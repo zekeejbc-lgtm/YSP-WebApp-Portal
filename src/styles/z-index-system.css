@@ -1,0 +1,131 @@
+/**
+ * =============================================================================
+ * YSP Z-INDEX SYSTEM - COMPREHENSIVE HIERARCHY
+ * =============================================================================
+ * 
+ * A systematic z-index hierarchy for the entire application
+ * Each layer is clearly defined to prevent overlapping issues
+ * 
+ * HIERARCHY (from bottom to top):
+ * 1. Base content (0-9)
+ * 2. Cards and elevated content (10-19)
+ * 3. Sticky elements (20-29)
+ * 4. Sidebar (30-39)
+ * 5. Top Bar (40-44)
+ * 6. Mobile controls (45-49)
+ * 7. Mobile sidebar overlay (50-59)
+ * 8. Mobile sidebar panel (60-69)
+ * 9. Dropdowns and popovers (70-79)
+ * 10. Standard modals (80-89)
+ * 11. Nested modals (90-99)
+ * 12. Critical modals (100-109)
+ * 13. Toast notifications (110-119)
+ * 
+ * =============================================================================
+ */
+
+:root {
+  /* ============================================
+   * LAYER 1: BASE CONTENT (0-9)
+   * ============================================ */
+  --z-background: 0;
+  --z-background-overlay: 1;
+  
+  /* ============================================
+   * LAYER 2: CARDS & ELEVATED CONTENT (10-19)
+   * ============================================ */
+  --z-content: 10;
+  --z-card: 15;
+  --z-elevated-card: 18;
+  
+  /* ============================================
+   * LAYER 3: STICKY ELEMENTS (20-29)
+   * ============================================ */
+  --z-sticky: 20;
+  --z-sticky-header: 25;
+  
+  /* ============================================
+   * LAYER 4: SIDEBAR (30-39)
+   * ============================================ */
+  --z-sidebar-desktop: 30;
+  
+  /* ============================================
+   * LAYER 5: TOP BAR (40-44)
+   * ============================================ */
+  --z-topbar: 40;
+  
+  /* ============================================
+   * LAYER 6: MOBILE CONTROLS (45-49)
+   * ============================================ */
+  --z-mobile-hamburger: 45;
+  --z-mobile-theme-toggle: 45;
+  --z-mobile-controls: 45;
+  
+  /* ============================================
+   * LAYER 7: MOBILE SIDEBAR OVERLAY (50-59)
+   * ============================================ */
+  --z-mobile-sidebar-overlay: 50;
+  
+  /* ============================================
+   * LAYER 8: MOBILE SIDEBAR PANEL (60-69)
+   * ============================================ */
+  --z-mobile-sidebar-panel: 60;
+  
+  /* ============================================
+   * LAYER 9: DROPDOWNS & POPOVERS (70-79)
+   * ============================================ */
+  --z-dropdown: 70;
+  --z-popover: 75;
+  --z-tooltip: 78;
+  
+  /* ============================================
+   * LAYER 10: STANDARD MODALS (80-89)
+   * ============================================ */
+  --z-modal-overlay: 80;
+  --z-modal-content: 85;
+  
+  /* ============================================
+   * LAYER 11: NESTED MODALS (90-99)
+   * ============================================ */
+  --z-nested-modal-overlay: 90;
+  --z-nested-modal-content: 95;
+  
+  /* ============================================
+   * LAYER 12: CRITICAL MODALS (100-109)
+   * ============================================ */
+  --z-critical-modal-overlay: 100;
+  --z-critical-modal-content: 105;
+  
+  /* ============================================
+   * LAYER 13: TOAST NOTIFICATIONS (110-119)
+   * ============================================ */
+  --z-toast: 110;
+  --z-notification: 115;
+}
+
+/* =============================================================================
+ * UTILITY CLASSES
+ * ============================================================================= */
+
+.z-background { z-index: var(--z-background); }
+.z-content { z-index: var(--z-content); }
+.z-card { z-index: var(--z-card); }
+.z-elevated-card { z-index: var(--z-elevated-card); }
+.z-sticky { z-index: var(--z-sticky); }
+.z-sticky-header { z-index: var(--z-sticky-header); }
+.z-sidebar-desktop { z-index: var(--z-sidebar-desktop); }
+.z-topbar { z-index: var(--z-topbar); }
+.z-mobile-controls { z-index: var(--z-mobile-controls); }
+.z-mobile-sidebar-overlay { z-index: var(--z-mobile-sidebar-overlay); }
+.z-mobile-sidebar-panel { z-index: var(--z-mobile-sidebar-panel); }
+.z-dropdown { z-index: var(--z-dropdown); }
+.z-popover { z-index: var(--z-popover); }
+.z-tooltip { z-index: var(--z-tooltip); }
+.z-modal-overlay { z-index: var(--z-modal-overlay); }
+.z-modal-content { z-index: var(--z-modal-content); }
+.z-nested-modal-overlay { z-index: var(--z-nested-modal-overlay); }
+.z-nested-modal-content { z-index: var(--z-nested-modal-content); }
+.z-critical-modal-overlay { z-index: var(--z-critical-modal-overlay); }
+.z-critical-modal-content { z-index: var(--z-critical-modal-content); }
+.z-toast { z-index: var(--z-toast); }
+.z-notification { z-index: var(--z-notification); }
