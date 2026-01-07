@@ -1,29 +1,14 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Mail, Phone, MapPin, Code2, Edit2, Save, Upload, Trash2, Plus, Link, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { X, Mail, Phone, MapPin, ExternalLink, Edit2, Save, Upload, Trash2, Plus } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { type UploadToastMessage } from './UploadToast';
-import {
-  fetchDevInfoContent,
-  updateDevInfoContent,
-  uploadDevProfile,
-  type DevInfoContent,
-} from '../services/gasHomepageService';
+import { toast } from 'sonner@2.0.3';
 
-interface DeveloperModalProps {
+interface FounderModalProps {
   isOpen: boolean;
   onClose: () => void;
   isDark: boolean;
   isAdmin: boolean;
-  // Upload Toast functions for consistent progress bar at bottom-right (optional with fallback)
-  addUploadToast?: (message: UploadToastMessage) => void;
-  updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
-  removeUploadToast?: (id: string) => void;
 }
-
-// Default no-op toast functions for when props are not provided
-const defaultAddToast = (_message: UploadToastMessage) => {};
-const defaultUpdateToast = (_id: string, _updates: Partial<UploadToastMessage>) => {};
-const defaultRemoveToast = (_id: string) => {};
 
 // Social platform detection helper - detects platform from URL
 const detectSocialPlatform = (url: string): { name: string; color: string; bgClass: string; textClass: string; icon: string } => {
@@ -81,7 +66,7 @@ const detectSocialPlatform = (url: string): { name: string; color: string; bgCla
 
 // Social icon component that renders platform-specific SVG icons
 const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; className?: string }) => {
-  const icons: Record<string, React.ReactNode> = {
+  const icons: Record<string, JSX.Element> = {
     facebook: (
       <svg className={className} fill="currentColor" viewBox="0 0 24 24">
         <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
@@ -100,11 +85,6 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
     youtube: (
       <svg className={className} fill="currentColor" viewBox="0 0 24 24">
         <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-      </svg>
-    ),
-    tiktok: (
-      <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-        <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/>
       </svg>
     ),
     linkedin: (
@@ -134,7 +114,7 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
     ),
     viber: (
       <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-        <path d="M11.398.002C9.473.028 5.331.344 3.014 2.467 1.294 4.182.628 6.633.528 9.682.428 12.733.256 18.456 5.373 19.908v2.238s-.036.906.563 1.089c.725.227 1.149-.466 1.84-1.213l1.266-1.439s4.389.365 6.179-.203c2.005-.639 2.932-2.139 2.932-4.956s-.072-4.156-2.003-4.845c-.818-.35-3.984-.755-6.179-.655-1.098.049-2.006.227-2.673.478l-.001.003c.625-.179 1.406-.311 2.343-.361 1.823-.101 4.354.215 5.213.496 1.42.506 1.469 1.853 1.469 3.884s-.582 3.412-2.016 3.869c-1.339.427-4.607.079-5.577.027l-2.378 2.442s-.067.063-.176.017c-.071-.031-.088-.107-.088-.107l.018-2.895s-3.746-.956-3.603-5.381c.093-2.879.566-4.866 2.014-6.304 1.819-1.668 5.381-1.928 7.081-1.95.184-.003.356-.004.515-.003h.018c2.656 0 5.908.725 7.742 2.105 2.018 1.582 2.006 4.085 2.006 4.085s.141 4.465-1.205 6.499c-.865 1.38-2.395 2.181-4.274 2.511-.035.009-.062.015-.062.015l.003.004c-.659.122-1.452.205-2.391.247-.096.005-.19.008-.283.011.035.118.077.229.127.331.161.31.415.56.728.729.584.313 1.245.465 1.876.587 1.059.202 2.093.271 3.089.201 1.104-.079 2.137-.328 3.027-.75 1.946-.936 3.183-2.737 3.651-5.26.443-2.409.219-5.411-.6-7.761-1.038-2.975-3.275-5.026-6.267-5.74-1.527-.367-3.232-.5-4.859-.484zm.26 2.161a6.81 6.81 0 01.206.001c.135.003.269.009.4.019 2.687.217 4.387 1.413 5.078 3.546.514 1.602.506 3.55.224 5.04-.356 1.883-1.288 2.808-2.416 3.347-.564.27-1.196.434-1.874.511-.584.064-1.194.068-1.812.023-.42-.031-.85-.085-1.282-.16l-.005.003c-.518-.089-.979-.227-1.358-.486a1.582 1.582 0 01-.465-.475c-.132-.22-.217-.494-.217-.845 0-.025.001-.05.002-.075v-3.7c-.007-.328.034-.608.129-.844.105-.259.271-.452.477-.594.204-.141.445-.232.707-.282.263-.051.546-.061.839-.032.208.02.426.064.654.122.099.025.194.05.284.076l-.008-.03a5.24 5.24 0 00-.35-.12 5.95 5.95 0 00-1.11-.188c-.418-.04-.829-.014-1.18.066-.35.079-.643.213-.85.396-.207.183-.334.417-.385.7a1.804 1.804 0 00-.015.348v3.831c.001.307.052.587.164.835.112.25.282.465.5.639.322.255.751.418 1.23.521.415.089.86.147 1.316.182.648.05 1.307.045 1.93-.026.753-.086 1.461-.27 2.08-.576 1.281-.634 2.019-1.795 2.318-3.379.27-1.433.266-3.32-.229-4.851-.582-1.8-2.037-2.761-4.388-2.95-.125-.011-.253-.016-.384-.017-.189-.002-.387.009-.594.032-1.234.138-2.11.483-2.766.97-.656.486-1.096 1.115-1.396 1.808-.3.693-.463 1.449-.548 2.179-.085.73-.093 1.432-.093 2.011v.005c.001.276.023.48.05.62.035.196.077.305.1.345a.098.098 0 00.028.031l.006.003.007-.001c.035-.014.054-.05.056-.088a1.238 1.238 0 00-.012-.222 4.182 4.182 0 01-.018-.356v-.099c.001-.556.008-1.246.09-1.958.082-.712.24-1.449.529-2.113.29-.664.71-1.26 1.333-1.72.624-.46 1.461-.784 2.651-.917a6.78 6.78 0 01.635-.034zm.037 1.94a4.91 4.91 0 01.452.016c1.883.15 3.047.946 3.492 2.384.332 1.071.32 2.429.146 3.544-.179 1.158-.628 1.815-1.298 2.153-.417.212-.909.326-1.431.38a6.62 6.62 0 01-1.379.007c-.4-.04-.807-.11-1.207-.21a3.305 3.305 0 01-.706-.268 1.234 1.234 0 01-.385-.338.804.804 0 01-.167-.39 1.197 1.197 0 01-.016-.204v-3.633c-.005-.26.019-.48.084-.657a.797.797 0 01.298-.395.968.968 0 01.468-.183c.18-.028.374-.028.569-.01.148.014.302.04.46.079l.158.042-.043-.042a3.33 3.33 0 00-.243-.196 2.13 2.13 0 00-.354-.213 2.05 2.05 0 00-.42-.151 2.03 2.03 0 00-.463-.053c-.174-.003-.349.008-.518.036a1.407 1.407 0 00-.461.148.995.995 0 00-.35.3 1.006 1.006 0 00-.174.44c-.025.136-.037.286-.035.451v3.807c-.002.194.024.374.086.533.063.158.163.299.3.416.255.217.608.366 1.025.467.362.087.764.144 1.181.177.571.044 1.152.042 1.7-.023.688-.082 1.33-.245 1.878-.53 1.127-.585 1.718-1.534 1.944-2.949.218-1.374.184-3.072-.276-4.417-.548-1.6-1.787-2.451-3.805-2.612a6.01 6.01 0 00-.591-.023c-.178 0-.366.01-.563.03-.882.087-1.51.31-1.981.608-.47.297-.793.666-1.025 1.07a3.85 3.85 0 00-.441 1.395c-.076.502-.095.987-.095 1.407v.002c0 .27.034.444.074.528.025.053.045.068.055.072l.003-.001.013-.013.011-.032a.915.915 0 00.018-.127l.01-.138a4.95 4.95 0 01.017-.185l.002-.034v-.003-.005-.001c.001-.385.016-.853.084-1.325.069-.473.19-.95.415-1.365.225-.414.552-.769 1.006-1.051.455-.282 1.039-.486 1.857-.566.153-.015.312-.023.477-.023z"/>
+        <path d="M11.398.002C9.473.028 5.331.344 3.014 2.467 1.294 4.182.628 6.633.528 9.682.428 12.733.256 18.456 5.373 19.908v2.238s-.036.906.563 1.089c.725.227 1.149-.466 1.84-1.213l1.266-1.439s4.389.365 6.179-.203c2.005-.639 2.932-2.139 2.932-4.956s-.072-4.156-2.003-4.845c-.818-.35-3.984-.755-6.179-.655-1.098.049-2.006.227-2.673.478l-.001.003c.625-.179 1.406-.311 2.343-.361 1.823-.101 4.354.215 5.213.496 1.42.506 1.469 1.853 1.469 3.884s-.582 3.412-2.016 3.869c-1.339.427-4.607.079-5.577.027l-2.378 2.442s-.067.063-.176.017c-.071-.031-.088-.107-.088-.107l.018-2.895s-3.746-.956-3.603-5.381c.093-2.879.566-4.866 2.014-6.304 1.819-1.668 5.381-1.928 7.081-1.95.184-.003.356-.004.515-.003h.018c2.656 0 5.908.725 7.742 2.105 2.018 1.582 2.006 4.085 2.006 4.085s.141 4.465-1.205 6.499c-.865 1.38-2.395 2.181-4.274 2.511-.035.009-.062.015-.062.015l.003.004c-.659.122-1.452.205-2.391.247-.096.005-.19.008-.283.011.035.118.077.229.127.331.161.31.415.56.728.729.584.313 1.245.465 1.876.587 1.059.202 2.093.271 3.089.201 1.104-.079 2.137-.328 3.027-.75 1.946-.936 3.183-2.737 3.651-5.26.443-2.409.219-5.411-.6-7.761-1.038-2.975-3.275-5.026-6.267-5.74-1.527-.367-3.232-.5-4.859-.484z"/>
       </svg>
     ),
     github: (
@@ -144,7 +124,7 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
     ),
     threads: (
       <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-        <path d="M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717C4.307 6.504 3.616 8.914 3.589 12c.027 3.086.718 5.496 2.057 7.164 1.43 1.783 3.631 2.698 6.54 2.717 2.623-.02 4.358-.631 5.8-2.045 1.647-1.613 1.618-3.593 1.09-4.798-.31-.71-.873-1.3-1.634-1.75-.192 1.352-.622 2.446-1.284 3.272-.886 1.102-2.14 1.704-3.73 1.79-1.202.065-2.361-.218-3.259-.801-1.063-.689-1.685-1.74-1.752-2.96-.065-1.182.408-2.256 1.332-3.022.88-.73 2.108-1.146 3.457-1.17a10.37 10.37 0 012.24.212c-.062-.607-.2-1.093-.411-1.452-.322-.548-.88-.862-1.654-.934-.727-.066-1.434.083-1.985.417l-1.106-1.68c.858-.564 2.013-.868 3.249-.854 1.36.015 2.478.395 3.325 1.13.796.688 1.298 1.67 1.494 2.918.136.857.116 1.826-.059 2.879l.065.035c.924.505 1.69 1.2 2.216 2.012.793 1.222 1.093 2.705.843 4.178-.344 2.022-1.432 3.645-3.144 4.692C17.063 23.442 14.88 24 12.186 24zM9.15 14.615c-.08 0-.162.002-.244.007-.764.04-1.477.282-2.005.679-.442.332-.675.753-.655 1.181.02.377.24.763.635 1.083.505.408 1.233.634 2.05.634.073 0 .147-.002.222-.006.924-.05 1.648-.434 2.152-1.141.353-.495.586-1.18.696-2.038-.755-.199-1.607-.388-2.85-.399z"/>
+        <path d="M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717C4.307 6.504 3.616 8.914 3.589 12c.027 3.086.718 5.496 2.057 7.164 1.43 1.783 3.631 2.698 6.54 2.717 2.623-.02 4.358-.631 5.8-2.045 1.647-1.613 1.618-3.593 1.09-4.798-.31-.71-.873-1.3-1.634-1.75-.192 1.352-.622 2.446-1.284 3.272-.886 1.102-2.14 1.704-3.73 1.79-1.202.065-2.361-.218-3.259-.801-1.063-.689-1.685-1.74-1.752-2.96-.065-1.182.408-2.256 1.332-3.022.88-.73 2.108-1.146 3.457-1.17a10.37 10.37 0 012.24.212c-.062-.607-.2-1.093-.411-1.452-.322-.548-.88-.862-1.654-.934-.727-.066-1.434.083-1.985.417l-1.106-1.68c.858-.564 2.013-.868 3.249-.854 1.36.015 2.478.395 3.325 1.13.796.688 1.298 1.67 1.494 2.918.136.857.116 1.826-.059 2.879l.065.035c.924.505 1.69 1.2 2.216 2.012.793 1.222 1.093 2.705.843 4.178-.344 2.022-1.432 3.645-3.144 4.692C17.063 23.442 14.88 24 12.186 24z"/>
       </svg>
     ),
     pinterest: (
@@ -167,340 +147,124 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
   return icons[platform] || icons.link;
 };
 
-export default function DeveloperModal({ 
-  isOpen, 
-  onClose, 
-  isDark, 
-  isAdmin, 
-  addUploadToast = defaultAddToast, 
-  updateUploadToast = defaultUpdateToast, 
-  removeUploadToast = defaultRemoveToast 
-}: DeveloperModalProps) {
+export default function FounderModal({ isOpen, onClose, isDark, isAdmin }: FounderModalProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
   
-  // Ref to prevent multiple fetches
-  const hasFetchedRef = useRef(false);
-  
-  // Store toast functions in refs to prevent useCallback recreation
-  const addToastRef = useRef(addUploadToast);
-  const updateToastRef = useRef(updateUploadToast);
-  addToastRef.current = addUploadToast;
-  updateToastRef.current = updateUploadToast;
-  
-  // Pending image file for upload on Save (not immediate upload)
-  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>('');
-  
-  // Default empty data structure
-  const emptyData = {
-    name: '',
-    nickname: '',
-    organization: '',
-    position: '',
-    profileImage: '',
-    about: '',
-    background: '',
-    philosophy: '',
-    socialLinks: [] as { url: string }[],
+  // Store original data for cancel functionality
+  const initialData = {
+    name: 'Juanquine Carlo R. Castro',
+    nickname: 'a.k.a Wacky Racho',
+    title: 'Founder & Visionary Leader',
+    profileImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&q=80',
+    about: `Juanquine Carlo R. Castro, known affectionately as "Wacky Racho," is the visionary founder of Youth Service Philippines - Tagum Chapter. With an unwavering commitment to community service and youth empowerment, he established the organization to mobilize Filipino youth in creating meaningful social change across Tagum City and Davao del Norte.
+
+His leadership philosophy centers on grassroots engagement, collaborative partnerships, and sustainable community development. Under his guidance, YSP Tagum Chapter has grown into a dynamic organization that touches thousands of lives through diverse programs spanning education, health, environment, and disaster response.`,
+    background: `A native of Tagum City, Wacky Racho recognized early on the untapped potential of Filipino youth to drive social transformation. His journey in community service began during his college years, where he witnessed firsthand the challenges faced by marginalized communities.
+
+Inspired by the Filipino spirit of "bayanihan" and driven by a deep sense of social responsibility, he founded YSP Tagum Chapter to create a platform where young people could channel their passion, skills, and energy into meaningful community service. His dedication to the organization's mission has inspired countless volunteers to join the movement.`,
+    achievements: [
+      'Founded YSP Tagum Chapter and established it as a leading youth service organization in Davao del Norte',
+      'Led over 50+ community outreach programs serving thousands of beneficiaries',
+      'Mobilized 200+ active youth volunteers committed to community service',
+      'Established partnerships with local government units, NGOs, and private sector organizations',
+      'Pioneered innovative approaches to youth engagement and community development',
+      'Recipient of multiple recognitions for outstanding community service and youth leadership'
+    ],
+    organizationImpact: `Under Wacky Racho's leadership, YSP Tagum Chapter has made significant impacts across multiple sectors:
+
+• Education: Provided tutoring, school supplies, and scholarship opportunities to 500+ students from low-income families
+• Environment: Planted 1,000+ trees and conducted numerous coastal cleanup drives
+• Health: Organized medical missions serving 2,000+ individuals in underserved communities
+• Disaster Response: Delivered emergency assistance to families affected by natural calamities
+• Leadership Development: Trained 300+ youth volunteers in civic engagement and community organizing
+
+The organization continues to expand its reach and deepen its impact, guided by Wacky Racho's vision of a community where every young person is an active agent of positive change.`,
+    philosophy: `"True leadership is not about personal glory, but about empowering others to discover and unleash their potential for the greater good. Every young person has the power to make a difference—we just need to provide the platform, support, and inspiration."`,
+    socialLinks: [
+      { url: 'https://www.facebook.com/YSPTagumChapter' }
+    ],
     contact: {
-      email: '',
-      phone: '',
-      location: ''
-    },
-    affiliations: [] as { name: string; category: string }[]
+      email: 'YSPTagumChapter@gmail.com',
+      phone: '+63 917 123 4567',
+      office: 'Tagum City, Davao del Norte, Philippines'
+    }
   };
 
-  const [developerData, setDeveloperData] = useState(emptyData);
-  const [savedData, setSavedData] = useState(emptyData);
-
-  // Fetch data from backend - use refs for toast functions to prevent recreation
-  const fetchData = useCallback(async () => {
-    // Prevent multiple fetches
-    if (hasFetchedRef.current) return;
-    hasFetchedRef.current = true;
-    
-    const toastId = `devinfo-fetch-${Date.now()}`;
-    setIsLoading(true);
-    
-    addToastRef.current({
-      id: toastId,
-      title: 'Loading Developer Profile',
-      message: 'Connecting to backend...',
-      status: 'loading',
-      progress: 0,
-    });
-    
-    try {
-      updateToastRef.current(toastId, { progress: 30, message: 'Fetching from Google Sheets...' });
-      const data = await fetchDevInfoContent();
-      
-      updateToastRef.current(toastId, { progress: 70, message: 'Processing data...' });
-      console.log('[DevModal] Raw data from backend:', data);
-      
-      // Transform backend data to component format
-      const transformedData = {
-        name: data.name || '',
-        nickname: data.nickname || '',
-        organization: data.organization || '',
-        position: data.position || '',
-        profileImage: data.profileUrl || '',
-        about: data.about || '',
-        background: data.background || '',
-        philosophy: data.devPhilosophy || '',
-        socialLinks: data.socialLinks?.map(link => ({ url: link.url })) || [],
-        contact: {
-          email: data.email || '',
-          phone: data.phone || '',
-          location: data.location || ''
-        },
-        affiliations: data.affiliations?.map(aff => ({ 
-          name: aff.orgName, 
-          category: aff.position 
-        })) || []
-      };
-      
-      setDeveloperData(transformedData);
-      setSavedData(transformedData);
-      setImagePreview(transformedData.profileImage); // Set initial image preview from backend
-      
-      console.log('[DevModal] Transformed data:', transformedData);
-      console.log('[DevModal] Profile image URL:', transformedData.profileImage);
-      
-      updateToastRef.current(toastId, {
-        status: 'success',
-        progress: 100,
-        title: 'Profile Loaded',
-        message: 'Developer info loaded successfully',
-      });
-    } catch (error) {
-      console.error('[DevModal] Error fetching data:', error);
-      updateToastRef.current(toastId, {
-        status: 'error',
-        progress: 100,
-        title: 'Load Failed',
-        message: error instanceof Error ? error.message : 'Failed to load developer info',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, []); // No dependencies - uses refs
-
-  // Fetch on open - reset flag when modal closes
-  useEffect(() => {
-    if (isOpen) {
-      hasFetchedRef.current = false; // Reset so we fetch again on next open
-      fetchData();
-      setPendingImageFile(null);
-    }
-  }, [isOpen, fetchData]);
+  const [founderData, setFounderData] = useState(initialData);
+  const [savedData, setSavedData] = useState(initialData);
 
   if (!isOpen) return null;
 
-  const handleSave = async () => {
-    const toastId = `devinfo-save-${Date.now()}`;
-    setIsSaving(true);
-    
-    addUploadToast({
-      id: toastId,
-      title: 'Saving Developer Profile',
-      message: 'Preparing data...',
-      status: 'loading',
-      progress: 0,
-    });
-    
-    console.log('[DevModal] Starting save process...');
-    
-    try {
-      let finalProfileUrl = developerData.profileImage;
-      
-      // If there's a pending image file, upload it first
-      if (pendingImageFile) {
-        updateUploadToast(toastId, { progress: 10, message: 'Uploading profile image to Google Drive...' });
-        console.log('[DevModal] Uploading pending image file:', pendingImageFile.name);
-        
-        const uploadResult = await uploadDevProfile(pendingImageFile);
-        
-        if (uploadResult.success && uploadResult.imageUrl) {
-          finalProfileUrl = uploadResult.imageUrl;
-          console.log('[DevModal] Image uploaded successfully:', finalProfileUrl);
-          updateUploadToast(toastId, { progress: 40, message: 'Image uploaded! Saving profile data...' });
-        } else {
-          updateUploadToast(toastId, {
-            status: 'error',
-            progress: 100,
-            title: 'Upload Failed',
-            message: uploadResult.error || 'Failed to upload image',
-          });
-          setIsSaving(false);
-          return; // Stop save if image upload failed
-        }
-      } else {
-        updateUploadToast(toastId, { progress: 30, message: 'Preparing profile data...' });
-      }
-      
-      // Transform component data to backend format
-      const backendData: Partial<DevInfoContent> = {
-        profileUrl: finalProfileUrl, // Include the profile URL in the update
-        name: developerData.name,
-        nickname: developerData.nickname,
-        organization: developerData.organization,
-        position: developerData.position,
-        about: developerData.about,
-        background: developerData.background,
-        devPhilosophy: developerData.philosophy,
-        email: developerData.contact.email,
-        phone: developerData.contact.phone,
-        location: developerData.contact.location,
-        affiliations: developerData.affiliations.map((aff, index) => ({
-          id: index + 1,
-          orgName: aff.name,
-          position: aff.category
-        })),
-        socialLinks: developerData.socialLinks.map((link, index) => ({
-          id: index + 1,
-          url: link.url
-        }))
-      };
-      
-      updateUploadToast(toastId, { progress: 60, message: 'Sending to Google Sheets API...' });
-      console.log('[DevModal] Saving data to backend:', backendData);
-      
-      const success = await updateDevInfoContent(backendData);
-      
-      if (success) {
-        updateUploadToast(toastId, { progress: 90, message: 'Updating local state...' });
-        
-        // Update local state with the new profile URL
-        const updatedData = { ...developerData, profileImage: finalProfileUrl };
-        setDeveloperData(updatedData);
-        setSavedData(updatedData);
-        setImagePreview(finalProfileUrl);
-        setPendingImageFile(null); // Clear pending file
-        setIsEditing(false);
-        
-        updateUploadToast(toastId, {
-          status: 'success',
-          progress: 100,
-          title: 'Profile Saved!',
-          message: 'Developer profile saved to backend successfully',
-        });
-        console.log('[DevModal] Save successful, final profile URL:', finalProfileUrl);
-      } else {
-        updateUploadToast(toastId, {
-          status: 'error',
-          progress: 100,
-          title: 'Save Failed',
-          message: 'Failed to save - please try again',
-        });
-      }
-    } catch (error) {
-      console.error('[DevModal] Save error:', error);
-      updateUploadToast(toastId, {
-        status: 'error',
-        progress: 100,
-        title: 'Save Failed',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      });
-    } finally {
-      setIsSaving(false);
-    }
+  const handleSave = () => {
+    setSavedData(founderData);
+    setIsEditing(false);
+    toast.success('Founder profile updated successfully');
   };
 
   const handleCancelEdit = () => {
-    setDeveloperData(savedData);
-    setImagePreview(savedData.profileImage); // Reset image preview to saved version
-    setPendingImageFile(null); // Clear any pending image
+    setFounderData(savedData);
     setIsEditing(false);
+    toast.info('Changes discarded');
   };
 
-  // Handle image selection - just preview locally, don't upload yet
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    
-    if (file.size > 10 * 1024 * 1024) {
-      addUploadToast({
-        id: `img-error-${Date.now()}`,
-        title: 'Image Too Large',
-        message: 'Image must be less than 10MB',
-        status: 'error',
-        progress: 100,
-      });
-      return;
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('Image must be less than 5MB');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setFounderData({ ...founderData, profileImage: e.target?.result as string });
+        toast.success('Profile image uploaded');
+      };
+      reader.readAsDataURL(file);
     }
-    
-    if (!file.type.startsWith('image/')) {
-      addUploadToast({
-        id: `img-error-${Date.now()}`,
-        title: 'Invalid File',
-        message: 'Please select an image file',
-        status: 'error',
-        progress: 100,
-      });
-      return;
-    }
-    
-    // Store the file for upload on save
-    setPendingImageFile(file);
-    
-    // Create local preview using FileReader
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const previewUrl = event.target?.result as string;
-      setImagePreview(previewUrl);
-      console.log('[DevModal] Image preview created locally (not uploaded yet)');
-    };
-    reader.readAsDataURL(file);
-    
-    // Reset input so same file can be selected again
-    e.target.value = '';
+  };
+
+  const addAchievement = () => {
+    setFounderData({ 
+      ...founderData, 
+      achievements: [...founderData.achievements, 'New Achievement'] 
+    });
+  };
+
+  const updateAchievement = (index: number, value: string) => {
+    const newAchievements = [...founderData.achievements];
+    newAchievements[index] = value;
+    setFounderData({ ...founderData, achievements: newAchievements });
+  };
+
+  const removeAchievement = (index: number) => {
+    const newAchievements = founderData.achievements.filter((_, i) => i !== index);
+    setFounderData({ ...founderData, achievements: newAchievements });
   };
 
   // Social Links functions
   const addSocialLink = () => {
-    setDeveloperData({ 
-      ...developerData, 
-      socialLinks: [...developerData.socialLinks, { url: '' }] 
+    setFounderData({ 
+      ...founderData, 
+      socialLinks: [...founderData.socialLinks, { url: '' }] 
     });
   };
 
   const updateSocialLink = (index: number, url: string) => {
-    const newSocialLinks = [...developerData.socialLinks];
+    const newSocialLinks = [...founderData.socialLinks];
     newSocialLinks[index] = { url };
-    setDeveloperData({ ...developerData, socialLinks: newSocialLinks });
+    setFounderData({ ...founderData, socialLinks: newSocialLinks });
   };
 
   const removeSocialLink = (index: number) => {
-    const newSocialLinks = developerData.socialLinks.filter((_, i) => i !== index);
-    setDeveloperData({ ...developerData, socialLinks: newSocialLinks });
-  };
-
-  // Affiliations functions
-  const addAffiliation = () => {
-    setDeveloperData({ 
-      ...developerData, 
-      affiliations: [...developerData.affiliations, { name: 'New Affiliation', category: 'Category' }] 
-    });
-  };
-
-  const updateAffiliation = (index: number, field: 'name' | 'category', value: string) => {
-    const newAffiliations = [...developerData.affiliations];
-    newAffiliations[index][field] = value;
-    setDeveloperData({ ...developerData, affiliations: newAffiliations });
-  };
-
-  const removeAffiliation = (index: number) => {
-    const newAffiliations = developerData.affiliations.filter((_, i) => i !== index);
-    setDeveloperData({ ...developerData, affiliations: newAffiliations });
+    const newSocialLinks = founderData.socialLinks.filter((_, i) => i !== index);
+    setFounderData({ ...founderData, socialLinks: newSocialLinks });
   };
 
   return (
     <div 
       className="fixed flex items-center justify-center p-4" 
       style={{ 
-        zIndex: 10001,
+        zIndex: 9999,
         top: 0,
         left: 0,
         right: 0,
@@ -546,13 +310,13 @@ export default function DeveloperModal({
               letterSpacing: '-0.01em',
             }}
           >
-            Developer Profile
+            Founder Profile
           </h2>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2">
             {isAdmin && isEditing && (
               <button
                 onClick={handleCancelEdit}
-                className="px-4 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium text-gray-600 dark:text-gray-400"
+                className="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium text-gray-600 dark:text-gray-400"
               >
                 Cancel
               </button>
@@ -560,8 +324,7 @@ export default function DeveloperModal({
             {isAdmin && (
               <button
                 onClick={() => isEditing ? handleSave() : setIsEditing(true)}
-                disabled={isSaving}
-                className="px-4 py-2 rounded-lg transition-all text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 rounded-lg transition-all text-sm font-semibold flex items-center gap-1.5"
                 style={{
                   background: isEditing 
                     ? 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)' 
@@ -574,12 +337,7 @@ export default function DeveloperModal({
                 }}
                 aria-label={isEditing ? "Save changes" : "Edit profile"}
               >
-                {isSaving ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Saving...</span>
-                  </>
-                ) : isEditing ? (
+                {isEditing ? (
                   <>
                     <Save className="w-4 h-4" />
                     Save
@@ -603,44 +361,29 @@ export default function DeveloperModal({
         </div>
 
         {/* Content */}
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center p-6" style={{ minHeight: '500px' }}>
-            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-4 text-gray-600 dark:text-gray-400">Loading developer profile...</p>
-          </div>
-        ) : (
         <div className="p-6 space-y-6">
           {/* Profile Header */}
           <div className="flex flex-col md:flex-row gap-6 items-start">
             {/* Profile Image */}
             <div className="shrink-0">
-              {/* Use imagePreview for display - this shows local preview or backend URL */}
-              {imagePreview ? (
-                <ImageWithFallback
-                  src={imagePreview}
-                  alt={developerData.name || 'Developer Profile'}
-                  className="w-32 h-32 md:w-40 md:h-40 rounded-xl object-cover border-4 border-[#3b82f6] shadow-lg"
-                />
-              ) : (
-                <div className="w-32 h-32 md:w-40 md:h-40 rounded-xl border-4 border-[#3b82f6] shadow-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                  <Code2 className="w-12 h-12 text-gray-400" />
-                </div>
-              )}
+              <ImageWithFallback
+                src={founderData.profileImage}
+                alt={founderData.name}
+                className="w-32 h-32 md:w-40 md:h-40 rounded-xl object-cover border-4 border-[#f6421f] shadow-lg"
+              />
               {isEditing && (
                 <div className="mt-2">
-                  <label className="flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer transition-colors text-sm">
+                  <label className="flex items-center justify-center gap-2 px-3 py-2 bg-[#f6421f] hover:bg-[#ee8724] text-white rounded-lg cursor-pointer transition-colors text-sm">
                     <Upload className="w-4 h-4" />
-                    {pendingImageFile ? 'Change Image' : 'Upload Image'}
+                    Upload Image
                     <input
                       type="file"
-                      accept="image/png,image/jpeg,image/jpg,image/webp"
-                      onChange={handleImageSelect}
+                      accept="image/png,image/jpeg,image/jpg"
+                      onChange={handleImageUpload}
                       className="hidden"
                     />
                   </label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
-                    {pendingImageFile ? `Selected: ${pendingImageFile.name}` : 'Max 10MB'}
-                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">Max 5MB</p>
                 </div>
               )}
             </div>
@@ -651,32 +394,22 @@ export default function DeveloperModal({
                 <>
                   <input
                     type="text"
-                    value={developerData.name}
-                    onChange={(e) => setDeveloperData({ ...developerData, name: e.target.value })}
+                    value={founderData.name}
+                    onChange={(e) => setFounderData({ ...founderData, name: e.target.value })}
                     className="w-full px-3 py-2 mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                     style={{ fontSize: '1.5rem', fontWeight: '600' }}
-                    placeholder="Full Name"
                   />
                   <input
                     type="text"
-                    value={developerData.nickname}
-                    onChange={(e) => setDeveloperData({ ...developerData, nickname: e.target.value })}
+                    value={founderData.nickname}
+                    onChange={(e) => setFounderData({ ...founderData, nickname: e.target.value })}
                     className="w-full px-3 py-2 mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
-                    placeholder="Nickname (e.g., a.k.a Ziek)"
                   />
                   <input
                     type="text"
-                    value={developerData.position}
-                    onChange={(e) => setDeveloperData({ ...developerData, position: e.target.value })}
-                    className="w-full px-3 py-2 mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
-                    placeholder="Position"
-                  />
-                  <input
-                    type="text"
-                    value={developerData.organization}
-                    onChange={(e) => setDeveloperData({ ...developerData, organization: e.target.value })}
+                    value={founderData.title}
+                    onChange={(e) => setFounderData({ ...founderData, title: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
-                    placeholder="Organization"
                   />
                 </>
               ) : (
@@ -685,25 +418,19 @@ export default function DeveloperModal({
                     className="text-gray-900 dark:text-white mb-1"
                     style={{ fontSize: '1.5rem', fontWeight: '600' }}
                   >
-                    {developerData.name}
+                    {founderData.name}
                   </h3>
                   <p
-                    className="text-[#3b82f6] mb-2 italic"
+                    className="text-gray-700 dark:text-gray-300 italic mb-2"
                     style={{ fontSize: '1rem', fontWeight: '500' }}
                   >
-                    {developerData.nickname}
+                    {founderData.nickname}
                   </p>
                   <p
-                    className="text-gray-700 dark:text-gray-300 mb-1"
-                    style={{ fontSize: '1rem', fontWeight: '500' }}
+                    className="text-[#ee8724] mb-4"
+                    style={{ fontSize: '1.125rem', fontWeight: '600' }}
                   >
-                    {developerData.position}
-                  </p>
-                  <p
-                    className="text-gray-600 dark:text-gray-400"
-                    style={{ fontSize: '0.875rem', fontWeight: '500' }}
-                  >
-                    {developerData.organization}
+                    {founderData.title}
                   </p>
                 </>
               )}
@@ -715,13 +442,13 @@ export default function DeveloperModal({
                     <label className="text-xs text-gray-600 dark:text-gray-400">Social Links</label>
                     <button
                       onClick={addSocialLink}
-                      className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                      className="flex items-center gap-1 px-2 py-1 text-xs bg-[#f6421f] hover:bg-[#ee8724] text-white rounded-lg transition-colors"
                     >
                       <Plus className="w-3 h-3" />
                       Add Link
                     </button>
                   </div>
-                  {developerData.socialLinks.map((link, index) => {
+                  {founderData.socialLinks.map((link, index) => {
                     const platform = detectSocialPlatform(link.url);
                     return (
                       <div key={index} className="flex items-center gap-2">
@@ -750,7 +477,7 @@ export default function DeveloperModal({
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-2 mt-4">
-                  {developerData.socialLinks.map((link, index) => {
+                  {founderData.socialLinks.map((link, index) => {
                     if (!link.url) return null;
                     const platform = detectSocialPlatform(link.url);
                     return (
@@ -785,8 +512,8 @@ export default function DeveloperModal({
             </h4>
             {isEditing ? (
               <textarea
-                value={developerData.about}
-                onChange={(e) => setDeveloperData({ ...developerData, about: e.target.value })}
+                value={founderData.about}
+                onChange={(e) => setFounderData({ ...founderData, about: e.target.value })}
                 className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white min-h-[150px]"
                 style={{ fontSize: '1rem', lineHeight: '1.625' }}
               />
@@ -795,7 +522,7 @@ export default function DeveloperModal({
                 className="text-gray-800 dark:text-gray-100 text-justify whitespace-pre-line"
                 style={{ fontSize: '1rem', lineHeight: '1.625', fontWeight: '500' }}
               >
-                {developerData.about}
+                {founderData.about}
               </p>
             )}
           </div>
@@ -810,12 +537,12 @@ export default function DeveloperModal({
                 color: '#f6421f',
               }}
             >
-              Background
+              Background & Journey
             </h4>
             {isEditing ? (
               <textarea
-                value={developerData.background}
-                onChange={(e) => setDeveloperData({ ...developerData, background: e.target.value })}
+                value={founderData.background}
+                onChange={(e) => setFounderData({ ...founderData, background: e.target.value })}
                 className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white min-h-[150px]"
                 style={{ fontSize: '1rem', lineHeight: '1.625' }}
               />
@@ -824,12 +551,12 @@ export default function DeveloperModal({
                 className="text-gray-800 dark:text-gray-100 text-justify whitespace-pre-line"
                 style={{ fontSize: '1rem', lineHeight: '1.625', fontWeight: '500' }}
               >
-                {developerData.background}
+                {founderData.background}
               </p>
             )}
           </div>
 
-          {/* Affiliations Section */}
+          {/* Key Achievements Section */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h4
@@ -840,72 +567,85 @@ export default function DeveloperModal({
                   color: '#f6421f',
                 }}
               >
-                Affiliations
+                Key Achievements
               </h4>
               {isEditing && (
                 <button
-                  onClick={addAffiliation}
-                  className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                  onClick={addAchievement}
+                  className="flex items-center gap-1 px-3 py-1 text-sm bg-[#f6421f] hover:bg-[#ee8724] text-white rounded-lg transition-colors"
                 >
                   <Plus className="w-4 h-4" />
-                  Add Affiliation
+                  Add Achievement
                 </button>
               )}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {developerData.affiliations.map((affiliation, index) => (
-                <div
-                  key={index}
-                  className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
-                >
+            <ul className="space-y-2">
+              {founderData.achievements.map((achievement, index) => (
+                <li key={index} className="flex gap-3">
                   {isEditing ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={affiliation.name}
-                          onChange={(e) => updateAffiliation(index, 'name', e.target.value)}
-                          className="flex-1 px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-                          placeholder="Organization name"
-                        />
-                        <button
-                          onClick={() => removeAffiliation(index)}
-                          className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                    <>
+                      <span className="text-[#f6421f] font-bold shrink-0">•</span>
                       <input
                         type="text"
-                        value={affiliation.category}
-                        onChange={(e) => updateAffiliation(index, 'category', e.target.value)}
-                        className="w-full px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-                        placeholder="Category"
+                        value={achievement}
+                        onChange={(e) => updateAchievement(index, e.target.value)}
+                        className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                        style={{ fontSize: '1rem' }}
                       />
-                    </div>
+                      <button
+                        onClick={() => removeAchievement(index)}
+                        className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </>
                   ) : (
                     <>
-                      <p
-                        className="text-gray-900 dark:text-white mb-1"
-                        style={{ fontSize: '0.875rem', fontWeight: '600' }}
+                      <span className="text-[#f6421f] font-bold shrink-0">•</span>
+                      <span
+                        className="text-gray-800 dark:text-gray-100"
+                        style={{ fontSize: '1rem', lineHeight: '1.625', fontWeight: '500' }}
                       >
-                        {affiliation.name}
-                      </p>
-                      <p
-                        className="text-gray-600 dark:text-gray-400"
-                        style={{ fontSize: '0.75rem', fontWeight: '500' }}
-                      >
-                        {affiliation.category}
-                      </p>
+                        {achievement}
+                      </span>
                     </>
                   )}
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
+          </div>
+
+          {/* Organization Impact Section */}
+          <div className="space-y-4">
+            <h4
+              style={{
+                fontFamily: 'var(--font-headings)',
+                fontSize: '1.125rem',
+                fontWeight: '600',
+                color: '#f6421f',
+              }}
+            >
+              Organizational Impact
+            </h4>
+            {isEditing ? (
+              <textarea
+                value={founderData.organizationImpact}
+                onChange={(e) => setFounderData({ ...founderData, organizationImpact: e.target.value })}
+                className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white min-h-[200px]"
+                style={{ fontSize: '1rem', lineHeight: '1.625' }}
+              />
+            ) : (
+              <p
+                className="text-gray-800 dark:text-gray-100 text-justify whitespace-pre-line"
+                style={{ fontSize: '1rem', lineHeight: '1.625', fontWeight: '500' }}
+              >
+                {founderData.organizationImpact}
+              </p>
+            )}
           </div>
 
           {/* Philosophy Section */}
-          <div className="space-y-4 p-4 md:p-6 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-2 border-blue-200 dark:border-blue-800 rounded-xl">
+          <div className="space-y-4 p-4 md:p-6 bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-xl">
             <h4
               style={{
                 fontFamily: 'var(--font-headings)',
@@ -918,8 +658,8 @@ export default function DeveloperModal({
             </h4>
             {isEditing ? (
               <textarea
-                value={developerData.philosophy}
-                onChange={(e) => setDeveloperData({ ...developerData, philosophy: e.target.value })}
+                value={founderData.philosophy}
+                onChange={(e) => setFounderData({ ...founderData, philosophy: e.target.value })}
                 className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white min-h-[100px]"
                 style={{ fontSize: '1rem', lineHeight: '1.625' }}
               />
@@ -928,7 +668,7 @@ export default function DeveloperModal({
                 className="text-gray-900 dark:text-white italic text-center"
                 style={{ fontSize: '1.125rem', lineHeight: '1.625', fontWeight: '500' }}
               >
-                {developerData.philosophy}
+                {founderData.philosophy}
               </p>
             )}
           </div>
@@ -951,10 +691,10 @@ export default function DeveloperModal({
                   <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Email</label>
                   <input
                     type="email"
-                    value={developerData.contact.email}
-                    onChange={(e) => setDeveloperData({ 
-                      ...developerData, 
-                      contact: { ...developerData.contact, email: e.target.value }
+                    value={founderData.contact.email}
+                    onChange={(e) => setFounderData({ 
+                      ...founderData, 
+                      contact: { ...founderData.contact, email: e.target.value }
                     })}
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                   />
@@ -963,22 +703,22 @@ export default function DeveloperModal({
                   <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Phone</label>
                   <input
                     type="tel"
-                    value={developerData.contact.phone}
-                    onChange={(e) => setDeveloperData({ 
-                      ...developerData, 
-                      contact: { ...developerData.contact, phone: e.target.value }
+                    value={founderData.contact.phone}
+                    onChange={(e) => setFounderData({ 
+                      ...founderData, 
+                      contact: { ...founderData.contact, phone: e.target.value }
                     })}
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Location</label>
+                  <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Office Location</label>
                   <input
                     type="text"
-                    value={developerData.contact.location}
-                    onChange={(e) => setDeveloperData({ 
-                      ...developerData, 
-                      contact: { ...developerData.contact, location: e.target.value }
+                    value={founderData.contact.office}
+                    onChange={(e) => setFounderData({ 
+                      ...founderData, 
+                      contact: { ...founderData.contact, office: e.target.value }
                     })}
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                   />
@@ -991,10 +731,10 @@ export default function DeveloperModal({
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-gray-600 dark:text-gray-400">Email</p>
                     <a 
-                      href={`mailto:${developerData.contact.email}`}
+                      href={`mailto:${founderData.contact.email}`}
                       className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] dark:hover:text-[#f6421f] transition-colors truncate block"
                     >
-                      {developerData.contact.email}
+                      {founderData.contact.email}
                     </a>
                   </div>
                 </div>
@@ -1004,10 +744,10 @@ export default function DeveloperModal({
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-gray-600 dark:text-gray-400">Phone</p>
                     <a 
-                      href={`tel:${developerData.contact.phone}`}
+                      href={`tel:${founderData.contact.phone}`}
                       className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] dark:hover:text-[#f6421f] transition-colors"
                     >
-                      {developerData.contact.phone}
+                      {founderData.contact.phone}
                     </a>
                   </div>
                 </div>
@@ -1015,27 +755,16 @@ export default function DeveloperModal({
                 <div className="flex items-center gap-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg md:col-span-2">
                   <MapPin className="w-5 h-5 text-purple-600 dark:text-purple-400 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-600 dark:text-gray-400">Location</p>
+                    <p className="text-xs text-gray-600 dark:text-gray-400">Office Location</p>
                     <p className="text-sm text-gray-900 dark:text-white">
-                      {developerData.contact.location}
+                      {founderData.contact.office}
                     </p>
                   </div>
                 </div>
               </div>
             )}
           </div>
-
-          {/* Support Notice */}
-          <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-500 dark:border-amber-600 rounded-r-lg">
-            <p
-              className="text-gray-900 dark:text-white"
-              style={{ fontSize: '0.875rem', lineHeight: '1.625', fontWeight: '500' }}
-            >
-              <strong>Need Technical Support?</strong> Should you encounter any issues, errors, or technical difficulties while using this Web App, please feel free to reach out. Your feedback helps improve the platform for everyone.
-            </p>
-          </div>
         </div>
-        )}
       </div>
     </div>
   );

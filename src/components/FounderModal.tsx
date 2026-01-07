@@ -1,14 +1,29 @@
-import { useState } from 'react';
-import { X, Mail, Phone, MapPin, ExternalLink, Edit2, Save, Upload, Trash2, Plus } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { X, Mail, Phone, MapPin, Award, Edit2, Save, Upload, Trash2, Plus, Loader2 } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { toast } from 'sonner@2.0.3';
+import { type UploadToastMessage } from './UploadToast';
+import {
+  fetchFounderInfoContent,
+  updateFounderInfoContent,
+  uploadFounderProfile,
+  type FounderInfoContent,
+} from '../services/gasHomepageService';
 
 interface FounderModalProps {
   isOpen: boolean;
   onClose: () => void;
   isDark: boolean;
   isAdmin: boolean;
+  // Upload Toast functions for consistent progress bar at bottom-right (optional with fallback)
+  addUploadToast?: (message: UploadToastMessage) => void;
+  updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
+  removeUploadToast?: (id: string) => void;
 }
+
+// Default no-op toast functions for when props are not provided
+const defaultAddToast = (_message: UploadToastMessage) => {};
+const defaultUpdateToast = (_id: string, _updates: Partial<UploadToastMessage>) => {};
+const defaultRemoveToast = (_id: string) => {};
 
 // Social platform detection helper - detects platform from URL
 const detectSocialPlatform = (url: string): { name: string; color: string; bgClass: string; textClass: string; icon: string } => {
@@ -66,7 +81,7 @@ const detectSocialPlatform = (url: string): { name: string; color: string; bgCla
 
 // Social icon component that renders platform-specific SVG icons
 const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; className?: string }) => {
-  const icons: Record<string, JSX.Element> = {
+  const icons: Record<string, React.ReactNode> = {
     facebook: (
       <svg className={className} fill="currentColor" viewBox="0 0 24 24">
         <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
@@ -85,6 +100,11 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
     youtube: (
       <svg className={className} fill="currentColor" viewBox="0 0 24 24">
         <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+      </svg>
+    ),
+    tiktok: (
+      <svg className={className} fill="currentColor" viewBox="0 0 24 24">
+        <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/>
       </svg>
     ),
     linkedin: (
@@ -114,7 +134,7 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
     ),
     viber: (
       <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-        <path d="M11.398.002C9.473.028 5.331.344 3.014 2.467 1.294 4.182.628 6.633.528 9.682.428 12.733.256 18.456 5.373 19.908v2.238s-.036.906.563 1.089c.725.227 1.149-.466 1.84-1.213l1.266-1.439s4.389.365 6.179-.203c2.005-.639 2.932-2.139 2.932-4.956s-.072-4.156-2.003-4.845c-.818-.35-3.984-.755-6.179-.655-1.098.049-2.006.227-2.673.478l-.001.003c.625-.179 1.406-.311 2.343-.361 1.823-.101 4.354.215 5.213.496 1.42.506 1.469 1.853 1.469 3.884s-.582 3.412-2.016 3.869c-1.339.427-4.607.079-5.577.027l-2.378 2.442s-.067.063-.176.017c-.071-.031-.088-.107-.088-.107l.018-2.895s-3.746-.956-3.603-5.381c.093-2.879.566-4.866 2.014-6.304 1.819-1.668 5.381-1.928 7.081-1.95.184-.003.356-.004.515-.003h.018c2.656 0 5.908.725 7.742 2.105 2.018 1.582 2.006 4.085 2.006 4.085s.141 4.465-1.205 6.499c-.865 1.38-2.395 2.181-4.274 2.511-.035.009-.062.015-.062.015l.003.004c-.659.122-1.452.205-2.391.247-.096.005-.19.008-.283.011.035.118.077.229.127.331.161.31.415.56.728.729.584.313 1.245.465 1.876.587 1.059.202 2.093.271 3.089.201 1.104-.079 2.137-.328 3.027-.75 1.946-.936 3.183-2.737 3.651-5.26.443-2.409.219-5.411-.6-7.761-1.038-2.975-3.275-5.026-6.267-5.74-1.527-.367-3.232-.5-4.859-.484z"/>
+        <path d="M11.398.002C9.473.028 5.331.344 3.014 2.467 1.294 4.182.628 6.633.528 9.682.428 12.733.256 18.456 5.373 19.908v2.238s-.036.906.563 1.089c.725.227 1.149-.466 1.84-1.213l1.266-1.439s4.389.365 6.179-.203c2.005-.639 2.932-2.139 2.932-4.956s-.072-4.156-2.003-4.845c-.818-.35-3.984-.755-6.179-.655-1.098.049-2.006.227-2.673.478l-.001.003c.625-.179 1.406-.311 2.343-.361 1.823-.101 4.354.215 5.213.496 1.42.506 1.469 1.853 1.469 3.884s-.582 3.412-2.016 3.869c-1.339.427-4.607.079-5.577.027l-2.378 2.442s-.067.063-.176.017c-.071-.031-.088-.107-.088-.107l.018-2.895s-3.746-.956-3.603-5.381c.093-2.879.566-4.866 2.014-6.304 1.819-1.668 5.381-1.928 7.081-1.95.184-.003.356-.004.515-.003h.018c2.656 0 5.908.725 7.742 2.105 2.018 1.582 2.006 4.085 2.006 4.085s.141 4.465-1.205 6.499c-.865 1.38-2.395 2.181-4.274 2.511-.035.009-.062.015-.062.015l.003.004c-.659.122-1.452.205-2.391.247-.096.005-.19.008-.283.011.035.118.077.229.127.331.161.31.415.56.728.729.584.313 1.245.465 1.876.587 1.059.202 2.093.271 3.089.201 1.104-.079 2.137-.328 3.027-.75 1.946-.936 3.183-2.737 3.651-5.26.443-2.409.219-5.411-.6-7.761-1.038-2.975-3.275-5.026-6.267-5.74-1.527-.367-3.232-.5-4.859-.484zm.26 2.161a6.81 6.81 0 01.206.001c.135.003.269.009.4.019 2.687.217 4.387 1.413 5.078 3.546.514 1.602.506 3.55.224 5.04-.356 1.883-1.288 2.808-2.416 3.347-.564.27-1.196.434-1.874.511-.584.064-1.194.068-1.812.023-.42-.031-.85-.085-1.282-.16l-.005.003c-.518-.089-.979-.227-1.358-.486a1.582 1.582 0 01-.465-.475c-.132-.22-.217-.494-.217-.845 0-.025.001-.05.002-.075v-3.7c-.007-.328.034-.608.129-.844.105-.259.271-.452.477-.594.204-.141.445-.232.707-.282.263-.051.546-.061.839-.032.208.02.426.064.654.122.099.025.194.05.284.076l-.008-.03a5.24 5.24 0 00-.35-.12 5.95 5.95 0 00-1.11-.188c-.418-.04-.829-.014-1.18.066-.35.079-.643.213-.85.396-.207.183-.334.417-.385.7a1.804 1.804 0 00-.015.348v3.831c.001.307.052.587.164.835.112.25.282.465.5.639.322.255.751.418 1.23.521.415.089.86.147 1.316.182.648.05 1.307.045 1.93-.026.753-.086 1.461-.27 2.08-.576 1.281-.634 2.019-1.795 2.318-3.379.27-1.433.266-3.32-.229-4.851-.582-1.8-2.037-2.761-4.388-2.95-.125-.011-.253-.016-.384-.017-.189-.002-.387.009-.594.032-1.234.138-2.11.483-2.766.97-.656.486-1.096 1.115-1.396 1.808-.3.693-.463 1.449-.548 2.179-.085.73-.093 1.432-.093 2.011v.005c.001.276.023.48.05.62.035.196.077.305.1.345a.098.098 0 00.028.031l.006.003.007-.001c.035-.014.054-.05.056-.088a1.238 1.238 0 00-.012-.222 4.182 4.182 0 01-.018-.356v-.099c.001-.556.008-1.246.09-1.958.082-.712.24-1.449.529-2.113.29-.664.71-1.26 1.333-1.72.624-.46 1.461-.784 2.651-.917a6.78 6.78 0 01.635-.034zm.037 1.94a4.91 4.91 0 01.452.016c1.883.15 3.047.946 3.492 2.384.332 1.071.32 2.429.146 3.544-.179 1.158-.628 1.815-1.298 2.153-.417.212-.909.326-1.431.38a6.62 6.62 0 01-1.379.007c-.4-.04-.807-.11-1.207-.21a3.305 3.305 0 01-.706-.268 1.234 1.234 0 01-.385-.338.804.804 0 01-.167-.39 1.197 1.197 0 01-.016-.204v-3.633c-.005-.26.019-.48.084-.657a.797.797 0 01.298-.395.968.968 0 01.468-.183c.18-.028.374-.028.569-.01.148.014.302.04.46.079l.158.042-.043-.042a3.33 3.33 0 00-.243-.196 2.13 2.13 0 00-.354-.213 2.05 2.05 0 00-.42-.151 2.03 2.03 0 00-.463-.053c-.174-.003-.349.008-.518.036a1.407 1.407 0 00-.461.148.995.995 0 00-.35.3 1.006 1.006 0 00-.174.44c-.025.136-.037.286-.035.451v3.807c-.002.194.024.374.086.533.063.158.163.299.3.416.255.217.608.366 1.025.467.362.087.764.144 1.181.177.571.044 1.152.042 1.7-.023.688-.082 1.33-.245 1.878-.53 1.127-.585 1.718-1.534 1.944-2.949.218-1.374.184-3.072-.276-4.417-.548-1.6-1.787-2.451-3.805-2.612a6.01 6.01 0 00-.591-.023c-.178 0-.366.01-.563.03-.882.087-1.51.31-1.981.608-.47.297-.793.666-1.025 1.07a3.85 3.85 0 00-.441 1.395c-.076.502-.095.987-.095 1.407v.002c0 .27.034.444.074.528.025.053.045.068.055.072l.003-.001.013-.013.011-.032a.915.915 0 00.018-.127l.01-.138a4.95 4.95 0 01.017-.185l.002-.034v-.003-.005-.001c.001-.385.016-.853.084-1.325.069-.473.19-.95.415-1.365.225-.414.552-.769 1.006-1.051.455-.282 1.039-.486 1.857-.566.153-.015.312-.023.477-.023z"/>
       </svg>
     ),
     github: (
@@ -124,7 +144,7 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
     ),
     threads: (
       <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-        <path d="M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717C4.307 6.504 3.616 8.914 3.589 12c.027 3.086.718 5.496 2.057 7.164 1.43 1.783 3.631 2.698 6.54 2.717 2.623-.02 4.358-.631 5.8-2.045 1.647-1.613 1.618-3.593 1.09-4.798-.31-.71-.873-1.3-1.634-1.75-.192 1.352-.622 2.446-1.284 3.272-.886 1.102-2.14 1.704-3.73 1.79-1.202.065-2.361-.218-3.259-.801-1.063-.689-1.685-1.74-1.752-2.96-.065-1.182.408-2.256 1.332-3.022.88-.73 2.108-1.146 3.457-1.17a10.37 10.37 0 012.24.212c-.062-.607-.2-1.093-.411-1.452-.322-.548-.88-.862-1.654-.934-.727-.066-1.434.083-1.985.417l-1.106-1.68c.858-.564 2.013-.868 3.249-.854 1.36.015 2.478.395 3.325 1.13.796.688 1.298 1.67 1.494 2.918.136.857.116 1.826-.059 2.879l.065.035c.924.505 1.69 1.2 2.216 2.012.793 1.222 1.093 2.705.843 4.178-.344 2.022-1.432 3.645-3.144 4.692C17.063 23.442 14.88 24 12.186 24z"/>
+        <path d="M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717C4.307 6.504 3.616 8.914 3.589 12c.027 3.086.718 5.496 2.057 7.164 1.43 1.783 3.631 2.698 6.54 2.717 2.623-.02 4.358-.631 5.8-2.045 1.647-1.613 1.618-3.593 1.09-4.798-.31-.71-.873-1.3-1.634-1.75-.192 1.352-.622 2.446-1.284 3.272-.886 1.102-2.14 1.704-3.73 1.79-1.202.065-2.361-.218-3.259-.801-1.063-.689-1.685-1.74-1.752-2.96-.065-1.182.408-2.256 1.332-3.022.88-.73 2.108-1.146 3.457-1.17a10.37 10.37 0 012.24.212c-.062-.607-.2-1.093-.411-1.452-.322-.548-.88-.862-1.654-.934-.727-.066-1.434.083-1.985.417l-1.106-1.68c.858-.564 2.013-.868 3.249-.854 1.36.015 2.478.395 3.325 1.13.796.688 1.298 1.67 1.494 2.918.136.857.116 1.826-.059 2.879l.065.035c.924.505 1.69 1.2 2.216 2.012.793 1.222 1.093 2.705.843 4.178-.344 2.022-1.432 3.645-3.144 4.692C17.063 23.442 14.88 24 12.186 24zM9.15 14.615c-.08 0-.162.002-.244.007-.764.04-1.477.282-2.005.679-.442.332-.675.753-.655 1.181.02.377.24.763.635 1.083.505.408 1.233.634 2.05.634.073 0 .147-.002.222-.006.924-.05 1.648-.434 2.152-1.141.353-.495.586-1.18.696-2.038-.755-.199-1.607-.388-2.85-.399z"/>
       </svg>
     ),
     pinterest: (
@@ -147,98 +167,303 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
   return icons[platform] || icons.link;
 };
 
-export default function FounderModal({ isOpen, onClose, isDark, isAdmin }: FounderModalProps) {
+export default function FounderModal({ 
+  isOpen, 
+  onClose, 
+  isDark, 
+  isAdmin, 
+  addUploadToast = defaultAddToast, 
+  updateUploadToast = defaultUpdateToast, 
+  removeUploadToast = defaultRemoveToast 
+}: FounderModalProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   
-  // Store original data for cancel functionality
-  const initialData = {
-    name: 'Juanquine Carlo R. Castro',
-    nickname: 'a.k.a Wacky Racho',
-    title: 'Founder & Visionary Leader',
-    profileImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&q=80',
-    about: `Juanquine Carlo R. Castro, known affectionately as "Wacky Racho," is the visionary founder of Youth Service Philippines - Tagum Chapter. With an unwavering commitment to community service and youth empowerment, he established the organization to mobilize Filipino youth in creating meaningful social change across Tagum City and Davao del Norte.
-
-His leadership philosophy centers on grassroots engagement, collaborative partnerships, and sustainable community development. Under his guidance, YSP Tagum Chapter has grown into a dynamic organization that touches thousands of lives through diverse programs spanning education, health, environment, and disaster response.`,
-    background: `A native of Tagum City, Wacky Racho recognized early on the untapped potential of Filipino youth to drive social transformation. His journey in community service began during his college years, where he witnessed firsthand the challenges faced by marginalized communities.
-
-Inspired by the Filipino spirit of "bayanihan" and driven by a deep sense of social responsibility, he founded YSP Tagum Chapter to create a platform where young people could channel their passion, skills, and energy into meaningful community service. His dedication to the organization's mission has inspired countless volunteers to join the movement.`,
-    achievements: [
-      'Founded YSP Tagum Chapter and established it as a leading youth service organization in Davao del Norte',
-      'Led over 50+ community outreach programs serving thousands of beneficiaries',
-      'Mobilized 200+ active youth volunteers committed to community service',
-      'Established partnerships with local government units, NGOs, and private sector organizations',
-      'Pioneered innovative approaches to youth engagement and community development',
-      'Recipient of multiple recognitions for outstanding community service and youth leadership'
-    ],
-    organizationImpact: `Under Wacky Racho's leadership, YSP Tagum Chapter has made significant impacts across multiple sectors:
-
-• Education: Provided tutoring, school supplies, and scholarship opportunities to 500+ students from low-income families
-• Environment: Planted 1,000+ trees and conducted numerous coastal cleanup drives
-• Health: Organized medical missions serving 2,000+ individuals in underserved communities
-• Disaster Response: Delivered emergency assistance to families affected by natural calamities
-• Leadership Development: Trained 300+ youth volunteers in civic engagement and community organizing
-
-The organization continues to expand its reach and deepen its impact, guided by Wacky Racho's vision of a community where every young person is an active agent of positive change.`,
-    philosophy: `"True leadership is not about personal glory, but about empowering others to discover and unleash their potential for the greater good. Every young person has the power to make a difference—we just need to provide the platform, support, and inspiration."`,
-    socialLinks: [
-      { url: 'https://www.facebook.com/YSPTagumChapter' }
-    ],
+  // Ref to prevent multiple fetches
+  const hasFetchedRef = useRef(false);
+  
+  // Store toast functions in refs to prevent useCallback recreation
+  const addToastRef = useRef(addUploadToast);
+  const updateToastRef = useRef(updateUploadToast);
+  addToastRef.current = addUploadToast;
+  updateToastRef.current = updateUploadToast;
+  
+  // Pending image file for upload on Save (not immediate upload)
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string>('');
+  
+  // Default empty data structure
+  const emptyData = {
+    name: '',
+    nickname: '',
+    position: '',
+    profileImage: '',
+    about: '',
+    background: '',
+    organizationalImpact: '',
+    leadershipPhilosophy: '',
+    keyAchievements: [] as { achievement: string }[],
+    socialLinks: [] as { url: string }[],
     contact: {
-      email: 'YSPTagumChapter@gmail.com',
-      phone: '+63 917 123 4567',
-      office: 'Tagum City, Davao del Norte, Philippines'
+      email: '',
+      phone: '',
+      officeLocation: ''
     }
   };
 
-  const [founderData, setFounderData] = useState(initialData);
-  const [savedData, setSavedData] = useState(initialData);
+  const [founderData, setFounderData] = useState(emptyData);
+  const [savedData, setSavedData] = useState(emptyData);
+
+  // Fetch data from backend - use refs for toast functions to prevent recreation
+  const fetchData = useCallback(async () => {
+    // Prevent multiple fetches
+    if (hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
+    
+    const toastId = `founderinfo-fetch-${Date.now()}`;
+    setIsLoading(true);
+    
+    addToastRef.current({
+      id: toastId,
+      title: 'Loading Founder Profile',
+      message: 'Connecting to backend...',
+      status: 'loading',
+      progress: 0,
+    });
+    
+    try {
+      updateToastRef.current(toastId, { progress: 30, message: 'Fetching from Google Sheets...' });
+      const data = await fetchFounderInfoContent();
+      
+      updateToastRef.current(toastId, { progress: 70, message: 'Processing data...' });
+      console.log('[FounderModal] Raw data from backend:', data);
+      
+      // Transform backend data to component format
+      const transformedData = {
+        name: data.name || '',
+        nickname: data.nickname || '',
+        position: data.position || '',
+        profileImage: data.profileUrl || '',
+        about: data.about || '',
+        background: data.background || '',
+        organizationalImpact: data.organizationalImpact || '',
+        leadershipPhilosophy: data.leadershipPhilosophy || '',
+        keyAchievements: (data.keyAchievements || []).map(a => ({ achievement: a.achievement })),
+        socialLinks: (data.socialLinks || []).map(l => ({ url: l.url })),
+        contact: {
+          email: data.email || '',
+          phone: data.phone || '',
+          officeLocation: data.officeLocation || ''
+        }
+      };
+      
+      setFounderData(transformedData);
+      setSavedData(transformedData);
+      setImagePreview(transformedData.profileImage); // Set initial image preview from backend
+      
+      console.log('[FounderModal] Transformed data:', transformedData);
+      
+      updateToastRef.current(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Profile Loaded',
+        message: 'Founder info loaded successfully',
+      });
+    } catch (error) {
+      console.error('[FounderModal] Error fetching data:', error);
+      updateToastRef.current(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Load Failed',
+        message: error instanceof Error ? error.message : 'Failed to load founder info',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, []); // No dependencies - uses refs
+
+  // Fetch on open - reset flag when modal closes
+  useEffect(() => {
+    if (isOpen) {
+      hasFetchedRef.current = false; // Reset so we fetch again on next open
+      fetchData();
+      setPendingImageFile(null);
+    }
+  }, [isOpen, fetchData]);
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
-    setSavedData(founderData);
-    setIsEditing(false);
-    toast.success('Founder profile updated successfully');
-  };
-
-  const handleCancelEdit = () => {
-    setFounderData(savedData);
-    setIsEditing(false);
-    toast.info('Changes discarded');
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle local image selection (creates preview, doesn't upload yet)
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error('Image must be less than 5MB');
+      // Validate file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        addUploadToast({
+          id: `error-${Date.now()}`,
+          title: 'File Too Large',
+          message: 'Image must be less than 10MB',
+          status: 'error',
+          progress: 100,
+        });
         return;
       }
+
+      // Validate file type
+      const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+      if (!validTypes.includes(file.type)) {
+        addUploadToast({
+          id: `error-${Date.now()}`,
+          title: 'Invalid File Type',
+          message: 'Please use JPG, PNG, or WebP images',
+          status: 'error',
+          progress: 100,
+        });
+        return;
+      }
+
+      // Store file for later upload and create preview
+      setPendingImageFile(file);
       const reader = new FileReader();
       reader.onload = (e) => {
-        setFounderData({ ...founderData, profileImage: e.target?.result as string });
-        toast.success('Profile image uploaded');
+        const previewUrl = e.target?.result as string;
+        setImagePreview(previewUrl);
       };
       reader.readAsDataURL(file);
     }
   };
 
+  // Save all changes including pending image upload
+  const handleSave = async () => {
+    setIsSaving(true);
+    const toastId = `founder-save-${Date.now()}`;
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Saving Founder Profile',
+      message: 'Starting save...',
+      status: 'loading',
+      progress: 0,
+    });
+
+    try {
+      let finalProfileUrl = founderData.profileImage;
+
+      // If there's a pending image file, upload it first
+      if (pendingImageFile) {
+        updateUploadToast(toastId, { progress: 10, message: 'Uploading profile image to Google Drive...' });
+        
+        const uploadResult = await uploadFounderProfile(pendingImageFile);
+        if (uploadResult.success && uploadResult.imageUrl) {
+          finalProfileUrl = uploadResult.imageUrl;
+          updateUploadToast(toastId, { progress: 40, message: 'Image uploaded! Saving profile data...' });
+        } else {
+          updateUploadToast(toastId, {
+            status: 'error',
+            progress: 100,
+            title: 'Upload Failed',
+            message: uploadResult.error || 'Failed to upload image',
+          });
+          setIsSaving(false);
+          return;
+        }
+      } else {
+        updateUploadToast(toastId, { progress: 30, message: 'Preparing profile data...' });
+      }
+
+      // Prepare data for backend
+      const backendData: Partial<FounderInfoContent> = {
+        profileUrl: finalProfileUrl,
+        name: founderData.name,
+        nickname: founderData.nickname,
+        position: founderData.position,
+        about: founderData.about,
+        background: founderData.background,
+        organizationalImpact: founderData.organizationalImpact,
+        leadershipPhilosophy: founderData.leadershipPhilosophy,
+        email: founderData.contact.email,
+        phone: founderData.contact.phone,
+        officeLocation: founderData.contact.officeLocation,
+        keyAchievements: founderData.keyAchievements.map((a, idx) => ({ id: idx + 1, achievement: a.achievement })),
+        socialLinks: founderData.socialLinks.map((l, idx) => ({ id: idx + 1, url: l.url })),
+      };
+
+      updateUploadToast(toastId, { progress: 60, message: 'Sending to Google Sheets API...' });
+
+      const success = await updateFounderInfoContent(backendData);
+
+      if (success) {
+        updateUploadToast(toastId, { progress: 90, message: 'Updating local state...' });
+        
+        // Update local state with the new profile URL
+        const updatedData = {
+          ...founderData,
+          profileImage: finalProfileUrl,
+        };
+        setFounderData(updatedData);
+        setSavedData(updatedData);
+        setImagePreview(finalProfileUrl);
+        setPendingImageFile(null);
+        setIsEditing(false);
+        
+        updateUploadToast(toastId, {
+          status: 'success',
+          progress: 100,
+          title: 'Saved Successfully',
+          message: 'Founder profile updated!',
+        });
+      } else {
+        updateUploadToast(toastId, {
+          status: 'error',
+          progress: 100,
+          title: 'Save Failed',
+          message: 'Failed to update founder info',
+        });
+      }
+    } catch (error) {
+      updateUploadToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Save Error',
+        message: error instanceof Error ? error.message : 'Unknown error occurred',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setFounderData(savedData);
+    setImagePreview(savedData.profileImage);
+    setPendingImageFile(null);
+    setIsEditing(false);
+    addUploadToast({
+      id: `cancel-${Date.now()}`,
+      title: 'Changes Discarded',
+      message: 'Reverted to saved data',
+      status: 'info',
+      progress: 100,
+    });
+  };
+
+  // Key Achievements functions
   const addAchievement = () => {
     setFounderData({ 
       ...founderData, 
-      achievements: [...founderData.achievements, 'New Achievement'] 
+      keyAchievements: [...founderData.keyAchievements, { achievement: '' }] 
     });
   };
 
   const updateAchievement = (index: number, value: string) => {
-    const newAchievements = [...founderData.achievements];
-    newAchievements[index] = value;
-    setFounderData({ ...founderData, achievements: newAchievements });
+    const newAchievements = [...founderData.keyAchievements];
+    newAchievements[index] = { achievement: value };
+    setFounderData({ ...founderData, keyAchievements: newAchievements });
   };
 
   const removeAchievement = (index: number) => {
-    const newAchievements = founderData.achievements.filter((_, i) => i !== index);
-    setFounderData({ ...founderData, achievements: newAchievements });
+    const newAchievements = founderData.keyAchievements.filter((_, i) => i !== index);
+    setFounderData({ ...founderData, keyAchievements: newAchievements });
   };
 
   // Social Links functions
@@ -264,7 +489,7 @@ The organization continues to expand its reach and deepen its impact, guided by 
     <div 
       className="fixed flex items-center justify-center p-4" 
       style={{ 
-        zIndex: 9999,
+        zIndex: 10001,
         top: 0,
         left: 0,
         right: 0,
@@ -316,7 +541,8 @@ The organization continues to expand its reach and deepen its impact, guided by 
             {isAdmin && isEditing && (
               <button
                 onClick={handleCancelEdit}
-                className="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium text-gray-600 dark:text-gray-400"
+                disabled={isSaving}
+                className="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium text-gray-600 dark:text-gray-400 disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -324,7 +550,8 @@ The organization continues to expand its reach and deepen its impact, guided by 
             {isAdmin && (
               <button
                 onClick={() => isEditing ? handleSave() : setIsEditing(true)}
-                className="px-4 py-2 rounded-lg transition-all text-sm font-semibold flex items-center gap-1.5"
+                disabled={isSaving || isLoading}
+                className="px-4 py-2 rounded-lg transition-all text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50"
                 style={{
                   background: isEditing 
                     ? 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)' 
@@ -335,9 +562,13 @@ The organization continues to expand its reach and deepen its impact, guided by 
                     : '0 4px 12px rgba(246, 66, 31, 0.3)',
                   border: 'none',
                 }}
-                aria-label={isEditing ? "Save changes" : "Edit profile"}
               >
-                {isEditing ? (
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : isEditing ? (
                   <>
                     <Save className="w-4 h-4" />
                     Save
@@ -353,7 +584,6 @@ The organization continues to expand its reach and deepen its impact, guided by 
             <button
               onClick={onClose}
               className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              aria-label="Close modal"
             >
               <X className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             </button>
@@ -361,29 +591,43 @@ The organization continues to expand its reach and deepen its impact, guided by 
         </div>
 
         {/* Content */}
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center p-6" style={{ minHeight: '500px' }}>
+            <div className="w-12 h-12 border-4 border-[#f6421f] border-t-transparent rounded-full animate-spin"></div>
+            <p className="mt-4 text-gray-600 dark:text-gray-400">Loading founder profile...</p>
+          </div>
+        ) : (
         <div className="p-6 space-y-6">
           {/* Profile Header */}
           <div className="flex flex-col md:flex-row gap-6 items-start">
             {/* Profile Image */}
             <div className="shrink-0">
-              <ImageWithFallback
-                src={founderData.profileImage}
-                alt={founderData.name}
-                className="w-32 h-32 md:w-40 md:h-40 rounded-xl object-cover border-4 border-[#f6421f] shadow-lg"
-              />
+              {imagePreview ? (
+                <ImageWithFallback
+                  src={imagePreview}
+                  alt={founderData.name || 'Founder Profile'}
+                  className="w-32 h-32 md:w-40 md:h-40 rounded-xl object-cover border-4 border-[#f6421f] shadow-lg"
+                />
+              ) : (
+                <div className="w-32 h-32 md:w-40 md:h-40 rounded-xl border-4 border-[#f6421f] shadow-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                  <Award className="w-12 h-12 text-gray-400" />
+                </div>
+              )}
               {isEditing && (
                 <div className="mt-2">
                   <label className="flex items-center justify-center gap-2 px-3 py-2 bg-[#f6421f] hover:bg-[#ee8724] text-white rounded-lg cursor-pointer transition-colors text-sm">
                     <Upload className="w-4 h-4" />
-                    Upload Image
+                    {pendingImageFile ? 'Change Image' : 'Upload Image'}
                     <input
                       type="file"
-                      accept="image/png,image/jpeg,image/jpg"
-                      onChange={handleImageUpload}
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      onChange={handleImageSelect}
                       className="hidden"
                     />
                   </label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">Max 5MB</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
+                    {pendingImageFile ? `Selected: ${pendingImageFile.name}` : 'Max 10MB'}
+                  </p>
                 </div>
               )}
             </div>
@@ -391,302 +635,251 @@ The organization continues to expand its reach and deepen its impact, guided by 
             {/* Basic Info */}
             <div className="flex-1">
               {isEditing ? (
-                <>
+                <div className="space-y-3">
                   <input
                     type="text"
                     value={founderData.name}
                     onChange={(e) => setFounderData({ ...founderData, name: e.target.value })}
-                    className="w-full px-3 py-2 mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-                    style={{ fontSize: '1.5rem', fontWeight: '600' }}
+                    placeholder="Full Name"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xl font-semibold"
                   />
                   <input
                     type="text"
                     value={founderData.nickname}
                     onChange={(e) => setFounderData({ ...founderData, nickname: e.target.value })}
-                    className="w-full px-3 py-2 mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                    placeholder="Nickname (e.g., a.k.a Wacky)"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
                   />
                   <input
                     type="text"
-                    value={founderData.title}
-                    onChange={(e) => setFounderData({ ...founderData, title: e.target.value })}
+                    value={founderData.position}
+                    onChange={(e) => setFounderData({ ...founderData, position: e.target.value })}
+                    placeholder="Position (e.g., Founder & Visionary Leader)"
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
                   />
-                </>
+                </div>
               ) : (
                 <>
-                  <h3
-                    className="text-gray-900 dark:text-white mb-1"
-                    style={{ fontSize: '1.5rem', fontWeight: '600' }}
-                  >
-                    {founderData.name}
+                  <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+                    {founderData.name || 'Founder Name'}
                   </h3>
-                  <p
-                    className="text-gray-700 dark:text-gray-300 italic mb-2"
-                    style={{ fontSize: '1rem', fontWeight: '500' }}
-                  >
-                    {founderData.nickname}
-                  </p>
-                  <p
-                    className="text-[#ee8724] mb-4"
-                    style={{ fontSize: '1.125rem', fontWeight: '600' }}
-                  >
-                    {founderData.title}
+                  {founderData.nickname && (
+                    <p className="text-gray-600 dark:text-gray-400 italic mb-2">
+                      {founderData.nickname}
+                    </p>
+                  )}
+                  <p className="text-[#f6421f] font-semibold text-lg">
+                    {founderData.position || 'Position'}
                   </p>
                 </>
               )}
 
-              {/* Social Links */}
-              {isEditing ? (
-                <div className="mt-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-gray-600 dark:text-gray-400">Social Links</label>
-                    <button
-                      onClick={addSocialLink}
-                      className="flex items-center gap-1 px-2 py-1 text-xs bg-[#f6421f] hover:bg-[#ee8724] text-white rounded-lg transition-colors"
-                    >
-                      <Plus className="w-3 h-3" />
-                      Add Link
-                    </button>
-                  </div>
-                  {founderData.socialLinks.map((link, index) => {
-                    const platform = detectSocialPlatform(link.url);
-                    return (
-                      <div key={index} className="flex items-center gap-2">
-                        <div className={`p-2 rounded-lg ${platform.bgClass} shrink-0`}>
-                          <SocialIcon platform={platform.icon} className={`w-4 h-4 ${platform.textClass}`} />
-                        </div>
-                        <input
-                          type="url"
-                          value={link.url}
-                          onChange={(e) => updateSocialLink(index, e.target.value)}
-                          className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-                          placeholder="Enter social media URL (auto-detected)"
-                        />
-                        <span className="text-xs text-gray-500 dark:text-gray-400 min-w-[70px]">
-                          {platform.name}
-                        </span>
-                        <button
-                          onClick={() => removeSocialLink(index)}
-                          className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex flex-wrap gap-2 mt-4">
-                  {founderData.socialLinks.map((link, index) => {
-                    if (!link.url) return null;
-                    const platform = detectSocialPlatform(link.url);
-                    return (
-                      <a
-                        key={index}
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`p-2 rounded-lg ${platform.bgClass} hover:opacity-80 transition-all`}
-                        title={platform.name}
+              {/* Social Links Display/Edit */}
+              <div className="mt-4">
+                {isEditing ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-gray-600 dark:text-gray-400">Social Links</label>
+                      <button
+                        onClick={addSocialLink}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-[#f6421f] hover:bg-[#ee8724] text-white rounded-lg transition-colors"
                       >
-                        <SocialIcon platform={platform.icon} className={`w-5 h-5 ${platform.textClass}`} />
-                      </a>
-                    );
-                  })}
-                </div>
-              )}
+                        <Plus className="w-3 h-3" />
+                        Add
+                      </button>
+                    </div>
+                    {founderData.socialLinks.map((link, index) => {
+                      const platform = detectSocialPlatform(link.url);
+                      return (
+                        <div key={index} className="flex items-center gap-2">
+                          <div className={`p-2 rounded-lg ${platform.bgClass} shrink-0`}>
+                            <SocialIcon platform={platform.icon} className={`w-4 h-4 ${platform.textClass}`} />
+                          </div>
+                          <input
+                            type="url"
+                            value={link.url}
+                            onChange={(e) => updateSocialLink(index, e.target.value)}
+                            placeholder="Enter social media URL (auto-detected)"
+                            className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                          />
+                          <span className="text-xs text-gray-500 dark:text-gray-400 min-w-[70px]">
+                            {platform.name}
+                          </span>
+                          <button
+                            onClick={() => removeSocialLink(index)}
+                            className="p-2 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {founderData.socialLinks.filter(l => l.url).map((link, index) => {
+                      const platform = detectSocialPlatform(link.url);
+                      return (
+                        <a
+                          key={index}
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${platform.bgClass} ${platform.textClass} text-sm font-medium hover:opacity-80 transition-opacity`}
+                        >
+                          <SocialIcon platform={platform.icon} className="w-4 h-4" />
+                          {platform.name}
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           {/* About Section */}
           <div className="space-y-4">
-            <h4
-              style={{
-                fontFamily: 'var(--font-headings)',
-                fontSize: '1.125rem',
-                fontWeight: '600',
-                color: '#f6421f',
-              }}
-            >
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2">
               About
             </h4>
             {isEditing ? (
               <textarea
                 value={founderData.about}
                 onChange={(e) => setFounderData({ ...founderData, about: e.target.value })}
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white min-h-[150px]"
-                style={{ fontSize: '1rem', lineHeight: '1.625' }}
+                placeholder="Write about the founder..."
+                rows={4}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none"
               />
             ) : (
-              <p
-                className="text-gray-800 dark:text-gray-100 text-justify whitespace-pre-line"
-                style={{ fontSize: '1rem', lineHeight: '1.625', fontWeight: '500' }}
-              >
-                {founderData.about}
+              <p className="text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
+                {founderData.about || 'No about information available.'}
               </p>
             )}
           </div>
 
           {/* Background Section */}
           <div className="space-y-4">
-            <h4
-              style={{
-                fontFamily: 'var(--font-headings)',
-                fontSize: '1.125rem',
-                fontWeight: '600',
-                color: '#f6421f',
-              }}
-            >
-              Background & Journey
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2">
+              Background
             </h4>
             {isEditing ? (
               <textarea
                 value={founderData.background}
                 onChange={(e) => setFounderData({ ...founderData, background: e.target.value })}
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white min-h-[150px]"
-                style={{ fontSize: '1rem', lineHeight: '1.625' }}
+                placeholder="Write about background..."
+                rows={4}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none"
               />
             ) : (
-              <p
-                className="text-gray-800 dark:text-gray-100 text-justify whitespace-pre-line"
-                style={{ fontSize: '1rem', lineHeight: '1.625', fontWeight: '500' }}
-              >
-                {founderData.background}
+              <p className="text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
+                {founderData.background || 'No background information available.'}
               </p>
             )}
           </div>
 
           {/* Key Achievements Section */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h4
-                style={{
-                  fontFamily: 'var(--font-headings)',
-                  fontSize: '1.125rem',
-                  fontWeight: '600',
-                  color: '#f6421f',
-                }}
-              >
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-2">
+              <h4 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <Award className="w-5 h-5 text-[#f6421f]" />
                 Key Achievements
               </h4>
               {isEditing && (
                 <button
                   onClick={addAchievement}
-                  className="flex items-center gap-1 px-3 py-1 text-sm bg-[#f6421f] hover:bg-[#ee8724] text-white rounded-lg transition-colors"
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm bg-[#f6421f] hover:bg-[#ee8724] text-white rounded-lg transition-colors"
                 >
                   <Plus className="w-4 h-4" />
-                  Add Achievement
+                  Add
                 </button>
               )}
             </div>
-            <ul className="space-y-2">
-              {founderData.achievements.map((achievement, index) => (
-                <li key={index} className="flex gap-3">
-                  {isEditing ? (
-                    <>
-                      <span className="text-[#f6421f] font-bold shrink-0">•</span>
-                      <input
-                        type="text"
-                        value={achievement}
-                        onChange={(e) => updateAchievement(index, e.target.value)}
-                        className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-                        style={{ fontSize: '1rem' }}
-                      />
-                      <button
-                        onClick={() => removeAchievement(index)}
-                        className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-[#f6421f] font-bold shrink-0">•</span>
-                      <span
-                        className="text-gray-800 dark:text-gray-100"
-                        style={{ fontSize: '1rem', lineHeight: '1.625', fontWeight: '500' }}
-                      >
-                        {achievement}
-                      </span>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
+            {isEditing ? (
+              <div className="space-y-2">
+                {founderData.keyAchievements.map((item, index) => (
+                  <div key={index} className="flex items-start gap-2">
+                    <input
+                      type="text"
+                      value={item.achievement}
+                      onChange={(e) => updateAchievement(index, e.target.value)}
+                      placeholder="Enter achievement..."
+                      className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                    />
+                    <button
+                      onClick={() => removeAchievement(index)}
+                      className="p-2 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                {founderData.keyAchievements.length === 0 && (
+                  <p className="text-gray-500 dark:text-gray-400 text-sm italic">No achievements added yet. Click "Add" to add one.</p>
+                )}
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {founderData.keyAchievements.filter(a => a.achievement).map((item, index) => (
+                  <li key={index} className="flex items-start gap-3">
+                    <span className="text-[#f6421f] mt-1">•</span>
+                    <span className="text-gray-700 dark:text-gray-300">{item.achievement}</span>
+                  </li>
+                ))}
+                {founderData.keyAchievements.filter(a => a.achievement).length === 0 && (
+                  <p className="text-gray-500 dark:text-gray-400 text-sm italic">No achievements listed.</p>
+                )}
+              </ul>
+            )}
           </div>
 
-          {/* Organization Impact Section */}
+          {/* Organizational Impact Section */}
           <div className="space-y-4">
-            <h4
-              style={{
-                fontFamily: 'var(--font-headings)',
-                fontSize: '1.125rem',
-                fontWeight: '600',
-                color: '#f6421f',
-              }}
-            >
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2">
               Organizational Impact
             </h4>
             {isEditing ? (
               <textarea
-                value={founderData.organizationImpact}
-                onChange={(e) => setFounderData({ ...founderData, organizationImpact: e.target.value })}
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white min-h-[200px]"
-                style={{ fontSize: '1rem', lineHeight: '1.625' }}
+                value={founderData.organizationalImpact}
+                onChange={(e) => setFounderData({ ...founderData, organizationalImpact: e.target.value })}
+                placeholder="Describe the organizational impact..."
+                rows={4}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none"
               />
             ) : (
-              <p
-                className="text-gray-800 dark:text-gray-100 text-justify whitespace-pre-line"
-                style={{ fontSize: '1rem', lineHeight: '1.625', fontWeight: '500' }}
-              >
-                {founderData.organizationImpact}
+              <p className="text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
+                {founderData.organizationalImpact || 'No organizational impact information available.'}
               </p>
             )}
           </div>
 
-          {/* Philosophy Section */}
-          <div className="space-y-4 p-4 md:p-6 bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-xl">
-            <h4
-              style={{
-                fontFamily: 'var(--font-headings)',
-                fontSize: '1.125rem',
-                fontWeight: '600',
-                color: '#f6421f',
-              }}
-            >
+          {/* Leadership Philosophy Section */}
+          <div className="space-y-4">
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2">
               Leadership Philosophy
             </h4>
             {isEditing ? (
               <textarea
-                value={founderData.philosophy}
-                onChange={(e) => setFounderData({ ...founderData, philosophy: e.target.value })}
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white min-h-[100px]"
-                style={{ fontSize: '1rem', lineHeight: '1.625' }}
+                value={founderData.leadershipPhilosophy}
+                onChange={(e) => setFounderData({ ...founderData, leadershipPhilosophy: e.target.value })}
+                placeholder="Share leadership philosophy..."
+                rows={3}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none"
               />
             ) : (
-              <p
-                className="text-gray-900 dark:text-white italic text-center"
-                style={{ fontSize: '1.125rem', lineHeight: '1.625', fontWeight: '500' }}
-              >
-                {founderData.philosophy}
-              </p>
+              <blockquote className="border-l-4 border-[#f6421f] pl-4 italic text-gray-700 dark:text-gray-300">
+                {founderData.leadershipPhilosophy || 'No leadership philosophy shared.'}
+              </blockquote>
             )}
           </div>
 
-          {/* Contact Information */}
+          {/* Contact Information Section */}
           <div className="space-y-4">
-            <h4
-              style={{
-                fontFamily: 'var(--font-headings)',
-                fontSize: '1.125rem',
-                fontWeight: '600',
-                color: '#f6421f',
-              }}
-            >
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2">
               Contact Information
             </h4>
             {isEditing ? (
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Email</label>
                   <input
@@ -696,6 +889,7 @@ The organization continues to expand its reach and deepen its impact, guided by 
                       ...founderData, 
                       contact: { ...founderData.contact, email: e.target.value }
                     })}
+                    placeholder="email@example.com"
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                   />
                 </div>
@@ -708,6 +902,7 @@ The organization continues to expand its reach and deepen its impact, guided by 
                       ...founderData, 
                       contact: { ...founderData.contact, phone: e.target.value }
                     })}
+                    placeholder="+63 917 123 4567"
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                   />
                 </div>
@@ -715,56 +910,68 @@ The organization continues to expand its reach and deepen its impact, guided by 
                   <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Office Location</label>
                   <input
                     type="text"
-                    value={founderData.contact.office}
+                    value={founderData.contact.officeLocation}
                     onChange={(e) => setFounderData({ 
                       ...founderData, 
-                      contact: { ...founderData.contact, office: e.target.value }
+                      contact: { ...founderData.contact, officeLocation: e.target.value }
                     })}
+                    placeholder="City, Province"
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                   />
                 </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                  <Mail className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-600 dark:text-gray-400">Email</p>
-                    <a 
-                      href={`mailto:${founderData.contact.email}`}
-                      className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] dark:hover:text-[#f6421f] transition-colors truncate block"
-                    >
-                      {founderData.contact.email}
-                    </a>
+                {founderData.contact.email && (
+                  <div className="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                    <Mail className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Email</p>
+                      <a 
+                        href={`mailto:${founderData.contact.email}`}
+                        className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] transition-colors truncate block"
+                      >
+                        {founderData.contact.email}
+                      </a>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <div className="flex items-center gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                  <Phone className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-600 dark:text-gray-400">Phone</p>
-                    <a 
-                      href={`tel:${founderData.contact.phone}`}
-                      className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] dark:hover:text-[#f6421f] transition-colors"
-                    >
-                      {founderData.contact.phone}
-                    </a>
+                {founderData.contact.phone && (
+                  <div className="flex items-center gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                    <Phone className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Phone</p>
+                      <a 
+                        href={`tel:${founderData.contact.phone}`}
+                        className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] transition-colors"
+                      >
+                        {founderData.contact.phone}
+                      </a>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <div className="flex items-center gap-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg md:col-span-2">
-                  <MapPin className="w-5 h-5 text-purple-600 dark:text-purple-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-600 dark:text-gray-400">Office Location</p>
-                    <p className="text-sm text-gray-900 dark:text-white">
-                      {founderData.contact.office}
-                    </p>
+                {founderData.contact.officeLocation && (
+                  <div className="flex items-center gap-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg md:col-span-2">
+                    <MapPin className="w-5 h-5 text-purple-600 dark:text-purple-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Office Location</p>
+                      <p className="text-sm text-gray-900 dark:text-white">
+                        {founderData.contact.officeLocation}
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {!founderData.contact.email && !founderData.contact.phone && !founderData.contact.officeLocation && (
+                  <p className="text-gray-500 dark:text-gray-400 text-sm italic md:col-span-2">No contact information available.</p>
+                )}
               </div>
             )}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

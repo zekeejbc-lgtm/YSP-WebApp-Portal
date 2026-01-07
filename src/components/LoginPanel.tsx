@@ -84,7 +84,7 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
         background: 'rgba(0, 0, 0, 0.15)',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
-        zIndex: 9999,
+        zIndex: 10001,
         top: 0,
         left: 0,
         right: 0,

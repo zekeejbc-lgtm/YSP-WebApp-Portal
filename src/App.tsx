@@ -37,8 +37,18 @@ import {
   fetchHomepageContent,
   updateHomepageContent,
   getDefaultHomepageContent,
+  uploadOrgChart,
+  fetchHomepageOtherContent,
+  updateHomepageOtherContent,
+  invalidateOtherContentCache,
   type HomepageMainContent,
 } from "./services/gasHomepageService";
+import {
+  fetchAllProjects,
+  addProject,
+  updateProject,
+  type Project,
+} from "./services/projectsService";
 import { ImageWithFallback } from "./components/figma/ImageWithFallback";
 import { toast, Toaster } from "sonner";
 import DonationPage from "./components/DonationPage";
@@ -59,6 +69,7 @@ import MembershipApplicationsPage from "./components/MembershipApplicationsPage"
 import FounderModal from "./components/FounderModal";
 import DeveloperModal from "./components/DeveloperModal";
 import { DebugPill } from "./components/DebugPill";
+import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
 import { SideBar } from "./components/design-system";
 import TopBar from "./components/design-system/TopBar";
 import AnimatedHamburger from "./components/design-system/AnimatedHamburger";
@@ -70,16 +81,6 @@ import {
   getFullPWAMaintenanceConfig,
   getPageMaintenanceConfig,
 } from "./utils/maintenanceMode";
-
-// Project type definition
-interface Project {
-  id: number;
-  title: string;
-  description: string;
-  imageUrl: string;
-  link?: string;
-  linkText?: string;
-}
 
 // Donation type definition
 interface Donation {
@@ -345,6 +346,25 @@ export default function App() {
   const [showMembershipApplications, setShowMembershipApplications] = useState(false);
   const [showFounderModal, setShowFounderModal] = useState(false);
   const [showDeveloperModal, setShowDeveloperModal] = useState(false);
+  
+  // Upload Toast State for progress bar at bottom-right
+  const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
+  
+  // Upload Toast Helper Functions
+  const addUploadToast = (message: UploadToastMessage) => {
+    setUploadToastMessages(prev => [...prev.filter(m => m.id !== message.id), message]);
+  };
+  
+  const updateUploadToast = (id: string, updates: Partial<UploadToastMessage>) => {
+    setUploadToastMessages(prev => 
+      prev.map(m => m.id === id ? { ...m, ...updates } : m)
+    );
+  };
+  
+  const removeUploadToast = (id: string) => {
+    setUploadToastMessages(prev => prev.filter(m => m.id !== id));
+  };
+
   const [activePage, setActivePage] = useState<string>("home");
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [openMobileGroup, setOpenMobileGroup] = useState<string | null>(null);
@@ -357,6 +377,11 @@ export default function App() {
 
   // Delete Confirmation Modal State
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+
+  // Org Chart State
+  const [orgChartUrl, setOrgChartUrl] = useState<string>('');
+  const [showDeleteOrgChartModal, setShowDeleteOrgChartModal] = useState(false);
+  const [isUploadingOrgChart, setIsUploadingOrgChart] = useState(false);
 
   // Pending Applications State (shared across pages)
   const [pendingApplications, setPendingApplications] = useState<PendingApplication[]>([]);
@@ -430,6 +455,57 @@ export default function App() {
     };
 
     loadHomepageContent();
+  }, []);
+
+  // Fetch projects from backend on mount
+  useEffect(() => {
+    const loadProjects = async () => {
+      try {
+        console.log('[App] Fetching projects from backend...');
+        const result = await fetchAllProjects();
+        
+        if (result.error) {
+          console.error('[App] Error loading projects:', result.error);
+          toast.error('Failed to load projects');
+        } else {
+          console.log('[App] Loaded projects:', result.projects);
+          setProjects(result.projects);
+        }
+      } catch (error) {
+        console.error('[App] Error loading projects:', error);
+        toast.error('Failed to load projects');
+      }
+    };
+
+    loadProjects();
+  }, []);
+
+  // Fetch org chart URL from backend on mount
+  useEffect(() => {
+    const loadOrgChartUrl = async () => {
+      try {
+        // Invalidate cache to ensure we get fresh data on mount
+        invalidateOtherContentCache();
+        
+        console.log('[App] Fetching org chart URL from backend (fresh)...');
+        const otherContent = await fetchHomepageOtherContent();
+        console.log('[App] Homepage Other Content received:', JSON.stringify(otherContent, null, 2));
+        console.log('[App] orgChartUrl value:', otherContent.orgChartUrl);
+        console.log('[App] orgChartUrl type:', typeof otherContent.orgChartUrl);
+        console.log('[App] orgChartUrl length:', otherContent.orgChartUrl?.length || 0);
+        
+        if (otherContent.orgChartUrl && otherContent.orgChartUrl.trim() !== '') {
+          setOrgChartUrl(otherContent.orgChartUrl);
+          console.log('[App] Org chart URL set to state:', otherContent.orgChartUrl);
+        } else {
+          console.log('[App] No org chart URL found in backend response');
+        }
+      } catch (error) {
+        console.error('[App] Error loading org chart URL:', error);
+      }
+    };
+
+    loadOrgChartUrl();
   }, []);
 
   // Retry loading homepage content
@@ -516,75 +592,9 @@ export default function App() {
   ]);
 
   // Projects State
-  const defaultProjects: Project[] = [
-    {
-      id: 1,
-      title: "Community Outreach Program",
-      description:
-        "Providing essential services and support to underserved communities across Tagum City. Our team works directly with local families to identify needs and deliver assistance. We focus on creating sustainable impact through partnerships with local organizations and government agencies.",
-      imageUrl:
-        "https://images.unsplash.com/photo-1559027615-cd4628902d4a?w=800&q=80",
-      link: "https://www.facebook.com/YSPTagumChapter",
-      linkText: "Learn More on Facebook",
-    },
-    {
-      id: 2,
-      title: "Youth Leadership Training",
-      description:
-        "Empowering the next generation of leaders through comprehensive training programs focused on civic engagement, community service, and personal development. Our workshops cover essential leadership skills, project management, and community organizing.",
-      imageUrl:
-        "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=800&q=80",
-      link: "https://www.facebook.com/YSPTagumChapter",
-      linkText: "Join Our Training Programs",
-    },
-    {
-      id: 3,
-      title: "Environmental Conservation",
-      description:
-        "Leading tree-planting initiatives and coastal cleanup drives to protect our natural resources and promote environmental awareness among Filipino youth. We have planted over 1,000 trees and cleaned multiple coastal areas in Davao del Norte.",
-      imageUrl:
-        "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?w=800&q=80",
-      link: "https://www.facebook.com/YSPTagumChapter",
-      linkText: "View Our Environmental Projects",
-    },
-    {
-      id: 4,
-      title: "Educational Support",
-      description:
-        "Providing tutoring, school supplies, and scholarship opportunities to students from low-income families to ensure access to quality education. We believe education is the key to breaking the cycle of poverty and creating lasting change.",
-      imageUrl:
-        "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=800&q=80",
-      link: "https://www.facebook.com/YSPTagumChapter",
-      linkText: "Support Education Programs",
-    },
-    {
-      id: 5,
-      title: "Health & Wellness Initiatives",
-      description:
-        "Organizing medical missions and health awareness campaigns in partnership with local health professionals to serve communities in need. Our health programs include free check-ups, medicine distribution, and health education seminars.",
-      imageUrl:
-        "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=800&q=80",
-      link: "https://www.facebook.com/YSPTagumChapter",
-      linkText: "Discover Health Programs",
-    },
-    {
-      id: 6,
-      title: "Disaster Response",
-      description:
-        "Rapid mobilization and relief operations during natural calamities, providing emergency assistance and supporting affected communities in their recovery. Our disaster response team is trained and ready to deploy at a moment's notice.",
-      imageUrl:
-        "https://images.unsplash.com/photo-1469571486292-0ba58a3f068b?w=800&q=80",
-      link: "https://www.facebook.com/YSPTagumChapter",
-      linkText: "Support Disaster Relief",
-    },
-  ];
-
-  const [projects, setProjects] = useState<Project[]>(() => {
-    const saved = localStorage.getItem("ysp_projects");
-    return saved ? JSON.parse(saved) : defaultProjects;
-  });
+  const [projects, setProjects] = useState<Project[]>([]);
   const [showUploadProjectModal, setShowUploadProjectModal] = useState(false);
-  const [selectedProjectIds, setSelectedProjectIds] = useState<number[]>([]);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [newProject, setNewProject] = useState({
     title: "",
@@ -593,11 +603,8 @@ export default function App() {
     link: "",
     linkText: "",
   });
-
-  // Save projects to localStorage when changed
-  useEffect(() => {
-    localStorage.setItem("ysp_projects", JSON.stringify(projects));
-  }, [projects]);
+  const [projectImageFile, setProjectImageFile] = useState<File | null>(null);
+  const [isUploadingProjectImage, setIsUploadingProjectImage] = useState(false);
 
   // YSP Logo URLs
   const primaryLogoUrl = "https://i.imgur.com/J4wddTW.png";
@@ -952,7 +959,7 @@ export default function App() {
   };
 
   // Project Management Functions
-  const handleUploadProject = () => {
+  const handleUploadProject = async () => {
     if (!newProject.title.trim()) {
       toast.error("Please enter a project title");
       return;
@@ -961,44 +968,81 @@ export default function App() {
       toast.error("Please enter a project description");
       return;
     }
-    if (!newProject.imageUrl.trim()) {
-      toast.error("Please enter an image URL");
+    if (!projectImageFile && !newProject.imageUrl.trim()) {
+      toast.error("Please upload an image");
       return;
     }
 
-    if (editingProject) {
-      // Update existing project
-      setProjects(projects.map(p => 
-        p.id === editingProject.id 
-          ? {
-              ...p,
-              title: newProject.title.trim(),
-              description: newProject.description.trim(),
-              imageUrl: newProject.imageUrl.trim(),
-              link: newProject.link.trim() || undefined,
-              linkText: newProject.linkText.trim() || undefined,
-            }
-          : p
-      ));
-      setEditingProject(null);
-      setNewProject({ title: "", description: "", imageUrl: "", link: "", linkText: "" });
-      setShowUploadProjectModal(false);
-      toast.success("Project updated successfully!");
-    } else {
-      // Create new project
-      const project: Project = {
-        id: Date.now(),
+    setIsUploadingProjectImage(true);
+    const toastId = `project-upload-${Date.now()}`;
+    const isEditing = !!editingProject;
+
+    try {
+      // Show progress toast
+      addUploadToast({
+        id: toastId,
+        message: isEditing ? 'Saving project changes...' : 'Uploading project...',
+        progress: 10,
+        type: 'info'
+      });
+
+      const projectData = {
         title: newProject.title.trim(),
         description: newProject.description.trim(),
-        imageUrl: newProject.imageUrl.trim(),
+        imageUrl: newProject.imageUrl,
         link: newProject.link.trim() || undefined,
         linkText: newProject.linkText.trim() || undefined,
+        status: 'Active' as const,
       };
 
-      setProjects([project, ...projects]);
-      setNewProject({ title: "", description: "", imageUrl: "", link: "", linkText: "" });
-      setShowUploadProjectModal(false);
-      toast.success("Project uploaded successfully!");
+      updateUploadToast(toastId, { progress: 30, message: 'Processing image...' });
+
+      let result;
+      if (isEditing) {
+        result = await updateProject(editingProject.projectId, projectData, projectImageFile || undefined);
+      } else {
+        result = await addProject(projectData, projectImageFile || undefined);
+      }
+
+      if (result.success) {
+        updateUploadToast(toastId, { progress: 80, message: isEditing ? 'Updating backend...' : 'Syncing to backend...' });
+
+        // Reload projects from backend
+        const projectsResult = await fetchAllProjects();
+        if (!projectsResult.error) {
+          setProjects(projectsResult.projects);
+        }
+
+        updateUploadToast(toastId, {
+          progress: 100,
+          message: isEditing ? 'Project updated successfully!' : 'Project uploaded successfully!',
+          type: 'success'
+        });
+
+        setNewProject({ title: "", description: "", imageUrl: "", link: "", linkText: "" });
+        setProjectImageFile(null);
+        setEditingProject(null);
+        setShowUploadProjectModal(false);
+
+        setTimeout(() => removeUploadToast(toastId), 3000);
+      } else {
+        updateUploadToast(toastId, {
+          progress: 100,
+          message: `Error: ${result.error?.message || 'Failed to upload project'}`,
+          type: 'error'
+        });
+        setTimeout(() => removeUploadToast(toastId), 5000);
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      updateUploadToast(toastId, {
+        progress: 100,
+        message: 'Error uploading project',
+        type: 'error'
+      });
+      setTimeout(() => removeUploadToast(toastId), 5000);
+    } finally {
+      setIsUploadingProjectImage(false);
     }
   };
 
@@ -1011,12 +1055,14 @@ export default function App() {
       link: project.link || "",
       linkText: project.linkText || "",
     });
+    setProjectImageFile(null);
     setShowUploadProjectModal(true);
   };
 
   const closeProjectModal = () => {
     setEditingProject(null);
     setNewProject({ title: "", description: "", imageUrl: "", link: "", linkText: "" });
+    setProjectImageFile(null);
     setShowUploadProjectModal(false);
   };
 
@@ -1031,13 +1077,112 @@ export default function App() {
 
   const confirmDeleteProjects = () => {
     const count = selectedProjectIds.length;
-    setProjects(projects.filter((p) => !selectedProjectIds.includes(p.id)));
+    setProjects(projects.filter((p) => !selectedProjectIds.includes(p.projectId)));
     setSelectedProjectIds([]);
     setShowDeleteConfirmModal(false);
     toast.success(`${count} project${count > 1 ? "s" : ""} deleted successfully!`);
   };
 
-  const toggleProjectSelection = (projectId: number) => {
+  // Org Chart Upload Handler
+  const handleOrgChartUpload = async (file: File) => {
+    if (!file) return;
+    
+    setIsUploadingOrgChart(true);
+    const toastId = `org-chart-upload-${Date.now()}`;
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Uploading Org Chart',
+      message: 'Preparing image...',
+      status: 'loading',
+      progress: 0,
+    });
+
+    try {
+      updateUploadToast(toastId, { progress: 30, message: 'Uploading to Google Drive...' });
+      console.log('[App] Starting org chart upload:', file.name);
+      
+      const result = await uploadOrgChart(file);
+      console.log('[App] Upload result:', result);
+      
+      if (result.success && result.imageUrl) {
+        // The backend already saves the URL to the sheet, just update local state
+        console.log('[App] Setting org chart URL to:', result.imageUrl);
+        setOrgChartUrl(result.imageUrl);
+        updateUploadToast(toastId, {
+          status: 'success',
+          progress: 100,
+          title: 'Upload Complete',
+          message: 'Org chart uploaded successfully!',
+        });
+        toast.success('Org chart uploaded successfully!');
+      } else {
+        console.error('[App] Upload failed:', result.error);
+        updateUploadToast(toastId, {
+          status: 'error',
+          progress: 100,
+          title: 'Upload Failed',
+          message: result.error || 'Failed to upload org chart',
+        });
+        toast.error(result.error || 'Failed to upload org chart');
+      }
+    } catch (error) {
+      console.error('[App] Org chart upload error:', error);
+      updateUploadToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Upload Error',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+      toast.error('Failed to upload org chart');
+    } finally {
+      setIsUploadingOrgChart(false);
+    }
+  };
+
+  // Org Chart Delete Handler
+  const confirmDeleteOrgChart = async () => {
+    const toastId = `org-chart-delete-${Date.now()}`;
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Deleting Org Chart',
+      message: 'Removing from database...',
+      status: 'loading',
+      progress: 50,
+    });
+
+    try {
+      // Clear from backend - this updates the sheet to have empty org chart URL
+      console.log('[App] Deleting org chart from backend...');
+      const success = await updateHomepageOtherContent({ orgChartUrl: '' });
+      console.log('[App] Delete result:', success);
+      
+      setOrgChartUrl(''); // Clear the org chart URL locally
+      setShowDeleteOrgChartModal(false);
+      
+      updateUploadToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Deleted',
+        message: 'Org chart deleted successfully!',
+      });
+      toast.success('Org chart deleted successfully!');
+    } catch (error) {
+      console.error('[App] Org chart delete error:', error);
+      setOrgChartUrl(''); // Still clear locally
+      setShowDeleteOrgChartModal(false);
+      updateUploadToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Delete Error',
+        message: 'Removed locally, sync may be delayed',
+      });
+      toast.success('Org chart removed');
+    }
+  };
+
+  const toggleProjectSelection = (projectId: string) => {
     setSelectedProjectIds((prev) =>
       prev.includes(projectId)
         ? prev.filter((id) => id !== projectId)
@@ -2362,11 +2507,11 @@ export default function App() {
                     <label className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-blue-500 transition-colors">
                       <input
                         type="checkbox"
-                        checked={selectedProjectIds.includes(project.id)}
-                        onChange={() => toggleProjectSelection(project.id)}
+                        checked={selectedProjectIds.includes(project.projectId)}
+                        onChange={() => toggleProjectSelection(project.projectId)}
                         className="sr-only"
                       />
-                      {selectedProjectIds.includes(project.id) && (
+                      {selectedProjectIds.includes(project.projectId) && (
                         <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                         </svg>
@@ -2441,8 +2586,8 @@ export default function App() {
           {/* Admin Controls */}
           {isAdmin && (
             <div className="flex gap-3 mb-6 flex-wrap">
-              <button
-                className="flex items-center justify-center gap-2 h-10 px-5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
+              <label
+                className={`flex items-center justify-center gap-2 h-10 px-5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer ${isUploadingOrgChart ? 'opacity-50 pointer-events-none' : ''}`}
                 style={{
                   background:
                     "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
@@ -2450,11 +2595,33 @@ export default function App() {
                   fontSize: "14px",
                 }}
               >
-                <Upload className="w-4 h-4" />
-                Upload Chart
-              </button>
+                {isUploadingOrgChart ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" />
+                    Upload Chart
+                  </>
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={isUploadingOrgChart}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleOrgChartUpload(file);
+                    e.target.value = ''; // Reset so same file can be selected again
+                  }}
+                />
+              </label>
               <button
-                className="flex items-center justify-center gap-2 h-10 px-5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
+                onClick={() => setShowDeleteOrgChartModal(true)}
+                disabled={!orgChartUrl}
+                className={`flex items-center justify-center gap-2 h-10 px-5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg ${!orgChartUrl ? 'opacity-50 cursor-not-allowed' : ''}`}
                 style={{
                   background:
                     "linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)",
@@ -2516,36 +2683,49 @@ export default function App() {
           </button>
 
           {/* Chart Display with Zoom Indicator */}
-          <div
-            className="relative cursor-pointer rounded-xl overflow-hidden group"
-            onClick={() =>
-              openProjectModal({
-                id: 0,
-                title: "Organizational Chart",
-                description:
-                  "Youth Service Philippines - Tagum Chapter organizational structure",
-                imageUrl:
-                  "https://images.unsplash.com/photo-1552664730-d307ca884978?w=1200&q=80",
-              })
-            }
-          >
-            <ImageWithFallback
-              src="https://images.unsplash.com/photo-1552664730-d307ca884978?w=1200&q=80"
-              alt="Organizational Chart"
-              className="w-full h-auto rounded-lg shadow-lg transition-opacity duration-250 group-hover:opacity-90"
-            />
+          {orgChartUrl ? (
+            <div
+              className="relative cursor-pointer rounded-xl overflow-hidden group"
+              onClick={() =>
+                openProjectModal({
+                  id: 0,
+                  title: "Organizational Chart",
+                  description:
+                    "Youth Service Philippines - Tagum Chapter organizational structure",
+                  imageUrl: orgChartUrl,
+                })
+              }
+            >
+              <ImageWithFallback
+                src={orgChartUrl}
+                alt="Organizational Chart"
+                className="w-full h-auto rounded-lg shadow-lg transition-opacity duration-250 group-hover:opacity-90"
+              />
 
-            {/* Zoom Indicator */}
-            <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-sm px-3 py-2 rounded-lg flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <ZoomIn className="w-4 h-4 text-white" />
-              <span
-                className="text-sm text-white"
-                style={{ fontWeight: "500" }}
-              >
-                Click to expand
-              </span>
+              {/* Zoom Indicator */}
+              <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-sm px-3 py-2 rounded-lg flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <ZoomIn className="w-4 h-4 text-white" />
+                <span
+                  className="text-sm text-white"
+                  style={{ fontWeight: "500" }}
+                >
+                  Click to expand
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 px-6 bg-gray-50 dark:bg-gray-800/50 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600">
+              <Network className="w-16 h-16 text-gray-400 dark:text-gray-500 mb-4" />
+              <p className="text-gray-600 dark:text-gray-400 text-center font-medium">
+                No organizational chart uploaded yet
+              </p>
+              {isAdmin && (
+                <p className="text-gray-500 dark:text-gray-500 text-sm mt-2">
+                  Use the "Upload Chart" button above to add one
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
@@ -3118,12 +3298,15 @@ export default function App() {
         </div>
       </footer>
 
+      </div>
+      {/* End Main Content Wrapper */}
+
       {/* Project Modal */}
       {modalProject && (
         <div
           className="fixed flex items-center justify-center p-4 sm:p-6 md:p-8 lg:p-12 animate-[fadeIn_0.25s_ease] overflow-y-auto"
           style={{ 
-            zIndex: 9999,
+            zIndex: 10001,
             top: 0,
             left: 0,
             right: 0,
@@ -3138,10 +3321,10 @@ export default function App() {
         >
           {/* Modal Content - Floating Card */}
           <div
-            className="relative w-full max-w-3xl bg-white dark:bg-gray-800 rounded-3xl shadow-2xl animate-[scaleIn_0.3s_ease] mx-auto my-auto"
+            className="relative w-full max-w-4xl bg-white dark:bg-gray-800 rounded-3xl shadow-2xl animate-[scaleIn_0.3s_ease] mx-auto my-auto"
             style={{
               boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)",
-              maxHeight: "calc(100vh - 4rem)",
+              maxHeight: "calc(100vh - 2rem)",
               overflow: "hidden",
             }}
             onClick={(e) => e.stopPropagation()}
@@ -3157,16 +3340,17 @@ export default function App() {
             </button>
 
             {/* Scrollable Content Area */}
-            <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 4rem)" }}>
+            <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 10rem)" }}>
               {/* Project Image - Click to open full image */}
               <div 
-                className="relative w-full cursor-pointer group"
+                className="relative w-full cursor-pointer group overflow-hidden"
                 onClick={() => window.open(modalProject.imageUrl, '_blank')}
               >
                 <ImageWithFallback
                   src={modalProject.imageUrl}
                   alt={modalProject.title}
-                  className="w-full h-auto object-contain max-h-[60vh]"
+                  className="w-full h-auto object-cover"
+                  style={{ maxHeight: "calc(100vh - 14rem)" }}
                 />
                 {/* Hover overlay with "View Full Image" indicator */}
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all duration-300 flex items-center justify-center">
@@ -3192,7 +3376,7 @@ export default function App() {
                 </h2>
 
                 <p
-                  className="text-gray-700 dark:text-gray-300 mb-5 md:mb-6 text-sm sm:text-base md:text-lg"
+                  className="text-gray-700 dark:text-gray-300 text-sm sm:text-base md:text-lg"
                   style={{
                     lineHeight: "1.75",
                     letterSpacing: "0.01em",
@@ -3201,55 +3385,40 @@ export default function App() {
                 >
                   {modalProject.description}
                 </p>
-
-                {/* Action Buttons */}
-                <div className="flex flex-col sm:flex-row gap-3">
-                  {/* Open Full Image Button */}
-                  <a
-                    href={modalProject.imageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 px-5 sm:px-6 py-3 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-xl flex-1 text-sm sm:text-base group"
-                    style={{
-                      background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
-                      fontWeight: "600",
-                      boxShadow: "0 4px 12px rgba(59, 130, 246, 0.3)",
-                    }}
-                  >
-                    <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5 group-hover:rotate-45 transition-transform" />
-                    Open Full Image
-                  </a>
-                  {modalProject.link && modalProject.linkText && (
-                    <a
-                      href={modalProject.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 px-5 sm:px-6 py-3 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-xl flex-1 text-sm sm:text-base group"
-                      style={{
-                        background:
-                          "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                        fontWeight: "600",
-                        boxShadow:
-                          "0 4px 12px rgba(246, 66, 31, 0.3)",
-                      }}
-                    >
-                      <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5 group-hover:rotate-45 transition-transform" />
-                      {modalProject.linkText}
-                    </a>
-                  )}
-                  <button
-                    onClick={closeModal}
-                    className="flex items-center justify-center gap-2 px-5 sm:px-6 py-3 rounded-xl border-2 transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex-1 text-sm sm:text-base"
-                    style={{
-                      borderColor: "#f6421f",
-                      color: "#f6421f",
-                      fontWeight: "600",
-                    }}
-                  >
-                    Close
-                  </button>
-                </div>
               </div>
+            </div>
+
+            {/* Fixed Footer with Action Buttons */}
+            <div className="flex flex-col sm:flex-row gap-2 p-5 sm:p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-b-3xl">
+              {modalProject.link && modalProject.linkText && (
+                <a
+                  href={modalProject.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg flex-1 text-sm group"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                    fontWeight: "600",
+                    boxShadow:
+                      "0 2px 8px rgba(246, 66, 31, 0.3)",
+                  }}
+                >
+                  <ExternalLink className="w-4 h-4 group-hover:rotate-45 transition-transform" />
+                  {modalProject.linkText}
+                </a>
+              )}
+              <button
+                onClick={closeModal}
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border-2 transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex-1 text-sm"
+                style={{
+                  borderColor: "#f6421f",
+                  color: "#f6421f",
+                  fontWeight: "600",
+                }}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
@@ -3260,7 +3429,7 @@ export default function App() {
         <div
           className="fixed flex items-center justify-center p-4 sm:p-6 md:p-8 lg:p-12 animate-[fadeIn_0.25s_ease] overflow-y-auto"
           style={{ 
-            zIndex: 9999,
+            zIndex: 10001,
             top: 0,
             left: 0,
             right: 0,
@@ -3335,27 +3504,44 @@ export default function App() {
                   />
                 </div>
 
-                {/* Image URL */}
+                {/* Image Upload */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                    Image URL <span className="text-red-500">*</span>
+                    Project Image <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="url"
-                    value={newProject.imageUrl}
-                    onChange={(e) => setNewProject({ ...newProject, imageUrl: e.target.value })}
-                    placeholder="https://example.com/image.jpg"
-                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:border-orange-500 focus:ring-2 focus:ring-orange-200 dark:focus:ring-orange-800 transition-all"
-                  />
-                  {newProject.imageUrl && (
-                    <div className="mt-3 rounded-xl overflow-hidden border-2 border-gray-200 dark:border-gray-600">
+                  <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-4 text-center cursor-pointer hover:border-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/10 transition-all"
+                    onClick={() => document.getElementById('projectImageInput')?.click()}
+                  >
+                    <input
+                      id="projectImageInput"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setProjectImageFile(file);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                    {projectImageFile ? (
+                      <div className="space-y-2">
+                        <p className="text-sm font-semibold text-green-600 dark:text-green-400">✓ {projectImageFile.name}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Click to change</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Click to upload or drag and drop</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">PNG, JPG, GIF up to 10MB</p>
+                      </div>
+                    )}
+                  </div>
+                  {projectImageFile && (
+                    <div className="mt-3 rounded-lg overflow-hidden border-2 border-gray-200 dark:border-gray-600 w-20 h-20">
                       <img
-                        src={newProject.imageUrl}
+                        src={URL.createObjectURL(projectImageFile)}
                         alt="Preview"
-                        className="w-full h-32 object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                        }}
+                        className="w-full h-full object-cover"
                       />
                     </div>
                   )}
@@ -3402,13 +3588,19 @@ export default function App() {
               </button>
               <button
                 onClick={handleUploadProject}
-                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl font-semibold flex-1"
+                disabled={isUploadingProjectImage}
+                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl font-semibold flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
                   boxShadow: "0 4px 12px rgba(246, 66, 31, 0.3)",
                 }}
               >
-                {editingProject ? (
+                {isUploadingProjectImage ? (
+                  <>
+                    <span className="inline-block animate-spin">⏳</span>
+                    Uploading...
+                  </>
+                ) : editingProject ? (
                   <>
                     <Save className="w-5 h-5" />
                     Save Changes
@@ -3430,7 +3622,7 @@ export default function App() {
         <div
           className="fixed flex items-center justify-center p-4 sm:p-6 animate-[fadeIn_0.25s_ease]"
           style={{ 
-            zIndex: 10000,
+            zIndex: 10001,
             top: 0,
             left: 0,
             right: 0,
@@ -3483,10 +3675,10 @@ export default function App() {
               {/* List of projects to be deleted */}
               <div className="max-h-48 overflow-y-auto space-y-2 mb-4">
                 {projects
-                  .filter((p) => selectedProjectIds.includes(p.id))
+                  .filter((p) => selectedProjectIds.includes(p.projectId))
                   .map((project) => (
                     <div
-                      key={project.id}
+                      key={project.projectId}
                       className="flex items-center gap-3 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800"
                     >
                       <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0">
@@ -3533,8 +3725,106 @@ export default function App() {
         </div>
       )}
 
-      </div>
-      {/* End Main Content Wrapper */}
+      {/* Delete Org Chart Confirmation Modal */}
+      {showDeleteOrgChartModal && (
+        <div
+          className="fixed flex items-center justify-center p-4 sm:p-6 animate-[fadeIn_0.25s_ease]"
+          style={{ 
+            zIndex: 10001,
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: "rgba(0, 0, 0, 0.6)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+          }}
+          onClick={() => setShowDeleteOrgChartModal(false)}
+        >
+          <div
+            className="relative w-full max-w-lg bg-white dark:bg-gray-800 rounded-2xl shadow-2xl animate-[scaleIn_0.3s_ease] mx-auto"
+            style={{
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.4)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="p-5 sm:p-6 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                  <Trash2 className="w-6 h-6 text-red-600 dark:text-red-400" />
+                </div>
+                <div>
+                  <h2
+                    className="text-xl"
+                    style={{
+                      fontFamily: "var(--font-headings)",
+                      fontWeight: "var(--font-weight-bold)",
+                      color: "#dc2626",
+                    }}
+                  >
+                    Delete Organizational Chart
+                  </h2>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    This action cannot be undone
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-5 sm:p-6">
+              <p className="text-gray-700 dark:text-gray-300 mb-4">
+                Are you sure you want to delete the organizational chart?
+              </p>
+              
+              {/* Preview of chart to be deleted */}
+              {orgChartUrl && (
+                <div className="flex items-center gap-3 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
+                  <div className="w-20 h-14 rounded-lg overflow-hidden shrink-0">
+                    <img
+                      src={orgChartUrl}
+                      alt="Organizational Chart"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900 dark:text-white">
+                      Organizational Chart
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      YSP Tagum Chapter structure
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex flex-col sm:flex-row gap-3 p-5 sm:p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-b-2xl">
+              <button
+                onClick={() => setShowDeleteOrgChartModal(false)}
+                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all font-semibold flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteOrgChart}
+                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl font-semibold flex-1"
+                style={{
+                  background: "linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)",
+                  boxShadow: "0 4px 12px rgba(220, 38, 38, 0.3)",
+                }}
+              >
+                <Trash2 className="w-5 h-5" />
+                Delete Chart
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Founder Modal */}
       <FounderModal
@@ -3542,6 +3832,9 @@ export default function App() {
         onClose={() => setShowFounderModal(false)}
         isDark={isDark}
         isAdmin={isAdmin}
+        addUploadToast={addUploadToast}
+        updateUploadToast={updateUploadToast}
+        removeUploadToast={removeUploadToast}
       />
 
       {/* Developer Modal */}
@@ -3550,6 +3843,9 @@ export default function App() {
         onClose={() => setShowDeveloperModal(false)}
         isDark={isDark}
         isAdmin={isAdmin}
+        addUploadToast={addUploadToast}
+        updateUploadToast={updateUploadToast}
+        removeUploadToast={removeUploadToast}
       />
 
       {/* Login Panel */}
@@ -3562,6 +3858,13 @@ export default function App() {
 
       {/* Debug Pill */}
       <DebugPill />
+
+      {/* Upload Toast Container - Progress bars at bottom-right */}
+      <UploadToastContainer
+        messages={uploadToastMessages}
+        onDismiss={removeUploadToast}
+        isDark={isDark}
+      />
     </div>
   );
 }

@@ -6750,6 +6750,21 @@ h1, h2, h3, h4, h5, h6 {
   animation-delay: 6s;
 }
 
+/* Skeleton Shimmer Animation for Loading States */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, :before, :after {
     scroll-behavior: auto !important;

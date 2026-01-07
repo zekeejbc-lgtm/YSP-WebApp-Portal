@@ -1677,6 +1677,26 @@ FeedbackPage.tsx:
 
 ---
 
+## 👥 User Interaction & Feedback Rules
+
+### Backend Sync Feedback (Progress Toast Pattern)
+- **Required**: When syncing changes to the backend (e.g., saving homepage, uploading/editing/removing projects), ALWAYS use the `UploadToast` progress bar component for consistent UX.
+- **Pattern**:
+  1. Generate unique toast ID: `const toastId = \`operation-name-\${Date.now()}\`;`
+  2. Add loading toast: `addUploadToast({ id: toastId, title: 'Operation Name', message: 'Starting...', status: 'loading', progress: 0 });`
+  3. Update progress during operation: `updateUploadToast(toastId, { progress: 50, message: 'Processing...' });`
+  4. On success: `updateUploadToast(toastId, { status: 'success', progress: 100, title: 'Success!', message: 'Operation completed.' });`
+  5. On error: `updateUploadToast(toastId, { status: 'error', progress: 100, title: 'Failed', message: 'Error description.' });`
+- **Purpose**: Provides a consistent, visual progress bar at the bottom-right corner for all backend sync operations, especially for GAS backend latency.
+- **DO NOT use**: `toast.loading()` for backend sync operations. Use `UploadToast` pattern instead for consistency.
+
+### Operations Requiring Progress Toast
+- Homepage content editing (title, subheading, tagline, about, mission, vision, pillars)
+- Project upload (new project with image)
+- Project editing (updating existing project)
+- Project removal (deleting project)
+- Any operation that communicates with the GAS backend
+
 ## ⚙️ Technical Specifications
 
 ### Framework & Libraries
