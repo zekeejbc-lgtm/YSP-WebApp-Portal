@@ -74,3 +74,20 @@ export {
   type ProfileResponse,
   type ProfileUpdateResponse,
 } from './gasLoginService';
+
+// Directory GAS Service
+export {
+  searchOfficers,
+  getOfficerByIdCode,
+  getAllOfficers,
+  clearDirectoryCache,
+  checkDirectoryApiHealth,
+  getRoleDisplayName as getDirectoryRoleDisplayName,
+  getRoleBadgeColor,
+  DirectoryErrorCodes,
+  DirectoryAPIError,
+  type DirectoryOfficer,
+  type SearchOfficersResponse,
+  type GetOfficerResponse,
+  type GetAllOfficersResponse,
+} from './gasDirectoryService';

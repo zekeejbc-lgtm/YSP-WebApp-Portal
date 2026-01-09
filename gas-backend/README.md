@@ -2,7 +2,47 @@
 
 This folder contains Google Apps Script files for the YSP Tagum WebApp backend.
 
+## Files Overview
+
+| File | Description |
+|------|-------------|
+| `Homepage_Main.gs` | Main homepage content API |
+| `Loginpage_Main.gs` | User authentication and profile management API |
+| `Loginpage_Hash.gs` | Password hashing and ID generation triggers |
+| `Directory_Main.gs` | Officer directory search API |
+
 ## Sheets Structure
+
+### User Profiles Sheet
+Used by `Loginpage_Main.gs` and `Directory_Main.gs` for authentication and officer directory.
+
+| Column | Header | Description |
+|--------|--------|-------------|
+| A | Timestamp | Form submission timestamp |
+| B | Email Address | User's official email |
+| D | Full name | User's full name |
+| N | Username | Login username |
+| O | Password | Hashed password |
+| S | ID Code | Unique identifier (e.g., HD-001, MEM-020) |
+| T | Position | User's position/title |
+| U | Role | User role (auditor/admin/head/member/guest) |
+| V | ProfilePictureURL | Profile picture URL |
+| AL | Status | Account status (active/suspended/banned) |
+| - | Committee | User's committee assignment |
+| - | Contact Number | Phone number |
+| - | Date of Birth | Birthday |
+| - | Age | User's age |
+| - | Sex/Gender | Gender |
+| - | Civil Status | Marital status |
+| - | Nationality | Nationality |
+| - | Religion | Religion |
+| - | Personal Email Address | Personal email |
+| - | Address, Barangay, City, Province, Zip Code | Address fields |
+| - | Chapter | YSP Chapter |
+| - | Date Joined | Membership start date |
+| - | Membership Type | Type of membership |
+| - | Facebook, Instagram, Twitter | Social media links |
+| - | Emergency Contact fields | Emergency contact info |
 
 ### Homepage_Main
 Stores the main homepage content.

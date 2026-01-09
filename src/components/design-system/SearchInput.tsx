@@ -22,13 +22,13 @@
 
 import { Search, X, Loader2 } from "lucide-react";
 import { DESIGN_TOKENS, getGlassStyle } from "./tokens";
-import ySPLogo from "figma:asset/d6cbed267130c24f547c8147563471206c8f2142.png";
 
 interface Suggestion {
   id: string;
   label: string;
   subtitle?: string;
   profilePicture?: string;
+  initials?: string;
 }
 
 interface SearchInputProps {
@@ -141,21 +141,47 @@ export default function SearchInput({
                 transitionDuration: `${DESIGN_TOKENS.motion.duration.fast}ms`,
               }}
             >
-              {/* Profile Picture */}
-              <div className="flex-shrink-0">
-                <img
-                  src={suggestion.profilePicture || ySPLogo}
-                  alt={suggestion.label}
-                  className="rounded-full object-cover"
-                  style={{
-                    width: "40px",
-                    height: "40px",
-                    border: "2px solid rgba(246, 66, 31, 0.3)",
-                  }}
-                  onError={(e) => {
-                    e.currentTarget.src = ySPLogo;
-                  }}
-                />
+              {/* Profile Picture with Initials Fallback */}
+              <div 
+                className="flex-shrink-0 rounded-full flex items-center justify-center"
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  border: "2px solid rgba(246, 66, 31, 0.3)",
+                  backgroundColor: !suggestion.profilePicture ? '#FF8800' : undefined,
+                }}
+              >
+                {suggestion.profilePicture ? (
+                  <img
+                    src={suggestion.profilePicture}
+                    alt={suggestion.label}
+                    className="rounded-full object-cover w-full h-full"
+                    onError={(e) => {
+                      // Hide image and show initials
+                      e.currentTarget.style.display = 'none';
+                      const parent = e.currentTarget.parentElement;
+                      if (parent) {
+                        parent.style.backgroundColor = '#FF8800';
+                        const initialsSpan = document.createElement('span');
+                        initialsSpan.style.cssText = "font-family: 'Lexend', sans-serif; font-size: 14px; font-weight: 700; color: white;";
+                        initialsSpan.textContent = suggestion.initials || suggestion.label.substring(0, 2).toUpperCase();
+                        parent.appendChild(initialsSpan);
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      fontFamily: "'Lexend', sans-serif",
+                      fontSize: '14px',
+                      fontWeight: 700,
+                      color: 'white',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {suggestion.initials || suggestion.label.substring(0, 2).toUpperCase()}
+                  </span>
+                )}
               </div>
               
               {/* Text Content */}

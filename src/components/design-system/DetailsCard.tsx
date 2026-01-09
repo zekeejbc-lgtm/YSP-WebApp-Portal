@@ -21,7 +21,6 @@
 
 import { X } from "lucide-react";
 import { DESIGN_TOKENS, getGlassStyle, getCardPadding } from "./tokens";
-import ySPLogo from "figma:asset/d6cbed267130c24f547c8147563471206c8f2142.png";
 
 interface DetailField {
   label: string;
@@ -34,6 +33,7 @@ interface DetailsCardProps {
   title: string;
   fields: DetailField[];
   profileImage?: string;
+  initials?: string;
   onClose: () => void;
   isDark: boolean;
   isMobile?: boolean;
@@ -44,6 +44,7 @@ export default function DetailsCard({
   title,
   fields,
   profileImage,
+  initials,
   onClose,
   isDark,
   isMobile = false,
@@ -92,24 +93,45 @@ export default function DetailsCard({
         </button>
       </div>
 
-      {/* Profile Image - Always show with YSP logo as fallback */}
+      {/* Profile Image - Show initials as fallback when no image */}
       <div className="flex justify-center mb-6">
         <div
-          className="rounded-full overflow-hidden border-4"
+          className="rounded-full overflow-hidden border-4 flex items-center justify-center"
           style={{
             width: `${DESIGN_TOKENS.media.profileImage.size}px`,
             height: `${DESIGN_TOKENS.media.profileImage.size}px`,
             borderColor: DESIGN_TOKENS.colors.brand.orange,
+            backgroundColor: !profileImage ? DESIGN_TOKENS.colors.brand.orange : undefined,
           }}
         >
-          <img
-            src={profileImage || ySPLogo}
-            alt={title}
-            className="w-full h-full object-cover"
-            onError={(e) => {
-              e.currentTarget.src = ySPLogo;
-            }}
-          />
+          {profileImage ? (
+            <img
+              src={profileImage}
+              alt={title}
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                // Hide the broken image and show initials container
+                e.currentTarget.style.display = 'none';
+                const parent = e.currentTarget.parentElement;
+                if (parent && initials) {
+                  parent.innerHTML = `<span style="font-family: 'Lexend', sans-serif; font-size: 32px; font-weight: 700; color: white;">${initials}</span>`;
+                  parent.style.backgroundColor = '#FF8800';
+                }
+              }}
+            />
+          ) : (
+            <span
+              style={{
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                fontSize: '32px',
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
+                color: 'white',
+                textTransform: 'uppercase',
+              }}
+            >
+              {initials || '?'}
+            </span>
+          )}
         </div>
       </div>
 

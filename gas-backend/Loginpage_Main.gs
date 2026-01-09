@@ -373,6 +373,13 @@ function doPost(e) {
         return handleVerifyOTP(requestData.username, requestData.email, requestData.otp);
       case 'checkEmailVerified':
         return handleCheckEmailVerified(requestData.username, requestData.email);
+      // Directory actions
+      case 'searchOfficers':
+        return handleSearchOfficers(requestData.query);
+      case 'getOfficerByIdCode':
+        return handleGetOfficerByIdCode(requestData.idCode);
+      case 'getAllOfficers':
+        return handleGetAllOfficers(requestData.page, requestData.limit);
       default:
         return createErrorResponse('Invalid action', 400);
     }
