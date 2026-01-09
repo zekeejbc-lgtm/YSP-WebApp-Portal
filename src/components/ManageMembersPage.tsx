@@ -10,12 +10,14 @@
  * - Pending applications modal
  * - Resume-style application viewer
  * - Approve/Reject/Email actions
+ * - Real backend integration via GAS
+ * - Skeleton loading for better UX
  * 
  * =============================================================================
  */
 
-import { useState } from "react";
-import { Search, UserPlus, Download, Filter, Eye, Edit, Trash2, Mail, FileText, CheckCircle, XCircle, Clock, X, Send, LayoutGrid, Table as TableIcon, User } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Search, UserPlus, Download, Eye, Edit, Mail, FileText, CheckCircle, XCircle, Clock, X, LayoutGrid, Table as TableIcon, User, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { AddMemberModal, EditMemberModal, ViewMemberModal } from "./ManageMembersModals";
@@ -23,6 +25,156 @@ import AccountCreationModal from "./AccountCreationModal";
 import RejectionModal from "./RejectionModal";
 import EmailComposerModal from "./EmailComposerModal";
 import CustomDropdown from "./CustomDropdown";
+import {
+  getAllOfficers,
+  searchOfficers,
+  DirectoryOfficer,
+  DirectoryAPIError,
+  DirectoryErrorCodes,
+} from "../services/gasDirectoryService";
+
+// =================== SKELETON COMPONENTS ===================
+
+interface SkeletonProps {
+  className?: string;
+  isDark?: boolean;
+}
+
+function Skeleton({ className = "", isDark = false }: SkeletonProps) {
+  return (
+    <div
+      className={`animate-pulse rounded ${
+        isDark ? "bg-white/10" : "bg-gray-200"
+      } ${className}`}
+    />
+  );
+}
+
+function StatsCardSkeleton({ isDark }: { isDark: boolean }) {
+  return (
+    <div
+      className="rounded-xl p-6 border"
+      style={{
+        background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+        backdropFilter: 'blur(20px)',
+        borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+      }}
+    >
+      <Skeleton isDark={isDark} className="h-4 w-24 mb-3" />
+      <Skeleton isDark={isDark} className="h-10 w-16" />
+    </div>
+  );
+}
+
+function MemberTileSkeleton({ isDark }: { isDark: boolean }) {
+  return (
+    <div
+      className="p-4 rounded-xl border"
+      style={{
+        background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+        backdropFilter: 'blur(20px)',
+        borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+      }}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex-1">
+          <Skeleton isDark={isDark} className="h-4 w-32 mb-2" />
+          <Skeleton isDark={isDark} className="h-3 w-40 mb-1" />
+          <Skeleton isDark={isDark} className="h-3 w-20" />
+        </div>
+        <Skeleton isDark={isDark} className="h-5 w-14 rounded-full" />
+      </div>
+      <div className="flex gap-2 mb-3">
+        <Skeleton isDark={isDark} className="h-5 w-14 rounded-full" />
+        <Skeleton isDark={isDark} className="h-5 w-24 rounded" />
+      </div>
+      <Skeleton isDark={isDark} className="h-3 w-28 mb-3" />
+      <div className="flex gap-2">
+        <Skeleton isDark={isDark} className="h-8 flex-1 rounded-lg" />
+        <Skeleton isDark={isDark} className="h-8 flex-1 rounded-lg" />
+        <Skeleton isDark={isDark} className="h-8 flex-1 rounded-lg" />
+      </div>
+    </div>
+  );
+}
+
+function MemberTableSkeleton({ isDark, rows = 5 }: { isDark: boolean; rows?: number }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border" style={{
+      borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+      background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.5)",
+    }}>
+      <table className="w-full">
+        <thead className="bg-gray-100 dark:bg-gray-800">
+          <tr>
+            {["ID", "Name", "Position", "Role", "Committee", "Status", "Actions"].map((header) => (
+              <th key={header} className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground">
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          {Array.from({ length: rows }).map((_, i) => (
+            <tr key={i}>
+              <td className="px-6 py-4"><Skeleton isDark={isDark} className="h-4 w-20" /></td>
+              <td className="px-6 py-4">
+                <Skeleton isDark={isDark} className="h-4 w-32 mb-1" />
+                <Skeleton isDark={isDark} className="h-3 w-40" />
+              </td>
+              <td className="px-6 py-4"><Skeleton isDark={isDark} className="h-4 w-24" /></td>
+              <td className="px-6 py-4"><Skeleton isDark={isDark} className="h-5 w-14 rounded-full" /></td>
+              <td className="px-6 py-4"><Skeleton isDark={isDark} className="h-4 w-28" /></td>
+              <td className="px-6 py-4"><Skeleton isDark={isDark} className="h-5 w-14 rounded-full" /></td>
+              <td className="px-6 py-4">
+                <div className="flex gap-2">
+                  <Skeleton isDark={isDark} className="h-8 w-8 rounded-lg" />
+                  <Skeleton isDark={isDark} className="h-8 w-8 rounded-lg" />
+                  <Skeleton isDark={isDark} className="h-8 w-8 rounded-lg" />
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// =================== TYPE MAPPER ===================
+
+/**
+ * Maps DirectoryOfficer from backend to Member interface for this page
+ */
+function mapOfficerToMember(officer: DirectoryOfficer): Member {
+  // Determine status from backend status field
+  let status: "Active" | "Inactive" | "Suspended" = "Active";
+  const backendStatus = officer.status?.toLowerCase() || "";
+  if (backendStatus === "inactive") status = "Inactive";
+  else if (backendStatus === "suspended") status = "Suspended";
+
+  return {
+    id: officer.idCode || "",
+    name: officer.fullName || "",
+    position: officer.position || "Member",
+    role: officer.role || "Member",
+    committee: officer.committee || "",
+    status,
+    email: officer.email || "",
+    phone: officer.contactNumber || "",
+    dateJoined: officer.dateJoined || "",
+    // Extended info
+    address: "", // Not directly in DirectoryOfficer visible fields
+    dateOfBirth: officer.birthday || "",
+    age: officer.age || 0,
+    gender: officer.gender || "",
+    civilStatus: officer.civilStatus || "",
+    nationality: officer.nationality || "",
+    emergencyContact: "", // Would need backend extension
+    emergencyPhone: "",
+    profilePicture: officer.profilePicture || "",
+  };
+}
 
 interface Member {
   id: string;
@@ -45,6 +197,7 @@ interface Member {
   emergencyPhone?: string;
   bloodType?: string;
   medicalConditions?: string;
+  profilePicture?: string;
 }
 
 interface PendingApplication {
@@ -147,62 +300,92 @@ export default function ManageMembersPage({
   const [showEmailComposerModal, setShowEmailComposerModal] = useState(false);
   const [emailRecipient, setEmailRecipient] = useState({ email: "", name: "" });
   
-  // Mock data
-  const [members, setMembers] = useState<Member[]>([
-    {
-      id: "MEM-001",
-      name: "Juan Dela Cruz",
-      position: "Chapter President",
-      role: "Admin",
-      committee: "Executive Board",
-      status: "Active",
-      email: "juan@ysp.org.ph",
-      phone: "+63 912 345 6789",
-      dateJoined: "2023-01-15",
-    },
-    {
-      id: "MEM-002",
-      name: "Maria Santos",
-      position: "Vice President",
-      role: "Officer",
-      committee: "Community Development",
-      status: "Active",
-      email: "maria@ysp.org.ph",
-      phone: "+63 912 345 6780",
-      dateJoined: "2023-02-20",
-    },
-    {
-      id: "MEM-003",
-      name: "Pedro Reyes",
-      position: "Secretary",
-      role: "Officer",
-      committee: "Environmental Conservation",
-      status: "Active",
-      email: "pedro@ysp.org.ph",
-      phone: "+63 912 345 6781",
-      dateJoined: "2023-03-10",
-    },
-    {
-      id: "MEM-004",
-      name: "Ana Garcia",
-      position: "Member",
-      role: "Member",
-      committee: "Youth Development",
-      status: "Active",
-      email: "ana@ysp.org.ph",
-      phone: "+63 912 345 6782",
-      dateJoined: "2023-04-05",
-    },
-  ]);
+  // Backend data state
+  const [members, setMembers] = useState<Member[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Debounce timer ref for search
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // =================== FETCH MEMBERS FROM BACKEND ===================
+  
+  const fetchMembers = useCallback(async (query?: string) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      let response;
+      
+      if (query && query.trim().length >= 2) {
+        // Use search endpoint for queries
+        response = await searchOfficers(query);
+      } else {
+        // Use getAllOfficers for full list
+        response = await getAllOfficers(1, 100); // Get first 100 members
+      }
+      
+      if (response.success && response.officers) {
+        const mappedMembers = response.officers.map(mapOfficerToMember);
+        setMembers(mappedMembers);
+      } else {
+        setMembers([]);
+      }
+    } catch (err) {
+      console.error("Fetch members error:", err);
+      
+      if (err instanceof DirectoryAPIError) {
+        if (err.code === DirectoryErrorCodes.NO_API_URL) {
+          setError("Member service not configured. Please contact administrator.");
+        } else if (err.code === DirectoryErrorCodes.TIMEOUT_ERROR) {
+          setError("Request timed out. Please try again.");
+        } else if (err.code === DirectoryErrorCodes.NETWORK_ERROR) {
+          setError("Network error. Please check your connection.");
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError("An unexpected error occurred. Please try again.");
+      }
+      
+      setMembers([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    fetchMembers();
+  }, [fetchMembers]);
+
+  // Debounced search effect
+  useEffect(() => {
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
+
+    if (searchQuery.trim().length >= 2) {
+      searchTimerRef.current = setTimeout(() => {
+        fetchMembers(searchQuery);
+      }, 400); // 400ms debounce
+    } else if (searchQuery.trim().length === 0) {
+      // Reset to full list when search is cleared
+      fetchMembers();
+    }
+
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, [searchQuery, fetchMembers]);
+
+  // Filter members locally after backend fetch
   const filteredMembers = members.filter((member) => {
-    const matchesSearch =
-      member.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      member.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      member.email.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesRole = filterRole === "all" || member.role === filterRole;
     const matchesCommittee = filterCommittee === "all" || member.committee === filterCommittee;
-    return matchesSearch && matchesRole && matchesCommittee;
+    return matchesRole && matchesCommittee;
   });
 
   const totalMembers = members.length;
@@ -235,8 +418,12 @@ export default function ManageMembersPage({
   };
 
   const handleSendEmail = (email: string) => {
+    // Open Gmail compose in a new tab with the recipient email pre-filled
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(email)}`;
+    window.open(gmailUrl, '_blank');
+    
     toast.info("Email Composer", {
-      description: `Opening email to ${email}`,
+      description: `Opening Gmail to ${email}`,
     });
   };
 
@@ -284,68 +471,78 @@ export default function ManageMembersPage({
     >
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-        <div
-          className="rounded-xl p-6 border"
-          style={{
-            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-            backdropFilter: 'blur(20px)',
-            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          }}
-        >
-          <p className="text-muted-foreground text-sm mb-2">Total Members</p>
-          <h3
-            style={{
-              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-              fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              color: DESIGN_TOKENS.colors.brand.red,
-            }}
-          >
-            {totalMembers}
-          </h3>
-        </div>
+        {isLoading ? (
+          <>
+            <StatsCardSkeleton isDark={isDark} />
+            <StatsCardSkeleton isDark={isDark} />
+            <StatsCardSkeleton isDark={isDark} />
+          </>
+        ) : (
+          <>
+            <div
+              className="rounded-xl p-6 border"
+              style={{
+                background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                backdropFilter: 'blur(20px)',
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              }}
+            >
+              <p className="text-muted-foreground text-sm mb-2">Total Members</p>
+              <h3
+                style={{
+                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  color: DESIGN_TOKENS.colors.brand.red,
+                }}
+              >
+                {totalMembers}
+              </h3>
+            </div>
 
-        <div
-          className="rounded-xl p-6 border"
-          style={{
-            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-            backdropFilter: 'blur(20px)',
-            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          }}
-        >
-          <p className="text-muted-foreground text-sm mb-2">Active Members</p>
-          <h3
-            style={{
-              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-              fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              color: "#10b981",
-            }}
-          >
-            {activeMembers}
-          </h3>
-        </div>
+            <div
+              className="rounded-xl p-6 border"
+              style={{
+                background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                backdropFilter: 'blur(20px)',
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              }}
+            >
+              <p className="text-muted-foreground text-sm mb-2">Active Members</p>
+              <h3
+                style={{
+                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  color: "#10b981",
+                }}
+              >
+                {activeMembers}
+              </h3>
+            </div>
 
-        <div
-          className="rounded-xl p-6 border"
-          style={{
-            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-            backdropFilter: 'blur(20px)',
-            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          }}
-        >
-          <p className="text-muted-foreground text-sm mb-2">Pending Applications</p>
-          <h3
-            style={{
-              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-              fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              color: DESIGN_TOKENS.colors.brand.orange,
-            }}
-          >
-            {pendingCount}
-          </h3>
-        </div>
+            <div
+              className="rounded-xl p-6 border"
+              style={{
+                background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                backdropFilter: 'blur(20px)',
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              }}
+            >
+              <p className="text-muted-foreground text-sm mb-2">Pending Applications</p>
+              <h3
+                style={{
+                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  color: DESIGN_TOKENS.colors.brand.orange,
+                }}
+              >
+                {pendingCount}
+              </h3>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Search and Filters */}
@@ -443,101 +640,139 @@ export default function ManageMembersPage({
         </button>
       </div>
 
+      {/* Error State */}
+      {error && (
+        <div
+          className="rounded-xl p-8 border text-center mb-6"
+          style={{
+            background: isDark ? 'rgba(239, 68, 68, 0.1)' : 'rgba(239, 68, 68, 0.05)',
+            borderColor: isDark ? 'rgba(239, 68, 68, 0.3)' : 'rgba(239, 68, 68, 0.2)',
+          }}
+        >
+          <AlertCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+          <h3
+            className="mb-2"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+              fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              color: isDark ? '#fca5a5' : '#dc2626',
+            }}
+          >
+            Failed to Load Members
+          </h3>
+          <p className="text-muted-foreground mb-4">{error}</p>
+          <Button
+            variant="primary"
+            onClick={() => fetchMembers()}
+            icon={<RefreshCw className="w-4 h-4" />}
+          >
+            Try Again
+          </Button>
+        </div>
+      )}
+
       {/* Tile View */}
-      {viewMode === "tile" && (
+      {viewMode === "tile" && !error && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredMembers.map((member) => (
-            <div 
-              key={member.id} 
-              className="p-4 rounded-xl border transition-all hover:shadow-lg"
-              style={{
-                background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-                backdropFilter: 'blur(20px)',
-                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-              }}
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex-1">
-                  <div className="text-sm mb-1" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                    {member.name}
+          {isLoading ? (
+            // Skeleton loading for tiles
+            Array.from({ length: 6 }).map((_, i) => (
+              <MemberTileSkeleton key={i} isDark={isDark} />
+            ))
+          ) : filteredMembers.length > 0 ? (
+            filteredMembers.map((member) => (
+              <div 
+                key={member.id} 
+                className="p-4 rounded-xl border transition-all hover:shadow-lg"
+                style={{
+                  background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                  backdropFilter: 'blur(20px)',
+                  borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                }}
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <div className="text-sm mb-1" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                      {member.name}
+                    </div>
+                    <div className="text-xs text-muted-foreground mb-1">{member.email}</div>
+                    <div className="text-xs text-muted-foreground">{member.id}</div>
                   </div>
-                  <div className="text-xs text-muted-foreground mb-1">{member.email}</div>
-                  <div className="text-xs text-muted-foreground">{member.id}</div>
+                  <span
+                    className="px-2 py-1 rounded-full text-xs"
+                    style={{
+                      backgroundColor: member.status === "Active" ? "#10b98120" : "#6b728020",
+                      color: member.status === "Active" ? "#10b981" : "#6b7280",
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    }}
+                  >
+                    {member.status}
+                  </span>
                 </div>
-                <span
-                  className="px-2 py-1 rounded-full text-xs"
-                  style={{
-                    backgroundColor: member.status === "Active" ? "#10b98120" : "#6b728020",
-                    color: member.status === "Active" ? "#10b981" : "#6b7280",
-                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  }}
-                >
-                  {member.status}
-                </span>
+                
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <span
+                    className="px-2 py-1 rounded-full text-xs"
+                    style={{
+                      backgroundColor:
+                        member.role === "Admin"
+                          ? "#f6421f20"
+                          : member.role === "Officer"
+                          ? "#ee872420"
+                          : "#10b98120",
+                      color:
+                        member.role === "Admin"
+                          ? "#f6421f"
+                          : member.role === "Officer"
+                          ? "#ee8724"
+                          : "#10b981",
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    }}
+                  >
+                    {member.role}
+                  </span>
+                  <span className="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-800">
+                    {member.position}
+                  </span>
+                </div>
+                
+                <div className="text-xs text-muted-foreground mb-3">{member.committee}</div>
+                
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedMember(member);
+                      setShowViewMemberModal(true);
+                    }}
+                    className="flex-1 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm"
+                  >
+                    <Eye className="w-4 h-4 inline mr-1" />
+                    View
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedMember(member);
+                      setShowEditMemberModal(true);
+                    }}
+                    className="flex-1 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm"
+                  >
+                    <Edit className="w-4 h-4 inline mr-1" />
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleSendEmail(member.email)}
+                    className="flex-1 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm"
+                  >
+                    <Mail className="w-4 h-4 inline mr-1" />
+                    Email
+                  </button>
+                </div>
               </div>
-              
-              <div className="flex flex-wrap gap-2 mb-3">
-                <span
-                  className="px-2 py-1 rounded-full text-xs"
-                  style={{
-                    backgroundColor:
-                      member.role === "Admin"
-                        ? "#f6421f20"
-                        : member.role === "Officer"
-                        ? "#ee872420"
-                        : "#10b98120",
-                    color:
-                      member.role === "Admin"
-                        ? "#f6421f"
-                        : member.role === "Officer"
-                        ? "#ee8724"
-                        : "#10b981",
-                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  }}
-                >
-                  {member.role}
-                </span>
-                <span className="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-800">
-                  {member.position}
-                </span>
-              </div>
-              
-              <div className="text-xs text-muted-foreground mb-3">{member.committee}</div>
-              
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    setSelectedMember(member);
-                    setShowViewMemberModal(true);
-                  }}
-                  className="flex-1 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm"
-                >
-                  <Eye className="w-4 h-4 inline mr-1" />
-                  View
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedMember(member);
-                    setShowEditMemberModal(true);
-                  }}
-                  className="flex-1 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm"
-                >
-                  <Edit className="w-4 h-4 inline mr-1" />
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleSendEmail(member.email)}
-                  className="flex-1 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm"
-                >
-                  <Mail className="w-4 h-4 inline mr-1" />
-                  Email
-                </button>
-              </div>
-            </div>
-          ))}
-          
-          {filteredMembers.length === 0 && (
-            <div className="text-center py-12">
+            ))
+          ) : (
+            <div className="col-span-full text-center py-12">
+              <User className="w-16 h-16 mx-auto text-gray-400 mb-4" />
               <p className="text-muted-foreground">No members found matching your criteria</p>
             </div>
           )}
@@ -545,132 +780,137 @@ export default function ManageMembersPage({
       )}
 
       {/* Table View */}
-      {viewMode === "table" && (
-        <div className="overflow-x-auto rounded-xl border" style={{
-          borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-          background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.5)",
-        }}>
-          <table className="w-full">
-            <thead className="bg-gray-100 dark:bg-gray-800">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                  ID
-                </th>
-                <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                  Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                  Position
-                </th>
-                <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                  Role
-                </th>
-                <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                  Committee
-                </th>
-                <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-              {filteredMembers.map((member) => (
-                <tr key={member.id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
-                    {member.id}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div>
-                      <div className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                        {member.name}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{member.email}</div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {member.position}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className="px-2 py-1 rounded-full text-xs"
-                      style={{
-                        backgroundColor:
-                          member.role === "Admin"
-                            ? "#f6421f20"
-                            : member.role === "Officer"
-                            ? "#ee872420"
-                            : "#10b98120",
-                        color:
-                          member.role === "Admin"
-                            ? "#f6421f"
-                            : member.role === "Officer"
-                            ? "#ee8724"
-                            : "#10b981",
-                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                      }}
-                    >
-                      {member.role}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm">{member.committee}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className="px-2 py-1 rounded-full text-xs"
-                      style={{
-                        backgroundColor: member.status === "Active" ? "#10b98120" : "#6b728020",
-                        color: member.status === "Active" ? "#10b981" : "#6b7280",
-                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                      }}
-                    >
-                      {member.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          setSelectedMember(member);
-                          setShowViewMemberModal(true);
-                        }}
-                        className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                        title="View"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedMember(member);
-                          setShowEditMemberModal(true);
-                        }}
-                        className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                        title="Edit"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleSendEmail(member.email)}
-                        className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                        title="Send Email"
-                      >
-                        <Mail className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
+      {viewMode === "table" && !error && (
+        isLoading ? (
+          // Skeleton loading for table
+          <MemberTableSkeleton isDark={isDark} rows={5} />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border" style={{
+            borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+            background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.5)",
+          }}>
+            <table className="w-full">
+              <thead className="bg-gray-100 dark:bg-gray-800">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                    ID
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                    Name
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                    Position
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                    Role
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                    Committee
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                    Actions
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          
-          {filteredMembers.length === 0 && (
-            <div className="col-span-full text-center py-12">
-              <User className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-              <p className="text-muted-foreground">No members found matching your criteria</p>
-            </div>
-          )}
-        </div>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                {filteredMembers.map((member) => (
+                  <tr key={member.id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
+                      {member.id}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div>
+                        <div className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+                          {member.name}
+                        </div>
+                        <div className="text-xs text-muted-foreground">{member.email}</div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {member.position}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span
+                        className="px-2 py-1 rounded-full text-xs"
+                        style={{
+                          backgroundColor:
+                            member.role === "Admin"
+                              ? "#f6421f20"
+                              : member.role === "Officer"
+                              ? "#ee872420"
+                              : "#10b98120",
+                          color:
+                            member.role === "Admin"
+                              ? "#f6421f"
+                              : member.role === "Officer"
+                              ? "#ee8724"
+                              : "#10b981",
+                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        }}
+                      >
+                        {member.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm">{member.committee}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span
+                        className="px-2 py-1 rounded-full text-xs"
+                        style={{
+                          backgroundColor: member.status === "Active" ? "#10b98120" : "#6b728020",
+                          color: member.status === "Active" ? "#10b981" : "#6b7280",
+                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        }}
+                      >
+                        {member.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedMember(member);
+                            setShowViewMemberModal(true);
+                          }}
+                          className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                          title="View"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedMember(member);
+                            setShowEditMemberModal(true);
+                          }}
+                          className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                          title="Edit"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleSendEmail(member.email)}
+                          className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                          title="Send Email"
+                        >
+                          <Mail className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            
+            {filteredMembers.length === 0 && (
+              <div className="col-span-full text-center py-12">
+                <User className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+                <p className="text-muted-foreground">No members found matching your criteria</p>
+              </div>
+            )}
+          </div>
+        )
       )}
 
       {/* Pendings Modal */}

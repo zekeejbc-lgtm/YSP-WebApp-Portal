@@ -60,11 +60,11 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-80 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="rounded-xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto border z-90"
+        className="rounded-xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto border"
         style={{
           background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
           backdropFilter: 'blur(20px)',
@@ -245,11 +245,11 @@ export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberM
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-80 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="rounded-xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto border z-90"
+        className="rounded-xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto border"
         style={{
           background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
           backdropFilter: 'blur(20px)',
@@ -395,11 +395,11 @@ interface ViewMemberModalProps {
 export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberModalProps) {
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-80 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto border z-90"
+        className="rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto border"
         style={{
           background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
           backdropFilter: 'blur(20px)',

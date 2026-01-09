@@ -101,7 +101,7 @@ export default function EmailComposerModal({
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center p-4 md:p-8"
+      className="fixed inset-0 z-[120] flex items-center justify-center p-4 md:p-8"
       style={{
         background: modalStyles.overlay.background,
         backdropFilter: modalStyles.overlay.backdropFilter,
