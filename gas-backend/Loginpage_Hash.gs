@@ -348,6 +348,71 @@ function sendYSPEmail(email, name, type, data) {
         </div>
       </div>`;
   }
+  // NEW: BULK_UPDATE - Multiple fields changed at once
+  else if (type === "BULK_UPDATE") {
+    const changesCount = data.changes ? data.changes.length : 0;
+    subjectLine = `Profile Update Notification - ${changesCount} Field${changesCount !== 1 ? 's' : ''} Modified`;
+    
+    let allChangesHTML = "";
+    
+    // Loop through all changes and build HTML for each
+    if (data.changes && data.changes.length > 0) {
+      for (let i = 0; i < data.changes.length; i++) {
+        const change = data.changes[i];
+        
+        if (change.field === 'Password') {
+          // Password gets special security alert styling
+          allChangesHTML += `
+            <div style="margin-bottom: 20px;">
+              <div style="background-color: #fff5f5; border: 1px solid #fed7d7; border-radius: 8px; padding: 16px; text-align: center;">
+                <div style="font-size: 20px; margin-bottom: 8px;">🔐</div>
+                <div style="font-family: 'Lexend', sans-serif; color: #c53030; font-weight: 700; font-size: 14px; margin-bottom: 6px;">
+                  PASSWORD CHANGED
+                </div>
+                <div style="color: #742a2a; font-size: 12px;">
+                  Your account password has been updated successfully.
+                </div>
+              </div>
+            </div>
+          `;
+        } else {
+          // Normal field change with old → new
+          allChangesHTML += `
+            <div style="margin-bottom: 20px;">
+              <div style="margin-bottom: 8px; font-size: 12px; color: #888; text-transform: uppercase; font-weight: 600;">${change.field}</div>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td valign="top" width="45%" style="padding: 10px; background-color: #fff5f5; border: 1px solid #fed7d7; border-radius: 6px;">
+                    <div style="font-size: 11px; color: #c53030; margin-bottom: 4px; font-weight: bold;">PREVIOUS</div>
+                    <div style="font-size: 14px; color: #742a2a; word-break: break-word;">${change.oldVal || '(Empty)'}</div>
+                  </td>
+                  <td valign="middle" align="center" width="10%" style="color: #999;">
+                    <span style="font-size: 20px;">➝</span>
+                  </td>
+                  <td valign="top" width="45%" style="padding: 10px; background-color: #f0fff4; border: 1px solid #c6f6d5; border-radius: 6px;">
+                    <div style="font-size: 11px; color: #2f855a; margin-bottom: 4px; font-weight: bold;">NEW</div>
+                    <div style="font-size: 14px; color: #22543d; word-break: break-word; font-weight: 600;">${change.newVal || '(Empty)'}</div>
+                  </td>
+                </tr>
+              </table>
+            </div>
+          `;
+        }
+      }
+    }
+
+    mainContent = `
+      <p style="margin-bottom: 24px;">Your profile was updated on <strong>${dateStr}</strong> at ${timeStr}. The following ${changesCount} field${changesCount !== 1 ? 's were' : ' was'} modified:</p>
+      
+      <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+        <div style="background-color: #f8f9fa; padding: 12px 20px; border-bottom: 1px solid #eeeeee;">
+          <span style="font-family: 'Lexend', sans-serif; font-size: 12px; font-weight: 600; color: #666; letter-spacing: 0.5px; text-transform: uppercase;">All Modifications</span>
+        </div>
+        <div style="padding: 20px;">
+          ${allChangesHTML} 
+        </div>
+      </div>`;
+  }
 
   // 2. SECURITY SECTION LOGIC (CONDITIONAL)
   // !!! FIXED: Only show this section if it is a WELCOME email. 

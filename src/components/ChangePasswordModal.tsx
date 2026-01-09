@@ -22,8 +22,8 @@ interface ChangePasswordModalProps {
   onChangePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   onVerifyPassword: (password: string) => Promise<{ valid: boolean; error?: string }>;
   isDark: boolean;
-  addUploadToast?: (message: { id: string; message: string; status: 'uploading' | 'success' | 'error'; fileName?: string; progress?: number }) => void;
-  updateUploadToast?: (id: string, updates: Partial<{ message: string; status: 'uploading' | 'success' | 'error'; progress?: number }>) => void;
+  addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error'; progress?: number }) => void;
+  updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error'; progress?: number }>) => void;
 }
 
 interface PasswordStrength {
@@ -152,8 +152,9 @@ export default function ChangePasswordModal({
       if (addUploadToast) {
         addUploadToast({
           id: toastId,
+          title: "Password Change",
           message: "Changing password...",
-          status: "uploading",
+          status: "loading",
           progress: 30,
         });
       }

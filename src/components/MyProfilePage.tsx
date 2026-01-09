@@ -16,12 +16,13 @@
  */
 
 import { useState, useEffect } from "react";
-import { User as UserIcon, Save, Edit, Camera, Loader2, Lock } from "lucide-react";
+import { User as UserIcon, Save, Edit, Camera, Loader2, Lock, Mail, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { SkeletonProfilePage } from "./SkeletonCard";
 import { UploadToastMessage } from "./UploadToast";
 import ChangePasswordModal from "./ChangePasswordModal";
+import EmailVerificationModal from "./EmailVerificationModal";
 import { 
   fetchUserProfile, 
   updateUserProfile, 
@@ -29,6 +30,9 @@ import {
   getStoredUser,
   verifyPassword,
   changePassword,
+  sendVerificationOTP,
+  verifyOTP,
+  checkEmailVerified,
   type UserProfile 
 } from "../services/gasLoginService";
 
@@ -58,6 +62,12 @@ export default function MyProfilePage({
   const [currentUsername, setCurrentUsername] = useState<string>('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [originalProfile, setOriginalProfile] = useState<typeof profile | null>(null); // Track original values
+  
+  // Email verification states
+  const [showEmailVerificationModal, setShowEmailVerificationModal] = useState(false);
+  const [isEmailVerified, setIsEmailVerified] = useState(false);
+  const [verifiedEmail, setVerifiedEmail] = useState<string>(''); // Track which email was verified
+  const [isCheckingVerification, setIsCheckingVerification] = useState(false);
 
   const [profile, setProfile] = useState({
     // Personal Info
@@ -164,6 +174,22 @@ export default function MyProfilePage({
           // Set profile picture if available
           if (p.profilePictureURL) {
             setProfileImage(p.profilePictureURL);
+          }
+          
+          // Check email verification status
+          if (p.personalEmail) {
+            setIsCheckingVerification(true);
+            try {
+              const verifyResult = await checkEmailVerified(storedUser.username, p.personalEmail);
+              if (verifyResult.success && verifyResult.verified) {
+                setIsEmailVerified(true);
+                setVerifiedEmail(p.personalEmail);
+              }
+            } catch (verifyError) {
+              console.error('Failed to check email verification:', verifyError);
+            } finally {
+              setIsCheckingVerification(false);
+            }
           }
         }
       } catch (error) {
@@ -331,7 +357,7 @@ export default function MyProfilePage({
 
       // Build the update data object - ONLY include fields that have changed
       const editableFields = [
-        'fullName', 'email', 'personalEmail', 'contactNumber', 'birthday',
+        'fullName', 'username', 'personalEmail', 'contactNumber', 'birthday',
         'gender', 'pronouns', 'civilStatus', 'religion', 'nationality',
         'address', 'barangay', 'city', 'province', 'zipCode',
         'chapter', 'committee', 'facebook', 'instagram', 'twitter',
@@ -387,6 +413,29 @@ export default function MyProfilePage({
         if (response.notFoundFields && response.notFoundFields.length > 0) {
           console.warn('Fields not found in spreadsheet:', response.notFoundFields);
           detailMessage += ` (${response.notFoundFields.length} not found in sheet)`;
+        }
+        
+        // If username was changed, update local storage and state
+        if (updateData.username && updateData.username !== currentUsername) {
+          const newUsername = updateData.username as string;
+          
+          // Update the stored user object in localStorage
+          const storedUser = localStorage.getItem('ysp_user');
+          if (storedUser) {
+            try {
+              const userObj = JSON.parse(storedUser);
+              userObj.username = newUsername;
+              localStorage.setItem('ysp_user', JSON.stringify(userObj));
+              console.log('Updated username in localStorage:', newUsername);
+            } catch (e) {
+              console.error('Failed to update username in localStorage:', e);
+            }
+          }
+          
+          // Update the currentUsername state so future saves use the new username
+          setCurrentUsername(newUsername);
+          
+          detailMessage += ' (Username changed - you may need to use your new username to log in next time)';
         }
         
         // Update original profile to match current after successful save
@@ -659,10 +708,103 @@ export default function MyProfilePage({
             gap: `${DESIGN_TOKENS.spacing.scale.lg}px`,
           }}
         >
+          {/* Full Name Field */}
+          <div>
+            <label
+              className="block text-muted-foreground mb-2"
+              style={{
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+              }}
+            >
+              Full Name
+            </label>
+            <input
+              type="text"
+              value={profile.fullName}
+              onChange={(e) => handleChange("fullName", e.target.value)}
+              disabled={!isEditing}
+              className="w-full border-2 bg-white/50 dark:bg-white/5 backdrop-blur-sm transition-all disabled:opacity-60 focus:outline-none focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20"
+              style={{
+                ...inputStyle,
+                borderColor: isDark
+                  ? "rgba(255, 255, 255, 0.1)"
+                  : "rgba(0, 0, 0, 0.1)",
+              }}
+            />
+          </div>
+
+          {/* Personal Email Field with Verification */}
+          <div>
+            <label
+              className="flex items-center gap-2 text-muted-foreground mb-2"
+              style={{
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+              }}
+            >
+              <span>Personal Email</span>
+              {/* Verification status indicator */}
+              {isCheckingVerification ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+              ) : isEmailVerified && profile.personalEmail === verifiedEmail ? (
+                <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px` }}>Verified</span>
+                </span>
+              ) : profile.personalEmail ? (
+                <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px` }}>Not verified</span>
+                </span>
+              ) : null}
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={profile.personalEmail}
+                onChange={(e) => {
+                  handleChange("personalEmail", e.target.value);
+                  // If email changes, reset verification status
+                  if (e.target.value !== verifiedEmail) {
+                    setIsEmailVerified(false);
+                  }
+                }}
+                disabled={!isEditing}
+                className="flex-1 border-2 bg-white/50 dark:bg-white/5 backdrop-blur-sm transition-all disabled:opacity-60 focus:outline-none focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20"
+                style={{
+                  ...inputStyle,
+                  borderColor: isEmailVerified && profile.personalEmail === verifiedEmail
+                    ? "#22c55e"
+                    : isDark
+                    ? "rgba(255, 255, 255, 0.1)"
+                    : "rgba(0, 0, 0, 0.1)",
+                }}
+                placeholder="your.email@example.com"
+              />
+              {/* Verify button - show when email is not verified or changed */}
+              {profile.personalEmail && (!isEmailVerified || profile.personalEmail !== verifiedEmail) && (
+                <button
+                  onClick={() => setShowEmailVerificationModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg transition-all hover:opacity-90"
+                  style={{
+                    background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                    color: "#fff",
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    height: `${DESIGN_TOKENS.interactive.input.height}px`,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <Mail className="w-4 h-4" />
+                  <span>Verify</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Other fields */}
           {[
-            { label: "Full Name", value: profile.fullName, key: "fullName", editable: true },
-            { label: "Email (Account)", value: profile.email, key: "email", editable: true },
-            { label: "Personal Email", value: profile.personalEmail, key: "personalEmail", editable: true },
             { label: "Contact Number", value: profile.contactNumber, key: "contactNumber", editable: true },
             { label: "Birthday", value: profile.birthday, key: "birthday", editable: true, type: "date" },
             { label: "Age", value: profile.age.toString(), key: "age", editable: false },
@@ -1205,6 +1347,40 @@ export default function MyProfilePage({
         }}
         onChangePassword={async (currentPwd, newPwd) => {
           return await changePassword(currentUsername, currentPwd, newPwd);
+        }}
+        isDark={isDark}
+        addUploadToast={addUploadToast}
+        updateUploadToast={updateUploadToast}
+      />
+
+      {/* Email Verification Modal */}
+      <EmailVerificationModal
+        isOpen={showEmailVerificationModal}
+        onClose={() => {
+          setShowEmailVerificationModal(false);
+          // Re-check verification status when modal closes
+          if (profile.personalEmail && currentUsername) {
+            checkEmailVerified(currentUsername, profile.personalEmail).then(result => {
+              if (result.success && result.verified) {
+                setIsEmailVerified(true);
+                setVerifiedEmail(profile.personalEmail);
+              }
+            });
+          }
+        }}
+        email={profile.personalEmail}
+        username={currentUsername}
+        onSendOTP={async (email) => {
+          const result = await sendVerificationOTP(currentUsername, email);
+          return result;
+        }}
+        onVerifyOTP={async (otp) => {
+          const result = await verifyOTP(currentUsername, profile.personalEmail, otp);
+          if (result.success && result.verified) {
+            setIsEmailVerified(true);
+            setVerifiedEmail(profile.personalEmail);
+          }
+          return result;
         }}
         isDark={isDark}
         addUploadToast={addUploadToast}

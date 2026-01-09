@@ -829,6 +829,176 @@ export async function changePassword(
   }
 }
 
+// =================== EMAIL VERIFICATION ===================
+
+export interface SendOTPResponse {
+  success: boolean;
+  message?: string;
+  expiresInMinutes?: number;
+  error?: string;
+}
+
+export interface VerifyOTPResponse {
+  success: boolean;
+  verified?: boolean;
+  message?: string;
+  error?: string;
+}
+
+export interface CheckEmailVerifiedResponse {
+  success: boolean;
+  verified?: boolean;
+  verifiedEmail?: string;
+  error?: string;
+}
+
+/**
+ * Send OTP verification email
+ * @param username - Username requesting verification
+ * @param email - Email address to verify
+ * @returns Promise<SendOTPResponse>
+ */
+export async function sendVerificationOTP(
+  username: string,
+  email: string
+): Promise<SendOTPResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'sendVerificationOTP',
+        username: username.trim(),
+        email: email.trim(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('sendVerificationOTP Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+/**
+ * Verify OTP code
+ * @param username - Username verifying email
+ * @param email - Email being verified
+ * @param otp - OTP code entered by user
+ * @returns Promise<VerifyOTPResponse>
+ */
+export async function verifyOTP(
+  username: string,
+  email: string,
+  otp: string
+): Promise<VerifyOTPResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'verifyOTP',
+        username,
+        email,
+        otp,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('verifyOTP Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+/**
+ * Check if an email is verified for a user
+ * @param username - Username to check
+ * @param email - Email to check
+ * @returns Promise<CheckEmailVerifiedResponse>
+ */
+export async function checkEmailVerified(
+  username: string,
+  email: string
+): Promise<CheckEmailVerifiedResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'checkEmailVerified',
+        username,
+        email,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('checkEmailVerified Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
 // =================== DEFAULT EXPORT ===================
 
 export default {
@@ -848,5 +1018,8 @@ export default {
   isRestricted,
   verifyPassword,
   changePassword,
+  sendVerificationOTP,
+  verifyOTP,
+  checkEmailVerified,
   LoginErrorCodes,
 };
