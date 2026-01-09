@@ -36,10 +36,7 @@ export async function fetchAllProjects(): Promise<{ projects: Project[]; error?:
     }
 
     const response = await fetch(`${PROJECTS_API_BASE}?action=getProjects`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
+      method: 'GET'
     });
 
     const data = await response.json();
@@ -95,7 +92,7 @@ export async function addProject(
     const response = await fetch(PROJECTS_API_BASE, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify({
         action: 'addProject',
@@ -161,7 +158,7 @@ export async function updateProject(
     const response = await fetch(PROJECTS_API_BASE, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify({
         action: 'updateProject',
@@ -204,7 +201,7 @@ export async function deleteProject(projectId: string): Promise<{ success: boole
     const response = await fetch(PROJECTS_API_BASE, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify({
         action: 'deleteProject',
@@ -267,10 +264,12 @@ export async function uploadProjectImage(file: File): Promise<{ success: boolean
     // Convert file to base64
     const base64Data = await fileToBase64(file);
 
+    // Use text/plain to avoid CORS preflight (simple request)
+    // application/json triggers OPTIONS preflight which GAS doesn't handle
     const response = await fetch(PROJECTS_API_BASE, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify({
         action: 'uploadImage',

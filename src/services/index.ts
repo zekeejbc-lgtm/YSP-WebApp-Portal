@@ -48,3 +48,29 @@ export {
   type DevAffiliationData,
   type DevSocialLinkData,
 } from './gasHomepageService';
+
+// Login GAS Service
+export {
+  authenticateUser,
+  checkLoginApiHealth,
+  fetchUserProfile,
+  updateUserProfile,
+  storeSession,
+  getSessionToken,
+  getStoredUser,
+  clearSession,
+  hasActiveSession,
+  verifySession,
+  getRoleDisplayName,
+  hasAdminAccess,
+  hasLeadershipAccess,
+  isRestricted,
+  LoginErrorCodes,
+  LoginAPIError,
+  type LoginUser,
+  type LoginResponse,
+  type SessionVerifyResponse,
+  type UserProfile,
+  type ProfileResponse,
+  type ProfileUpdateResponse,
+} from './gasLoginService';

@@ -114,6 +114,8 @@ function DesktopSideBar({
   onProfileClick,
   onHomeClick,
   onLogout,
+  onLoginClick,
+  isLoggedIn,
   logoUrl,
   userName = "Juan Dela Cruz",
   userProfilePicture,
@@ -134,7 +136,7 @@ function DesktopSideBar({
           : "rgba(255, 255, 255, 0.98)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
-        zIndex: 10, // Lower than modals (9999)
+        zIndex: 50, // Higher than main content (z-10)
       }}
       animate={{
         width: isExpanded ? "300px" : "60px",
@@ -360,83 +362,120 @@ function DesktopSideBar({
             borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
           }}
         >
-          {/* Profile Section - Picture + Name when expanded, just icon when collapsed */}
-          <button
-            onClick={onProfileClick}
-            className={`w-full flex items-center gap-3 rounded-lg transition-all ${
-              activePage === "my-profile"
-                ? "text-white"
-                : "hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-[#ee8724]"
-            }`}
-            style={{
-              background:
-                activePage === "my-profile"
-                  ? "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)"
-                  : "transparent",
-              justifyContent: isExpanded ? "flex-start" : "center",
-              padding: isExpanded ? "10px 12px" : "10px",
-            }}
-          >
-            {userProfilePicture ? (
-              <img
-                src={userProfilePicture}
-                alt={userName}
-                className="w-8 h-8 rounded-full object-cover flex-shrink-0"
-              />
-            ) : (
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+          {isLoggedIn ? (
+            <>
+              {/* Profile Section - Picture + Name when expanded, just icon when collapsed */}
+              <button
+                onClick={onProfileClick}
+                className={`w-full flex items-center gap-3 rounded-lg transition-all ${
+                  activePage === "my-profile"
+                    ? "text-white"
+                    : "hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-[#ee8724]"
+                }`}
                 style={{
-                  background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                  background:
+                    activePage === "my-profile"
+                      ? "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)"
+                      : "transparent",
+                  justifyContent: isExpanded ? "flex-start" : "center",
+                  padding: isExpanded ? "10px 12px" : "10px",
                 }}
               >
-                <User className="w-4 h-4 text-white" />
-              </div>
-            )}
-            <motion.span
-              animate={{
-                opacity: isExpanded ? 1 : 0,
-                width: isExpanded ? "auto" : 0,
-              }}
-              transition={{ duration: 0.2 }}
-              style={{
-                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-              }}
-            >
-              {userName}
-            </motion.span>
-          </button>
+                {userProfilePicture ? (
+                  <img
+                    src={userProfilePicture}
+                    alt={userName}
+                    className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      // Hide broken image, fallback to default icon
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{
+                      background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                    }}
+                  >
+                    <User className="w-4 h-4 text-white" />
+                  </div>
+                )}
+                <motion.span
+                  animate={{
+                    opacity: isExpanded ? 1 : 0,
+                    width: isExpanded ? "auto" : 0,
+                  }}
+                  transition={{ duration: 0.2 }}
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                  }}
+                >
+                  {userName}
+                </motion.span>
+              </button>
 
-          {/* Logout Button */}
-          <button
-            onClick={onLogout}
-            className="w-full flex items-center gap-3 rounded-lg transition-all text-white"
-            style={{
-              background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-              justifyContent: isExpanded ? "center" : "center",
-              padding: isExpanded ? "10px 12px" : "10px",
-            }}
-          >
-            <LogOut className="w-5 h-5 flex-shrink-0" />
-            <motion.span
-              animate={{
-                opacity: isExpanded ? 1 : 0,
-                width: isExpanded ? "auto" : 0,
-              }}
-              transition={{ duration: 0.2 }}
+              {/* Logout Button */}
+              <button
+                onClick={onLogout}
+                className="w-full flex items-center gap-3 rounded-lg transition-all text-white"
+                style={{
+                  background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                  justifyContent: isExpanded ? "center" : "center",
+                  padding: isExpanded ? "10px 12px" : "10px",
+                }}
+              >
+                <LogOut className="w-5 h-5 flex-shrink-0" />
+                <motion.span
+                  animate={{
+                    opacity: isExpanded ? 1 : 0,
+                    width: isExpanded ? "auto" : 0,
+                  }}
+                  transition={{ duration: 0.2 }}
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                  }}
+                >
+                  Log Out
+                </motion.span>
+              </button>
+            </>
+          ) : (
+            /* Login Button for non-logged-in users */
+            <button
+              onClick={onLoginClick}
+              className="w-full flex items-center gap-3 rounded-lg transition-all text-white"
               style={{
-                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
+                background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                justifyContent: isExpanded ? "center" : "center",
+                padding: isExpanded ? "10px 12px" : "10px",
               }}
             >
-              Log Out
-            </motion.span>
-          </button>
+              <User className="w-5 h-5 flex-shrink-0" />
+              <motion.span
+                animate={{
+                  opacity: isExpanded ? 1 : 0,
+                  width: isExpanded ? "auto" : 0,
+                }}
+                transition={{ duration: 0.2 }}
+                style={{
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                }}
+              >
+                Log In
+              </motion.span>
+            </button>
+          )}
         </div>
       </div>
     </motion.aside>
@@ -758,6 +797,11 @@ function MobileSideBar({
                           src={userProfilePicture}
                           alt={userName}
                           className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            // Hide broken image, fallback to default icon
+                            e.currentTarget.style.display = 'none';
+                          }}
                         />
                       ) : (
                         <div

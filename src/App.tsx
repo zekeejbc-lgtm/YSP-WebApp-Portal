@@ -47,8 +47,17 @@ import {
   fetchAllProjects,
   addProject,
   updateProject,
+  deleteProject,
   type Project,
 } from "./services/projectsService";
+import {
+  authenticateUser,
+  clearSession,
+  getStoredUser,
+  hasActiveSession,
+  LoginErrorCodes,
+  type LoginUser,
+} from "./services/gasLoginService";
 import { ImageWithFallback } from "./components/figma/ImageWithFallback";
 import { toast, Toaster } from "sonner";
 import DonationPage from "./components/DonationPage";
@@ -70,6 +79,15 @@ import FounderModal from "./components/FounderModal";
 import DeveloperModal from "./components/DeveloperModal";
 import { DebugPill } from "./components/DebugPill";
 import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
+import { FormattedText } from "./components/FormattedText";
+import { 
+  SkeletonCardGrid, 
+  SkeletonSection, 
+  SkeletonOrgChart, 
+  SkeletonContact, 
+  SkeletonProfileCard,
+  SkeletonPartnership 
+} from "./components/SkeletonCard";
 import { SideBar } from "./components/design-system";
 import TopBar from "./components/design-system/TopBar";
 import AnimatedHamburger from "./components/design-system/AnimatedHamburger";
@@ -81,6 +99,137 @@ import {
   getFullPWAMaintenanceConfig,
   getPageMaintenanceConfig,
 } from "./utils/maintenanceMode";
+
+/**
+ * Suggests link button text based on the URL domain
+ * @param url The URL to analyze
+ * @returns Suggested button text based on the domain
+ */
+function suggestLinkTextFromUrl(url: string): string {
+  if (!url) return '';
+  
+  try {
+    // Clean up the URL
+    let cleanUrl = url.trim();
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = 'https://' + cleanUrl;
+    }
+    
+    const urlObj = new URL(cleanUrl);
+    const hostname = urlObj.hostname.toLowerCase();
+    
+    // Domain to button text mapping
+    const domainMappings: { [key: string]: string } = {
+      // Social Media
+      'facebook.com': 'View on Facebook',
+      'www.facebook.com': 'View on Facebook',
+      'fb.com': 'View on Facebook',
+      'fb.watch': 'Watch on Facebook',
+      'instagram.com': 'View on Instagram',
+      'www.instagram.com': 'View on Instagram',
+      'twitter.com': 'View on Twitter',
+      'www.twitter.com': 'View on Twitter',
+      'x.com': 'View on X',
+      'www.x.com': 'View on X',
+      'linkedin.com': 'View on LinkedIn',
+      'www.linkedin.com': 'View on LinkedIn',
+      'tiktok.com': 'Watch on TikTok',
+      'www.tiktok.com': 'Watch on TikTok',
+      'threads.net': 'View on Threads',
+      'www.threads.net': 'View on Threads',
+      
+      // Video Platforms
+      'youtube.com': 'Watch on YouTube',
+      'www.youtube.com': 'Watch on YouTube',
+      'youtu.be': 'Watch on YouTube',
+      'vimeo.com': 'Watch on Vimeo',
+      'www.vimeo.com': 'Watch on Vimeo',
+      'twitch.tv': 'Watch on Twitch',
+      'www.twitch.tv': 'Watch on Twitch',
+      
+      // Google
+      'docs.google.com': 'Open Google Doc',
+      'drive.google.com': 'Open Google Drive',
+      'forms.google.com': 'Open Google Form',
+      'forms.gle': 'Open Google Form',
+      'sheets.google.com': 'Open Google Sheet',
+      'slides.google.com': 'Open Google Slides',
+      'meet.google.com': 'Join Google Meet',
+      'calendar.google.com': 'View on Google Calendar',
+      'maps.google.com': 'View on Google Maps',
+      'www.google.com': 'Search on Google',
+      
+      // Communication
+      'zoom.us': 'Join Zoom Meeting',
+      'discord.com': 'Join Discord',
+      'discord.gg': 'Join Discord',
+      'slack.com': 'Open Slack',
+      'telegram.org': 'Open Telegram',
+      't.me': 'Open Telegram',
+      'wa.me': 'Chat on WhatsApp',
+      'whatsapp.com': 'Chat on WhatsApp',
+      
+      // News & Articles
+      'medium.com': 'Read on Medium',
+      'dev.to': 'Read on Dev.to',
+      'substack.com': 'Read on Substack',
+      
+      // Code & Development
+      'github.com': 'View on GitHub',
+      'www.github.com': 'View on GitHub',
+      'gitlab.com': 'View on GitLab',
+      'bitbucket.org': 'View on Bitbucket',
+      'codepen.io': 'View on CodePen',
+      'codesandbox.io': 'Open CodeSandbox',
+      'replit.com': 'Open Replit',
+      'stackblitz.com': 'Open StackBlitz',
+      
+      // E-commerce & Donations
+      'shopee.ph': 'Shop on Shopee',
+      'lazada.com.ph': 'Shop on Lazada',
+      'amazon.com': 'Shop on Amazon',
+      'gofundme.com': 'Donate on GoFundMe',
+      'patreon.com': 'Support on Patreon',
+      'ko-fi.com': 'Support on Ko-fi',
+      'buymeacoffee.com': 'Buy Me a Coffee',
+      
+      // Filipino Platforms
+      'gcash.com': 'Pay with GCash',
+      'maya.ph': 'Pay with Maya',
+      'grab.com': 'Open Grab',
+      
+      // Events
+      'eventbrite.com': 'Register on Eventbrite',
+      'www.eventbrite.com': 'Register on Eventbrite',
+      'ticketmaster.com': 'Get Tickets',
+      
+      // Design
+      'figma.com': 'View on Figma',
+      'www.figma.com': 'View on Figma',
+      'canva.com': 'View on Canva',
+      'www.canva.com': 'View on Canva',
+      'dribbble.com': 'View on Dribbble',
+      'behance.net': 'View on Behance',
+    };
+    
+    // Check for exact match first
+    if (domainMappings[hostname]) {
+      return domainMappings[hostname];
+    }
+    
+    // Check for partial matches (subdomains)
+    for (const [domain, text] of Object.entries(domainMappings)) {
+      if (hostname.endsWith('.' + domain) || hostname === domain) {
+        return text;
+      }
+    }
+    
+    // Default fallback
+    return 'Learn More!';
+  } catch {
+    return 'Learn More!';
+  }
+}
 
 // Donation type definition
 interface Donation {
@@ -460,6 +609,7 @@ export default function App() {
   // Fetch projects from backend on mount
   useEffect(() => {
     const loadProjects = async () => {
+      setIsLoadingProjects(true);
       try {
         console.log('[App] Fetching projects from backend...');
         const result = await fetchAllProjects();
@@ -474,6 +624,8 @@ export default function App() {
       } catch (error) {
         console.error('[App] Error loading projects:', error);
         toast.error('Failed to load projects');
+      } finally {
+        setIsLoadingProjects(false);
       }
     };
 
@@ -593,6 +745,7 @@ export default function App() {
 
   // Projects State
   const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [showUploadProjectModal, setShowUploadProjectModal] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -981,9 +1134,10 @@ export default function App() {
       // Show progress toast
       addUploadToast({
         id: toastId,
-        message: isEditing ? 'Saving project changes...' : 'Uploading project...',
+        title: isEditing ? 'Updating Project' : 'Uploading Project',
+        message: isEditing ? 'Saving project changes...' : 'Preparing upload...',
+        status: 'loading',
         progress: 10,
-        type: 'info'
       });
 
       const projectData = {
@@ -995,7 +1149,7 @@ export default function App() {
         status: 'Active' as const,
       };
 
-      updateUploadToast(toastId, { progress: 30, message: 'Processing image...' });
+      updateUploadToast(toastId, { progress: 30, message: 'Processing image...', status: 'loading' });
 
       let result;
       if (isEditing) {
@@ -1005,7 +1159,7 @@ export default function App() {
       }
 
       if (result.success) {
-        updateUploadToast(toastId, { progress: 80, message: isEditing ? 'Updating backend...' : 'Syncing to backend...' });
+        updateUploadToast(toastId, { progress: 80, message: isEditing ? 'Updating backend...' : 'Syncing to backend...', status: 'loading' });
 
         // Reload projects from backend
         const projectsResult = await fetchAllProjects();
@@ -1014,9 +1168,10 @@ export default function App() {
         }
 
         updateUploadToast(toastId, {
+          status: 'success',
           progress: 100,
+          title: isEditing ? 'Update Complete' : 'Upload Complete',
           message: isEditing ? 'Project updated successfully!' : 'Project uploaded successfully!',
-          type: 'success'
         });
 
         setNewProject({ title: "", description: "", imageUrl: "", link: "", linkText: "" });
@@ -1027,18 +1182,20 @@ export default function App() {
         setTimeout(() => removeUploadToast(toastId), 3000);
       } else {
         updateUploadToast(toastId, {
+          status: 'error',
           progress: 100,
-          message: `Error: ${result.error?.message || 'Failed to upload project'}`,
-          type: 'error'
+          title: isEditing ? 'Update Failed' : 'Upload Failed',
+          message: result.error?.message || 'Failed to upload project',
         });
         setTimeout(() => removeUploadToast(toastId), 5000);
       }
     } catch (error) {
       console.error('Upload error:', error);
       updateUploadToast(toastId, {
+        status: 'error',
         progress: 100,
-        message: 'Error uploading project',
-        type: 'error'
+        title: isEditing ? 'Update Error' : 'Upload Error',
+        message: error instanceof Error ? error.message : 'Unknown error occurred',
       });
       setTimeout(() => removeUploadToast(toastId), 5000);
     } finally {
@@ -1075,12 +1232,80 @@ export default function App() {
     setShowDeleteConfirmModal(true);
   };
 
-  const confirmDeleteProjects = () => {
+  const confirmDeleteProjects = async () => {
     const count = selectedProjectIds.length;
-    setProjects(projects.filter((p) => !selectedProjectIds.includes(p.projectId)));
-    setSelectedProjectIds([]);
-    setShowDeleteConfirmModal(false);
-    toast.success(`${count} project${count > 1 ? "s" : ""} deleted successfully!`);
+    const toastId = `project-delete-${Date.now()}`;
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Deleting Project' + (count > 1 ? 's' : ''),
+      message: `Removing ${count} project${count > 1 ? 's' : ''} from database...`,
+      status: 'loading',
+      progress: 10,
+    });
+
+    try {
+      // Delete each selected project from backend
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (let i = 0; i < selectedProjectIds.length; i++) {
+        const projectId = selectedProjectIds[i];
+        const progress = Math.round(10 + ((i + 1) / selectedProjectIds.length) * 80);
+        
+        updateUploadToast(toastId, {
+          message: `Deleting project ${i + 1} of ${count}...`,
+          progress,
+        });
+        
+        const result = await deleteProject(projectId);
+        if (result.success) {
+          successCount++;
+        } else {
+          failCount++;
+          console.error(`Failed to delete project ${projectId}:`, result.error);
+        }
+      }
+      
+      // Reload projects from backend to sync state
+      const projectsResult = await fetchAllProjects();
+      if (!projectsResult.error) {
+        setProjects(projectsResult.projects);
+      } else {
+        // Fallback: remove from local state
+        setProjects(projects.filter((p) => !selectedProjectIds.includes(p.projectId)));
+      }
+      
+      setSelectedProjectIds([]);
+      setShowDeleteConfirmModal(false);
+      
+      if (failCount === 0) {
+        updateUploadToast(toastId, {
+          status: 'success',
+          progress: 100,
+          title: 'Deleted',
+          message: `${successCount} project${successCount > 1 ? 's' : ''} deleted successfully!`,
+        });
+        toast.success(`${successCount} project${successCount > 1 ? 's' : ''} deleted successfully!`);
+      } else {
+        updateUploadToast(toastId, {
+          status: 'error',
+          progress: 100,
+          title: 'Partial Delete',
+          message: `${successCount} deleted, ${failCount} failed`,
+        });
+        toast.error(`${failCount} project${failCount > 1 ? 's' : ''} failed to delete`);
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      updateUploadToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Delete Error',
+        message: error instanceof Error ? error.message : 'Unknown error occurred',
+      });
+      toast.error('Failed to delete projects');
+    }
   };
 
   // Org Chart Upload Handler
@@ -1190,67 +1415,103 @@ export default function App() {
     );
   };
 
-  const handleLogin = (username: string, password: string) => {
-    // Demo login - in production, this would be an API call
-    // Role Hierarchy: auditor (highest) > admin > head > member > suspended > banned (no access)
-    
-    const demoAccounts = {
-      auditor: { password: 'demo123', role: 'auditor', name: 'Auditor Maria Santos' },
-      admin: { password: 'demo123', role: 'admin', name: 'Admin Juan Dela Cruz' },
-      head: { password: 'demo123', role: 'head', name: 'Head Pedro Reyes' },
-      member: { password: 'demo123', role: 'member', name: 'Member Ana Garcia' },
-      suspended: { password: 'demo123', role: 'suspended', name: 'Suspended User' },
-      banned: { password: 'demo123', role: 'banned', name: 'Banned User' },
-    };
+  const handleLogin = async (username: string, password: string) => {
+    // Real authentication via GAS backend
+    try {
+      const response = await authenticateUser(username, password);
+      
+      if (response.success && response.user) {
+        const user = response.user;
+        
+        // Handle BANNED accounts - no access
+        if (user.role === 'banned') {
+          toast.error('Account Banned', {
+            description: 'This account has been permanently banned. Contact admin for assistance.',
+          });
+          return;
+        }
 
-    const account = demoAccounts[username.toLowerCase() as keyof typeof demoAccounts];
+        // Handle SUSPENDED accounts - minimal access warning
+        if (user.role === 'suspended') {
+          setIsAdmin(true); // Allow login but limited
+          setUserRole('suspended');
+          setUserName(user.name);
+          setUserProfilePicture(user.profilePic || '');
+          setShowLoginPanel(false);
+          toast.warning('Account Suspended', {
+            description: 'Your account has limited access. Contact admin for full restoration.',
+          });
+          return;
+        }
 
-    if (account && password === account.password) {
-      // Handle BANNED accounts - no access
-      if (account.role === 'banned') {
-        toast.error('Account Banned', {
-          description: 'This account has been permanently banned. Contact admin for assistance.',
-        });
-        return;
-      }
-
-      // Handle SUSPENDED accounts - minimal access warning
-      if (account.role === 'suspended') {
-        setIsAdmin(true); // Allow login but limited
-        setUserRole('suspended');
-        setUserName(account.name);
+        // Normal login for all other roles
+        setIsAdmin(true);
+        setUserRole(user.role);
+        setUserName(user.name);
+        setUserProfilePicture(user.profilePic || '');
         setShowLoginPanel(false);
-        toast.warning('Account Suspended', {
-          description: 'Your account has limited access. Contact admin for full restoration.',
+
+        // Role-specific welcome messages
+        const roleMessages: Record<string, string> = {
+          auditor: 'Welcome, Auditor! You have full system access including audit logs.',
+          admin: 'Welcome, Admin! You have full management access.',
+          head: 'Welcome, Committee Head! You have leadership access.',
+          member: 'Welcome, Member! You have standard access.',
+          guest: 'Welcome, Guest! You have limited viewing access.',
+        };
+
+        toast.success('Successfully logged in!', {
+          description: roleMessages[user.role] || `Welcome, ${user.name}!`,
         });
-        return;
       }
-
-      // Normal login for all other roles
-      setIsAdmin(true);
-      setUserRole(account.role);
-      setUserName(account.name);
-      setShowLoginPanel(false);
-
-      // Role-specific welcome messages
-      const roleMessages = {
-        auditor: 'Welcome, Auditor! You have full system access including audit logs.',
-        admin: 'Welcome, Admin! You have full management access.',
-        head: 'Welcome, Committee Head! You have leadership access.',
-        member: 'Welcome, Member! You have standard access.',
-      };
-
-      toast.success('Successfully logged in!', {
-        description: roleMessages[account.role as keyof typeof roleMessages] || 'Welcome!',
-      });
-    } else {
-      toast.error('Invalid credentials', {
-        description: 'Please check your username and password',
-      });
+    } catch (error: unknown) {
+      // Handle specific error types
+      if (error && typeof error === 'object' && 'code' in error) {
+        const loginError = error as { code: string; message: string };
+        
+        switch (loginError.code) {
+          case LoginErrorCodes.INVALID_CREDENTIALS:
+            toast.error('Invalid credentials', {
+              description: 'Please check your username and password',
+            });
+            break;
+          case LoginErrorCodes.ACCOUNT_BANNED:
+            toast.error('Account Banned', {
+              description: loginError.message || 'This account has been permanently banned.',
+            });
+            break;
+          case LoginErrorCodes.TIMEOUT_ERROR:
+            toast.error('Connection Timeout', {
+              description: 'The server is taking too long to respond. Please try again.',
+            });
+            break;
+          case LoginErrorCodes.NETWORK_ERROR:
+            toast.error('Network Error', {
+              description: 'Unable to connect to the server. Please check your internet connection.',
+            });
+            break;
+          case LoginErrorCodes.NO_API_URL:
+            toast.error('Service Unavailable', {
+              description: 'Login service is not configured. Please contact administrator.',
+            });
+            break;
+          default:
+            toast.error('Login Failed', {
+              description: loginError.message || 'An unexpected error occurred. Please try again.',
+            });
+        }
+      } else {
+        toast.error('Login Failed', {
+          description: 'An unexpected error occurred. Please try again.',
+        });
+      }
     }
   };
 
   const handleLogout = () => {
+    // Clear session from storage
+    clearSession();
+    
     setIsAdmin(false);
     setUserRole("guest");
     setActivePage("home");
@@ -1666,7 +1927,23 @@ export default function App() {
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><MyProfilePage onClose={() => setShowMyProfile(false)} isDark={isDark} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <MyProfilePage 
+          onClose={() => setShowMyProfile(false)} 
+          isDark={isDark}
+          addUploadToast={addUploadToast}
+          updateUploadToast={updateUploadToast}
+          onProfilePictureChange={(newUrl) => setUserProfilePicture(newUrl)}
+        />
+        <UploadToastContainer
+          messages={uploadToastMessages}
+          onDismiss={removeUploadToast}
+          isDark={isDark}
+        />
+      </>
+    );
   }
 
   // Show Announcements page
@@ -2144,6 +2421,9 @@ export default function App() {
         id="about"
         className="max-w-6xl mx-auto px-4 md:px-6 mb-8 relative"
       >
+        {isLoadingHomepage ? (
+          <SkeletonSection lines={5} />
+        ) : (
         <div className="ysp-card p-6 md:p-8">
           {isEditingHomepage ? (
             <>
@@ -2210,10 +2490,14 @@ export default function App() {
             </>
           )}
         </div>
+        )}
       </section>
 
       {/* Mission Section */}
       <section className="max-w-6xl mx-auto px-4 md:px-6 mb-8 relative">
+        {isLoadingHomepage ? (
+          <SkeletonSection lines={4} />
+        ) : (
         <div className="ysp-card p-6 md:p-8">
           {isEditingHomepage ? (
             <>
@@ -2279,10 +2563,14 @@ export default function App() {
             </>
           )}
         </div>
+        )}
       </section>
 
       {/* Vision Section */}
       <section className="max-w-6xl mx-auto px-4 md:px-6 mb-8 relative">
+        {isLoadingHomepage ? (
+          <SkeletonSection lines={4} />
+        ) : (
         <div className="ysp-card p-6 md:p-8">
           {isEditingHomepage ? (
             <>
@@ -2348,10 +2636,14 @@ export default function App() {
             </>
           )}
         </div>
+        )}
       </section>
 
       {/* Advocacy Pillars Section */}
       <section className="max-w-6xl mx-auto px-4 md:px-6 mb-8 relative">
+        {isLoadingHomepage ? (
+          <SkeletonSection lines={8} />
+        ) : (
         <div className="ysp-card p-6 md:p-8">
           {isEditingHomepage ? (
             <>
@@ -2425,6 +2717,7 @@ export default function App() {
             </>
           )}
         </div>
+        )}
       </section>
 
       {/* Projects Section */}
@@ -2487,22 +2780,37 @@ export default function App() {
             </div>
           )}
 
-          {/* Projects Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {projects.map((project) => (
-              <GlowingCard
-                key={project.id}
-                isDark={isDark}
-                glowOnHover={true}
-                className={`overflow-hidden cursor-pointer transition-all duration-250 hover:scale-[1.03] relative ${
-                  selectedProjectIds.includes(project.id) ? "ring-2 ring-blue-500 ring-offset-2" : ""
-                }`}
-              >
-                {/* Checkbox for Admin */}
-                {isAdmin && (
-                  <div
-                    className="absolute top-3 left-3 z-10 flex gap-2"
-                    onClick={(e) => e.stopPropagation()}
+          {/* Projects Grid - Show skeleton while loading */}
+          {isLoadingProjects ? (
+            <SkeletonCardGrid count={6} />
+          ) : projects.length === 0 ? (
+            <div className="col-span-full text-center py-12">
+              <div className="text-gray-400 dark:text-gray-500 mb-4">
+                <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">No Projects Yet</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-500">
+                {isAdmin ? "Click 'Add Project' to create your first project" : "Check back soon for upcoming projects!"}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {projects.map((project) => (
+                <GlowingCard
+                  key={project.projectId}
+                  isDark={isDark}
+                  glowOnHover={true}
+                  className={`overflow-hidden cursor-pointer transition-all duration-250 hover:scale-[1.03] relative ${
+                    selectedProjectIds.includes(project.projectId) ? "ring-2 ring-blue-500 ring-offset-2" : ""
+                  }`}
+                >
+                  {/* Checkbox for Admin */}
+                  {isAdmin && (
+                    <div
+                      className="absolute top-3 left-3 z-10 flex gap-2"
+                      onClick={(e) => e.stopPropagation()}
                   >
                     <label className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-blue-500 transition-colors">
                       <input
@@ -2549,25 +2857,29 @@ export default function App() {
                         lineHeight: "1.4",
                       }}
                     >
-                      {project.title}
+                      <FormattedText text={project.title} />
                     </h3>
 
-                    <p
+                    <div
                       className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3"
                       style={{ lineHeight: "1.5" }}
                     >
-                      {project.description}
-                    </p>
+                      <FormattedText text={project.description} />
+                    </div>
                   </div>
                 </div>
               </GlowingCard>
             ))}
-          </div>
+            </div>
+          )}
         </div>
       </section>
 
       {/* Organizational Chart Section */}
       <section id="org-chart" className="max-w-6xl mx-auto px-4 md:px-6 mb-8 relative">
+        {isLoadingHomepage ? (
+          <SkeletonOrgChart />
+        ) : (
         <div className="ysp-card p-6 md:p-8">
           <h2
             className="mb-6 flex items-center gap-3"
@@ -2727,6 +3039,7 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
       </section>
 
       {/* Contact Section */}
@@ -2734,6 +3047,9 @@ export default function App() {
         id="contact"
         className="max-w-6xl mx-auto px-4 md:px-6 mb-8 pb-8 relative"
       >
+        {isLoadingHomepage ? (
+          <SkeletonContact />
+        ) : (
         <div className="ysp-card p-6 md:p-8">
           {isEditingHomepage ? (
             <>
@@ -3155,10 +3471,14 @@ export default function App() {
             </>
           )}
         </div>
+        )}
       </section>
 
       {/* Developer Info Section */}
       <section className="max-w-6xl mx-auto px-4 md:px-6 mb-8 pb-8 relative">
+        {isLoadingHomepage ? (
+          <SkeletonProfileCard />
+        ) : (
         <div
           className="ysp-card p-6 md:p-8 bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-800 dark:to-gray-700 border-2 border-blue-200 dark:border-blue-800"
           style={{
@@ -3283,6 +3603,7 @@ export default function App() {
             </div>
           </div>
         </div>
+        )}
       </section>
 
       {/* Footer */}
@@ -3372,10 +3693,10 @@ export default function App() {
                     lineHeight: "1.2",
                   }}
                 >
-                  {modalProject.title}
+                  <FormattedText text={modalProject.title} />
                 </h2>
 
-                <p
+                <div
                   className="text-gray-700 dark:text-gray-300 text-sm sm:text-base md:text-lg"
                   style={{
                     lineHeight: "1.75",
@@ -3383,8 +3704,8 @@ export default function App() {
                     textAlign: "justify",
                   }}
                 >
-                  {modalProject.description}
-                </p>
+                  <FormattedText text={modalProject.description} />
+                </div>
               </div>
             </div>
 
@@ -3529,6 +3850,11 @@ export default function App() {
                         <p className="text-sm font-semibold text-green-600 dark:text-green-400">✓ {projectImageFile.name}</p>
                         <p className="text-xs text-gray-500 dark:text-gray-400">Click to change</p>
                       </div>
+                    ) : newProject.imageUrl ? (
+                      <div className="space-y-2">
+                        <p className="text-sm font-semibold text-blue-600 dark:text-blue-400">✓ Current image loaded</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Click to change</p>
+                      </div>
                     ) : (
                       <div className="space-y-2">
                         <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Click to upload or drag and drop</p>
@@ -3536,10 +3862,11 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                  {projectImageFile && (
+                  {/* Show preview: new file takes priority, then existing URL */}
+                  {(projectImageFile || newProject.imageUrl) && (
                     <div className="mt-3 rounded-lg overflow-hidden border-2 border-gray-200 dark:border-gray-600 w-20 h-20">
                       <img
-                        src={URL.createObjectURL(projectImageFile)}
+                        src={projectImageFile ? URL.createObjectURL(projectImageFile) : newProject.imageUrl}
                         alt="Preview"
                         className="w-full h-full object-cover"
                       />
@@ -3555,7 +3882,19 @@ export default function App() {
                   <input
                     type="url"
                     value={newProject.link}
-                    onChange={(e) => setNewProject({ ...newProject, link: e.target.value })}
+                    onChange={(e) => {
+                      const url = e.target.value;
+                      const suggestedText = suggestLinkTextFromUrl(url);
+                      setNewProject({ 
+                        ...newProject, 
+                        link: url,
+                        // Only auto-fill if linkText is empty or was previously auto-suggested
+                        linkText: newProject.linkText === '' || 
+                                  newProject.linkText === suggestLinkTextFromUrl(newProject.link)
+                                  ? suggestedText 
+                                  : newProject.linkText
+                      });
+                    }}
                     placeholder="https://facebook.com/post-link"
                     className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:border-orange-500 focus:ring-2 focus:ring-orange-200 dark:focus:ring-orange-800 transition-all"
                   />
@@ -3690,7 +4029,7 @@ export default function App() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-gray-900 dark:text-white truncate">
-                          {project.title}
+                          <FormattedText text={project.title} />
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                           {project.description.substring(0, 60)}...

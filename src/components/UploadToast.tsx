@@ -123,7 +123,7 @@ export function UploadToastContainer({ messages, onDismiss, isDark }: UploadToas
       className={`fixed bottom-6 right-6 max-w-sm space-y-3 pointer-events-none ${
         isDark ? 'dark' : ''
       }`}
-      style={{ zIndex: 11000 }} // Force z-index higher than all modals (10001)
+      style={{ zIndex: 9999999 }} // Force z-index higher than all modals (999999)
     >
       {messages.map((msg) => (
         <div key={msg.id} className="pointer-events-auto">

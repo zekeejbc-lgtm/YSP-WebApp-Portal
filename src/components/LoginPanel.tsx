@@ -5,7 +5,7 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 interface LoginPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  onLogin: (username: string, password: string) => void;
+  onLogin: (username: string, password: string) => Promise<void>;
   isDark: boolean;
 }
 
@@ -63,11 +63,14 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
     
     setIsLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      onLogin(username, password);
+    try {
+      // Call the login handler (now async with real backend)
+      await onLogin(username, password);
+    } catch {
+      // Error handling is done in App.tsx
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleForgotPassword = () => {
@@ -429,176 +432,7 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
                 )}
               </button>
 
-              {/* Divider with Gradient */}
-              <div className="relative py-3">
-                <div className="absolute inset-0 flex items-center">
-                  <div 
-                    className="w-full h-px"
-                    style={{ 
-                      background: 'linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.15), transparent)'
-                    }}
-                  />
-                </div>
-                <div className="relative flex justify-center">
-                  <span 
-                    className="px-3 text-xs rounded-full bg-white text-gray-500"
-                    style={{
-                      fontWeight: '600',
-                      backdropFilter: 'blur(10px)'
-                    }}
-                  >
-                    Demo Credentials
-                  </span>
-                </div>
-              </div>
 
-              {/* Demo Info with Glassmorphism - Expanded with All Roles */}
-              <div 
-                className="p-4 rounded-xl space-y-2 relative overflow-hidden max-h-64 overflow-y-auto"
-                style={{
-                  background: 'linear-gradient(135deg, rgba(238, 135, 36, 0.08) 0%, rgba(246, 66, 31, 0.05) 100%)',
-                  border: '2px solid rgba(238, 135, 36, 0.2)',
-                  backdropFilter: 'blur(10px)',
-                  WebkitBackdropFilter: 'blur(10px)',
-                  boxShadow: 'inset 0 1px 2px rgba(255, 255, 255, 0.5), 0 4px 12px rgba(238, 135, 36, 0.1)'
-                }}
-              >
-                {/* Decorative Corner Accent */}
-                <div 
-                  className="absolute top-0 right-0 w-12 h-12 opacity-30"
-                  style={{
-                    background: 'linear-gradient(135deg, transparent 50%, rgba(251, 203, 41, 0.5) 50%)',
-                    borderRadius: '0 0 0 100%'
-                  }}
-                />
-                
-                <p className="text-xs text-center mb-2" style={{ color: '#ee8724', fontWeight: '700' }}>
-                  Demo Accounts (Password: demo123)
-                </p>
-                
-                <div className="grid grid-cols-1 gap-2 text-xs">
-                  {/* Admin Account */}
-                  <div 
-                    className="p-2 rounded-lg cursor-pointer transition-all hover:scale-[1.02]"
-                    style={{ 
-                      background: 'linear-gradient(135deg, rgba(220, 38, 38, 0.1), rgba(239, 68, 68, 0.05))',
-                      border: '1px solid rgba(220, 38, 38, 0.2)'
-                    }}
-                    onClick={() => {
-                      setUsername('admin');
-                      setPassword('demo123');
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span style={{ fontWeight: '600', color: '#dc2626' }}>👑 Admin</span>
-                      <span className="px-2 py-0.5 rounded text-[10px]" style={{ background: 'rgba(220, 38, 38, 0.15)', color: '#dc2626', fontWeight: '700' }}>admin</span>
-                    </div>
-                    <p className="text-[10px] text-gray-600 mt-0.5">Full system access</p>
-                  </div>
-
-                  {/* Head Account */}
-                  <div 
-                    className="p-2 rounded-lg cursor-pointer transition-all hover:scale-[1.02]"
-                    style={{ 
-                      background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.1), rgba(251, 146, 60, 0.05))',
-                      border: '1px solid rgba(249, 115, 22, 0.2)'
-                    }}
-                    onClick={() => {
-                      setUsername('head');
-                      setPassword('demo123');
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span style={{ fontWeight: '600', color: '#f97316' }}>⭐ Head</span>
-                      <span className="px-2 py-0.5 rounded text-[10px]" style={{ background: 'rgba(249, 115, 22, 0.15)', color: '#f97316', fontWeight: '700' }}>head</span>
-                    </div>
-                    <p className="text-[10px] text-gray-600 mt-0.5">Committee leader access</p>
-                  </div>
-
-                  {/* Officer Account */}
-                  <div 
-                    className="p-2 rounded-lg cursor-pointer transition-all hover:scale-[1.02]"
-                    style={{ 
-                      background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(96, 165, 250, 0.05))',
-                      border: '1px solid rgba(59, 130, 246, 0.2)'
-                    }}
-                    onClick={() => {
-                      setUsername('officer');
-                      setPassword('demo123');
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span style={{ fontWeight: '600', color: '#3b82f6' }}>🎖️ Officer</span>
-                      <span className="px-2 py-0.5 rounded text-[10px]" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', fontWeight: '700' }}>officer</span>
-                    </div>
-                    <p className="text-[10px] text-gray-600 mt-0.5">Standard officer access</p>
-                  </div>
-
-                  {/* Auditor Account */}
-                  <div 
-                    className="p-2 rounded-lg cursor-pointer transition-all hover:scale-[1.02]"
-                    style={{ 
-                      background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.1), rgba(192, 132, 252, 0.05))',
-                      border: '1px solid rgba(168, 85, 247, 0.2)'
-                    }}
-                    onClick={() => {
-                      setUsername('auditor');
-                      setPassword('demo123');
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span style={{ fontWeight: '600', color: '#a855f7' }}>🔍 Auditor</span>
-                      <span className="px-2 py-0.5 rounded text-[10px]" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#a855f7', fontWeight: '700' }}>auditor</span>
-                    </div>
-                    <p className="text-[10px] text-gray-600 mt-0.5">View & audit access</p>
-                  </div>
-
-                  {/* Member Account */}
-                  <div 
-                    className="p-2 rounded-lg cursor-pointer transition-all hover:scale-[1.02]"
-                    style={{ 
-                      background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(74, 222, 128, 0.05))',
-                      border: '1px solid rgba(34, 197, 94, 0.2)'
-                    }}
-                    onClick={() => {
-                      setUsername('member');
-                      setPassword('demo123');
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span style={{ fontWeight: '600', color: '#22c55e' }} className="flex items-center gap-1">
-                        <User className="w-3 h-3" />
-                        Member
-                      </span>
-                      <span className="px-2 py-0.5 rounded text-[10px]" style={{ background: 'rgba(34, 197, 94, 0.15)', color: '#22c55e', fontWeight: '700' }}>member</span>
-                    </div>
-                    <p className="text-[10px] text-gray-600 mt-0.5">Basic member access</p>
-                  </div>
-
-                  {/* Banned Account */}
-                  <div 
-                    className="p-2 rounded-lg cursor-pointer transition-all hover:scale-[1.02]"
-                    style={{ 
-                      background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.1), rgba(156, 163, 175, 0.05))',
-                      border: '1px solid rgba(107, 114, 128, 0.2)'
-                    }}
-                    onClick={() => {
-                      setUsername('banned');
-                      setPassword('demo123');
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span style={{ fontWeight: '600', color: '#6b7280' }}>🚫 Banned</span>
-                      <span className="px-2 py-0.5 rounded text-[10px]" style={{ background: 'rgba(107, 114, 128, 0.15)', color: '#6b7280', fontWeight: '700' }}>banned</span>
-                    </div>
-                    <p className="text-[10px] text-gray-600 mt-0.5">Restricted access (demo)</p>
-                  </div>
-                </div>
-
-                <p className="text-[10px] text-center text-gray-500 mt-2 italic">
-                  Click any account to auto-fill credentials
-                </p>
-              </div>
             </form>
           </div>
         </div>

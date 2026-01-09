@@ -753,6 +753,46 @@
   }
 
   /**
+  * Generate next project ID in format YSPPR_yyyy_xxxx
+  * yyyy = current year
+  * xxxx = next sequential number (always follows highest existing number)
+  */
+  function generateNextProjectId() {
+    const sheet = getProjectsSheet();
+    const lastRow = sheet.getLastRow();
+    const currentYear = new Date().getFullYear();
+    
+    let highestNumber = 0;
+    
+    if (lastRow >= 2) {
+      // Get all existing project IDs
+      const range = sheet.getRange(2, 1, lastRow - 1, 1);
+      const values = range.getValues();
+      
+      for (let i = 0; i < values.length; i++) {
+        const projectId = values[i][0];
+        if (projectId && typeof projectId === 'string') {
+          // Match pattern YSPPR_yyyy_xxxx
+          const match = projectId.match(/^YSPPR_\d{4}_(\d{4})$/);
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > highestNumber) {
+              highestNumber = num;
+            }
+          }
+        }
+      }
+    }
+    
+    // Next number is highest + 1
+    const nextNumber = highestNumber + 1;
+    
+    // Format: YSPPR_yyyy_xxxx (xxxx padded to 4 digits)
+    const paddedNumber = String(nextNumber).padStart(4, '0');
+    return `YSPPR_${currentYear}_${paddedNumber}`;
+  }
+
+  /**
   * Add new project to spreadsheet
   */
   function addProject(data) {
@@ -761,8 +801,8 @@
       const lastRow = sheet.getLastRow();
       const newRow = lastRow + 1;
       
-      // Generate Project ID if not provided
-      const projectId = data.projectId || 'PRJ-' + Utilities.getUuid().substring(0, 8);
+      // Generate Project ID in format YSPPR_yyyy_xxxx
+      const projectId = data.projectId || generateNextProjectId();
       
       // Ensure imageUrl is a CORS-free public link
       let imageUrl = data.imageUrl || '';
