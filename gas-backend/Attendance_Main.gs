@@ -31,11 +31,11 @@ function getAttendanceSpreadsheetId() {
 }
 
 /**
- * Get the User Profiles Spreadsheet ID (for member lookup)
- * Uses the same spreadsheet as Loginpage_Main.gs
+ * Get the Login Spreadsheet ID (for member lookup)
+ * Uses the same spreadsheet as Loginpage_Main.gs and Directory_Main.gs
+ * This contains the User Profiles sheet with all member data
  */
-function getUserProfilesSpreadsheetId() {
-  // Same spreadsheet ID as LOGIN_SPREADSHEET_ID in Loginpage_Main.gs
+function getLoginSpreadsheetId() {
   return '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
 }
 
@@ -667,10 +667,12 @@ function toRad(deg) {
 
 /**
  * Get members for attendance dropdown
+ * Uses the same User Profiles sheet as Directory_Main.gs
+ * Filters for active members only
  */
 function getMembersForAttendance(search, limit) {
   try {
-    const ss = SpreadsheetApp.openById(getUserProfilesSpreadsheetId());
+    const ss = SpreadsheetApp.openById(getLoginSpreadsheetId());
     const sheet = ss.getSheetByName('User Profiles');
     
     if (!sheet || sheet.getLastRow() < 2) {
@@ -679,34 +681,63 @@ function getMembersForAttendance(search, limit) {
     
     const data = sheet.getDataRange().getValues();
     const headers = data[0];
+    
+    // Build column index (same as Directory_Main.gs)
+    const idx = {};
+    headers.forEach((header, i) => {
+      switch(header) {
+        case 'Full name': idx.fullName = i; break;
+        case 'ID Code': idx.idCode = i; break;
+        case 'Committee': idx.committee = i; break;
+        case 'Position': idx.position = i; break;
+        case 'Status': idx.status = i; break;
+        case 'Role': idx.role = i; break;
+        case 'ProfilePictureURL': idx.profilePic = i; break;
+      }
+    });
+    
     const members = [];
     const maxResults = parseInt(limit) || 50;
     const searchLower = (search || '').toLowerCase();
     
     for (let i = 1; i < data.length && members.length < maxResults; i++) {
-      const fullName = data[i][headers.indexOf('Full name')] || '';
-      const idCode = data[i][headers.indexOf('ID Code')] || '';
-      const committee = data[i][headers.indexOf('Committee')] || '';
-      const position = data[i][headers.indexOf('Position')] || '';
-      const status = data[i][headers.indexOf('Status')] || '';
+      const row = data[i];
       
-      // Only include active members
-      if (status.toLowerCase() !== 'active') continue;
+      // Skip if no name or ID code
+      if (!row[idx.fullName] && !row[idx.idCode]) continue;
+      
+      // Only include active members (skip banned/suspended)
+      const status = (row[idx.status] || '').toString().toLowerCase();
+      const role = (row[idx.role] || '').toString().toLowerCase();
+      
+      if (status === 'banned' || status === 'suspended' || role === 'banned' || role === 'suspended') {
+        continue;
+      }
+      
+      // If status is explicitly inactive, skip
+      if (status === 'inactive' || status === 'archived') {
+        continue;
+      }
+      
+      const fullName = (row[idx.fullName] || '').toString().toLowerCase();
+      const idCode = (row[idx.idCode] || '').toString().toLowerCase();
+      const committee = (row[idx.committee] || '').toString().toLowerCase();
       
       // Apply search filter
       if (searchLower && 
-          !fullName.toLowerCase().includes(searchLower) &&
-          !idCode.toLowerCase().includes(searchLower) &&
-          !committee.toLowerCase().includes(searchLower)) {
+          !fullName.includes(searchLower) &&
+          !idCode.includes(searchLower) &&
+          !committee.includes(searchLower)) {
         continue;
       }
       
       members.push({
-        id: idCode,
-        name: fullName,
-        committee: committee,
-        position: position,
-        profilePicture: data[i][headers.indexOf('Profile Picture')] || ''
+        id: (row[idx.idCode] || '').toString(),
+        name: (row[idx.fullName] || '').toString(),
+        committee: (row[idx.committee] || '').toString(),
+        position: (row[idx.position] || '').toString(),
+        profilePicture: (row[idx.profilePic] || '').toString(),
+        status: status
       });
     }
     
@@ -716,6 +747,7 @@ function getMembersForAttendance(search, limit) {
       total: members.length
     };
   } catch (error) {
+    Logger.log('getMembersForAttendance Error: ' + error.toString());
     return { success: false, error: error.toString() };
   }
 }
