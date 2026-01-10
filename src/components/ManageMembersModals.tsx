@@ -9,9 +9,10 @@
  */
 
 import { useState } from "react";
-import { X, Save, Edit } from "lucide-react";
+import { X, Save, Edit, Loader2 } from "lucide-react";
 import { DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
+import { type UploadToastMessage } from "./UploadToast";
 
 interface Member {
   id?: string;
@@ -111,13 +112,23 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
               <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                 Position *
               </label>
-              <input
-                type="text"
-                required
+              <CustomDropdown
                 value={formData.position}
-                onChange={(e) => setFormData({ ...formData, position: e.target.value })}
-                className="w-full px-4 py-2 rounded-lg border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none"
-                style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
+                onChange={(value) => setFormData({ ...formData, position: value })}
+                options={[
+                  { value: "Tagum Chapter President", label: "Tagum Chapter President" },
+                  { value: "Membership and Internal Affairs Officer", label: "Membership and Internal Affairs Officer" },
+                  { value: "External Relations Officer", label: "External Relations Officer" },
+                  { value: "Secretariat and Documentation Officer", label: "Secretariat and Documentation Officer" },
+                  { value: "Finance and Treasury Officer", label: "Finance and Treasury Officer" },
+                  { value: "Program Development Officer", label: "Program Development Officer" },
+                  { value: "Communications and Marketing Officer", label: "Communications and Marketing Officer" },
+                  { value: "Committee Member", label: "Committee Member" },
+                  { value: "Member", label: "Member" },
+                  { value: "Volunteer", label: "Volunteer" },
+                ]}
+                isDark={isDark}
+                size="md"
               />
             </div>
 
@@ -129,10 +140,13 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
                 value={formData.role}
                 onChange={(value) => setFormData({ ...formData, role: value })}
                 options={[
+                  { value: "Auditor", label: "Auditor" },
                   { value: "Admin", label: "Admin" },
-                  { value: "Officer", label: "Officer" },
+                  { value: "Head", label: "Head" },
                   { value: "Member", label: "Member" },
-                  { value: "Volunteer", label: "Volunteer" },
+                  { value: "Guest", label: "Guest" },
+                  { value: "Suspended", label: "Suspended" },
+                  { value: "Banned", label: "Banned" },
                 ]}
                 isDark={isDark}
                 size="md"
@@ -148,9 +162,13 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
                 onChange={(value) => setFormData({ ...formData, committee: value })}
                 options={[
                   { value: "Executive Board", label: "Executive Board" },
-                  { value: "Community Development", label: "Community Development" },
-                  { value: "Environmental Conservation", label: "Environmental Conservation" },
-                  { value: "Youth Development", label: "Youth Development" },
+                  { value: "Membership and Internal Affairs Committee", label: "Membership and Internal Affairs Committee" },
+                  { value: "External Relations Committee", label: "External Relations Committee" },
+                  { value: "Secretariat and Documentation Committee", label: "Secretariat and Documentation Committee" },
+                  { value: "Finance and Treasury Committee", label: "Finance and Treasury Committee" },
+                  { value: "Program Development Committee", label: "Program Development Committee" },
+                  { value: "Communications and Marketing Committee", label: "Communications and Marketing Committee" },
+                  { value: "None", label: "None" },
                 ]}
                 isDark={isDark}
                 size="md"
@@ -227,20 +245,73 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
   );
 }
 
+// Default no-op toast functions
+const defaultAddToast = (_message: UploadToastMessage) => {};
+const defaultUpdateToast = (_id: string, _updates: Partial<UploadToastMessage>) => {};
+
 // EDIT MEMBER MODAL
 interface EditMemberModalProps {
   isDark: boolean;
   member: Member;
   onClose: () => void;
   onSave: (member: Member) => void;
+  addUploadToast?: (message: UploadToastMessage) => void;
+  updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
 }
 
-export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberModalProps) {
+export function EditMemberModal({ 
+  isDark, 
+  member, 
+  onClose, 
+  onSave,
+  addUploadToast = defaultAddToast,
+  updateUploadToast = defaultUpdateToast,
+}: EditMemberModalProps) {
   const [formData, setFormData] = useState<Member>(member);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    
+    const toastId = `update-member-${Date.now()}`;
+    setIsSaving(true);
+    
+    // Start the progress toast
+    addUploadToast({
+      id: toastId,
+      title: 'Updating Member',
+      message: 'Preparing changes...',
+      status: 'loading',
+      progress: 0,
+    });
+    
+    try {
+      updateUploadToast(toastId, { progress: 30, message: 'Syncing to backend...' });
+      
+      // Simulate a small delay for backend sync (in real implementation, this would be the actual API call)
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      updateUploadToast(toastId, { progress: 70, message: 'Saving to database...' });
+      
+      // Call the parent's onSave (which handles the actual backend call)
+      onSave(formData);
+      
+      updateUploadToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Update Complete!',
+        message: `${formData.name}'s profile updated successfully`,
+      });
+    } catch (error) {
+      updateUploadToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Update Failed',
+        message: error instanceof Error ? error.message : 'Failed to update member',
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -249,7 +320,7 @@ export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberM
       onClick={onClose}
     >
       <div
-        className="rounded-xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto border"
+        className="rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col border"
         style={{
           background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
           backdropFilter: 'blur(20px)',
@@ -257,7 +328,13 @@ export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberM
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-6">
+        {/* Sticky Header */}
+        <div
+          className="flex items-center justify-between p-6 border-b flex-shrink-0"
+          style={{
+            borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+          }}
+        >
           <h3
             style={{
               fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
@@ -270,15 +347,25 @@ export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberM
           </h3>
           <button
             onClick={onClose}
+            disabled={isSaving}
             className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
           >
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
+        {/* Scrollable Content - with contained overflow for dropdowns */}
+        <form 
+          id="edit-member-form" 
+          onSubmit={handleSubmit} 
+          className="p-6 overflow-y-auto overflow-x-hidden flex-1"
+          style={{
+            // Ensure dropdowns stay within this boundary
+            contain: 'paint',
+          }}
+        >
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="relative">
               <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                 Full Name *
               </label>
@@ -289,33 +376,26 @@ export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberM
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="w-full px-4 py-2 rounded-lg border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none"
                 style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
+                disabled={isSaving}
               />
             </div>
 
-            <div>
+            <div className="relative">
               <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                 Position *
               </label>
-              <input
-                type="text"
-                required
-                value={formData.position}
-                onChange={(e) => setFormData({ ...formData, position: e.target.value })}
-                className="w-full px-4 py-2 rounded-lg border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none"
-                style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
-                Role *
-              </label>
               <CustomDropdown
-                value={formData.role}
-                onChange={(value) => setFormData({ ...formData, role: value })}
+                value={formData.position}
+                onChange={(value) => setFormData({ ...formData, position: value })}
                 options={[
-                  { value: "Admin", label: "Admin" },
-                  { value: "Officer", label: "Officer" },
+                  { value: "Tagum Chapter President", label: "Tagum Chapter President" },
+                  { value: "Membership and Internal Affairs Officer", label: "Membership and Internal Affairs Officer" },
+                  { value: "External Relations Officer", label: "External Relations Officer" },
+                  { value: "Secretariat and Documentation Officer", label: "Secretariat and Documentation Officer" },
+                  { value: "Finance and Treasury Officer", label: "Finance and Treasury Officer" },
+                  { value: "Program Development Officer", label: "Program Development Officer" },
+                  { value: "Communications and Marketing Officer", label: "Communications and Marketing Officer" },
+                  { value: "Committee Member", label: "Committee Member" },
                   { value: "Member", label: "Member" },
                   { value: "Volunteer", label: "Volunteer" },
                 ]}
@@ -324,7 +404,28 @@ export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberM
               />
             </div>
 
-            <div>
+            <div className="relative">
+              <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
+                Role *
+              </label>
+              <CustomDropdown
+                value={formData.role}
+                onChange={(value) => setFormData({ ...formData, role: value })}
+                options={[
+                  { value: "Auditor", label: "Auditor" },
+                  { value: "Admin", label: "Admin" },
+                  { value: "Head", label: "Head" },
+                  { value: "Member", label: "Member" },
+                  { value: "Guest", label: "Guest" },
+                  { value: "Suspended", label: "Suspended" },
+                  { value: "Banned", label: "Banned" },
+                ]}
+                isDark={isDark}
+                size="md"
+              />
+            </div>
+
+            <div className="relative">
               <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                 Committee *
               </label>
@@ -333,16 +434,20 @@ export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberM
                 onChange={(value) => setFormData({ ...formData, committee: value })}
                 options={[
                   { value: "Executive Board", label: "Executive Board" },
-                  { value: "Community Development", label: "Community Development" },
-                  { value: "Environmental Conservation", label: "Environmental Conservation" },
-                  { value: "Youth Development", label: "Youth Development" },
+                  { value: "Membership and Internal Affairs Committee", label: "Membership and Internal Affairs Committee" },
+                  { value: "External Relations Committee", label: "External Relations Committee" },
+                  { value: "Secretariat and Documentation Committee", label: "Secretariat and Documentation Committee" },
+                  { value: "Finance and Treasury Committee", label: "Finance and Treasury Committee" },
+                  { value: "Program Development Committee", label: "Program Development Committee" },
+                  { value: "Communications and Marketing Committee", label: "Communications and Marketing Committee" },
+                  { value: "None", label: "None" },
                 ]}
                 isDark={isDark}
                 size="md"
               />
             </div>
 
-            <div>
+            <div className="relative">
               <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                 Status *
               </label>
@@ -356,29 +461,52 @@ export function EditMemberModal({ isDark, member, onClose, onSave }: EditMemberM
                 ]}
                 isDark={isDark}
                 size="md"
+                forceDirection="up"
               />
             </div>
           </div>
+          {/* Spacer to ensure dropdowns have room */}
+          <div className="h-4" />
+        </form>
 
-          <div className="flex justify-end gap-3 pt-4 border-t" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
+        {/* Sticky Footer with Action Buttons */}
+        <div
+          className="p-6 border-t flex-shrink-0"
+          style={{
+            borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+          }}
+        >
+          <div className="flex justify-end gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-6 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-all"
+              disabled={isSaving}
+              className="px-6 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-all disabled:opacity-50"
               style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-6 py-2 rounded-lg bg-gradient-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2"
+              form="edit-member-form"
+              disabled={isSaving}
+              className="px-6 py-2 rounded-lg bg-gradient-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50"
               style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
             >
-              <Save className="w-4 h-4" />
-              Save Changes
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </>
+              )}
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

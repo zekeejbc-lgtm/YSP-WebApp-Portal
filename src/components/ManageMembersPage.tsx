@@ -25,6 +25,7 @@ import AccountCreationModal from "./AccountCreationModal";
 import RejectionModal from "./RejectionModal";
 import EmailComposerModal from "./EmailComposerModal";
 import CustomDropdown from "./CustomDropdown";
+import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import {
   getAllOfficers,
   searchOfficers,
@@ -307,6 +308,24 @@ export default function ManageMembersPage({
   
   // Debounce timer ref for search
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Upload Toast state for backend sync progress
+  const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
+
+  // Toast management functions
+  const addUploadToast = useCallback((message: UploadToastMessage) => {
+    setUploadToastMessages(prev => [...prev, message]);
+  }, []);
+
+  const updateUploadToast = useCallback((id: string, updates: Partial<UploadToastMessage>) => {
+    setUploadToastMessages(prev =>
+      prev.map(msg => (msg.id === id ? { ...msg, ...updates } : msg))
+    );
+  }, []);
+
+  const removeUploadToast = useCallback((id: string) => {
+    setUploadToastMessages(prev => prev.filter(msg => msg.id !== id));
+  }, []);
 
   // =================== FETCH MEMBERS FROM BACKEND ===================
   
@@ -1044,8 +1063,9 @@ export default function ManageMembersPage({
             setMembers(members.map(m => m.id === updatedMember.id ? updatedMember : m));
             setShowEditMemberModal(false);
             setSelectedMember(null);
-            toast.success("Member updated successfully!");
           }}
+          addUploadToast={addUploadToast}
+          updateUploadToast={updateUploadToast}
         />
       )}
 
@@ -1064,6 +1084,13 @@ export default function ManageMembersPage({
           }}
         />
       )}
+
+      {/* Upload Toast Container - Progress bars at bottom-right */}
+      <UploadToastContainer
+        messages={uploadToastMessages}
+        onDismiss={removeUploadToast}
+        isDark={isDark}
+      />
     </PageLayout>
   );
 }

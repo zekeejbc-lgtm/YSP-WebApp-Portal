@@ -34,6 +34,7 @@ interface CustomDropdownProps {
   disabled?: boolean;
   size?: "sm" | "md" | "lg";
   variant?: "default" | "filled" | "outlined";
+  forceDirection?: "up" | "down"; // Force dropdown to always open in a specific direction
 }
 
 export default function CustomDropdown({
@@ -46,21 +47,72 @@ export default function CustomDropdown({
   disabled = false,
   size = "md",
   variant = "default",
+  forceDirection,
 }: CustomDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [maxHeight, setMaxHeight] = useState(320);
+  const [maxHeight, setMaxHeight] = useState(200);
+  const [openDirection, setOpenDirection] = useState<'down' | 'up'>('down');
 
-  // Calculate available space and adjust dropdown maxHeight
-  useEffect(() => {
-    if (isOpen && dropdownRef.current) {
-      const rect = dropdownRef.current.getBoundingClientRect();
-      const viewportHeight = window.innerHeight;
-      const spaceBelow = viewportHeight - rect.bottom - 20; // 20px padding from bottom
-      const calculatedMaxHeight = Math.min(320, Math.max(200, spaceBelow - 60)); // Min 200px, max 320px
-      setMaxHeight(calculatedMaxHeight);
+  // Function to calculate position and open dropdown
+  const calculateAndOpen = () => {
+    if (!dropdownRef.current) return;
+    
+    // If forceDirection is set, use it directly
+    if (forceDirection) {
+      setOpenDirection(forceDirection);
+      setMaxHeight(180);
+      setIsOpen(true);
+      return;
     }
-  }, [isOpen]);
+    
+    const rect = dropdownRef.current.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    
+    // Find the closest modal or scrollable parent
+    let modalParent: Element | null = dropdownRef.current.parentElement;
+    while (modalParent) {
+      const style = window.getComputedStyle(modalParent);
+      // Look for modal containers (fixed position with high z-index, or flex column with max-height)
+      const isModal = style.position === 'fixed' || 
+                      (style.maxHeight && style.maxHeight !== 'none' && style.display === 'flex');
+      const isScrollable = style.overflow === 'auto' || style.overflowY === 'auto' || 
+                          style.overflow === 'scroll' || style.overflowY === 'scroll';
+      if (isModal || isScrollable) {
+        break;
+      }
+      modalParent = modalParent.parentElement;
+    }
+    
+    let spaceBelow: number;
+    let spaceAbove: number;
+    
+    if (modalParent) {
+      // Use the modal/scrollable parent as boundary
+      const parentRect = modalParent.getBoundingClientRect();
+      spaceBelow = parentRect.bottom - rect.bottom - 20;
+      spaceAbove = rect.top - parentRect.top - 20;
+    } else {
+      // Use viewport as boundary
+      spaceBelow = viewportHeight - rect.bottom - 20;
+      spaceAbove = rect.top - 20;
+    }
+    
+    // Decide direction: prefer down, but switch to up if significantly more space above
+    const minDropdownHeight = 100;
+    
+    if (spaceBelow < minDropdownHeight && spaceAbove > spaceBelow) {
+      // Open upward - not enough space below
+      setOpenDirection('up');
+      setMaxHeight(Math.min(200, Math.max(80, spaceAbove)));
+    } else {
+      // Open downward (default)
+      setOpenDirection('down');
+      setMaxHeight(Math.min(200, Math.max(80, spaceBelow)));
+    }
+    
+    setIsOpen(true);
+  };
 
   // Convert options to consistent format
   const normalizedOptions: CustomDropdownOption[] = options.map((opt) =>
@@ -175,7 +227,14 @@ export default function CustomDropdown({
       {/* Trigger Button */}
       <button
         type="button"
-        onClick={() => !disabled && setIsOpen(!isOpen)}
+        onClick={() => {
+          if (disabled) return;
+          if (isOpen) {
+            setIsOpen(false);
+          } else {
+            calculateAndOpen();
+          }
+        }}
         disabled={disabled}
         className="w-full flex items-center justify-between rounded-lg transition-all outline-none focus:ring-2 focus:ring-[#f6421f]/20"
         style={{
@@ -194,7 +253,7 @@ export default function CustomDropdown({
         </span>
         <ChevronDown
           className={`transition-transform duration-200 ${
-            isOpen ? "rotate-180" : ""
+            isOpen ? (openDirection === 'up' ? '' : 'rotate-180') : ''
           }`}
           style={{
             width: size === "sm" ? "16px" : size === "lg" ? "20px" : "18px",
@@ -207,7 +266,11 @@ export default function CustomDropdown({
       {/* Dropdown Menu */}
       {isOpen && (
         <div
-          className="absolute w-full mt-2 rounded-lg overflow-hidden shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200"
+          className={`absolute w-full rounded-lg overflow-hidden shadow-2xl animate-in fade-in duration-200 ${
+            openDirection === 'up' 
+              ? 'bottom-full mb-2 slide-in-from-bottom-2' 
+              : 'top-full mt-2 slide-in-from-top-2'
+          }`}
           style={{
             background: isDark
               ? "rgba(17, 24, 39, 0.98)"
@@ -216,7 +279,7 @@ export default function CustomDropdown({
             border: `2px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
             maxHeight: `${maxHeight}px`,
             overflowY: "auto",
-            zIndex: 9999,
+            zIndex: 50,
           }}
         >
           {/* Options List */}

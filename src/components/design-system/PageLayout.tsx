@@ -54,11 +54,11 @@ export default function PageLayout({
         <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-red-200/40 dark:bg-red-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob animation-delay-4000" />
       </div>
 
-      {/* Floating Header - Fixed at Top */}
+      {/* Floating Header - Fixed at Top (same level as homepage TopBar) */}
       <div 
         className="fixed left-0 right-0 z-40 transition-all duration-300"
         style={{
-          top: `${DESIGN_TOKENS.layout.topBar.height + 16}px`, // Just below the top bar
+          top: '1rem', // Same level as homepage TopBar (16px from top)
         }}
       >
         <div
@@ -182,9 +182,9 @@ export default function PageLayout({
 
       {/* Main Content Area - With proper padding to account for fixed header */}
       <div
-        className="relative z-10"
+        className="relative"
         style={{
-          paddingTop: `${DESIGN_TOKENS.layout.topBar.height + 140}px`, // Padding for floating header
+          paddingTop: `${DESIGN_TOKENS.layout.topBar.height + 60}px`, // Adjusted for higher header position
           minHeight: "100vh",
         }}
       >

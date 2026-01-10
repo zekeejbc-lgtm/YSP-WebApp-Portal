@@ -473,7 +473,9 @@ export default function App() {
     useState<Project | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [userRole, setUserRole] = useState<string>("guest"); // guest, member, admin
-  const [userName, setUserName] = useState<string>("Juan Dela Cruz");
+  const [userName, setUserName] = useState<string>("");
+  const [userIdCode, setUserIdCode] = useState<string>("");
+  const [userPosition, setUserPosition] = useState<string>("");
   const [userProfilePicture, setUserProfilePicture] = useState<string>("");
   const [logoError, setLogoError] = useState(false);
   const [showDonationPage, setShowDonationPage] =
@@ -577,6 +579,21 @@ export default function App() {
       },
     };
   });
+
+  // Restore session on mount
+  useEffect(() => {
+    const storedUser = getStoredUser();
+    if (storedUser && hasActiveSession()) {
+      // Restore user data from stored session
+      setIsAdmin(true);
+      setUserRole(storedUser.role);
+      setUserName(storedUser.name);
+      setUserIdCode(storedUser.id || '');
+      setUserPosition(storedUser.position || '');
+      setUserProfilePicture(storedUser.profilePic || '');
+      console.log('[App] Session restored for user:', storedUser.name);
+    }
+  }, []);
 
   // Fetch homepage content from GAS backend on mount
   useEffect(() => {
@@ -1436,6 +1453,8 @@ export default function App() {
           setIsAdmin(true); // Allow login but limited
           setUserRole('suspended');
           setUserName(user.name);
+          setUserIdCode(user.id || '');
+          setUserPosition(user.position || '');
           setUserProfilePicture(user.profilePic || '');
           setShowLoginPanel(false);
           toast.warning('Account Suspended', {
@@ -1448,6 +1467,8 @@ export default function App() {
         setIsAdmin(true);
         setUserRole(user.role);
         setUserName(user.name);
+        setUserIdCode(user.id || '');
+        setUserPosition(user.position || '');
         setUserProfilePicture(user.profilePic || '');
         setShowLoginPanel(false);
 
@@ -1514,6 +1535,10 @@ export default function App() {
     
     setIsAdmin(false);
     setUserRole("guest");
+    setUserName("");
+    setUserIdCode("");
+    setUserPosition("");
+    setUserProfilePicture("");
     setActivePage("home");
     toast.success('Successfully logged out');
   };
