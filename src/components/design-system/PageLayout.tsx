@@ -56,9 +56,10 @@ export default function PageLayout({
 
       {/* Floating Header - Fixed at Top (same level as homepage TopBar) */}
       <div 
-        className="fixed left-0 right-0 z-40 transition-all duration-300"
+        className="fixed left-0 right-0 transition-all duration-300"
         style={{
           top: '1rem', // Same level as homepage TopBar (16px from top)
+          zIndex: 200, // Higher than filters (z-100) to stay on top when scrolling
         }}
       >
         <div
@@ -184,7 +185,7 @@ export default function PageLayout({
       <div
         className="relative"
         style={{
-          paddingTop: `${DESIGN_TOKENS.layout.topBar.height + 60}px`, // Adjusted for higher header position
+          paddingTop: `${DESIGN_TOKENS.layout.topBar.height + 60}px`, // Padding for fixed header
           minHeight: "100vh",
         }}
       >

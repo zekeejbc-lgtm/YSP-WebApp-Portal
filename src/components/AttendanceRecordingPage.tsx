@@ -20,7 +20,7 @@ import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import CustomDropdown from "./CustomDropdown";
-import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle } from "lucide-react";
+import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle, Search, User } from "lucide-react";
 import {
   fetchEvents,
   clearEventsCache,
@@ -882,6 +882,9 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
   // Manual attendance state
   const [selectedMember, setSelectedMember] = useState("");
+  const [memberSearchInput, setMemberSearchInput] = useState("");
+  const [showMemberDropdown, setShowMemberDropdown] = useState(false);
+  const memberSearchRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"Present" | "Late" | "Excused" | "Absent">("Present");
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
@@ -1173,7 +1176,6 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   // Members state (loaded from backend)
   const [members, setMembers] = useState<MemberForAttendance[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
-  const [membersSearchQuery, setMembersSearchQuery] = useState("");
   const [isRecordingAttendance, setIsRecordingAttendance] = useState(false);
 
   // Load members from backend
@@ -1199,17 +1201,17 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     }
   }, [currentStep, selectedMode, loadMembers]);
 
-  // Debounced member search
+  // Debounced member search from backend
   useEffect(() => {
     const timeoutId = setTimeout(() => {
-      if (membersSearchQuery) {
-        loadMembers(membersSearchQuery);
-      } else if (currentStep === "recording" && selectedMode === "manual") {
+      if (memberSearchInput && memberSearchInput.length >= 2) {
+        loadMembers(memberSearchInput);
+      } else if (currentStep === "recording" && selectedMode === "manual" && !memberSearchInput) {
         loadMembers();
       }
     }, 300);
     return () => clearTimeout(timeoutId);
-  }, [membersSearchQuery, currentStep, selectedMode, loadMembers]);
+  }, [memberSearchInput, currentStep, selectedMode, loadMembers]);
 
   // Navigation handlers
   const handleEventSelect = (event: Event) => {
@@ -1247,6 +1249,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       setCurrentStep("mode-selection");
       setIsScanning(false);
       setSelectedMember("");
+      setMemberSearchInput("");
+      setShowMemberDropdown(false);
       setStatus("Present");
     } else if (currentStep === "mode-selection") {
       setCurrentStep("event-selection");
@@ -1261,6 +1265,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setSelectedMode(null);
     setIsScanning(false);
     setSelectedMember("");
+    setMemberSearchInput("");
+    setShowMemberDropdown(false);
     setStatus("Present");
   };
 
@@ -1269,6 +1275,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setSelectedMode(null);
     setIsScanning(false);
     setSelectedMember("");
+    setMemberSearchInput("");
+    setShowMemberDropdown(false);
     setStatus("Present");
   };
 
@@ -1277,6 +1285,128 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     const user = getStoredUser();
     return user?.name || user?.username || 'System';
   };
+
+  // Format time from various formats (handles Google Sheets date serialization)
+  const formatTimeDisplay = (timeValue: string | undefined): string => {
+    if (!timeValue) return 'N/A';
+    
+    // If it's already a formatted time like "10:30 AM" or "10:30 pm", return as-is
+    if (/^\d{1,2}:\d{2}\s?(AM|PM|am|pm)$/i.test(timeValue.trim())) {
+      return timeValue.trim();
+    }
+    
+    // If it's an ISO date string or Google Sheets serialized date
+    try {
+      const date = new Date(timeValue);
+      if (!isNaN(date.getTime())) {
+        // Check if it's a valid date (not 1899 which is Google Sheets epoch)
+        if (date.getFullYear() < 1900) {
+          // Google Sheets stores time-only values as 1899-12-30 dates
+          // The time is stored in Manila timezone but returned as UTC
+          // So we need to convert UTC to Manila time (+8 hours)
+          const utcHours = date.getUTCHours();
+          const utcMinutes = date.getUTCMinutes();
+          
+          // Add 8 hours for Manila timezone (UTC+8)
+          let manilaHours = utcHours + 8;
+          if (manilaHours >= 24) manilaHours -= 24;
+          
+          const ampm = manilaHours >= 12 ? 'PM' : 'AM';
+          const displayHours = manilaHours % 12 || 12;
+          return `${displayHours}:${utcMinutes.toString().padStart(2, '0')} ${ampm}`;
+        }
+        // For regular dates, use locale formatting
+        return date.toLocaleTimeString('en-PH', {
+          timeZone: 'Asia/Manila',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        });
+      }
+    } catch (e) {
+      // Fall through to return original value
+    }
+    
+    return timeValue;
+  };
+
+  // Generate initials from a name
+  const getInitials = (name: string): string => {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) {
+      return parts[0].charAt(0).toUpperCase();
+    }
+    // Get first letter of first name and first letter of last name
+    return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+  };
+
+  // Render avatar with image or initials fallback
+  const renderAvatar = (profilePicture: string | undefined, name: string, size: 'sm' | 'md' | 'lg' = 'md') => {
+    const sizeClasses = {
+      sm: 'w-10 h-10 text-sm',
+      md: 'w-16 h-16 md:w-20 md:h-20 text-xl md:text-2xl',
+      lg: 'w-20 h-20 md:w-24 md:h-24 text-2xl md:text-3xl',
+    };
+    
+    if (profilePicture) {
+      return (
+        <img 
+          src={profilePicture}
+          alt={name}
+          className={`${sizeClasses[size].split(' ').slice(0, 2).join(' ')} rounded-full object-cover border-4 shadow-lg`}
+          style={{
+            borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
+          }}
+          onError={(e) => {
+            // If image fails to load, replace with initials
+            const target = e.target as HTMLImageElement;
+            target.style.display = 'none';
+            target.nextElementSibling?.classList.remove('hidden');
+          }}
+        />
+      );
+    }
+    
+    // Initials fallback
+    return (
+      <div 
+        className={`${sizeClasses[size]} rounded-full flex items-center justify-center font-bold text-white border-4 shadow-lg`}
+        style={{
+          background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)',
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
+        }}
+      >
+        {getInitials(name)}
+      </div>
+    );
+  };
+
+  // Close member dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (memberSearchRef.current && !memberSearchRef.current.contains(event.target as Node)) {
+        setShowMemberDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Handle member selection
+  const handleMemberSelect = (member: MemberForAttendance) => {
+    setSelectedMember(member.id);
+    setMemberSearchInput(member.name);
+    setShowMemberDropdown(false);
+  };
+
+  // Filter members based on search input
+  const filteredMembers = members.filter(member => 
+    member.name.toLowerCase().includes(memberSearchInput.toLowerCase()) ||
+    member.committee.toLowerCase().includes(memberSearchInput.toLowerCase()) ||
+    member.id.toLowerCase().includes(memberSearchInput.toLowerCase())
+  );
 
   // Process QR code scan result
   const processQRScan = async (scannedData: string) => {
@@ -1571,14 +1701,15 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       const existingCheck = await checkExistingAttendance(selectedEvent.id, member.id);
       
       if (existingCheck.exists && existingCheck.record) {
-        // Show overwrite modal
+        // Show overwrite modal - format the timestamp properly
+        const rawTime = existingCheck.record.timeIn || existingCheck.record.timeOut;
         setPreviousRecord({
           memberData: member,
           member: member.name,
           event: selectedEvent.name,
           timeType: existingCheck.record.timeIn ? "Time In" : "Time Out",
           status: existingCheck.record.status,
-          timestamp: existingCheck.record.timeIn || existingCheck.record.timeOut,
+          timestamp: formatTimeDisplay(rawTime),
           date: fullDate,
         });
         setPendingRecord({
@@ -1687,6 +1818,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       
       // Reset form
       setSelectedMember("");
+      setMemberSearchInput("");
+      setShowMemberDropdown(false);
       setStatus("Present");
     } catch (error) {
       if (error instanceof AttendanceAPIError) {
@@ -1740,6 +1873,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       // Reset form for manual mode
       if (selectedMode === "manual") {
         setSelectedMember("");
+        setMemberSearchInput("");
+        setShowMemberDropdown(false);
         setStatus("Present");
       }
     } catch (error) {
@@ -2452,8 +2587,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             </p>
           </div>
 
-          {/* Member Search */}
-          <div className="mb-4 md:mb-6">
+          {/* Member Search with Autosuggest */}
+          <div className="mb-4 md:mb-6" ref={memberSearchRef}>
             <label
               className="block mb-2"
               style={{
@@ -2463,21 +2598,154 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 color: DESIGN_TOKENS.colors.brand.orange,
               }}
             >
-              Select Member *
+              Search Member *
             </label>
-            <CustomDropdown
-              value={selectedMember}
-              onChange={setSelectedMember}
-              options={[
-                { value: "", label: "Search and select member..." },
-                ...members.map((member) => ({
-                  value: member.id,
-                  label: `${member.name} - ${member.committee}`,
-                }))
-              ]}
-              isDark={isDark}
-              size="md"
-            />
+            <div className="relative">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  value={memberSearchInput}
+                  onChange={(e) => {
+                    setMemberSearchInput(e.target.value);
+                    setShowMemberDropdown(true);
+                    // Clear selection if user is typing a new search
+                    if (selectedMember) {
+                      const selectedMemberData = members.find(m => m.id === selectedMember);
+                      if (selectedMemberData && e.target.value !== selectedMemberData.name) {
+                        setSelectedMember("");
+                      }
+                    }
+                  }}
+                  onFocus={() => setShowMemberDropdown(true)}
+                  placeholder="Type to search members..."
+                  className="w-full pl-10 pr-10 py-3 rounded-xl border-2 transition-all focus:outline-none"
+                  style={{
+                    background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                    borderColor: selectedMember 
+                      ? DESIGN_TOKENS.colors.brand.orange 
+                      : isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                    color: isDark ? '#ffffff' : '#000000',
+                  }}
+                />
+                {memberSearchInput && (
+                  <button
+                    onClick={() => {
+                      setMemberSearchInput("");
+                      setSelectedMember("");
+                      setShowMemberDropdown(true);
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <X className="w-4 h-4 text-gray-400" />
+                  </button>
+                )}
+              </div>
+
+              {/* Selected Member Preview */}
+              {selectedMember && (
+                <div 
+                  className="mt-2 p-3 rounded-lg border flex items-center gap-3"
+                  style={{
+                    background: isDark ? 'rgba(246, 66, 31, 0.1)' : 'rgba(246, 66, 31, 0.05)',
+                    borderColor: DESIGN_TOKENS.colors.brand.orange,
+                  }}
+                >
+                  {(() => {
+                    const member = members.find(m => m.id === selectedMember);
+                    return member ? (
+                      <>
+                        {member.profilePicture ? (
+                          <img 
+                            src={member.profilePicture}
+                            alt={member.name}
+                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                          />
+                        ) : (
+                          <div 
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+                            style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
+                          >
+                            {getInitials(member.name)}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold truncate" style={{ color: isDark ? '#fff' : '#000' }}>
+                            {member.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {member.position} • {member.committee}
+                          </p>
+                        </div>
+                        <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                      </>
+                    ) : null;
+                  })()}
+                </div>
+              )}
+
+              {/* Autosuggest Dropdown */}
+              {showMemberDropdown && !selectedMember && (
+                <div 
+                  className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl z-50 max-h-64 overflow-y-auto"
+                  style={{
+                    background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                    backdropFilter: 'blur(20px)',
+                    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                  }}
+                >
+                  {isLoadingMembers ? (
+                    <div className="p-4 text-center text-muted-foreground flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading members...
+                    </div>
+                  ) : filteredMembers.length > 0 ? (
+                    filteredMembers.slice(0, 10).map((member) => (
+                      <button
+                        key={member.id}
+                        onClick={() => handleMemberSelect(member)}
+                        className="w-full p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left border-b last:border-b-0"
+                        style={{
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                        }}
+                      >
+                        {member.profilePicture ? (
+                          <img 
+                            src={member.profilePicture}
+                            alt={member.name}
+                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                          />
+                        ) : (
+                          <div 
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+                            style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
+                          >
+                            {getInitials(member.name)}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p 
+                            className="font-medium truncate"
+                            style={{ color: isDark ? '#fff' : '#000' }}
+                          >
+                            {member.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {member.position} • {member.committee}
+                          </p>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="p-4 text-center text-muted-foreground">
+                      <User className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p>No members found</p>
+                      <p className="text-xs mt-1">Try a different search term</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Time Type */}
@@ -2580,7 +2848,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
           onClick={() => setShowOverwriteWarning(false)}
         >
           <div
-            className="rounded-xl p-5 md:p-7 w-full max-w-md md:max-w-lg border max-h-[85vh] overflow-y-auto"
+            className="rounded-xl w-full max-w-md md:max-w-lg border max-h-[85vh] flex flex-col overflow-hidden"
             style={{
               background: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
               backdropFilter: 'blur(20px)',
@@ -2591,114 +2859,135 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Warning Icon Header */}
-            <div className="text-center mb-5">
-              <div 
-                className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-full mb-3"
-                style={{
-                  background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                  boxShadow: '0 8px 16px rgba(245, 158, 11, 0.3)',
-                }}
-              >
-                <AlertCircle className="w-9 h-9 md:w-11 md:h-11 text-white" />
-              </div>
-              <h3
-                className="mb-1"
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  color: '#d97706',
-                }}
-              >
-                Overwrite Existing Record?
-              </h3>
-              <p className="text-sm text-muted-foreground">This member already has a record for this event</p>
-            </div>
-            
-            {/* Member Profile Card - Previous Record */}
-            <div 
-              className="mb-5 p-4 md:p-5 rounded-xl border-2"
-              style={{
-                background: isDark ? 'rgba(245, 158, 11, 0.1)' : 'rgba(245, 158, 11, 0.05)',
-                borderColor: isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.2)',
-              }}
-            >
-              <div className="flex items-center gap-3 md:gap-4 mb-4">
-                {/* Profile Picture */}
-                <div className="flex-shrink-0">
-                  <img 
-                    src={previousRecord.memberData?.profilePicture || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&h=200&fit=crop'} 
-                    alt={previousRecord.member}
-                    className="w-16 h-16 md:w-20 md:h-20 rounded-full object-cover border-4 shadow-lg"
-                    style={{
-                      borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
-                    }}
-                  />
-                </div>
-
-                {/* Member Info */}
-                <div className="flex-1 min-w-0">
-                  <h4 
-                    className="truncate mb-1"
-                    style={{
-                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                      fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                      color: isDark ? '#ffffff' : '#000000',
-                    }}
-                  >
-                    {previousRecord.member}
-                  </h4>
-                  <p 
-                    className="text-sm truncate mb-0.5"
-                    style={{
-                      color: DESIGN_TOKENS.colors.brand.orange,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-                    }}
-                  >
-                    {previousRecord.memberData?.position || 'Member'}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {previousRecord.memberData?.committee || 'General Committee'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Previous Status Badge */}
-              <div className="flex justify-center">
-                <div
-                  className="inline-block px-4 py-2 rounded-full text-sm md:text-base"
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto p-5 md:p-7">
+              {/* Warning Icon Header */}
+              <div className="text-center mb-5">
+                <div 
+                  className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-full mb-3"
                   style={{
-                    backgroundColor: '#10b98120',
-                    color: '#10b981',
-                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                    boxShadow: '0 8px 16px rgba(245, 158, 11, 0.3)',
                   }}
                 >
-                  {previousRecord.status} (Previous)
+                  <AlertCircle className="w-9 h-9 md:w-11 md:h-11 text-white" />
                 </div>
+                <h3
+                  className="mb-1"
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: '#d97706',
+                  }}
+                >
+                  Overwrite Existing Record?
+                </h3>
+                <p className="text-sm text-muted-foreground">This member already has a record for this event</p>
               </div>
-            </div>
+              
+              {/* Member Profile Card - Previous Record */}
+              <div 
+                className="mb-5 p-4 md:p-5 rounded-xl border-2"
+                style={{
+                  background: isDark ? 'rgba(245, 158, 11, 0.1)' : 'rgba(245, 158, 11, 0.05)',
+                  borderColor: isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.2)',
+                }}
+              >
+                <div className="flex items-center gap-3 md:gap-4 mb-4">
+                  {/* Profile Picture */}
+                  <div className="flex-shrink-0">
+                    {previousRecord.memberData?.profilePicture ? (
+                      <img 
+                        src={previousRecord.memberData.profilePicture} 
+                        alt={previousRecord.member}
+                        className="w-16 h-16 md:w-20 md:h-20 rounded-full object-cover border-4 shadow-lg"
+                        style={{
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
+                        }}
+                      />
+                    ) : (
+                      <div 
+                        className="w-16 h-16 md:w-20 md:h-20 rounded-full flex items-center justify-center font-bold text-white text-xl md:text-2xl border-4 shadow-lg"
+                        style={{
+                          background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)',
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
+                        }}
+                      >
+                        {getInitials(previousRecord.member)}
+                      </div>
+                    )}
+                  </div>
 
-            {/* Previous Record Details */}
-            <div className="space-y-3 mb-6">
-              {/* Previous Time */}
-              <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
-                <Clock className="w-5 h-5 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-muted-foreground mb-1">Previous Record</p>
-                  <p 
-                    className="text-sm md:text-base"
-                    style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                  {/* Member Info */}
+                  <div className="flex-1 min-w-0">
+                    <h4 
+                      className="truncate mb-1"
+                      style={{
+                        fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                        fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        color: isDark ? '#ffffff' : '#000000',
+                      }}
+                    >
+                      {previousRecord.member}
+                    </h4>
+                    <p 
+                      className="text-sm truncate mb-0.5"
+                      style={{
+                        color: DESIGN_TOKENS.colors.brand.orange,
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                      }}
+                    >
+                      {previousRecord.memberData?.position || 'Member'}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {previousRecord.memberData?.committee || 'General Committee'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Previous Status Badge */}
+                <div className="flex justify-center">
+                  <div
+                    className="inline-block px-4 py-2 rounded-full text-sm md:text-base"
+                    style={{
+                      backgroundColor: '#10b98120',
+                      color: '#10b981',
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    }}
                   >
-                    {previousRecord.timeType} at {previousRecord.timestamp}
-                  </p>
+                    {previousRecord.status} (Previous)
+                  </div>
+                </div>
+              </div>
+
+              {/* Previous Record Details */}
+              <div className="space-y-3">
+                {/* Previous Time */}
+                <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
+                  <Clock className="w-5 h-5 text-[#f59e0b] flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground mb-1">Previous Record</p>
+                    <p 
+                      className="text-sm md:text-base"
+                      style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                    >
+                      {previousRecord.timeType} at {previousRecord.timestamp}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex gap-3">
+            {/* Sticky Footer with Action Buttons */}
+            <div 
+              className="flex-shrink-0 p-5 md:p-7 pt-4 border-t flex gap-3"
+              style={{
+                background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              }}
+            >
               <button
                 onClick={() => setShowOverwriteWarning(false)}
                 className="flex-1 px-4 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-sm md:text-base"
@@ -3176,7 +3465,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
           onClick={handleSuccessModalClose}
         >
           <div
-            className="rounded-xl p-5 md:p-7 w-full max-w-md md:max-w-lg border max-h-[85vh] overflow-y-auto"
+            className="rounded-xl w-full max-w-md md:max-w-lg border max-h-[85vh] flex flex-col overflow-hidden"
             style={{
               background: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
               backdropFilter: 'blur(20px)',
@@ -3187,148 +3476,171 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Success Icon Header */}
-            <div className="text-center mb-5">
-              <div 
-                className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-full mb-3"
-                style={{
-                  background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
-                  boxShadow: '0 8px 16px rgba(246, 66, 31, 0.3)',
-                }}
-              >
-                <CheckCircle className="w-9 h-9 md:w-11 md:h-11 text-white" />
-              </div>
-              <h3
-                className="mb-1"
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  color: DESIGN_TOKENS.colors.brand.red,
-                }}
-              >
-                Verify Attendance
-              </h3>
-              <p className="text-sm text-muted-foreground">Please verify the member information before recording</p>
-            </div>
-            
-            {/* Member Profile Card */}
-            <div 
-              className="mb-5 p-4 md:p-5 rounded-xl border-2"
-              style={{
-                background: isDark ? 'rgba(246, 66, 31, 0.1)' : 'rgba(246, 66, 31, 0.05)',
-                borderColor: isDark ? 'rgba(246, 66, 31, 0.3)' : 'rgba(246, 66, 31, 0.2)',
-              }}
-            >
-              <div className="flex items-center gap-3 md:gap-4 mb-4">
-                {/* Profile Picture */}
-                <div className="flex-shrink-0">
-                  <img 
-                    src={pendingRecord.memberData?.profilePicture || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&h=200&fit=crop'} 
-                    alt={pendingRecord.member}
-                    className="w-16 h-16 md:w-20 md:h-20 rounded-full object-cover border-4 shadow-lg"
-                    style={{
-                      borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
-                    }}
-                  />
-                </div>
-
-                {/* Member Info */}
-                <div className="flex-1 min-w-0">
-                  <h4 
-                    className="truncate mb-1"
-                    style={{
-                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                      fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                      color: isDark ? '#ffffff' : '#000000',
-                    }}
-                  >
-                    {pendingRecord.member}
-                  </h4>
-                  <p 
-                    className="text-sm truncate mb-0.5"
-                    style={{
-                      color: DESIGN_TOKENS.colors.brand.orange,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-                    }}
-                  >
-                    {pendingRecord.memberData?.position || 'Member'}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {pendingRecord.memberData?.committee || 'General Committee'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Status Badge */}
-              <div className="flex justify-center">
-                <div
-                  className="inline-block px-4 py-2 rounded-full text-sm md:text-base"
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto p-5 md:p-7">
+              {/* Success Icon Header */}
+              <div className="text-center mb-5">
+                <div 
+                  className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-full mb-3"
                   style={{
-                    backgroundColor: 
-                      pendingRecord.status === 'Present' ? '#10b98120' :
-                      pendingRecord.status === 'Late' ? '#f59e0b20' :
-                      pendingRecord.status === 'Excused' ? '#3b82f620' :
-                      '#ef444420',
-                    color: 
-                      pendingRecord.status === 'Present' ? '#10b981' :
-                      pendingRecord.status === 'Late' ? '#f59e0b' :
-                      pendingRecord.status === 'Excused' ? '#3b82f6' :
-                      '#ef4444',
-                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                    boxShadow: '0 8px 16px rgba(246, 66, 31, 0.3)',
                   }}
                 >
-                  {pendingRecord.status}
+                  <CheckCircle className="w-9 h-9 md:w-11 md:h-11 text-white" />
+                </div>
+                <h3
+                  className="mb-1"
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: DESIGN_TOKENS.colors.brand.red,
+                  }}
+                >
+                  Verify Attendance
+                </h3>
+                <p className="text-sm text-muted-foreground">Please verify the member information before recording</p>
+              </div>
+              
+              {/* Member Profile Card */}
+              <div 
+                className="mb-5 p-4 md:p-5 rounded-xl border-2"
+                style={{
+                  background: isDark ? 'rgba(246, 66, 31, 0.1)' : 'rgba(246, 66, 31, 0.05)',
+                  borderColor: isDark ? 'rgba(246, 66, 31, 0.3)' : 'rgba(246, 66, 31, 0.2)',
+                }}
+              >
+                <div className="flex items-center gap-3 md:gap-4 mb-4">
+                  {/* Profile Picture */}
+                  <div className="flex-shrink-0">
+                    {pendingRecord.memberData?.profilePicture ? (
+                      <img 
+                        src={pendingRecord.memberData.profilePicture} 
+                        alt={pendingRecord.member}
+                        className="w-16 h-16 md:w-20 md:h-20 rounded-full object-cover border-4 shadow-lg"
+                        style={{
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
+                        }}
+                      />
+                    ) : (
+                      <div 
+                        className="w-16 h-16 md:w-20 md:h-20 rounded-full flex items-center justify-center font-bold text-white text-xl md:text-2xl border-4 shadow-lg"
+                        style={{
+                          background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)',
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
+                        }}
+                      >
+                        {getInitials(pendingRecord.member)}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Member Info */}
+                  <div className="flex-1 min-w-0">
+                    <h4 
+                      className="truncate mb-1"
+                      style={{
+                        fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                        fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        color: isDark ? '#ffffff' : '#000000',
+                      }}
+                    >
+                      {pendingRecord.member}
+                    </h4>
+                    <p 
+                      className="text-sm truncate mb-0.5"
+                      style={{
+                        color: DESIGN_TOKENS.colors.brand.orange,
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                      }}
+                    >
+                      {pendingRecord.memberData?.position || 'Member'}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {pendingRecord.memberData?.committee || 'General Committee'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status Badge */}
+                <div className="flex justify-center">
+                  <div
+                    className="inline-block px-4 py-2 rounded-full text-sm md:text-base"
+                    style={{
+                      backgroundColor: 
+                        pendingRecord.status === 'Present' ? '#10b98120' :
+                        pendingRecord.status === 'Late' ? '#f59e0b20' :
+                        pendingRecord.status === 'Excused' ? '#3b82f620' :
+                        '#ef444420',
+                      color: 
+                        pendingRecord.status === 'Present' ? '#10b981' :
+                        pendingRecord.status === 'Late' ? '#f59e0b' :
+                        pendingRecord.status === 'Excused' ? '#3b82f6' :
+                        '#ef4444',
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    }}
+                  >
+                    {pendingRecord.status}
+                  </div>
+                </div>
+              </div>
+
+              {/* Record Details Grid */}
+              <div className="space-y-3">
+                {/* Event */}
+                <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
+                  <Calendar className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground mb-1">Event</p>
+                    <p 
+                      className="text-sm md:text-base truncate"
+                      style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                    >
+                      {pendingRecord.event}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Date & Time */}
+                <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
+                  <Clock className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground mb-1">Date & Time</p>
+                    <p 
+                      className="text-sm md:text-base"
+                      style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                    >
+                      {pendingRecord.date}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {pendingRecord.timeType} at {pendingRecord.timestamp}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Record Details Grid */}
-            <div className="space-y-3 mb-6">
-              {/* Event */}
-              <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
-                <Calendar className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-muted-foreground mb-1">Event</p>
-                  <p 
-                    className="text-sm md:text-base truncate"
-                    style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
-                  >
-                    {pendingRecord.event}
-                  </p>
-                </div>
-              </div>
-
-              {/* Date & Time */}
-              <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
-                <Clock className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-muted-foreground mb-1">Date & Time</p>
-                  <p 
-                    className="text-sm md:text-base"
-                    style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
-                  >
-                    {pendingRecord.date}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {pendingRecord.timeType} at {pendingRecord.timestamp}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Verify Button */}
-            <button
-              onClick={handleSuccessModalClose}
-              className="w-full px-4 py-3 rounded-xl text-white transition-all hover:shadow-lg text-sm md:text-base"
+            {/* Sticky Footer with Verify Button */}
+            <div 
+              className="flex-shrink-0 p-5 md:p-7 pt-4 border-t"
               style={{
-                background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
               }}
             >
-              Verify & Record
-            </button>
+              <button
+                onClick={handleSuccessModalClose}
+                className="w-full px-4 py-3 rounded-xl text-white transition-all hover:shadow-lg text-sm md:text-base"
+                style={{
+                  background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                }}
+              >
+                Verify & Record
+              </button>
+            </div>
           </div>
         </div>
       )}

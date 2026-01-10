@@ -5,19 +5,22 @@
  * 
  * Admin tools for system management
  * Features:
- * - Database backup/restore
- * - Clear cache
- * - System health monitoring
- * - User management tools
- * - Export data
+ * - Database backup (creates spreadsheet with all data)
+ * - Export data (creates spreadsheet export)
+ * - Clear cache (bumps global cache version)
+ * - System health monitoring (real-time from backend)
+ * - Maintenance mode (backend-synced)
  * 
  * Uses Design System Components
+ * Progress Toast for all backend operations
+ * Skeleton loading states
  * =============================================================================
  */
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
 import { toast } from "sonner";
+import { UploadToastMessage } from "./UploadToast";
 import {
   getMaintenanceMode,
   enableFullPWAMaintenance,
@@ -29,6 +32,19 @@ import {
   type MaintenanceModeState,
 } from "../utils/maintenanceMode";
 import MaintenanceModeModal, { type MaintenanceFormData } from "./MaintenanceModeModal";
+import {
+  getSystemHealth,
+  createDatabaseBackup,
+  exportData,
+  bumpCacheVersion,
+  forceClearAllCaches,
+  getMaintenanceModeFromBackend,
+  enableMaintenanceModeBackend,
+  disableMaintenanceModeBackend,
+  clearAllMaintenanceBackend,
+  AVAILABLE_PAGES_BACKEND,
+  type SystemHealthData,
+} from "../services/gasSystemToolsService";
 
 import {
   Database,
@@ -39,139 +55,493 @@ import {
   CheckCircle,
   AlertTriangle,
   Trash2,
-  Upload,
   Download,
   Wrench,
   Power,
   Shield,
+  ExternalLink,
+  Clock,
+  Users,
 } from "lucide-react";
 
 interface SystemToolsPageProps {
   onClose: () => void;
   isDark: boolean;
+  username?: string;
+  addUploadToast?: (message: UploadToastMessage) => void;
+  updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
 }
 
-interface SystemHealth {
-  database: "healthy" | "warning" | "error";
-  storage: number; // percentage used
-  api: "online" | "offline";
-  lastBackup: string;
+// Skeleton Components
+const ShimmerStyles = () => (
+  <style>{`
+    .skeleton-shimmer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.4) 50%,
+        transparent 100%
+      );
+      animation: shimmer 1.5s infinite;
+    }
+    .dark .skeleton-shimmer {
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        transparent 100%
+      );
+    }
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+  `}</style>
+);
+
+function SkeletonLine({ width = '100%', height = '1rem', className = '' }: { width?: string; height?: string; className?: string }) {
+  return (
+    <div 
+      className={`rounded-md bg-gray-200 dark:bg-gray-700 relative overflow-hidden ${className}`}
+      style={{ width, height }}
+    >
+      <div className="skeleton-shimmer" />
+    </div>
+  );
+}
+
+function HealthCardSkeleton({ isDark }: { isDark: boolean }) {
+  return (
+    <div
+      className="p-6 rounded-xl border"
+      style={{
+        background: isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(255, 255, 255, 0.7)",
+        backdropFilter: "blur(12px)",
+        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+      }}
+    >
+      <ShimmerStyles />
+      <div className="flex items-center justify-between mb-3">
+        <SkeletonLine width="32px" height="32px" className="rounded-lg" />
+        <SkeletonLine width="20px" height="20px" className="rounded-full" />
+      </div>
+      <SkeletonLine width="60px" height="12px" className="mb-2" />
+      <SkeletonLine width="80px" height="20px" />
+    </div>
+  );
+}
+
+function ToolCardSkeleton({ isDark }: { isDark: boolean }) {
+  return (
+    <div
+      className="p-6 rounded-xl border"
+      style={{
+        background: isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(255, 255, 255, 0.7)",
+        backdropFilter: "blur(12px)",
+        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+      }}
+    >
+      <ShimmerStyles />
+      <div className="flex items-start gap-4">
+        <SkeletonLine width="48px" height="48px" className="rounded-lg flex-shrink-0" />
+        <div className="flex-1">
+          <SkeletonLine width="120px" height="20px" className="mb-2" />
+          <SkeletonLine width="100%" height="14px" className="mb-2" />
+          <SkeletonLine width="80%" height="14px" className="mb-4" />
+          <SkeletonLine width="100px" height="32px" className="rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function SystemToolsPage({
   onClose,
   isDark,
+  username = 'admin',
+  addUploadToast,
+  updateUploadToast,
 }: SystemToolsPageProps) {
-  const [isLoading, setIsLoading] = useState(false);
+  // Loading states
+  const [isLoadingHealth, setIsLoadingHealth] = useState(true);
+  const [isLoadingMaintenance, setIsLoadingMaintenance] = useState(true);
+  const [isOperationLoading, setIsOperationLoading] = useState(false);
+  
+  // Data states
+  const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
   const [maintenanceMode, setMaintenanceMode] = useState<MaintenanceModeState>(getMaintenanceMode());
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
   const [selectedPage, setSelectedPage] = useState<string | null>(null);
-  const [maintenanceMessage, setMaintenanceMessage] = useState("");
-  const [maintenanceTime, setMaintenanceTime] = useState("");
-  const [systemHealth] = useState<SystemHealth>({
-    database: "healthy",
-    storage: 45,
-    api: "online",
-    lastBackup: "2025-02-14 23:00:00",
-  });
 
-  const handleBackupDatabase = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      toast.success("Database Backup Created", {
-        description: "Backup file has been downloaded",
+  // Helper functions for progress toast
+  const showProgressToast = (id: string, title: string, message: string, progress: number) => {
+    if (addUploadToast) {
+      addUploadToast({ id, title, message, status: 'loading', progress });
+    }
+  };
+
+  const updateProgressToast = (id: string, updates: Partial<UploadToastMessage>) => {
+    if (updateUploadToast) {
+      updateUploadToast(id, updates);
+    }
+  };
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr || dateStr === 'Never' || dateStr === 'Error') return dateStr;
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleString();
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Fetch system health from backend
+  const fetchSystemHealth = useCallback(async () => {
+    setIsLoadingHealth(true);
+    try {
+      const health = await getSystemHealth();
+      setSystemHealth(health);
+    } catch (error) {
+      console.error('Error fetching system health:', error);
+      toast.error('Failed to fetch system health');
+      setSystemHealth({
+        database: 'error',
+        databaseRows: 0,
+        storage: 0,
+        totalCells: 0,
+        maxCells: 10000000,
+        api: 'offline',
+        lastBackup: 'Error',
+        lastExport: 'Error',
+        cacheVersion: 0,
+        timestamp: new Date().toISOString(),
       });
-    }, 2000);
-  };
+    } finally {
+      setIsLoadingHealth(false);
+    }
+  }, []);
 
-  const handleClearCache = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      toast.success("Cache Cleared", {
-        description: "System cache has been cleared successfully",
+  // Fetch maintenance mode from backend
+  const fetchMaintenanceMode = useCallback(async () => {
+    setIsLoadingMaintenance(true);
+    try {
+      const state = await getMaintenanceModeFromBackend(true);
+      setMaintenanceMode(state);
+    } catch (error) {
+      console.error('Error fetching maintenance mode:', error);
+      // Fall back to local storage
+      setMaintenanceMode(getMaintenanceMode());
+    } finally {
+      setIsLoadingMaintenance(false);
+    }
+  }, []);
+
+  // Initial data fetch
+  useEffect(() => {
+    fetchSystemHealth();
+    fetchMaintenanceMode();
+  }, [fetchSystemHealth, fetchMaintenanceMode]);
+
+  const handleBackupDatabase = async () => {
+    const toastId = 'backup-' + Date.now();
+    setIsOperationLoading(true);
+    
+    showProgressToast(toastId, 'Database Backup', 'Starting backup...', 0);
+    
+    try {
+      updateProgressToast(toastId, { progress: 10, message: 'Connecting to database...' });
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      updateProgressToast(toastId, { progress: 30, message: 'Copying sheets...' });
+      const result = await createDatabaseBackup(username);
+      
+      updateProgressToast(toastId, { progress: 80, message: 'Finalizing backup...' });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      updateProgressToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Backup Complete!',
+        message: `${result.sheetsCount} sheets backed up successfully.`,
       });
-    }, 1500);
+      
+      if (result.backupUrl) {
+        toast.success('Backup Created', {
+          description: 'Click to open the backup spreadsheet',
+          action: {
+            label: 'Open',
+            onClick: () => window.open(result.backupUrl, '_blank'),
+          },
+        });
+      }
+      
+      fetchSystemHealth();
+    } catch (error) {
+      console.error('Backup error:', error);
+      updateProgressToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Backup Failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } finally {
+      setIsOperationLoading(false);
+    }
   };
 
-  const handleExportData = () => {
-    toast.info("Export Data", {
-      description: "This will export all system data. Coming soon!",
-    });
+  const handleClearCache = async () => {
+    const toastId = 'cache-' + Date.now();
+    setIsOperationLoading(true);
+    
+    showProgressToast(toastId, 'Clear Cache', 'Bumping cache version...', 0);
+    
+    try {
+      updateProgressToast(toastId, { progress: 20, message: 'Updating server cache version...' });
+      const result = await bumpCacheVersion(username);
+      
+      updateProgressToast(toastId, { progress: 60, message: 'Clearing local caches...' });
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      updateProgressToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Cache Cleared!',
+        message: `Version bumped from ${result.previousVersion} to ${result.newVersion}. All clients will refresh.`,
+      });
+      
+      toast.info('Cache Refresh', {
+        description: 'All users will see the refresh prompt on their next page load.',
+        duration: 5000,
+      });
+      
+      const confirmRefresh = window.confirm(
+        'Cache version has been updated. Do you want to refresh your browser now to apply changes?'
+      );
+      
+      if (confirmRefresh) {
+        await forceClearAllCaches();
+      } else {
+        fetchSystemHealth();
+      }
+    } catch (error) {
+      console.error('Clear cache error:', error);
+      updateProgressToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Clear Cache Failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } finally {
+      setIsOperationLoading(false);
+    }
   };
 
-  const handleRestoreDatabase = () => {
-    toast.warning("Restore Database", {
-      description: "This is a critical operation. Please contact system administrator.",
-    });
+  const handleExportData = async () => {
+    const toastId = 'export-' + Date.now();
+    setIsOperationLoading(true);
+    
+    showProgressToast(toastId, 'Export Data', 'Starting export...', 0);
+    
+    try {
+      updateProgressToast(toastId, { progress: 10, message: 'Connecting to database...' });
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      updateProgressToast(toastId, { progress: 30, message: 'Exporting sheets...' });
+      const result = await exportData(username);
+      
+      updateProgressToast(toastId, { progress: 80, message: 'Finalizing export...' });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      updateProgressToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Export Complete!',
+        message: `${result.sheetsCount} sheets (${result.totalRows.toLocaleString()} rows) exported.`,
+      });
+      
+      if (result.exportUrl) {
+        toast.success('Data Exported', {
+          description: 'Click to open the exported spreadsheet',
+          action: {
+            label: 'Open',
+            onClick: () => window.open(result.exportUrl, '_blank'),
+          },
+        });
+      }
+      
+      fetchSystemHealth();
+    } catch (error) {
+      console.error('Export error:', error);
+      updateProgressToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Export Failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } finally {
+      setIsOperationLoading(false);
+    }
   };
 
-  const handleRefreshHealth = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      toast.success("System Health Refreshed");
-    }, 1000);
+  const handleRefreshHealth = async () => {
+    await fetchSystemHealth();
+    toast.success('System Health Refreshed');
   };
 
   // Maintenance Mode Handlers
-  const handleToggleFullPWA = () => {
+  const handleToggleFullPWA = async () => {
     if (maintenanceMode.fullPWA.enabled) {
-      disableFullPWAMaintenance();
-      toast.success("Full PWA Maintenance Disabled");
-      setMaintenanceMode(getMaintenanceMode());
+      await handleDisableMaintenance('fullPWA');
     } else {
       setSelectedPage(null);
       setShowMaintenanceModal(true);
     }
   };
 
-  const handleTogglePage = (pageId: string) => {
+  const handleTogglePage = async (pageId: string) => {
     const isEnabled = maintenanceMode.pages[pageId]?.enabled;
     if (isEnabled) {
-      disablePageMaintenance(pageId);
-      toast.success("Page Maintenance Disabled");
-      setMaintenanceMode(getMaintenanceMode());
+      await handleDisableMaintenance(pageId);
     } else {
       setSelectedPage(pageId);
       setShowMaintenanceModal(true);
     }
   };
 
-  const handleMaintenanceProceed = (config: MaintenanceFormData) => {
-    if (selectedPage) {
-      // Page-specific maintenance
-      enablePageMaintenance(
-        selectedPage,
-        config.reason,
-        config.reason,
-        config.estimatedTime,
-        config.maintenanceDate,
-        config.durationDays
+  const handleEnableMaintenance = async (config: MaintenanceFormData) => {
+    const pageId = selectedPage || 'fullPWA';
+    const toastId = 'maintenance-' + Date.now();
+    
+    showProgressToast(toastId, 'Maintenance Mode', 'Enabling...', 0);
+    
+    try {
+      updateProgressToast(toastId, { progress: 50, message: 'Updating backend...' });
+      
+      await enableMaintenanceModeBackend(
+        pageId,
+        {
+          reason: config.reason,
+          message: config.reason,
+          estimatedTime: config.estimatedTime,
+          maintenanceDate: config.maintenanceDate,
+          durationDays: config.durationDays,
+        },
+        username
       );
-      toast.warning("Page Maintenance Enabled");
-    } else {
-      // Full PWA maintenance
-      enableFullPWAMaintenance(
-        config.reason,
-        config.reason,
-        config.estimatedTime,
-        config.maintenanceDate,
-        config.durationDays
-      );
-      toast.warning("Full PWA Maintenance Enabled", {
-        description: "All users will see maintenance screen",
+      
+      // Also update local storage for immediate effect
+      if (pageId === 'fullPWA') {
+        enableFullPWAMaintenance(
+          config.reason,
+          config.reason,
+          config.estimatedTime,
+          config.maintenanceDate,
+          config.durationDays
+        );
+      } else {
+        enablePageMaintenance(
+          pageId,
+          config.reason,
+          config.reason,
+          config.estimatedTime,
+          config.maintenanceDate,
+          config.durationDays
+        );
+      }
+      
+      updateProgressToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Maintenance Enabled',
+        message: pageId === 'fullPWA' ? 'Full PWA is now in maintenance mode.' : `${pageId} is now in maintenance mode.`,
+      });
+      
+      await fetchMaintenanceMode();
+    } catch (error) {
+      console.error('Enable maintenance error:', error);
+      updateProgressToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-    setMaintenanceMode(getMaintenanceMode());
+    
+    setShowMaintenanceModal(false);
+    setSelectedPage(null);
   };
 
-  const handleClearAll = () => {
-    if (confirm("Are you sure you want to clear all maintenance modes?")) {
-      clearAllMaintenance();
-      setMaintenanceMode(getMaintenanceMode());
-      toast.success("All Maintenance Modes Cleared");
+  const handleDisableMaintenance = async (pageId: string) => {
+    const toastId = 'maintenance-' + Date.now();
+    
+    showProgressToast(toastId, 'Maintenance Mode', 'Disabling...', 0);
+    
+    try {
+      updateProgressToast(toastId, { progress: 50, message: 'Updating backend...' });
+      
+      await disableMaintenanceModeBackend(pageId, username);
+      
+      // Also update local storage
+      if (pageId === 'fullPWA') {
+        disableFullPWAMaintenance();
+      } else {
+        disablePageMaintenance(pageId);
+      }
+      
+      updateProgressToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Maintenance Disabled',
+        message: pageId === 'fullPWA' ? 'Full PWA maintenance disabled.' : `${pageId} maintenance disabled.`,
+      });
+      
+      await fetchMaintenanceMode();
+    } catch (error) {
+      console.error('Disable maintenance error:', error);
+      updateProgressToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!confirm("Are you sure you want to clear all maintenance modes?")) return;
+    
+    const toastId = 'clear-maintenance-' + Date.now();
+    
+    showProgressToast(toastId, 'Clear Maintenance', 'Clearing all...', 0);
+    
+    try {
+      updateProgressToast(toastId, { progress: 50, message: 'Updating backend...' });
+      
+      await clearAllMaintenanceBackend(username);
+      clearAllMaintenance(); // Also clear local
+      
+      updateProgressToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'All Cleared',
+        message: 'All maintenance modes have been disabled.',
+      });
+      
+      await fetchMaintenanceMode();
+    } catch (error) {
+      console.error('Clear all maintenance error:', error);
+      updateProgressToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   };
 
@@ -208,35 +578,30 @@ export default function SystemToolsPage({
   const tools = [
     {
       title: "Database Backup",
-      description: "Create a backup of the entire database",
+      description: "Create a complete backup of all database sheets to a new spreadsheet. Backups are saved to Google Drive.",
       icon: <Database className="w-6 h-6" />,
       action: handleBackupDatabase,
       variant: "primary" as const,
       danger: false,
-    },
-    {
-      title: "Restore Database",
-      description: "Restore database from a backup file",
-      icon: <Upload className="w-6 h-6" />,
-      action: handleRestoreDatabase,
-      variant: "secondary" as const,
-      danger: true,
-    },
-    {
-      title: "Clear Cache",
-      description: "Clear all system cache to free up memory",
-      icon: <Trash2 className="w-6 h-6" />,
-      action: handleClearCache,
-      variant: "secondary" as const,
-      danger: false,
+      buttonText: "Create Backup",
     },
     {
       title: "Export Data",
-      description: "Export all system data to CSV/JSON",
+      description: "Export all system data to a new spreadsheet for external analysis or archiving.",
       icon: <Download className="w-6 h-6" />,
       action: handleExportData,
       variant: "secondary" as const,
       danger: false,
+      buttonText: "Export All Data",
+    },
+    {
+      title: "Clear Cache",
+      description: "Bump the global cache version to force all users to refresh. This clears cached data across all devices.",
+      icon: <Trash2 className="w-6 h-6" />,
+      action: handleClearCache,
+      variant: "secondary" as const,
+      danger: true,
+      buttonText: "Clear All Caches",
     },
   ];
 
@@ -268,13 +633,20 @@ export default function SystemToolsPage({
             variant="secondary"
             size="sm"
             onClick={handleRefreshHealth}
-            icon={<RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />}
-            disabled={isLoading}
+            icon={<RefreshCw className={`w-4 h-4 ${isLoadingHealth ? "animate-spin" : ""}`} />}
+            disabled={isLoadingHealth}
           >
             Refresh
           </Button>
         </div>
 
+        {isLoadingHealth ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <HealthCardSkeleton key={i} isDark={isDark} />
+            ))}
+          </div>
+        ) : systemHealth && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Database Status */}
           <div
@@ -312,6 +684,16 @@ export default function SystemToolsPage({
             >
               {systemHealth.database}
             </div>
+            <div
+              className="mt-1 flex items-center gap-1"
+              style={{
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                color: isDark ? "#9ca3af" : "#6b7280",
+              }}
+            >
+              <Users className="w-3 h-3" />
+              {systemHealth.databaseRows?.toLocaleString() || 0} users
+            </div>
           </div>
 
           {/* Storage Status */}
@@ -347,7 +729,16 @@ export default function SystemToolsPage({
                 color: systemHealth.storage > 80 ? "#f59e0b" : "#10b981",
               }}
             >
-              {systemHealth.storage}% Used
+              {systemHealth.storage?.toFixed(2) || 0}% Used
+            </div>
+            <div
+              className="mt-1"
+              style={{
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                color: isDark ? "#9ca3af" : "#6b7280",
+              }}
+            >
+              {systemHealth.totalCells?.toLocaleString() || 0} / {systemHealth.maxCells?.toLocaleString() || 10000000} cells
             </div>
           </div>
 
@@ -387,6 +778,16 @@ export default function SystemToolsPage({
             >
               {systemHealth.api}
             </div>
+            <div
+              className="mt-1 flex items-center gap-1"
+              style={{
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                color: isDark ? "#9ca3af" : "#6b7280",
+              }}
+            >
+              <Activity className="w-3 h-3" />
+              Cache v{systemHealth.cacheVersion || 1}
+            </div>
           </div>
 
           {/* Last Backup */}
@@ -404,7 +805,7 @@ export default function SystemToolsPage({
           >
             <div className="flex items-center justify-between mb-3">
               <RefreshCw className="w-8 h-8" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
-              <CheckCircle className="w-5 h-5 text-green-500" />
+              <Clock className="w-5 h-5 text-blue-500" />
             </div>
             <div
               className="mb-1"
@@ -421,14 +822,24 @@ export default function SystemToolsPage({
                 fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
               }}
             >
-              {systemHealth.lastBackup}
+              {formatDate(systemHealth.lastBackup)}
+            </div>
+            <div
+              className="mt-1"
+              style={{
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                color: isDark ? "#9ca3af" : "#6b7280",
+              }}
+            >
+              Export: {formatDate(systemHealth.lastExport || 'Never')}
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* System Tools Section */}
-      <div>
+      <div className="mb-8">
         <h2
           className="mb-4"
           style={{
@@ -440,7 +851,14 @@ export default function SystemToolsPage({
           Management Tools
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {isLoadingHealth ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <ToolCardSkeleton key={i} isDark={isDark} />
+            ))}
+          </div>
+        ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {tools.map((tool, index) => (
             <div
               key={index}
@@ -493,19 +911,21 @@ export default function SystemToolsPage({
                     variant={tool.variant}
                     size="sm"
                     onClick={tool.action}
-                    disabled={isLoading}
+                    disabled={isOperationLoading}
+                    icon={!tool.danger ? <ExternalLink className="w-4 h-4" /> : undefined}
                   >
-                    {tool.danger ? "Proceed with Caution" : "Execute"}
+                    {tool.buttonText || 'Execute'}
                   </Button>
                 </div>
               </div>
             </div>
           ))}
         </div>
+        )}
       </div>
 
       {/* Maintenance Mode Section */}
-      <div className="mt-8">
+      <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <h2
             style={{
@@ -521,11 +941,33 @@ export default function SystemToolsPage({
             size="sm"
             onClick={handleClearAll}
             icon={<Power className="w-4 h-4" />}
+            disabled={isLoadingMaintenance}
           >
             Clear All
           </Button>
         </div>
 
+        {isLoadingMaintenance ? (
+          <>
+            <ToolCardSkeleton isDark={isDark} />
+            <div className="mt-4 p-6 rounded-xl border" style={{
+              background: isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(255, 255, 255, 0.7)",
+              borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+            }}>
+              <ShimmerStyles />
+              <SkeletonLine width="200px" height="24px" className="mb-4" />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <SkeletonLine width="100px" height="14px" />
+                    <SkeletonLine width="40px" height="24px" className="rounded" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
+        <>
         {/* Full PWA Maintenance */}
         <div
           className="p-6 rounded-xl border mb-4"
@@ -698,11 +1140,13 @@ export default function SystemToolsPage({
             })}
           </div>
         </div>
+        </>
+        )}
       </div>
 
       {/* Warning Notice */}
       <div
-        className="mt-8 p-4 rounded-xl border-l-4"
+        className="p-4 rounded-xl border-l-4"
         style={{
           background: isDark
             ? "rgba(239, 68, 68, 0.1)"
@@ -740,9 +1184,12 @@ export default function SystemToolsPage({
       {/* Maintenance Mode Configuration Modal */}
       <MaintenanceModeModal
         isOpen={showMaintenanceModal}
-        onClose={() => setShowMaintenanceModal(false)}
-        onProceed={handleMaintenanceProceed}
-        title={selectedPage ? `Enable Maintenance Mode` : "Enable Full PWA Maintenance"}
+        onClose={() => {
+          setShowMaintenanceModal(false);
+          setSelectedPage(null);
+        }}
+        onProceed={handleEnableMaintenance}
+        title={selectedPage ? `Enable Maintenance: ${selectedPage}` : "Enable Full PWA Maintenance"}
         isDark={isDark}
       />
     </PageLayout>

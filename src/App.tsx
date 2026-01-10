@@ -1879,6 +1879,15 @@ export default function App() {
         <AttendanceDashboardPage
           onClose={() => setShowAttendanceDashboard(false)}
           isDark={isDark}
+          addUploadToast={addUploadToast}
+          updateUploadToast={updateUploadToast}
+          removeUploadToast={removeUploadToast}
+        />
+        {/* Upload Toast Container for export progress */}
+        <UploadToastContainer
+          messages={uploadToastMessages}
+          onDismiss={removeUploadToast}
+          isDark={isDark}
         />
       </>
     );
@@ -1938,7 +1947,7 @@ export default function App() {
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><AttendanceTransparencyPage onClose={() => setShowAttendanceTransparency(false)} isDark={isDark} /></>);
+    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><AttendanceTransparencyPage onClose={() => setShowAttendanceTransparency(false)} isDark={isDark} userName={userName} memberId={userIdCode} /></>);
   }
 
   // Show My Profile page
@@ -2010,7 +2019,19 @@ export default function App() {
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><SystemToolsPage onClose={() => setShowSystemTools(false)} isDark={isDark} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <SystemToolsPage 
+          onClose={() => setShowSystemTools(false)} 
+          isDark={isDark} 
+          username={userName || 'admin'}
+          addUploadToast={addUploadToast}
+          updateUploadToast={updateUploadToast}
+        />
+        <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
+      </>
+    );
   }
 
   // Show Manage Members page

@@ -64,10 +64,11 @@ export default function MaintenanceModeModal({
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center p-4 md:p-8"
+      className="fixed inset-0 flex items-center justify-center p-4 md:p-8"
       style={{
         background: modalStyles.overlay.background,
         backdropFilter: modalStyles.overlay.backdropFilter,
+        zIndex: 9999, // Must be above PageLayout header (z-200)
       }}
       onClick={onClose}
     >

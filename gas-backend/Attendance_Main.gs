@@ -209,7 +209,8 @@ function recordTimeIn(params) {
       location ? `${location.lat},${location.lng}` : '', // Location
       geofenceValid ? 'Valid' : 'Outside Geofence',      // GeofenceStatus
       '',                              // Notes
-      recordedBy || '',                // RecordedBy
+      recordedBy || '',                // RecordedByTimeIn
+      '',                              // RecordedByTimeOut
       nowISO                           // RecordedAt
     ];
     
@@ -282,6 +283,11 @@ function recordTimeOut(params) {
           // Update Time Out
           const rowIndex = i + 1;
           sheet.getRange(rowIndex, headers.indexOf('TimeOut') + 1).setValue(timeString);
+          
+          // Update RecordedByTimeOut
+          if (recordedBy) {
+            sheet.getRange(rowIndex, headers.indexOf('RecordedByTimeOut') + 1).setValue(recordedBy);
+          }
           
           // Update location if provided
           if (location && location.lat && location.lng) {
@@ -379,7 +385,13 @@ function recordManualAttendance(params) {
             sheet.getRange(rowIndex, headers.indexOf('Notes') + 1).setValue(notes);
           }
           
-          sheet.getRange(rowIndex, headers.indexOf('RecordedBy') + 1).setValue(recordedBy || '');
+          // Update RecordedBy based on timeType
+          if (timeType === 'in' || timeType === 'both') {
+            sheet.getRange(rowIndex, headers.indexOf('RecordedByTimeIn') + 1).setValue(recordedBy || '');
+          }
+          if (timeType === 'out' || timeType === 'both') {
+            sheet.getRange(rowIndex, headers.indexOf('RecordedByTimeOut') + 1).setValue(recordedBy || '');
+          }
           sheet.getRange(rowIndex, headers.indexOf('RecordedAt') + 1).setValue(nowISO);
           
           return {
@@ -407,7 +419,8 @@ function recordManualAttendance(params) {
       'Manual Entry',
       'N/A',
       notes || '',
-      recordedBy || '',
+      timeType === 'in' || timeType === 'both' ? (recordedBy || '') : '',  // RecordedByTimeIn
+      timeType === 'out' || timeType === 'both' ? (recordedBy || '') : '',  // RecordedByTimeOut
       nowISO
     ];
     
@@ -462,7 +475,8 @@ function getEventAttendanceRecords(eventId) {
           date: data[i][headers.indexOf('AttendanceDate')],
           geofenceStatus: data[i][headers.indexOf('GeofenceStatus')],
           notes: data[i][headers.indexOf('Notes')],
-          recordedBy: data[i][headers.indexOf('RecordedBy')],
+          recordedByTimeIn: data[i][headers.indexOf('RecordedByTimeIn')] || '',
+          recordedByTimeOut: data[i][headers.indexOf('RecordedByTimeOut')] || '',
           recordedAt: data[i][headers.indexOf('RecordedAt')]
         });
       }
@@ -558,7 +572,9 @@ function getMemberAttendanceHistory(memberId, limit) {
           timeIn: data[i][headers.indexOf('TimeIn')],
           timeOut: data[i][headers.indexOf('TimeOut')],
           date: data[i][headers.indexOf('AttendanceDate')],
-          notes: data[i][headers.indexOf('Notes')]
+          notes: data[i][headers.indexOf('Notes')],
+          recordedByTimeIn: data[i][headers.indexOf('RecordedByTimeIn')] || '',
+          recordedByTimeOut: data[i][headers.indexOf('RecordedByTimeOut')] || ''
         });
       }
     }
@@ -880,7 +896,8 @@ function initializeAttendanceSheet() {
       'Location',
       'GeofenceStatus',
       'Notes',
-      'RecordedBy',
+      'RecordedByTimeIn',
+      'RecordedByTimeOut',
       'RecordedAt'
     ];
     

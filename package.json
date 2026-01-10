@@ -36,6 +36,8 @@
             "embla-carousel-react": "^8.6.0",
             "html5-qrcode": "^2.3.8",
             "input-otp": "^1.4.2",
+            "jspdf": "^4.0.0",
+            "jspdf-autotable": "^5.0.7",
             "leaflet": "*",
             "lucide-react": "^0.487.0",
             "motion": "*",
@@ -50,7 +52,8 @@
             "sonner": "^2.0.3",
             "tailwind-merge": "*",
             "usehooks-ts": "*",
-            "vaul": "^1.1.2"
+            "vaul": "^1.1.2",
+            "xlsx": "^0.18.5"
       },
       "devDependencies": {
             "@types/node": "^20.10.0",

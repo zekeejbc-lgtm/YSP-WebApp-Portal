@@ -28,7 +28,8 @@ export interface AttendanceRecord {
   location?: string;
   geofenceStatus?: string;
   notes?: string;
-  recordedBy?: string;
+  recordedByTimeIn?: string;
+  recordedByTimeOut?: string;
   recordedAt?: string;
 }
 

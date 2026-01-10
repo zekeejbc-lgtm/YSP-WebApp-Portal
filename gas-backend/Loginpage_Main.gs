@@ -380,6 +380,25 @@ function doPost(e) {
         return handleGetOfficerByIdCode(requestData.idCode);
       case 'getAllOfficers':
         return handleGetAllOfficers(requestData.page, requestData.limit);
+      // System Tools actions
+      case 'getSystemHealth':
+        return handleGetSystemHealth();
+      case 'getCacheVersion':
+        return handleGetCacheVersion();
+      case 'bumpCacheVersion':
+        return handleBumpCacheVersion(requestData.username);
+      case 'databaseBackup':
+        return handleDatabaseBackup(requestData.username);
+      case 'exportData':
+        return handleExportData(requestData.username);
+      case 'getMaintenanceMode':
+        return handleGetMaintenanceMode();
+      case 'enableMaintenanceMode':
+        return handleEnableMaintenanceMode(requestData.pageId, requestData.config, requestData.username);
+      case 'disableMaintenanceMode':
+        return handleDisableMaintenanceMode(requestData.pageId, requestData.username);
+      case 'clearAllMaintenance':
+        return handleClearAllMaintenance(requestData.username);
       default:
         return createErrorResponse('Invalid action', 400);
     }
