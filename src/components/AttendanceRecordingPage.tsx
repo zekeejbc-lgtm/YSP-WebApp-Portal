@@ -1003,6 +1003,14 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   };
 
   const handleProceedToModeSelection = () => {
+    // Block if user is not within geofence
+    if (!isWithinGeofence) {
+      toast.error("You must be at the event location", {
+        description: `You are ${distanceFromEvent}m away. Move within ${selectedEvent?.radius}m of the event to record attendance.`,
+      });
+      return;
+    }
+    
     setShowEventDetailsModal(false);
     setCurrentStep("mode-selection");
   };
@@ -2345,14 +2353,22 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             </button>
             <button
               onClick={handleProceedToModeSelection}
-              className="flex-1 px-4 py-2.5 md:py-3 rounded-xl text-white transition-colors text-sm md:text-base flex items-center justify-center gap-2"
+              disabled={!isWithinGeofence || locationPermission !== "granted"}
+              className="flex-1 px-4 py-2.5 md:py-3 rounded-xl text-white transition-colors text-sm md:text-base flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
-                background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                background: isWithinGeofence && locationPermission === "granted"
+                  ? "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)"
+                  : "linear-gradient(135deg, #6b7280 0%, #4b5563 100%)",
                 fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
               }}
             >
-              <span>Proceed to Choose Mode</span>
-              <ArrowLeft className="w-4 h-4 rotate-180" />
+              {locationPermission !== "granted" ? (
+                <><MapPin className="w-4 h-4" /><span>Enable Location First</span></>
+              ) : !isWithinGeofence ? (
+                <><MapPin className="w-4 h-4" /><span>Move to Event Location</span></>
+              ) : (
+                <><span>Proceed to Choose Mode</span><ArrowLeft className="w-4 h-4 rotate-180" /></>
+              )}
             </button>
           </div>
         </div>
