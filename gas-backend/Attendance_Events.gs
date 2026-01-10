@@ -212,6 +212,7 @@ function createEventsSheet(ss) {
     'Latitude',
     'Longitude',
     'Radius',
+    'GeofenceEnabled',
     'CurrentAttendees',
     'Status',
     'CreatedBy',
@@ -521,6 +522,7 @@ function createEvent(eventData) {
       eventData.latitude || '',
       eventData.longitude || '',
       eventData.radius || 100,
+      eventData.geofenceEnabled !== false ? 'TRUE' : 'FALSE', // GeofenceEnabled (default: TRUE)
       0, // CurrentAttendees (auto-calculated)
       eventData.status || 'Scheduled',
       eventData.createdBy || '',
@@ -568,11 +570,11 @@ function updateEvent(eventId, eventData) {
         const rowIndex = i + 1;
         const now = new Date().toISOString();
         
-        // Column mapping for simplified schema (1-indexed):
+        // Column mapping for schema (1-indexed):
         // 1=EventID, 2=Title, 3=Description, 4=StartDate, 5=EndDate
         // 6=StartTime, 7=EndTime, 8=LocationName, 9=Latitude, 10=Longitude, 11=Radius
-        // 12=CurrentAttendees (auto), 13=Status, 14=CreatedBy
-        // 15=CreatedAt, 16=UpdatedAt, 17=Notes
+        // 12=GeofenceEnabled, 13=CurrentAttendees (auto), 14=Status, 15=CreatedBy
+        // 16=CreatedAt, 17=UpdatedAt, 18=Notes
         
         if (eventData.title !== undefined) sheet.getRange(rowIndex, 2).setValue(eventData.title);
         if (eventData.description !== undefined) sheet.getRange(rowIndex, 3).setValue(eventData.description);
@@ -595,11 +597,12 @@ function updateEvent(eventId, eventData) {
         if (eventData.latitude !== undefined) sheet.getRange(rowIndex, 9).setValue(eventData.latitude);
         if (eventData.longitude !== undefined) sheet.getRange(rowIndex, 10).setValue(eventData.longitude);
         if (eventData.radius !== undefined) sheet.getRange(rowIndex, 11).setValue(eventData.radius);
-        if (eventData.status !== undefined) sheet.getRange(rowIndex, 13).setValue(eventData.status);
-        if (eventData.notes !== undefined) sheet.getRange(rowIndex, 17).setValue(eventData.notes);
+        if (eventData.geofenceEnabled !== undefined) sheet.getRange(rowIndex, 12).setValue(eventData.geofenceEnabled ? 'TRUE' : 'FALSE');
+        if (eventData.status !== undefined) sheet.getRange(rowIndex, 14).setValue(eventData.status);
+        if (eventData.notes !== undefined) sheet.getRange(rowIndex, 18).setValue(eventData.notes);
         
-        // Always update UpdatedAt (column 16)
-        sheet.getRange(rowIndex, 16).setValue(now);
+        // Always update UpdatedAt (column 17)
+        sheet.getRange(rowIndex, 17).setValue(now);
         
         return { success: true, message: 'Event updated successfully', eventId: eventId };
       }

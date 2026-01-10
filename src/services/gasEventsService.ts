@@ -26,6 +26,7 @@ export interface EventData {
   Latitude: number | string;
   Longitude: number | string;
   Radius: number | string;
+  GeofenceEnabled: boolean | string;
   CurrentAttendees: number;
   Status: 'Scheduled' | 'Active' | 'Inactive' | 'Completed' | 'Cancelled' | 'Draft';
   CreatedBy: string;
@@ -66,6 +67,7 @@ export interface CreateEventData {
   latitude?: number;
   longitude?: number;
   radius?: number;
+  geofenceEnabled?: boolean;
   status?: string;
   createdBy?: string;
   notes?: string;
@@ -376,6 +378,7 @@ export async function createEvent(eventData: CreateEventData): Promise<{ eventId
       latitude: eventData.latitude || '',
       longitude: eventData.longitude || '',
       radius: eventData.radius || 100,
+      geofenceEnabled: eventData.geofenceEnabled !== false,
       status: eventData.status || 'Scheduled',
       createdBy: eventData.createdBy || '',
       notes: eventData.notes || '',
@@ -413,6 +416,7 @@ export async function updateEvent(eventId: string, eventData: Partial<CreateEven
       latitude: eventData.latitude,
       longitude: eventData.longitude,
       radius: eventData.radius,
+      geofenceEnabled: eventData.geofenceEnabled,
       status: eventData.status,
       notes: eventData.notes,
     },

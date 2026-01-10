@@ -268,11 +268,68 @@ interface Event {
   description: string;
   startDate: string;
   endDate: string;
+  startTime: string;
+  endTime: string;
   status: "Active" | "Inactive" | "Scheduled" | "Cancelled" | "Completed" | "Draft";
   locationName?: string;
   location: { lat: number; lng: number };
   radius: number;
+  geofenceEnabled: boolean;
   currentAttendees: number;
+}
+
+/**
+ * Convert MM/DD/YYYY + HH:MM AM/PM to YYYY-MM-DDTHH:MM format for datetime-local input
+ * Also handles ISO date strings from Google Sheets (1899-12-30T11:13:00.000Z format)
+ */
+function convertToDatetimeLocal(dateStr: string, timeStr: string): string {
+  if (!dateStr) return '';
+  
+  try {
+    // Parse date (MM/DD/YYYY)
+    const dateParts = dateStr.split('/');
+    if (dateParts.length !== 3) return '';
+    const [month, day, year] = dateParts;
+    
+    // Parse time - default to 00:00 if no time
+    let hours = 0;
+    let minutes = 0;
+    
+    if (timeStr) {
+      // Check if it's an ISO date string from Google Sheets (1899-12-30T11:13:00.000Z)
+      // Google Sheets API returns time in UTC, so we need to parse as Date to get local time
+      if (timeStr.includes('T') && timeStr.includes('1899')) {
+        const date = new Date(timeStr);
+        if (!isNaN(date.getTime())) {
+          // Use local time (converts UTC to Manila time)
+          hours = date.getHours();
+          minutes = date.getMinutes();
+        }
+      } else {
+        // Handle HH:MM AM/PM format
+        const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+        if (timeMatch) {
+          hours = parseInt(timeMatch[1], 10);
+          minutes = parseInt(timeMatch[2], 10);
+          const period = timeMatch[3]?.toUpperCase();
+          
+          if (period === 'PM' && hours !== 12) {
+            hours += 12;
+          } else if (period === 'AM' && hours === 12) {
+            hours = 0;
+          }
+        }
+      }
+    }
+    
+    // Format as YYYY-MM-DDTHH:MM
+    const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+    
+    return `${formattedDate}T${formattedTime}`;
+  } catch {
+    return '';
+  }
 }
 
 // Convert backend EventData to frontend Event format
@@ -287,12 +344,20 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
   else if (backendEvent.Status === 'Scheduled') status = 'Scheduled';
   else if (backendEvent.Status === 'Active') status = 'Active';
   
+  // Parse geofenceEnabled - backend stores as 'TRUE' or 'FALSE' string
+  const geofenceEnabled = backendEvent.GeofenceEnabled === true || 
+    backendEvent.GeofenceEnabled === 'TRUE' || 
+    backendEvent.GeofenceEnabled === 'true' ||
+    backendEvent.GeofenceEnabled === undefined; // Default to true if not set
+  
   return {
     id: backendEvent.EventID,
     name: backendEvent.Title,
     description: backendEvent.Description,
     startDate: backendEvent.StartDate,
     endDate: backendEvent.EndDate,
+    startTime: backendEvent.StartTime || '',
+    endTime: backendEvent.EndTime || '',
     status,
     locationName: geofence?.name || backendEvent.LocationName || '',
     location: {
@@ -300,6 +365,7 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
       lng: geofence?.lng || 125.8078,
     },
     radius: geofence?.radius || 100,
+    geofenceEnabled,
     currentAttendees: backendEvent.CurrentAttendees || 0,
   };
 }
@@ -542,6 +608,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           latitude: geoLat,
           longitude: geoLng,
           radius: geoRadius,
+          geofenceEnabled: geofencingEnabled,
         });
 
         updateUploadToast(toastId, { progress: 80, message: 'Refreshing local data...' });
@@ -558,6 +625,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
                   locationName: formData.locationName,
                   location: { lat: geoLat, lng: geoLng },
                   radius: geoRadius,
+                  geofenceEnabled: geofencingEnabled,
                 }
               : event
           )
@@ -586,6 +654,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           latitude: geoLat,
           longitude: geoLng,
           radius: geoRadius,
+          geofenceEnabled: geofencingEnabled,
           status: "Scheduled",
         });
 
@@ -597,10 +666,13 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           description: formData.description,
           startDate: formData.startDate,
           endDate: formData.endDate,
+          startTime: '',
+          endTime: '',
           status: "Scheduled",
           locationName: formData.locationName,
           location: { lat: geoLat, lng: geoLng },
           radius: geoRadius,
+          geofenceEnabled: geofencingEnabled,
           currentAttendees: 0,
         };
         setEvents((prev) => [...prev, newEvent]);
@@ -650,17 +722,21 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
   };
 
   const openEditModal = (event: Event) => {
+    // Convert backend date + time format to datetime-local format
+    const startDatetime = convertToDatetimeLocal(event.startDate, event.startTime);
+    const endDatetime = convertToDatetimeLocal(event.endDate, event.endTime);
+    
     setFormData({
       name: event.name,
       description: event.description,
-      startDate: event.startDate,
-      endDate: event.endDate,
+      startDate: startDatetime,
+      endDate: endDatetime,
       locationName: event.locationName || "",
       lat: event.location.lat,
       lng: event.location.lng,
       radius: event.radius,
     });
-    setGeofencingEnabled(event.radius > 0);
+    setGeofencingEnabled(event.geofenceEnabled);
     setActiveTab('details');
     setEditingEvent(event);
     setShowModal(true);

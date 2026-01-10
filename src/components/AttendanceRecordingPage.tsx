@@ -19,7 +19,7 @@ import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import CustomDropdown from "./CustomDropdown";
-import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X } from "lucide-react";
+import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive } from "lucide-react";
 import {
   fetchEvents,
   clearEventsCache,
@@ -69,6 +69,7 @@ interface Event {
   locationName?: string;
   location: { lat: number; lng: number };
   radius: number;
+  geofenceEnabled: boolean;
   status: EventStatus;
   backendStatus: string;
   currentAttendees?: number;
@@ -106,6 +107,42 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
   const endDate = new Date(backendEvent.EndDate || backendEvent.StartDate);
   endDate.setHours(23, 59, 59, 999);
   
+  // Helper to parse time string (handles "7:13 PM", "19:13", or ISO date strings)
+  const parseTimeToHoursMinutes = (timeStr: string): { hours: number; minutes: number } | null => {
+    if (!timeStr) return null;
+    
+    // Handle ISO date string (1899-12-30T11:13:00.000Z from Google Sheets)
+    if (timeStr.includes('T') && timeStr.includes('1899')) {
+      try {
+        const date = new Date(timeStr);
+        if (!isNaN(date.getTime())) {
+          return { hours: date.getHours(), minutes: date.getMinutes() };
+        }
+      } catch {
+        // Fall through to other parsing
+      }
+    }
+    
+    // Handle 12-hour format (7:13 PM or 7:13 AM)
+    if (timeStr.toUpperCase().includes('AM') || timeStr.toUpperCase().includes('PM')) {
+      const isPM = timeStr.toUpperCase().includes('PM');
+      const timePart = timeStr.replace(/\s*(AM|PM)\s*/gi, '').trim();
+      const [h, m] = timePart.split(':').map(Number);
+      if (isNaN(h) || isNaN(m)) return null;
+      
+      let hours = h;
+      if (isPM && h !== 12) hours = h + 12;
+      else if (!isPM && h === 12) hours = 0;
+      
+      return { hours, minutes: m };
+    }
+    
+    // Handle 24-hour format (19:13)
+    const [h, m] = timeStr.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return null;
+    return { hours: h, minutes: m };
+  };
+  
   // Parse times if available
   let eventStatus: EventStatus = "upcoming";
   
@@ -117,15 +154,15 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
     eventStatus = "completed";
   } else if (now >= startDate && now <= endDate) {
     // Check if we're within the event time range
-    if (backendEvent.StartTime && backendEvent.EndTime) {
-      const [startHour, startMin] = backendEvent.StartTime.split(':').map(Number);
-      const [endHour, endMin] = backendEvent.EndTime.split(':').map(Number);
-      
+    const startTime = parseTimeToHoursMinutes(backendEvent.StartTime);
+    const endTime = parseTimeToHoursMinutes(backendEvent.EndTime);
+    
+    if (startTime && endTime) {
       const eventStart = new Date(now);
-      eventStart.setHours(startHour, startMin, 0, 0);
+      eventStart.setHours(startTime.hours, startTime.minutes, 0, 0);
       
       const eventEnd = new Date(now);
-      eventEnd.setHours(endHour, endMin, 0, 0);
+      eventEnd.setHours(endTime.hours, endTime.minutes, 0, 0);
       
       if (now >= eventStart && now <= eventEnd) {
         eventStatus = "happening";
@@ -148,6 +185,12 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
     eventStatus = "upcoming";
   }
   
+  // Parse geofenceEnabled - backend stores as 'TRUE' or 'FALSE' string
+  const geofenceEnabled = backendEvent.GeofenceEnabled === true || 
+    backendEvent.GeofenceEnabled === 'TRUE' || 
+    backendEvent.GeofenceEnabled === 'true' ||
+    backendEvent.GeofenceEnabled === undefined; // Default to true if not set
+  
   return {
     id: backendEvent.EventID,
     name: backendEvent.Title,
@@ -162,6 +205,7 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
       lng: lng || 125.8078,
     },
     radius: radius || 100,
+    geofenceEnabled,
     status: eventStatus,
     backendStatus: backendEvent.Status,
     currentAttendees: backendEvent.CurrentAttendees || 0,
@@ -193,7 +237,7 @@ function getEventStatusInfo(status: EventStatus): { label: string; color: string
   switch (status) {
     case "happening":
       return {
-        label: "Happening Now",
+        label: "Ongoing",
         color: "#10b981",
         bgColor: "#10b98120",
         icon: <PlayCircle className="w-3 h-3" />,
@@ -240,19 +284,25 @@ function getEventStatusInfo(status: EventStatus): { label: string; color: string
 function formatEventTime(timeStr: string | undefined): string {
   if (!timeStr) return '';
   
-  // Check if it's an ISO date string (like "1899-12-30T00:00:00.000Z")
+  // Check if it's an ISO date string (like "1899-12-30T11:13:00.000Z")
+  // This happens when Google Sheets stores time as a Date value
   if (timeStr.includes('T') && timeStr.includes('1899')) {
-    // This is the Excel/Sheets date epoch issue - parse the time portion
+    // Google Sheets stores the time in the spreadsheet as-is but when read via API,
+    // it returns as UTC. We need to parse as Date and use LOCAL time (which converts UTC to local)
     try {
       const date = new Date(timeStr);
-      const hours = date.getUTCHours();
-      const minutes = date.getUTCMinutes();
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      const displayHours = hours % 12 || 12;
-      return `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+      if (!isNaN(date.getTime())) {
+        // Use local time - this correctly converts UTC to Manila time (UTC+8)
+        const hours = date.getHours();
+        const minutes = date.getMinutes();
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours % 12 || 12;
+        return `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+      }
     } catch {
-      return timeStr;
+      // Fallback
     }
+    return timeStr;
   }
   
   // Check if it's already in a good format (HH:MM or H:MM AM/PM)
@@ -286,6 +336,104 @@ function formatEventTime(timeStr: string | undefined): string {
   }
   
   return timeStr;
+}
+
+// =====================================================
+// COUNTDOWN TIMER COMPONENT - Realtime countdown to event
+// =====================================================
+interface CountdownTimerProps {
+  targetDate: Date;
+  status: EventStatus;
+}
+
+function CountdownTimer({ targetDate, status }: CountdownTimerProps) {
+  const [timeLeft, setTimeLeft] = useState<string>('');
+  const [isExpired, setIsExpired] = useState(false);
+
+  useEffect(() => {
+    const calculateTimeLeft = () => {
+      const now = new Date();
+      const diff = targetDate.getTime() - now.getTime();
+
+      if (diff <= 0) {
+        setIsExpired(true);
+        setTimeLeft('Starting now!');
+        return;
+      }
+
+      setIsExpired(false);
+      
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+      if (days > 0) {
+        setTimeLeft(`${days}d ${hours}h ${minutes}m`);
+      } else if (hours > 0) {
+        setTimeLeft(`${hours}h ${minutes}m ${seconds}s`);
+      } else if (minutes > 0) {
+        setTimeLeft(`${minutes}m ${seconds}s`);
+      } else {
+        setTimeLeft(`${seconds}s`);
+      }
+    };
+
+    // Calculate immediately
+    calculateTimeLeft();
+    
+    // Update every second
+    const interval = setInterval(calculateTimeLeft, 1000);
+
+    return () => clearInterval(interval);
+  }, [targetDate]);
+
+  // Only show countdown for upcoming and starting-soon events
+  if (status === 'happening' || status === 'completed' || status === 'cancelled') {
+    return null;
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 text-xs">
+      <Clock className="w-3 h-3 text-[#f59e0b]" />
+      <span 
+        className={`font-mono font-semibold ${
+          isExpired ? 'text-green-500' : 'text-[#f59e0b]'
+        }`}
+      >
+        {timeLeft}
+      </span>
+    </div>
+  );
+}
+
+// Helper to get event start datetime
+function getEventStartDateTime(event: Event): Date {
+  const startDate = new Date(event.startDate);
+  
+  if (event.startTime) {
+    // Parse time - could be "7:13 PM" or "19:13" format
+    const timeStr = event.startTime;
+    let hours = 0;
+    let minutes = 0;
+    
+    if (timeStr.toUpperCase().includes('AM') || timeStr.toUpperCase().includes('PM')) {
+      const isPM = timeStr.toUpperCase().includes('PM');
+      const timePart = timeStr.replace(/\s*(AM|PM)\s*/i, '').trim();
+      const [h, m] = timePart.split(':').map(Number);
+      hours = isPM && h !== 12 ? h + 12 : (!isPM && h === 12 ? 0 : h);
+      minutes = m || 0;
+    } else {
+      // 24-hour format
+      const [h, m] = timeStr.split(':').map(Number);
+      hours = h || 0;
+      minutes = m || 0;
+    }
+    
+    startDate.setHours(hours, minutes, 0, 0);
+  }
+  
+  return startDate;
 }
 
 // =====================================================
@@ -666,6 +814,9 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Archive section state
+  const [showArchive, setShowArchive] = useState(false);
 
   // Upload toast state for progress tracking
   const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
@@ -1003,6 +1154,13 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   };
 
   const handleProceedToModeSelection = () => {
+    // Skip geofence check if geofencing is disabled for this event
+    if (selectedEvent?.geofenceEnabled === false) {
+      setShowEventDetailsModal(false);
+      setCurrentStep("mode-selection");
+      return;
+    }
+    
     // Block if user is not within geofence
     if (!isWithinGeofence) {
       toast.error("You must be at the event location", {
@@ -1303,144 +1461,277 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 <EventCardSkeleton key={i} isDark={isDark} />
               ))}
             </div>
-          ) : events.length === 0 ? (
-            /* Empty State */
-            <div
-              className="border rounded-xl p-8 md:p-12 text-center"
-              style={{
-                background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-                backdropFilter: 'blur(20px)',
-                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-              }}
-            >
-              <Calendar className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-              <h3
-                className="mb-2"
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  color: DESIGN_TOKENS.colors.brand.orange,
-                }}
-              >
-                No Events Available
-              </h3>
-              <p className="text-muted-foreground mb-4">
-                There are no active events for attendance recording at the moment.
-              </p>
-              <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="px-4 py-2 rounded-lg text-white transition-all hover:shadow-lg inline-flex items-center gap-2"
-                style={{
-                  background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                }}
-              >
-                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Try Again
-              </button>
-            </div>
           ) : (
-            /* Event Cards Grid */
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-              {events.map((event) => {
-                const statusInfo = getEventStatusInfo(event.status);
-                const isSelectable = event.status !== "cancelled" && event.status !== "completed";
+            /* Event Cards - Active and Archived */
+            <>
+              {/* Filter events into active and archived */}
+              {(() => {
+                const activeEvents = events.filter(e => e.status !== 'completed' && e.status !== 'cancelled');
+                const archivedEvents = events.filter(e => e.status === 'completed' || e.status === 'cancelled');
                 
                 return (
-                  <div
-                    key={event.id}
-                    className={`border rounded-xl p-4 md:p-6 transition-all ${
-                      isSelectable 
-                        ? 'cursor-pointer hover:scale-105 hover:shadow-xl' 
-                        : 'opacity-60 cursor-not-allowed'
-                    }`}
-                    style={{
-                      background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-                      backdropFilter: 'blur(20px)',
-                      borderColor: event.status === "happening" 
-                        ? '#10b981' 
-                        : event.status === "starting-soon"
-                        ? '#f59e0b'
-                        : isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-                      borderWidth: event.status === "happening" || event.status === "starting-soon" ? '2px' : '1px',
-                    }}
-                    onClick={() => isSelectable && handleEventSelect(event)}
-                  >
-                    {/* Status Badge - Top Right */}
-                    <div className="flex items-start justify-between mb-3 md:mb-4">
-                      <div className="flex-1 min-w-0 pr-2">
-                        <h3
-                          className="mb-2 line-clamp-2"
-                          style={{
-                            fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                            fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                            color: DESIGN_TOKENS.colors.brand.red,
-                          }}
-                        >
-                          {event.name}
-                        </h3>
-                      </div>
+                  <>
+                    {/* Active Events Section */}
+                    {activeEvents.length === 0 && archivedEvents.length === 0 ? (
                       <div
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs flex-shrink-0"
+                        className="border rounded-xl p-8 md:p-12 text-center"
                         style={{
-                          backgroundColor: statusInfo.bgColor,
-                          color: statusInfo.color,
-                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                          background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                          backdropFilter: 'blur(20px)',
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
                         }}
                       >
-                        {statusInfo.icon}
-                        <span className="hidden sm:inline">{statusInfo.label}</span>
+                        <Calendar className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+                        <h3
+                          className="mb-2"
+                          style={{
+                            fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                            fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
+                            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                            color: DESIGN_TOKENS.colors.brand.orange,
+                          }}
+                        >
+                          No Events Available
+                        </h3>
+                        <p className="text-muted-foreground mb-4">
+                          There are no events for attendance recording at the moment.
+                        </p>
                       </div>
-                    </div>
-                    
-                    <p className="text-xs md:text-sm text-muted-foreground line-clamp-2 mb-3 md:mb-4">{event.description}</p>
-
-                    {/* Event Details */}
-                    <div className="space-y-1.5 md:space-y-2 mb-3 md:mb-4">
-                      <div className="flex items-center gap-2 text-xs md:text-sm">
-                        <Calendar className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
-                        <span className="text-muted-foreground truncate">
-                          {new Date(event.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} 
-                          {event.startDate !== event.endDate && ` - ${new Date(event.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
-                        </span>
+                    ) : activeEvents.length === 0 ? (
+                      <div
+                        className="border rounded-xl p-6 md:p-8 text-center mb-6"
+                        style={{
+                          background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                          backdropFilter: 'blur(20px)',
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                        }}
+                      >
+                        <Calendar className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
+                        <p className="text-muted-foreground">
+                          No active events at the moment. Check the archive below for past events.
+                        </p>
                       </div>
-                      {event.startTime && (
-                        <div className="flex items-center gap-2 text-xs md:text-sm">
-                          <Clock className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
-                          <span className="text-muted-foreground truncate">
-                            {formatEventTime(event.startTime)}{event.endTime && ` - ${formatEventTime(event.endTime)}`}
-                          </span>
-                        </div>
-                      )}
-                      {event.locationName && (
-                        <div className="flex items-center gap-2 text-xs md:text-sm">
-                          <MapPin className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
-                          <span className="text-muted-foreground truncate">{event.locationName}</span>
-                        </div>
-                      )}
-                    </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mb-6">
+                        {activeEvents.map((event) => {
+                          const statusInfo = getEventStatusInfo(event.status);
+                          const eventStartDateTime = getEventStartDateTime(event);
+                          
+                          return (
+                            <div
+                              key={event.id}
+                              className="border rounded-xl p-4 md:p-6 transition-all cursor-pointer hover:scale-105 hover:shadow-xl"
+                              style={{
+                                background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                                backdropFilter: 'blur(20px)',
+                                borderColor: event.status === "happening" 
+                                  ? '#10b981' 
+                                  : event.status === "starting-soon"
+                                  ? '#f59e0b'
+                                  : isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                                borderWidth: event.status === "happening" || event.status === "starting-soon" ? '2px' : '1px',
+                              }}
+                              onClick={() => handleEventSelect(event)}
+                            >
+                              {/* Status Badge - Top Right */}
+                              <div className="flex items-start justify-between mb-3 md:mb-4">
+                                <div className="flex-1 min-w-0 pr-2">
+                                  <h3
+                                    className="mb-2 line-clamp-2"
+                                    style={{
+                                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                                      fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                                      color: DESIGN_TOKENS.colors.brand.red,
+                                    }}
+                                  >
+                                    {event.name}
+                                  </h3>
+                                </div>
+                                <div
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs flex-shrink-0"
+                                  style={{
+                                    backgroundColor: statusInfo.bgColor,
+                                    color: statusInfo.color,
+                                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                                  }}
+                                >
+                                  {statusInfo.icon}
+                                  <span className="hidden sm:inline">{statusInfo.label}</span>
+                                </div>
+                              </div>
+                              
+                              <p className="text-xs md:text-sm text-muted-foreground line-clamp-2 mb-3 md:mb-4">{event.description}</p>
 
-                    {/* Footer */}
-                    <div className="flex items-center justify-between">
-                      {event.currentAttendees !== undefined && event.currentAttendees > 0 && (
-                        <span className="text-xs text-muted-foreground">
-                          {event.currentAttendees} attendee{event.currentAttendees !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                      {isSelectable && (
-                        <span className="text-xs text-muted-foreground hidden sm:inline ml-auto">Click to select →</span>
-                      )}
-                      {!isSelectable && (
-                        <span className="text-xs text-muted-foreground ml-auto">Not available</span>
-                      )}
-                    </div>
-                  </div>
+                              {/* Event Details */}
+                              <div className="space-y-1.5 md:space-y-2 mb-3 md:mb-4">
+                                <div className="flex items-center gap-2 text-xs md:text-sm">
+                                  <Calendar className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                  <span className="text-muted-foreground truncate">
+                                    {new Date(event.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} 
+                                    {event.startDate !== event.endDate && ` - ${new Date(event.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                                  </span>
+                                </div>
+                                {event.startTime && (
+                                  <div className="flex items-center gap-2 text-xs md:text-sm">
+                                    <Clock className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                    <span className="text-muted-foreground truncate">
+                                      {formatEventTime(event.startTime)}{event.endTime && ` - ${formatEventTime(event.endTime)}`}
+                                    </span>
+                                  </div>
+                                )}
+                                {event.locationName && (
+                                  <div className="flex items-center gap-2 text-xs md:text-sm">
+                                    <MapPin className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                    <span className="text-muted-foreground truncate">{event.locationName}</span>
+                                  </div>
+                                )}
+                                
+                                {/* Countdown Timer for upcoming/starting-soon events */}
+                                {(event.status === 'upcoming' || event.status === 'starting-soon') && (
+                                  <div className="pt-1">
+                                    <CountdownTimer 
+                                      targetDate={eventStartDateTime} 
+                                      status={event.status} 
+                                    />
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Footer */}
+                              <div className="flex items-center justify-between">
+                                {event.currentAttendees !== undefined && event.currentAttendees > 0 && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {event.currentAttendees} attendee{event.currentAttendees !== 1 ? 's' : ''}
+                                  </span>
+                                )}
+                                <span className="text-xs text-muted-foreground hidden sm:inline ml-auto">Click to select →</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Archive Section - Collapsible */}
+                    {archivedEvents.length > 0 && (
+                      <div className="mt-6">
+                        <button
+                          onClick={() => setShowArchive(!showArchive)}
+                          className="w-full flex items-center justify-between p-4 rounded-xl transition-all hover:bg-opacity-80"
+                          style={{
+                            background: isDark ? 'rgba(30, 41, 59, 0.5)' : 'rgba(0, 0, 0, 0.05)',
+                            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Archive className="w-5 h-5 text-muted-foreground" />
+                            <span 
+                              className="font-semibold"
+                              style={{ color: isDark ? 'rgba(255, 255, 255, 0.7)' : 'rgba(0, 0, 0, 0.7)' }}
+                            >
+                              Archive ({archivedEvents.length} event{archivedEvents.length !== 1 ? 's' : ''})
+                            </span>
+                          </div>
+                          {showArchive ? (
+                            <ChevronUp className="w-5 h-5 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                          )}
+                        </button>
+                        
+                        {showArchive && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mt-4">
+                            {archivedEvents.map((event) => {
+                              const statusInfo = getEventStatusInfo(event.status);
+                              
+                              return (
+                                <div
+                                  key={event.id}
+                                  className="border rounded-xl p-4 md:p-6 transition-all opacity-60"
+                                  style={{
+                                    background: isDark ? 'rgba(30, 41, 59, 0.5)' : 'rgba(255, 255, 255, 0.5)',
+                                    backdropFilter: 'blur(20px)',
+                                    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                                  }}
+                                >
+                                  {/* Status Badge - Top Right */}
+                                  <div className="flex items-start justify-between mb-3 md:mb-4">
+                                    <div className="flex-1 min-w-0 pr-2">
+                                      <h3
+                                        className="mb-2 line-clamp-2"
+                                        style={{
+                                          fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                                          fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                                          color: DESIGN_TOKENS.colors.brand.red,
+                                        }}
+                                      >
+                                        {event.name}
+                                      </h3>
+                                    </div>
+                                    <div
+                                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs flex-shrink-0"
+                                      style={{
+                                        backgroundColor: statusInfo.bgColor,
+                                        color: statusInfo.color,
+                                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                                      }}
+                                    >
+                                      {statusInfo.icon}
+                                      <span className="hidden sm:inline">{statusInfo.label}</span>
+                                    </div>
+                                  </div>
+                                  
+                                  <p className="text-xs md:text-sm text-muted-foreground line-clamp-2 mb-3 md:mb-4">{event.description}</p>
+
+                                  {/* Event Details */}
+                                  <div className="space-y-1.5 md:space-y-2 mb-3 md:mb-4">
+                                    <div className="flex items-center gap-2 text-xs md:text-sm">
+                                      <Calendar className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                      <span className="text-muted-foreground truncate">
+                                        {new Date(event.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} 
+                                        {event.startDate !== event.endDate && ` - ${new Date(event.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                                      </span>
+                                    </div>
+                                    {event.startTime && (
+                                      <div className="flex items-center gap-2 text-xs md:text-sm">
+                                        <Clock className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                        <span className="text-muted-foreground truncate">
+                                          {formatEventTime(event.startTime)}{event.endTime && ` - ${formatEventTime(event.endTime)}`}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {event.locationName && (
+                                      <div className="flex items-center gap-2 text-xs md:text-sm">
+                                        <MapPin className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                        <span className="text-muted-foreground truncate">{event.locationName}</span>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Footer */}
+                                  <div className="flex items-center justify-between">
+                                    {event.currentAttendees !== undefined && event.currentAttendees > 0 && (
+                                      <span className="text-xs text-muted-foreground">
+                                        {event.currentAttendees} attendee{event.currentAttendees !== 1 ? 's' : ''}
+                                      </span>
+                                    )}
+                                    <span className="text-xs text-muted-foreground ml-auto">
+                                      {event.status === 'completed' ? 'Event ended' : 'Event cancelled'}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
                 );
-              })}
-            </div>
+              })()}
+            </>
           )}
         </>
       )}
@@ -2081,7 +2372,44 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                   </div>
                 );
               })()}
+              
+              {/* Countdown Timer in Modal */}
+              {(selectedEvent.status === 'upcoming' || selectedEvent.status === 'starting-soon') && (
+                <div 
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+                  style={{
+                    backgroundColor: '#f59e0b20',
+                    color: '#f59e0b',
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  }}
+                >
+                  <Clock className="w-3 h-3" />
+                  <span>Starts in: </span>
+                  <CountdownTimer 
+                    targetDate={getEventStartDateTime(selectedEvent)} 
+                    status={selectedEvent.status} 
+                  />
+                </div>
+              )}
             </div>
+            
+            {/* Event Not Started Warning */}
+            {selectedEvent.status !== 'happening' && selectedEvent.status !== 'completed' && selectedEvent.status !== 'cancelled' && (
+              <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                      Event has not started yet
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Attendance recording will be available once the event begins. Please wait for the scheduled time.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {selectedEvent.description && (
               <p className="text-sm text-muted-foreground mb-4">{selectedEvent.description}</p>
             )}
@@ -2143,22 +2471,41 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 </div>
               </div>
 
-              {/* Geofence Radius */}
-              <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800">
-                <Navigation className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-xs text-muted-foreground mb-1">Geofence Radius</p>
-                  <p className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
-                    {selectedEvent.radius} meters
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Attendance tracking area
-                  </p>
+              {/* Geofence Radius - Only show if geofencing is enabled */}
+              {selectedEvent.geofenceEnabled !== false && (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800">
+                  <Navigation className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-xs text-muted-foreground mb-1">Geofence Radius</p>
+                    <p className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
+                      {selectedEvent.radius} meters
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Attendance tracking area
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
+              
+              {/* Geofencing Disabled Notice */}
+              {selectedEvent.geofenceEnabled === false && (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                  <CheckCircle2 className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-xs text-muted-foreground mb-1">Location Check</p>
+                    <p className="text-sm text-blue-600 dark:text-blue-400" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
+                      Geofencing is disabled for this event
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      You can record attendance from any location
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Your Location Status */}
+            {/* Your Location Status - Only show if geofencing is enabled */}
+            {selectedEvent.geofenceEnabled !== false && (
             <div className="mb-4">
               <p className="text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
                 Your Location Status
@@ -2300,8 +2647,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 )}
               </div>
             </div>
+            )}
 
-            {/* Interactive Map Preview - Using Leaflet */}
+            {/* Interactive Map Preview - Using Leaflet - Only show if geofencing is enabled */}
+            {selectedEvent.geofenceEnabled !== false && (
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
@@ -2333,6 +2682,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 }
               </p>
             </div>
+            )}
           </div>
 
           {/* Sticky Footer with Action Buttons */}
@@ -2351,25 +2701,43 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             >
               Cancel
             </button>
-            <button
-              onClick={handleProceedToModeSelection}
-              disabled={!isWithinGeofence || locationPermission !== "granted"}
-              className="flex-1 px-4 py-2.5 md:py-3 rounded-xl text-white transition-colors text-sm md:text-base flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{
-                background: isWithinGeofence && locationPermission === "granted"
-                  ? "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)"
-                  : "linear-gradient(135deg, #6b7280 0%, #4b5563 100%)",
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              }}
-            >
-              {locationPermission !== "granted" ? (
-                <><MapPin className="w-4 h-4" /><span>Enable Location First</span></>
-              ) : !isWithinGeofence ? (
-                <><MapPin className="w-4 h-4" /><span>Move to Event Location</span></>
-              ) : (
-                <><span>Proceed to Choose Mode</span><ArrowLeft className="w-4 h-4 rotate-180" /></>
-              )}
-            </button>
+            {(() => {
+              // Determine if event has started (only allow attendance for "happening" status)
+              const eventHasStarted = selectedEvent?.status === 'happening';
+              const geofenceDisabled = selectedEvent?.geofenceEnabled === false;
+              const locationOk = geofenceDisabled || (isWithinGeofence && locationPermission === "granted");
+              const canProceed = eventHasStarted && locationOk;
+              
+              // Determine button state and message
+              let buttonContent;
+              let buttonDisabled = !canProceed;
+              
+              if (!eventHasStarted) {
+                buttonContent = <><Clock className="w-4 h-4" /><span>Event Not Started</span></>;
+              } else if (!geofenceDisabled && locationPermission !== "granted") {
+                buttonContent = <><MapPin className="w-4 h-4" /><span>Enable Location First</span></>;
+              } else if (!geofenceDisabled && !isWithinGeofence) {
+                buttonContent = <><MapPin className="w-4 h-4" /><span>Move to Event Location</span></>;
+              } else {
+                buttonContent = <><span>Proceed to Choose Mode</span><ArrowLeft className="w-4 h-4 rotate-180" /></>;
+              }
+              
+              return (
+                <button
+                  onClick={handleProceedToModeSelection}
+                  disabled={buttonDisabled}
+                  className="flex-1 px-4 py-2.5 md:py-3 rounded-xl text-white transition-colors text-sm md:text-base flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    background: canProceed
+                      ? "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)"
+                      : "linear-gradient(135deg, #6b7280 0%, #4b5563 100%)",
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  }}
+                >
+                  {buttonContent}
+                </button>
+              );
+            })()}
           </div>
         </div>
       </div>
