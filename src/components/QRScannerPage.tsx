@@ -3,6 +3,9 @@
  * QR ATTENDANCE SCANNER PAGE
  * =============================================================================
  * 
+ * @deprecated This component is deprecated. Use AttendanceRecordingPage instead
+ * which includes both QR Scanner and Manual Entry with real backend integration.
+ * 
  * SMART SPEC COMPLIANCE:
  * ✅ Uses PageLayout master component
  * ✅ Event select: 44px dropdown height

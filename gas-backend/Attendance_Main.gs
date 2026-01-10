@@ -32,9 +32,11 @@ function getAttendanceSpreadsheetId() {
 
 /**
  * Get the User Profiles Spreadsheet ID (for member lookup)
+ * Uses the same spreadsheet as Loginpage_Main.gs
  */
 function getUserProfilesSpreadsheetId() {
-  return PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '1oJL2aPO29n0VgYhpIq9B4Zxa1SgRkcBkfCDFaOC6hvo';
+  // Same spreadsheet ID as LOGIN_SPREADSHEET_ID in Loginpage_Main.gs
+  return '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
 }
 
 // =====================================================
@@ -761,6 +763,62 @@ function updateEventAttendeeCount(eventId) {
     }
   } catch (error) {
     Logger.log('Error updating attendee count: ' + error.toString());
+  }
+}
+
+/**
+ * Update attendance status for an existing record
+ * @param {string} attendanceId - The attendance record ID
+ * @param {string} status - New status (Present, Late, Absent, Excused)
+ * @param {string} notes - Optional notes
+ */
+function updateAttendanceStatus(attendanceId, status, notes) {
+  try {
+    if (!attendanceId || !status) {
+      return { success: false, error: 'Attendance ID and Status are required' };
+    }
+    
+    const ss = SpreadsheetApp.openById(getAttendanceSpreadsheetId());
+    const sheet = ss.getSheetByName('EventAttendance');
+    
+    if (!sheet || sheet.getLastRow() < 2) {
+      return { success: false, error: 'No attendance records found' };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][headers.indexOf('AttendanceID')] === attendanceId) {
+        const rowIndex = i + 1;
+        
+        // Update status
+        sheet.getRange(rowIndex, headers.indexOf('Status') + 1).setValue(status);
+        
+        // Update notes if provided
+        if (notes !== undefined && notes !== null) {
+          const existingNotes = data[i][headers.indexOf('Notes')] || '';
+          const updatedNotes = existingNotes 
+            ? `${existingNotes} | ${notes}` 
+            : notes;
+          sheet.getRange(rowIndex, headers.indexOf('Notes') + 1).setValue(updatedNotes);
+        }
+        
+        // Update timestamp
+        sheet.getRange(rowIndex, headers.indexOf('RecordedAt') + 1).setValue(new Date().toISOString());
+        
+        return {
+          success: true,
+          message: 'Attendance status updated successfully',
+          attendanceId: attendanceId,
+          status: status
+        };
+      }
+    }
+    
+    return { success: false, error: 'Attendance record not found' };
+  } catch (error) {
+    return { success: false, error: error.toString() };
   }
 }
 

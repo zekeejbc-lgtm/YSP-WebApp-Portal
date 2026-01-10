@@ -16,15 +16,29 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
+import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import CustomDropdown from "./CustomDropdown";
-import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive } from "lucide-react";
+import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle } from "lucide-react";
 import {
   fetchEvents,
   clearEventsCache,
   type EventData,
 } from "../services/gasEventsService";
+import {
+  recordTimeIn,
+  recordTimeOut,
+  recordManualAttendance,
+  checkExistingAttendance,
+  getMembersForAttendance,
+  clearMembersCache,
+  AttendanceErrorCodes,
+  AttendanceAPIError,
+  type MemberForAttendance,
+  type AttendanceRecord,
+} from "../services/gasAttendanceService";
+import { getStoredUser } from "../services/gasLoginService";
 
 interface AttendanceRecordingPageProps {
   onClose: () => void;
@@ -146,11 +160,37 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
   // Parse times if available
   let eventStatus: EventStatus = "upcoming";
   
-  if (backendEvent.Status === 'Cancelled') {
+  // Handle backend dynamic status values (Cancelled, Disabled, Completed, Active, Scheduled)
+  const backendStatus = backendEvent.Status?.toString() || '';
+  
+  if (backendStatus === 'Cancelled' || backendStatus === 'Disabled') {
     eventStatus = "cancelled";
-  } else if (backendEvent.Status === 'Completed') {
+  } else if (backendStatus === 'Completed') {
     eventStatus = "completed";
+  } else if (backendStatus === 'Active') {
+    // Backend says it's active, but let's refine for starting-soon vs happening
+    const startTime = parseTimeToHoursMinutes(backendEvent.StartTime);
+    const endTime = parseTimeToHoursMinutes(backendEvent.EndTime);
+    
+    if (startTime && endTime) {
+      const eventStart = new Date(now);
+      eventStart.setHours(startTime.hours, startTime.minutes, 0, 0);
+      
+      const eventEnd = new Date(now);
+      eventEnd.setHours(endTime.hours, endTime.minutes, 0, 0);
+      
+      if (now >= eventStart && now <= eventEnd) {
+        eventStatus = "happening";
+      } else if (now < eventStart) {
+        eventStatus = "starting-soon";
+      } else {
+        eventStatus = "completed";
+      }
+    } else {
+      eventStatus = "happening";
+    }
   } else if (now > endDate) {
+    // Fallback: if past end date, mark as completed
     eventStatus = "completed";
   } else if (now >= startDate && now <= endDate) {
     // Check if we're within the event time range
@@ -837,6 +877,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   // QR Scanner state
   const [isScanning, setIsScanning] = useState(false);
   const [cameraPermission, setCameraPermission] = useState<"granted" | "denied" | "prompt">("prompt");
+  const qrScannerRef = useRef<Html5Qrcode | null>(null);
+  const qrScannerContainerId = "qr-reader-container";
 
   // Manual attendance state
   const [selectedMember, setSelectedMember] = useState("");
@@ -880,6 +922,9 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         updateUploadToast(toastId, { progress: 30, message: 'Connecting to server...' });
       }
       
+      // Always clear cache to get fresh status calculation from backend
+      clearEventsCache();
+      
       // Fetch events from backend - only active/scheduled events for recording
       const backendEvents = await fetchEvents();
       
@@ -887,11 +932,12 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         updateUploadToast(toastId, { progress: 70, message: 'Processing event data...' });
       }
       
-      // Filter only relevant events (Active, Scheduled, or events happening today)
+      // Filter only events that should be shown for attendance recording
+      // Show: Active, Scheduled
+      // Archive (hide): Completed, Cancelled
       const relevantEvents = backendEvents.filter(event => {
         const status = event.Status;
-        // Include Active, Scheduled events and exclude Draft/Cancelled
-        return status === 'Active' || status === 'Scheduled' || status === 'Completed';
+        return status === 'Active' || status === 'Scheduled';
       });
       
       // Convert to frontend format and sort by priority
@@ -1118,34 +1164,52 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const handleRefresh = async () => {
     setIsRefreshing(true);
     clearEventsCache();
+    clearMembersCache();
     await loadEvents(true);
+    await loadMembers();
     setIsRefreshing(false);
   };
 
-  // Mock members (will be replaced with real backend later)
-  const members = [
-    { 
-      id: "MEM-001", 
-      name: "Juan Dela Cruz", 
-      committee: "Executive Board",
-      position: "President",
-      profilePicture: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&h=200&fit=crop"
-    },
-    { 
-      id: "MEM-002", 
-      name: "Maria Santos", 
-      committee: "Community Development",
-      position: "Vice President",
-      profilePicture: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop"
-    },
-    { 
-      id: "MEM-003", 
-      name: "Pedro Reyes", 
-      committee: "Environmental Conservation",
-      position: "Committee Head",
-      profilePicture: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=200&fit=crop"
-    },
-  ];
+  // Members state (loaded from backend)
+  const [members, setMembers] = useState<MemberForAttendance[]>([]);
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [membersSearchQuery, setMembersSearchQuery] = useState("");
+  const [isRecordingAttendance, setIsRecordingAttendance] = useState(false);
+
+  // Load members from backend
+  const loadMembers = useCallback(async (search?: string) => {
+    setIsLoadingMembers(true);
+    try {
+      const fetchedMembers = await getMembersForAttendance(search, 100);
+      setMembers(fetchedMembers);
+    } catch (error) {
+      console.error("Failed to load members:", error);
+      toast.error("Failed to load members", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsLoadingMembers(false);
+    }
+  }, []);
+
+  // Load members when entering recording step
+  useEffect(() => {
+    if (currentStep === "recording" && selectedMode === "manual") {
+      loadMembers();
+    }
+  }, [currentStep, selectedMode, loadMembers]);
+
+  // Debounced member search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (membersSearchQuery) {
+        loadMembers(membersSearchQuery);
+      } else if (currentStep === "recording" && selectedMode === "manual") {
+        loadMembers();
+      }
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [membersSearchQuery, currentStep, selectedMode, loadMembers]);
 
   // Navigation handlers
   const handleEventSelect = (event: Event) => {
@@ -1208,81 +1272,270 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setStatus("Present");
   };
 
-  // QR Scanner handlers
+  // Get current user for recording
+  const getCurrentUserName = (): string => {
+    const user = getStoredUser();
+    return user?.name || user?.username || 'System';
+  };
+
+  // Process QR code scan result
+  const processQRScan = async (scannedData: string) => {
+    if (!selectedEvent) return;
+
+    setIsRecordingAttendance(true);
+    
+    try {
+      // Parse QR data - expected format: "ID_CODE" or "MEM-XXX" or member ID
+      const memberId = scannedData.trim();
+      
+      // Find member in our loaded list, or search for them
+      let member = members.find(m => m.id === memberId || m.id.includes(memberId));
+      
+      if (!member) {
+        // Try to fetch member from backend
+        const fetchedMembers = await getMembersForAttendance(memberId, 1);
+        if (fetchedMembers.length > 0) {
+          member = fetchedMembers[0];
+        }
+      }
+
+      if (!member) {
+        toast.error("Member not found", {
+          description: `No member found with ID: ${memberId}`,
+        });
+        setIsRecordingAttendance(false);
+        return;
+      }
+
+      const currentDate = new Date();
+      const timestamp = currentDate.toLocaleTimeString("en-PH", {
+        timeZone: "Asia/Manila",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const fullDate = currentDate.toLocaleDateString("en-PH", {
+        timeZone: "Asia/Manila",
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      // Record attendance based on timeType
+      if (timeType === "in") {
+        try {
+          const response = await recordTimeIn({
+            eventId: selectedEvent.id,
+            memberId: member.id,
+            memberName: member.name,
+            status: 'Present',
+            location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+            recordedBy: getCurrentUserName(),
+          });
+
+          // Success - show verification modal
+          setPendingRecord({
+            memberData: member,
+            member: member.name,
+            event: selectedEvent.name,
+            timeType: "Time In",
+            status: "Present",
+            timestamp: response.timeIn || timestamp,
+            date: fullDate,
+            attendanceId: response.attendanceId,
+          });
+          setShowVerificationModal(true);
+        } catch (error) {
+          if (error instanceof AttendanceAPIError && error.code === AttendanceErrorCodes.EXISTING_RECORD) {
+            // Show overwrite warning
+            const existingRecord = error.existingRecord;
+            setPreviousRecord({
+              memberData: member,
+              member: member.name,
+              event: selectedEvent.name,
+              timeType: "Time In",
+              status: existingRecord?.status || "Present",
+              timestamp: existingRecord?.timeIn || "",
+              date: fullDate,
+            });
+            setPendingRecord({
+              memberData: member,
+              member: member.name,
+              event: selectedEvent.name,
+              timeType: "Time In",
+              status: "Present",
+              timestamp: timestamp,
+              date: fullDate,
+            });
+            setShowOverwriteWarning(true);
+          } else {
+            throw error;
+          }
+        }
+      } else {
+        // Time Out
+        try {
+          const response = await recordTimeOut({
+            eventId: selectedEvent.id,
+            memberId: member.id,
+            location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+            recordedBy: getCurrentUserName(),
+          });
+
+          // Success - show verification modal
+          setPendingRecord({
+            memberData: member,
+            member: member.name,
+            event: selectedEvent.name,
+            timeType: "Time Out",
+            status: "Present",
+            timestamp: response.timeOut || timestamp,
+            date: fullDate,
+            attendanceId: response.attendanceId,
+            timeIn: response.timeIn,
+          });
+          setShowVerificationModal(true);
+        } catch (error) {
+          if (error instanceof AttendanceAPIError) {
+            if (error.code === AttendanceErrorCodes.NO_TIME_IN) {
+              toast.error("No Time In Record", {
+                description: `${member.name} hasn't timed in yet. Please record Time In first.`,
+              });
+            } else if (error.code === AttendanceErrorCodes.ALREADY_TIMED_OUT) {
+              toast.error("Already Timed Out", {
+                description: `${member.name} has already timed out for this event today.`,
+              });
+            } else {
+              throw error;
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
+    } catch (error) {
+      console.error("QR scan processing error:", error);
+      toast.error("Failed to record attendance", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsRecordingAttendance(false);
+    }
+  };
+
+  // QR Scanner handlers - using html5-qrcode for real QR scanning
   const handleStartScanning = async () => {
     try {
+      // Clean up any existing scanner instance
+      if (qrScannerRef.current) {
+        try {
+          const state = qrScannerRef.current.getState();
+          if (state === Html5QrcodeScannerState.SCANNING) {
+            await qrScannerRef.current.stop();
+          }
+        } catch {
+          // Ignore cleanup errors
+        }
+        qrScannerRef.current = null;
+      }
+
       setIsScanning(true);
       setCameraPermission("granted");
 
-      setTimeout(() => {
-        // Mock QR scan - Get random member
-        const scannedMember = members[0]; // Juan Dela Cruz for demo
-        const currentDate = new Date();
-        const timestamp = currentDate.toLocaleTimeString("en-PH", {
-          timeZone: "Asia/Manila",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-        const fullDate = currentDate.toLocaleDateString("en-PH", {
-          timeZone: "Asia/Manila",
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        });
+      // Wait for the container to be in the DOM
+      await new Promise(resolve => setTimeout(resolve, 100));
 
-        setIsScanning(false);
+      const html5QrCode = new Html5Qrcode(qrScannerContainerId);
+      qrScannerRef.current = html5QrCode;
 
-        // Check for existing record (30% chance for demo)
-        const hasExistingRecord = Math.random() > 0.7;
+      const qrCodeSuccessCallback = async (decodedText: string) => {
+        console.log("QR Code scanned:", decodedText);
         
-        if (hasExistingRecord) {
-          // Show overwrite modal with existing record details
-          setPreviousRecord({
-            memberData: scannedMember,
-            member: scannedMember.name,
-            event: selectedEvent?.name,
-            timeType: "Time In",
-            status: "Present",
-            timestamp: "10:30 AM",
-            date: fullDate,
-          });
-          // Store pending new record
-          setPendingRecord({
-            memberData: scannedMember,
-            member: scannedMember.name,
-            event: selectedEvent?.name,
-            timeType: timeType === "in" ? "Time In" : "Time Out",
-            status: "Present", // QR always marks as Present
-            timestamp: timestamp,
-            date: fullDate,
-          });
-          setShowOverwriteWarning(true);
-        } else {
-          // Show success modal directly
-          setPendingRecord({
-            memberData: scannedMember,
-            member: scannedMember.name,
-            event: selectedEvent?.name,
-            timeType: timeType === "in" ? "Time In" : "Time Out",
-            status: "Present", // QR always marks as Present
-            timestamp: timestamp,
-            date: fullDate,
-          });
-          setShowVerificationModal(true);
+        // Stop scanning after successful scan
+        try {
+          await html5QrCode.stop();
+        } catch {
+          // Ignore stop errors
         }
-      }, 2000);
+        setIsScanning(false);
+        
+        // Process the scanned QR code (member ID)
+        await processQRScan(decodedText.trim());
+      };
+
+      const config = { 
+        fps: 10, 
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1.0,
+      };
+
+      // Start scanning with back camera
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        config,
+        qrCodeSuccessCallback,
+        (errorMessage) => {
+          // QR code parse error - this is called frequently, just ignore
+          // console.log("QR parse error:", errorMessage);
+        }
+      );
+
     } catch (error) {
+      console.error("Camera access error:", error);
       setCameraPermission("denied");
-      toast.error("Camera access denied");
+      toast.error("Camera access denied", {
+        description: "Please enable camera permissions in your browser settings.",
+      });
       setIsScanning(false);
     }
   };
 
-  // Manual attendance handlers
-  const handleRecordAttendance = () => {
+  // Stop QR scanning
+  const handleStopScanning = async () => {
+    if (qrScannerRef.current) {
+      try {
+        const state = qrScannerRef.current.getState();
+        if (state === Html5QrcodeScannerState.SCANNING) {
+          await qrScannerRef.current.stop();
+        }
+      } catch (error) {
+        console.error("Error stopping scanner:", error);
+      }
+      qrScannerRef.current = null;
+    }
+    setIsScanning(false);
+  };
+
+  // Cleanup scanner on unmount or when leaving QR mode
+  useEffect(() => {
+    return () => {
+      if (qrScannerRef.current) {
+        try {
+          qrScannerRef.current.stop().catch(() => {});
+        } catch {
+          // Ignore cleanup errors
+        }
+        qrScannerRef.current = null;
+      }
+    };
+  }, []);
+
+  // Stop scanner when changing modes or steps
+  useEffect(() => {
+    if (currentStep !== "recording" || selectedMode !== "qr") {
+      handleStopScanning();
+    }
+  }, [currentStep, selectedMode]);
+
+  // Manual attendance handlers - with real backend
+  const handleRecordAttendance = async () => {
     if (!selectedMember) {
       toast.error("Please select a member");
+      return;
+    }
+
+    if (!selectedEvent) {
+      toast.error("No event selected");
       return;
     }
 
@@ -1292,7 +1545,12 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     }
 
     const member = members.find(m => m.id === selectedMember);
-    if (!member) return;
+    if (!member) {
+      toast.error("Member not found");
+      return;
+    }
+
+    setIsRecordingAttendance(true);
 
     const currentDate = new Date();
     const timestamp = currentDate.toLocaleTimeString("en-PH", {
@@ -1308,58 +1566,189 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       day: 'numeric'
     });
 
-    // Check for existing record (30% chance for demo)
-    const hasExistingRecord = Math.random() > 0.7;
-    
-    if (hasExistingRecord) {
-      // Show overwrite modal with existing record
-      setPreviousRecord({
-        memberData: member,
-        member: member.name,
-        event: selectedEvent?.name,
-        timeType: "Time In",
-        status: "Present",
-        timestamp: "10:30 AM",
-        date: fullDate,
+    try {
+      // First check if there's an existing record
+      const existingCheck = await checkExistingAttendance(selectedEvent.id, member.id);
+      
+      if (existingCheck.exists && existingCheck.record) {
+        // Show overwrite modal
+        setPreviousRecord({
+          memberData: member,
+          member: member.name,
+          event: selectedEvent.name,
+          timeType: existingCheck.record.timeIn ? "Time In" : "Time Out",
+          status: existingCheck.record.status,
+          timestamp: existingCheck.record.timeIn || existingCheck.record.timeOut,
+          date: fullDate,
+        });
+        setPendingRecord({
+          memberData: member,
+          member: member.name,
+          event: selectedEvent.name,
+          timeType: timeType === "in" ? "Time In" : "Time Out",
+          status: status,
+          timestamp: timestamp,
+          date: fullDate,
+        });
+        setShowOverwriteWarning(true);
+      } else {
+        // No existing record - record directly
+        await submitAttendanceRecord(member, timestamp, fullDate, false);
+      }
+    } catch (error) {
+      console.error("Attendance recording error:", error);
+      toast.error("Failed to record attendance", {
+        description: error instanceof Error ? error.message : "Unknown error",
       });
-      // Store pending new record
-      setPendingRecord({
-        memberData: member,
-        member: member.name,
-        event: selectedEvent?.name,
-        timeType: timeType === "in" ? "Time In" : "Time Out",
-        status: status,
-        timestamp: timestamp,
-        date: fullDate,
-      });
-      setShowOverwriteWarning(true);
-    } else {
-      // Show success modal directly
-      setPendingRecord({
-        memberData: member,
-        member: member.name,
-        event: selectedEvent?.name,
-        timeType: timeType === "in" ? "Time In" : "Time Out",
-        status: status,
-        timestamp: timestamp,
-        date: fullDate,
-      });
+    } finally {
+      setIsRecordingAttendance(false);
+    }
+  };
+
+  // Submit attendance record to backend
+  const submitAttendanceRecord = async (
+    member: MemberForAttendance, 
+    timestamp: string, 
+    fullDate: string, 
+    overwrite: boolean
+  ) => {
+    if (!selectedEvent) return;
+
+    try {
+      if (timeType === "in") {
+        if (status === "Absent" || status === "Excused") {
+          // Use manual attendance for Absent/Excused
+          const response = await recordManualAttendance({
+            eventId: selectedEvent.id,
+            memberId: member.id,
+            memberName: member.name,
+            status: status,
+            timeType: 'in',
+            notes: `Manually marked as ${status}`,
+            recordedBy: getCurrentUserName(),
+            overwrite: overwrite,
+          });
+
+          setPendingRecord({
+            memberData: member,
+            member: member.name,
+            event: selectedEvent.name,
+            timeType: "Manual Entry",
+            status: status,
+            timestamp: timestamp,
+            date: fullDate,
+            attendanceId: response.attendanceId,
+          });
+        } else {
+          // Regular Time In
+          const response = await recordTimeIn({
+            eventId: selectedEvent.id,
+            memberId: member.id,
+            memberName: member.name,
+            status: status as 'Present' | 'Late',
+            location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+            recordedBy: getCurrentUserName(),
+          });
+
+          setPendingRecord({
+            memberData: member,
+            member: member.name,
+            event: selectedEvent.name,
+            timeType: "Time In",
+            status: status,
+            timestamp: response.timeIn || timestamp,
+            date: fullDate,
+            attendanceId: response.attendanceId,
+          });
+        }
+      } else {
+        // Time Out
+        const response = await recordTimeOut({
+          eventId: selectedEvent.id,
+          memberId: member.id,
+          location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+          recordedBy: getCurrentUserName(),
+        });
+
+        setPendingRecord({
+          memberData: member,
+          member: member.name,
+          event: selectedEvent.name,
+          timeType: "Time Out",
+          status: "Present",
+          timestamp: response.timeOut || timestamp,
+          date: fullDate,
+          attendanceId: response.attendanceId,
+          timeIn: response.timeIn,
+        });
+      }
+
       setShowVerificationModal(true);
       
       // Reset form
       setSelectedMember("");
       setStatus("Present");
+    } catch (error) {
+      if (error instanceof AttendanceAPIError) {
+        if (error.code === AttendanceErrorCodes.NO_TIME_IN) {
+          toast.error("No Time In Record", {
+            description: `${member.name} hasn't timed in yet. Please record Time In first.`,
+          });
+        } else if (error.code === AttendanceErrorCodes.ALREADY_TIMED_OUT) {
+          toast.error("Already Timed Out", {
+            description: `${member.name} has already timed out for this event today.`,
+          });
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
     }
   };
 
-  const confirmOverwrite = () => {
+  const confirmOverwrite = async () => {
+    if (!pendingRecord?.memberData || !selectedEvent) {
+      setShowOverwriteWarning(false);
+      return;
+    }
+
+    setIsRecordingAttendance(true);
     setShowOverwriteWarning(false);
-    setShowVerificationModal(true);
-    
-    // Reset form for manual mode
-    if (selectedMode === "manual") {
-      setSelectedMember("");
-      setStatus("Present");
+
+    try {
+      // Use manual attendance with overwrite flag
+      const response = await recordManualAttendance({
+        eventId: selectedEvent.id,
+        memberId: pendingRecord.memberData.id,
+        memberName: pendingRecord.memberData.name,
+        status: pendingRecord.status as 'Present' | 'Late' | 'Absent' | 'Excused',
+        timeType: timeType,
+        notes: `Overwritten previous record`,
+        recordedBy: getCurrentUserName(),
+        overwrite: true,
+      });
+
+      // Update pending record with response
+      setPendingRecord({
+        ...pendingRecord,
+        attendanceId: response.attendanceId,
+      });
+
+      setShowVerificationModal(true);
+      
+      // Reset form for manual mode
+      if (selectedMode === "manual") {
+        setSelectedMember("");
+        setStatus("Present");
+      }
+    } catch (error) {
+      console.error("Failed to overwrite attendance:", error);
+      toast.error("Failed to update attendance", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsRecordingAttendance(false);
     }
   };
 
@@ -1917,49 +2306,63 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
               </div>
             </div>
 
-            {/* Start Scanning Button */}
-            <Button
-              variant="primary"
-              onClick={handleStartScanning}
-              disabled={isScanning}
-              loading={isScanning}
-              icon={<Camera className="w-4 h-4 md:w-5 md:h-5" />}
-              fullWidth
-            >
-              {isScanning ? "Scanning..." : "Start Camera"}
-            </Button>
+            {/* Start/Stop Scanning Buttons */}
+            <div className="flex gap-3">
+              <Button
+                variant="primary"
+                onClick={handleStartScanning}
+                disabled={isScanning || isRecordingAttendance}
+                icon={isRecordingAttendance ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Camera className="w-4 h-4 md:w-5 md:h-5" />}
+                fullWidth
+              >
+                {isRecordingAttendance ? "Recording..." : "Start Camera"}
+              </Button>
+              {isScanning && (
+                <Button
+                  variant="secondary"
+                  onClick={handleStopScanning}
+                  icon={<StopCircle className="w-4 h-4 md:w-5 md:h-5" />}
+                >
+                  Stop
+                </Button>
+              )}
+            </div>
           </div>
 
-          {/* Camera Preview */}
+          {/* Camera Preview / QR Scanner */}
           <div
             className="border rounded-lg overflow-hidden w-full"
             style={{
               borderRadius: `${DESIGN_TOKENS.radius.card}px`,
               borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
               ...glassStyle,
-              height: "min(400px, 60vh)",
+              minHeight: "300px",
               maxWidth: "100%",
             }}
           >
             {isScanning ? (
-              <div className="w-full h-full bg-black flex items-center justify-center">
-                <div className="text-center text-white px-4">
-                  <QrCode className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-3 md:mb-4 animate-pulse" />
-                  <p
-                    style={{
-                      fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                    }}
-                  >
+              <div className="w-full h-full bg-black relative">
+                {/* QR Scanner Container - html5-qrcode will render the camera here */}
+                <div 
+                  id={qrScannerContainerId} 
+                  style={{ 
+                    width: '100%', 
+                    minHeight: '300px',
+                  }}
+                />
+                {/* Scanning indicator overlay */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-center">
+                  <p className="text-white text-sm font-medium flex items-center justify-center gap-2">
+                    <QrCode className="w-4 h-4 animate-pulse" />
                     Scanning for QR Code...
                   </p>
-                  <p className="text-gray-400 mt-2 text-xs md:text-sm">
-                    Position the QR code within the frame
+                  <p className="text-gray-300 text-xs mt-1">
+                    Position the member's QR code within the frame
                   </p>
                 </div>
               </div>
             ) : cameraPermission === "denied" ? (
-              <div className="w-full h-full flex items-center justify-center bg-red-500/10">
+              <div className="w-full h-full flex items-center justify-center bg-red-500/10" style={{ minHeight: '300px' }}>
                 <div className="text-center px-4">
                   <Camera className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-3 md:mb-4 text-red-500" />
                   <p
@@ -1974,10 +2377,20 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                   <p className="text-muted-foreground mt-2 text-xs md:text-sm">
                     Please enable camera permissions in your browser settings
                   </p>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setCameraPermission("prompt");
+                      handleStartScanning();
+                    }}
+                    className="mt-4"
+                  >
+                    Try Again
+                  </Button>
                 </div>
               </div>
             ) : (
-              <div className="w-full h-full flex items-center justify-center">
+              <div className="w-full h-full flex items-center justify-center" style={{ minHeight: '300px' }}>
                 <div className="text-center px-4">
                   <QrCode className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-3 md:mb-4 text-muted-foreground" />
                   <p
@@ -2140,9 +2553,22 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             </div>
           )}
 
+          {/* Loading Members Indicator */}
+          {isLoadingMembers && (
+            <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Loading members...</span>
+            </div>
+          )}
+
           {/* Record Button */}
-          <Button onClick={handleRecordAttendance} icon={<Save className="w-4 h-4 md:w-5 md:h-5" />} fullWidth>
-            Record Attendance
+          <Button 
+            onClick={handleRecordAttendance} 
+            icon={isRecordingAttendance ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Save className="w-4 h-4 md:w-5 md:h-5" />} 
+            fullWidth
+            disabled={isRecordingAttendance || isLoadingMembers || !selectedMember}
+          >
+            {isRecordingAttendance ? "Recording..." : "Record Attendance"}
           </Button>
         </div>
       )}

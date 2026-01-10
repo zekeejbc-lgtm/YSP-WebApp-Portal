@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, Edit, Search, MapPin, Move, Trash2, Loader2, RefreshCw, X, ToggleLeft, ToggleRight, FileText, MapPinned, AlertTriangle, Users } from "lucide-react";
+import { Plus, Edit, Search, MapPin, Move, Trash2, Loader2, RefreshCw, X, ToggleLeft, ToggleRight, FileText, MapPinned, AlertTriangle, Users, Check, Clock, PlayCircle, XCircle, Ban } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
+import CustomDropdown from "./CustomDropdown";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import {
   fetchEvents,
@@ -279,27 +280,145 @@ interface Event {
 }
 
 /**
- * Convert MM/DD/YYYY + HH:MM AM/PM to YYYY-MM-DDTHH:MM format for datetime-local input
- * Also handles ISO date strings from Google Sheets (1899-12-30T11:13:00.000Z format)
+ * Convert date string to YYYY-MM-DD format for date input
+ * Handles: MM/DD/YYYY, YYYY-MM-DD, ISO strings
+ */
+function convertToDateInput(dateStr: string): string {
+  if (!dateStr) return '';
+  
+  try {
+    const dateValue = String(dateStr);
+    
+    // Check if it's already YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+      return dateValue;
+    }
+    
+    // Check if it's an ISO date string (e.g., 2026-01-18T00:00:00.000Z)
+    if (dateValue.includes('-') && dateValue.includes('T')) {
+      const isoMatch = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+      }
+    }
+    
+    // MM/DD/YYYY format
+    if (dateValue.includes('/')) {
+      const dateParts = dateValue.split('/');
+      if (dateParts.length === 3) {
+        const [month, day, year] = dateParts;
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      }
+    }
+    
+    return '';
+  } catch {
+    console.error('Failed to convert date:', dateStr);
+    return '';
+  }
+}
+
+/**
+ * Convert time string to HH:MM format (24-hour) for time input
+ * Handles: HH:MM AM/PM, HH:MM (24-hour), ISO time strings from Google Sheets
+ */
+function convertToTimeInput(timeStr: string): string {
+  if (!timeStr) return '';
+  
+  try {
+    const timeValue = String(timeStr);
+    
+    // Check if it's already 24-hour HH:MM format
+    if (/^\d{2}:\d{2}$/.test(timeValue)) {
+      return timeValue;
+    }
+    
+    // Check if it's an ISO date string from Google Sheets (1899-12-30T11:13:00.000Z or regular ISO)
+    if (timeValue.includes('T')) {
+      // Parse the time portion - use UTC hours/minutes directly for Google Sheets time
+      const timeMatch = timeValue.match(/T(\d{2}):(\d{2})/);
+      if (timeMatch) {
+        return `${timeMatch[1]}:${timeMatch[2]}`;
+      }
+    }
+    
+    // Handle HH:MM AM/PM format
+    const ampmMatch = timeValue.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (ampmMatch) {
+      let hours = parseInt(ampmMatch[1], 10);
+      const minutes = ampmMatch[2];
+      const period = ampmMatch[3]?.toUpperCase();
+      
+      if (period === 'PM' && hours !== 12) {
+        hours += 12;
+      } else if (period === 'AM' && hours === 12) {
+        hours = 0;
+      }
+      
+      return `${hours.toString().padStart(2, '0')}:${minutes}`;
+    }
+    
+    return '';
+  } catch {
+    console.error('Failed to convert time:', timeStr);
+    return '';
+  }
+}
+
+/**
+ * Convert date and time strings to YYYY-MM-DDTHH:MM format for datetime-local input
+ * Handles multiple formats:
+ * - Date: MM/DD/YYYY, YYYY-MM-DD, ISO date strings, Date objects
+ * - Time: HH:MM AM/PM, HH:MM (24-hour), ISO time strings from Google Sheets (1899-12-30T...)
  */
 function convertToDatetimeLocal(dateStr: string, timeStr: string): string {
   if (!dateStr) return '';
   
   try {
-    // Parse date (MM/DD/YYYY)
-    const dateParts = dateStr.split('/');
-    if (dateParts.length !== 3) return '';
-    const [month, day, year] = dateParts;
+    let year: string, month: string, day: string;
+    
+    // Convert dateStr to string if it's a Date object
+    const dateValue = String(dateStr);
+    
+    // Check if it's an ISO date string (e.g., 2026-01-18T00:00:00.000Z or 2026-01-18)
+    if (dateValue.includes('-') && (dateValue.length >= 10)) {
+      // Could be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS.sssZ
+      const isoMatch = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        year = isoMatch[1];
+        month = isoMatch[2];
+        day = isoMatch[3];
+      } else {
+        return '';
+      }
+    } else if (dateValue.includes('/')) {
+      // MM/DD/YYYY format
+      const dateParts = dateValue.split('/');
+      if (dateParts.length !== 3) return '';
+      [month, day, year] = dateParts;
+    } else {
+      // Try parsing as a Date object
+      const parsed = new Date(dateValue);
+      if (!isNaN(parsed.getTime())) {
+        year = parsed.getFullYear().toString();
+        month = (parsed.getMonth() + 1).toString().padStart(2, '0');
+        day = parsed.getDate().toString().padStart(2, '0');
+      } else {
+        return '';
+      }
+    }
     
     // Parse time - default to 00:00 if no time
     let hours = 0;
     let minutes = 0;
     
     if (timeStr) {
+      const timeValue = String(timeStr);
+      
       // Check if it's an ISO date string from Google Sheets (1899-12-30T11:13:00.000Z)
       // Google Sheets API returns time in UTC, so we need to parse as Date to get local time
-      if (timeStr.includes('T') && timeStr.includes('1899')) {
-        const date = new Date(timeStr);
+      if (timeValue.includes('T') && timeValue.includes('1899')) {
+        const date = new Date(timeValue);
         if (!isNaN(date.getTime())) {
           // Use local time (converts UTC to Manila time)
           hours = date.getHours();
@@ -307,7 +426,7 @@ function convertToDatetimeLocal(dateStr: string, timeStr: string): string {
         }
       } else {
         // Handle HH:MM AM/PM format
-        const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+        const timeMatch = timeValue.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
         if (timeMatch) {
           hours = parseInt(timeMatch[1], 10);
           minutes = parseInt(timeMatch[2], 10);
@@ -328,6 +447,7 @@ function convertToDatetimeLocal(dateStr: string, timeStr: string): string {
     
     return `${formattedDate}T${formattedTime}`;
   } catch {
+    console.error('Failed to convert datetime:', dateStr, timeStr);
     return '';
   }
 }
@@ -336,13 +456,22 @@ function convertToDatetimeLocal(dateStr: string, timeStr: string): string {
 function convertToFrontendEvent(backendEvent: EventData): Event {
   const geofence = getEventGeofence(backendEvent);
   
-  // Map backend status to frontend status
+  // Map backend status directly - backend now calculates status dynamically
+  // Status values from backend: Active, Scheduled, Completed, Cancelled, Disabled
   let status: Event['status'] = 'Active';
-  if (backendEvent.Status === 'Cancelled') status = 'Cancelled';
-  else if (backendEvent.Status === 'Completed') status = 'Inactive';
-  else if (backendEvent.Status === 'Draft') status = 'Draft';
-  else if (backendEvent.Status === 'Scheduled') status = 'Scheduled';
-  else if (backendEvent.Status === 'Active') status = 'Active';
+  const backendStatus = backendEvent.Status?.toString() || '';
+  
+  if (backendStatus === 'Cancelled' || backendStatus === 'Disabled') {
+    status = 'Cancelled';
+  } else if (backendStatus === 'Completed') {
+    status = 'Completed';
+  } else if (backendStatus === 'Draft') {
+    status = 'Draft';
+  } else if (backendStatus === 'Scheduled') {
+    status = 'Scheduled';
+  } else if (backendStatus === 'Active') {
+    status = 'Active';
+  }
   
   // Parse geofenceEnabled - backend stores as 'TRUE' or 'FALSE' string
   const geofenceEnabled = backendEvent.GeofenceEnabled === true || 
@@ -350,14 +479,31 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
     backendEvent.GeofenceEnabled === 'true' ||
     backendEvent.GeofenceEnabled === undefined; // Default to true if not set
   
+  // Convert dates to strings (Google Sheets may return Date objects at runtime)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawStartDate = backendEvent.StartDate as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawEndDate = backendEvent.EndDate as any;
+  
+  const startDateStr = rawStartDate instanceof Date 
+    ? `${rawStartDate.getMonth() + 1}/${rawStartDate.getDate()}/${rawStartDate.getFullYear()}`
+    : String(rawStartDate || '');
+  const endDateStr = rawEndDate instanceof Date 
+    ? `${rawEndDate.getMonth() + 1}/${rawEndDate.getDate()}/${rawEndDate.getFullYear()}`
+    : String(rawEndDate || '');
+  
+  // Convert times to strings
+  const startTimeStr = String(backendEvent.StartTime || '');
+  const endTimeStr = String(backendEvent.EndTime || '');
+  
   return {
     id: backendEvent.EventID,
     name: backendEvent.Title,
     description: backendEvent.Description,
-    startDate: backendEvent.StartDate,
-    endDate: backendEvent.EndDate,
-    startTime: backendEvent.StartTime || '',
-    endTime: backendEvent.EndTime || '',
+    startDate: startDateStr,
+    endDate: endDateStr,
+    startTime: startTimeStr,
+    endTime: endTimeStr,
     status,
     locationName: geofence?.name || backendEvent.LocationName || '',
     location: {
@@ -386,7 +532,9 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
     name: "",
     description: "",
     startDate: "",
+    startTime: "",
     endDate: "",
+    endTime: "",
     locationName: "",
     lat: 7.4500,
     lng: 125.8078,
@@ -428,8 +576,12 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
   const loadEvents = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Always clear cache to get fresh status calculation from backend
+      clearEventsCache();
+      
       // Fetch events from backend
       const backendEvents = await fetchEvents();
+      console.log('Backend events received:', backendEvents.map(e => ({ id: e.EventID, title: e.Title, status: e.Status })));
       const frontendEvents = backendEvents.map(convertToFrontendEvent);
       setEvents(frontendEvents);
     } catch (error) {
@@ -459,21 +611,17 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
       event.id.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleToggleStatus = async (eventId: string) => {
+  // Handle status change from dropdown
+  const handleStatusChange = async (eventId: string, newStatus: Event['status']) => {
     const event = events.find(e => e.id === eventId);
-    if (!event) return;
+    if (!event || event.status === newStatus) return;
 
-    // Determine the new backend status
-    const isCurrentlyActive = event.status === "Active" || event.status === "Scheduled";
-    const newBackendStatus = isCurrentlyActive ? "Inactive" : "Active";
-    const newFrontendStatus: Event['status'] = isCurrentlyActive ? "Inactive" : "Active";
-    
     const toastId = `status-${Date.now()}`;
     
     addUploadToast({
       id: toastId,
-      title: isCurrentlyActive ? 'Deactivating Event' : 'Activating Event',
-      message: 'Updating status...',
+      title: 'Updating Status',
+      message: `Changing to ${newStatus}...`,
       status: 'loading',
       progress: 30,
     });
@@ -481,12 +629,13 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
     try {
       updateUploadToast(toastId, { progress: 60, message: 'Saving to backend...' });
       
-      await updateEvent(eventId, { status: newBackendStatus });
+      // Send the status directly to backend
+      await updateEvent(eventId, { status: newStatus });
       
       setEvents((prev) =>
         prev.map((e) =>
           e.id === eventId
-            ? { ...e, status: newFrontendStatus }
+            ? { ...e, status: newStatus }
             : e
         )
       );
@@ -495,7 +644,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
         progress: 100, 
         status: 'success',
         title: 'Status Updated!',
-        message: `Event ${isCurrentlyActive ? 'deactivated' : 'activated'} successfully` 
+        message: `Event is now ${newStatus}` 
       });
     } catch (error) {
       updateUploadToast(toastId, { 
@@ -563,8 +712,8 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
   };
 
   const handleCreateOrEdit = async () => {
-    if (!formData.name || !formData.startDate || !formData.endDate) {
-      toast.error("Please fill in all required fields");
+    if (!formData.name || !formData.startDate || !formData.startTime || !formData.endDate || !formData.endTime) {
+      toast.error("Please fill in all required fields (name, date, and time)");
       return;
     }
 
@@ -603,7 +752,9 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           title: formData.name,
           description: formData.description,
           startDate: formData.startDate,
+          startTime: formData.startTime,
           endDate: formData.endDate,
+          endTime: formData.endTime,
           locationName: formData.locationName,
           latitude: geoLat,
           longitude: geoLng,
@@ -621,7 +772,9 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
                   name: formData.name,
                   description: formData.description,
                   startDate: formData.startDate,
+                  startTime: formData.startTime,
                   endDate: formData.endDate,
+                  endTime: formData.endTime,
                   locationName: formData.locationName,
                   location: { lat: geoLat, lng: geoLng },
                   radius: geoRadius,
@@ -649,7 +802,9 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           title: formData.name,
           description: formData.description,
           startDate: formData.startDate,
+          startTime: formData.startTime,
           endDate: formData.endDate,
+          endTime: formData.endTime,
           locationName: formData.locationName,
           latitude: geoLat,
           longitude: geoLng,
@@ -666,8 +821,8 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           description: formData.description,
           startDate: formData.startDate,
           endDate: formData.endDate,
-          startTime: '',
-          endTime: '',
+          startTime: formData.startTime,
+          endTime: formData.endTime,
           status: "Scheduled",
           locationName: formData.locationName,
           location: { lat: geoLat, lng: geoLng },
@@ -705,7 +860,9 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
       name: "",
       description: "",
       startDate: "",
+      startTime: "",
       endDate: "",
+      endTime: "",
       locationName: "",
       lat: 7.4500,
       lng: 125.8078,
@@ -722,15 +879,19 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
   };
 
   const openEditModal = (event: Event) => {
-    // Convert backend date + time format to datetime-local format
-    const startDatetime = convertToDatetimeLocal(event.startDate, event.startTime);
-    const endDatetime = convertToDatetimeLocal(event.endDate, event.endTime);
+    // Convert backend date + time to separate date and time input formats
+    const startDateValue = convertToDateInput(event.startDate);
+    const startTimeValue = convertToTimeInput(event.startTime);
+    const endDateValue = convertToDateInput(event.endDate);
+    const endTimeValue = convertToTimeInput(event.endTime);
     
     setFormData({
       name: event.name,
       description: event.description,
-      startDate: startDatetime,
-      endDate: endDatetime,
+      startDate: startDateValue,
+      startTime: startTimeValue,
+      endDate: endDateValue,
+      endTime: endTimeValue,
       locationName: event.locationName || "",
       lat: event.location.lat,
       lng: event.location.lng,
@@ -850,16 +1011,24 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
                 <span
                   className="px-3 py-1 rounded-full text-sm"
                   style={{
-                    backgroundColor: event.status === "Active" || event.status === "Scheduled" 
+                    backgroundColor: event.status === "Active" 
                       ? "#10b98120" 
-                      : event.status === "Cancelled" 
-                        ? "#ef444420" 
-                        : "#6b728020",
-                    color: event.status === "Active" || event.status === "Scheduled" 
+                      : event.status === "Scheduled"
+                        ? "#3b82f620"
+                        : event.status === "Completed"
+                          ? "#6b728020"
+                          : event.status === "Cancelled" 
+                            ? "#ef444420" 
+                            : "#f59e0b20",
+                    color: event.status === "Active" 
                       ? "#10b981" 
-                      : event.status === "Cancelled" 
-                        ? "#ef4444" 
-                        : "#6b7280",
+                      : event.status === "Scheduled"
+                        ? "#3b82f6"
+                        : event.status === "Completed"
+                          ? "#6b7280"
+                          : event.status === "Cancelled" 
+                            ? "#ef4444" 
+                            : "#f59e0b",
                     fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                   }}
                 >
@@ -893,13 +1062,21 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
               </div>
 
               <div className="flex gap-2">
-                <button
-                  onClick={() => handleToggleStatus(event.id)}
-                  className="flex-1 px-3 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-sm"
-                  style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
-                >
-                  {event.status === "Active" || event.status === "Scheduled" ? "Deactivate" : "Activate"}
-                </button>
+                {/* Status Dropdown */}
+                <div className="flex-1">
+                  <CustomDropdown
+                    value={event.status}
+                    onChange={(newStatus) => handleStatusChange(event.id, newStatus as Event['status'])}
+                    options={[
+                      { value: 'Scheduled', label: 'Scheduled' },
+                      { value: 'Active', label: 'Active' },
+                      { value: 'Completed', label: 'Completed' },
+                      { value: 'Cancelled', label: 'Cancelled' },
+                    ]}
+                    isDark={isDark}
+                    size="sm"
+                  />
+                </div>
                 <button
                   onClick={() => openEditModal(event)}
                   className="px-3 py-2 rounded-lg bg-[#ee8724] text-white hover:bg-[#d97618] transition-colors flex items-center gap-2 text-sm"
@@ -1085,40 +1262,81 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
                   </div>
 
                   {/* Date & Time Range */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
-                    <div>
-                      <label 
-                        className="block mb-1.5 md:mb-2 text-muted-foreground text-sm md:text-base"
-                        style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
-                      >
-                        Start Date & Time *
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={formData.startDate}
-                        onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                        className="w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none text-sm md:text-base"
-                        style={{
-                          borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-                        }}
-                      />
+                  <div className="space-y-3 md:space-y-4">
+                    {/* Start Date and Time */}
+                    <div className="grid grid-cols-2 gap-3 md:gap-4">
+                      <div>
+                        <label 
+                          className="block mb-1.5 md:mb-2 text-muted-foreground text-sm md:text-base"
+                          style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                        >
+                          Start Date *
+                        </label>
+                        <input
+                          type="date"
+                          value={formData.startDate}
+                          onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                          className="w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none text-sm md:text-base"
+                          style={{
+                            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label 
+                          className="block mb-1.5 md:mb-2 text-muted-foreground text-sm md:text-base"
+                          style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                        >
+                          Start Time *
+                        </label>
+                        <input
+                          type="time"
+                          value={formData.startTime}
+                          onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                          className="w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none text-sm md:text-base"
+                          style={{
+                            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                          }}
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label 
-                        className="block mb-1.5 md:mb-2 text-muted-foreground text-sm md:text-base"
-                        style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
-                      >
-                        End Date & Time *
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={formData.endDate}
-                        onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                        className="w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none text-sm md:text-base"
-                        style={{
-                          borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-                        }}
-                      />
+                    
+                    {/* End Date and Time */}
+                    <div className="grid grid-cols-2 gap-3 md:gap-4">
+                      <div>
+                        <label 
+                          className="block mb-1.5 md:mb-2 text-muted-foreground text-sm md:text-base"
+                          style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                        >
+                          End Date *
+                        </label>
+                        <input
+                          type="date"
+                          value={formData.endDate}
+                          onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                          className="w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none text-sm md:text-base"
+                          style={{
+                            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label 
+                          className="block mb-1.5 md:mb-2 text-muted-foreground text-sm md:text-base"
+                          style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                        >
+                          End Time *
+                        </label>
+                        <input
+                          type="time"
+                          value={formData.endTime}
+                          onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                          className="w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none text-sm md:text-base"
+                          style={{
+                            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
 

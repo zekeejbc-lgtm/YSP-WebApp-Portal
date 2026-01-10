@@ -76,6 +76,22 @@ function doGet(e) {
       case 'initializeSheets':
         result = initializeEventSheets();
         break;
+      // Attendance Recording Actions (from Attendance_Main.gs)
+      case 'getEventAttendanceRecords':
+        result = getEventAttendanceRecords(params.eventId);
+        break;
+      case 'getMemberAttendanceHistory':
+        result = getMemberAttendanceHistory(params.memberId, params.limit);
+        break;
+      case 'checkExistingAttendance':
+        result = checkExistingAttendance(params.eventId, params.memberId);
+        break;
+      case 'getMembersForAttendance':
+        result = getMembersForAttendance(params.search, params.limit);
+        break;
+      case 'validateGeofence':
+        result = validateGeofence(params.eventId, params.lat, params.lng);
+        break;
       default:
         result = { success: false, error: 'Invalid action' };
     }
@@ -127,6 +143,19 @@ function doPost(e) {
         break;
       case 'cancelEvent':
         result = cancelEvent(params.eventId, params.reason);
+        break;
+      // Attendance Recording Actions (from Attendance_Main.gs)
+      case 'recordTimeIn':
+        result = recordTimeIn(params);
+        break;
+      case 'recordTimeOut':
+        result = recordTimeOut(params);
+        break;
+      case 'recordManualAttendance':
+        result = recordManualAttendance(params);
+        break;
+      case 'updateAttendanceStatus':
+        result = updateAttendanceStatus(params.attendanceId, params.status, params.notes);
         break;
       default:
         result = { success: false, error: 'Invalid action' };
@@ -342,11 +371,160 @@ function createEventSettingsSheet(ss) {
 }
 
 // =====================================================
+// EVENT STATUS CALCULATION
+// =====================================================
+
+/**
+ * Calculate the dynamic status of an event based on current date/time
+ * Manual overrides (Cancelled, Disabled) are respected and not changed
+ * Completed is now dynamically calculated based on date/time, not a manual override
+ * @param {Object} event - Event object with StartDate, EndDate, StartTime, EndTime, Status
+ * @returns {string} - Calculated status: Scheduled, Active, Completed, Cancelled, or Disabled
+ */
+function calculateEventStatus(event) {
+  // Respect manual overrides - only Cancelled and Disabled should never be auto-calculated
+  // Completed is now dynamically calculated based on date/time
+  const storedStatus = String(event.Status || '').trim();
+  if (storedStatus === 'Cancelled' || storedStatus === 'Disabled') {
+    return storedStatus;
+  }
+  
+  // Get current time in Philippines timezone
+  const now = new Date();
+  const phNow = Utilities.formatDate(now, 'Asia/Manila', 'yyyy-MM-dd HH:mm:ss');
+  const currentDateTime = new Date(phNow);
+  
+  // Parse event start date/time
+  const startDate = parseEventDate(event.StartDate);
+  const endDate = parseEventDate(event.EndDate || event.StartDate);
+  const startTime = parseEventTime(event.StartTime);
+  const endTime = parseEventTime(event.EndTime || event.StartTime);
+  
+  if (!startDate) {
+    // If no valid start date, keep stored status or default to Scheduled
+    return storedStatus || 'Scheduled';
+  }
+  
+  // Combine date and time for start
+  const eventStart = new Date(startDate);
+  if (startTime) {
+    eventStart.setHours(startTime.hours, startTime.minutes, 0, 0);
+  } else {
+    // Default to start of day if no time specified
+    eventStart.setHours(0, 0, 0, 0);
+  }
+  
+  // Combine date and time for end
+  const eventEnd = new Date(endDate);
+  if (endTime) {
+    eventEnd.setHours(endTime.hours, endTime.minutes, 0, 0);
+  } else {
+    // Default to end of day if no time specified
+    eventEnd.setHours(23, 59, 59, 999);
+  }
+  
+  // Calculate status based on current time
+  if (currentDateTime < eventStart) {
+    return 'Scheduled';
+  } else if (currentDateTime >= eventStart && currentDateTime <= eventEnd) {
+    return 'Active';
+  } else {
+    return 'Completed';
+  }
+}
+
+/**
+ * Parse date string in various formats to Date object
+ * Supports: MM/DD/YYYY, YYYY-MM-DD, Date objects
+ */
+function parseEventDate(dateValue) {
+  if (!dateValue) return null;
+  
+  // If already a Date object
+  if (dateValue instanceof Date && !isNaN(dateValue)) {
+    return dateValue;
+  }
+  
+  const dateStr = String(dateValue).trim();
+  if (!dateStr) return null;
+  
+  // Try MM/DD/YYYY format (PH format)
+  if (dateStr.includes('/')) {
+    const parts = dateStr.split('/');
+    if (parts.length === 3) {
+      const month = parseInt(parts[0], 10) - 1;
+      const day = parseInt(parts[1], 10);
+      const year = parseInt(parts[2], 10);
+      const date = new Date(year, month, day);
+      if (!isNaN(date)) return date;
+    }
+  }
+  
+  // Try YYYY-MM-DD format (ISO format)
+  if (dateStr.includes('-')) {
+    const parts = dateStr.split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const date = new Date(year, month, day);
+      if (!isNaN(date)) return date;
+    }
+  }
+  
+  // Try standard Date parsing as fallback
+  const parsed = new Date(dateStr);
+  if (!isNaN(parsed)) return parsed;
+  
+  return null;
+}
+
+/**
+ * Parse time string in various formats
+ * Supports: HH:MM AM/PM, HH:MM (24-hour)
+ * @returns {Object|null} - { hours: number, minutes: number } in 24-hour format
+ */
+function parseEventTime(timeValue) {
+  if (!timeValue) return null;
+  
+  const timeStr = String(timeValue).trim();
+  if (!timeStr) return null;
+  
+  // Check for AM/PM format (e.g., "8:00 AM", "2:30 PM")
+  const ampmMatch = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (ampmMatch) {
+    let hours = parseInt(ampmMatch[1], 10);
+    const minutes = parseInt(ampmMatch[2], 10);
+    const period = ampmMatch[3].toUpperCase();
+    
+    // Convert to 24-hour format
+    if (period === 'AM' && hours === 12) {
+      hours = 0; // 12 AM = 0:00
+    } else if (period === 'PM' && hours !== 12) {
+      hours += 12; // PM (except 12 PM)
+    }
+    
+    return { hours, minutes };
+  }
+  
+  // Check for 24-hour format (e.g., "08:00", "14:30")
+  const h24Match = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (h24Match) {
+    const hours = parseInt(h24Match[1], 10);
+    const minutes = parseInt(h24Match[2], 10);
+    return { hours, minutes };
+  }
+  
+  return null;
+}
+
+// =====================================================
 // EVENT CRUD OPERATIONS
 // =====================================================
 
 /**
  * Get all events with optional filtering
+ * Status is calculated dynamically based on current date/time
  */
 function getEvents(params) {
   try {
@@ -367,14 +545,28 @@ function getEvents(params) {
       
       const event = {};
       headers.forEach((header, index) => {
-        event[header] = row[index];
+        let value = row[index];
+        // Convert Date objects to MM/DD/YYYY string format to avoid timezone issues
+        if (value instanceof Date && !isNaN(value)) {
+          // Use Philippines timezone for date formatting
+          const phDate = Utilities.formatDate(value, 'Asia/Manila', 'MM/dd/yyyy');
+          value = phDate;
+        }
+        event[header] = value;
       });
+      
+      // Calculate dynamic status based on current date/time
+      // Store original status for reference, calculate current status
+      event.StoredStatus = event.Status;
+      event.Status = calculateEventStatus(event);
       
       // Apply filters if provided
       if (params) {
         if (params.status && event.Status !== params.status) continue;
         if (params.startDate && new Date(event.StartDate) < new Date(params.startDate)) continue;
         if (params.endDate && new Date(event.StartDate) > new Date(params.endDate)) continue;
+        // Support filtering for archived (completed) events
+        if (params.includeArchived === false && event.Status === 'Completed') continue;
       }
       
       events.push(event);
@@ -391,6 +583,7 @@ function getEvents(params) {
 
 /**
  * Get a single event by ID
+ * Status is calculated dynamically based on current date/time
  */
 function getEventById(eventId) {
   try {
@@ -408,8 +601,19 @@ function getEventById(eventId) {
       if (data[i][0] === eventId) {
         const event = {};
         headers.forEach((header, index) => {
-          event[header] = data[i][index];
+          let value = data[i][index];
+          // Convert Date objects to MM/DD/YYYY string format to avoid timezone issues
+          if (value instanceof Date && !isNaN(value)) {
+            const phDate = Utilities.formatDate(value, 'Asia/Manila', 'MM/dd/yyyy');
+            value = phDate;
+          }
+          event[header] = value;
         });
+        
+        // Calculate dynamic status based on current date/time
+        event.StoredStatus = event.Status;
+        event.Status = calculateEventStatus(event);
+        
         return { success: true, event: event };
       }
     }
@@ -438,6 +642,61 @@ function generateEventId() {
  * Date is formatted as MM/DD/YYYY (PH format)
  * Time is converted to Philippine format (12-hour with AM/PM)
  */
+/**
+ * Parse date string to MM/DD/YYYY format (PH format)
+ * Handles: YYYY-MM-DD, MM/DD/YYYY
+ */
+function parseDate(dateStr) {
+  if (!dateStr) return '';
+  
+  const str = String(dateStr).trim();
+  
+  // Already in MM/DD/YYYY format
+  if (str.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+    return str;
+  }
+  
+  // YYYY-MM-DD format (from HTML date input)
+  if (str.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    const [year, month, day] = str.split('-');
+    return `${month}/${day}/${year}`;
+  }
+  
+  return str;
+}
+
+/**
+ * Parse time string to HH:MM AM/PM format (12-hour PH format)
+ * Handles: HH:MM (24-hour from HTML time input), HH:MM AM/PM
+ */
+function parseTime(timeStr) {
+  if (!timeStr) return '';
+  
+  const str = String(timeStr).trim();
+  
+  // Already in 12-hour format with AM/PM
+  if (str.match(/\d{1,2}:\d{2}\s*(AM|PM)/i)) {
+    return str;
+  }
+  
+  // 24-hour format HH:MM (from HTML time input)
+  if (str.match(/^\d{2}:\d{2}$/)) {
+    const [hours, minutes] = str.split(':');
+    let h = parseInt(hours, 10);
+    const period = h >= 12 ? 'PM' : 'AM';
+    
+    if (h === 0) {
+      h = 12; // Midnight
+    } else if (h > 12) {
+      h = h - 12;
+    }
+    
+    return `${h}:${minutes} ${period}`;
+  }
+  
+  return str;
+}
+
 function parseDatetime(datetimeStr) {
   if (!datetimeStr) return { date: '', time: '' };
   
@@ -506,18 +765,39 @@ function createEvent(eventData) {
     const eventId = generateEventId();
     const now = new Date().toISOString();
     
-    // Parse datetime into separate date and time
-    const startParsed = parseDatetime(eventData.startDate);
-    const endParsed = parseDatetime(eventData.endDate || eventData.startDate);
+    // Handle date and time - check if separate time fields are provided
+    let startDateFormatted, startTimeFormatted, endDateFormatted, endTimeFormatted;
+    
+    if (eventData.startTime !== undefined && eventData.startTime !== '') {
+      // Separate date and time fields provided
+      startDateFormatted = parseDate(eventData.startDate);
+      startTimeFormatted = parseTime(eventData.startTime);
+    } else {
+      // Combined datetime string (legacy support)
+      const startParsed = parseDatetime(eventData.startDate);
+      startDateFormatted = startParsed.date;
+      startTimeFormatted = startParsed.time;
+    }
+    
+    if (eventData.endTime !== undefined && eventData.endTime !== '') {
+      // Separate date and time fields provided
+      endDateFormatted = parseDate(eventData.endDate || eventData.startDate);
+      endTimeFormatted = parseTime(eventData.endTime);
+    } else {
+      // Combined datetime string (legacy support)
+      const endParsed = parseDatetime(eventData.endDate || eventData.startDate);
+      endDateFormatted = endParsed.date;
+      endTimeFormatted = endParsed.time;
+    }
     
     const newRow = [
       eventId,
       eventData.title || '',
       eventData.description || '',
-      startParsed.date,          // StartDate (date only)
-      endParsed.date,            // EndDate (date only)
-      startParsed.time,          // StartTime (time only)
-      endParsed.time,            // EndTime (time only)
+      startDateFormatted,          // StartDate (date only)
+      endDateFormatted,            // EndDate (date only)
+      startTimeFormatted,          // StartTime (time only)
+      endTimeFormatted,            // EndTime (time only)
       eventData.locationName || '',
       eventData.latitude || '',
       eventData.longitude || '',
@@ -579,18 +859,44 @@ function updateEvent(eventId, eventData) {
         if (eventData.title !== undefined) sheet.getRange(rowIndex, 2).setValue(eventData.title);
         if (eventData.description !== undefined) sheet.getRange(rowIndex, 3).setValue(eventData.description);
         
-        // Parse datetime into separate date and time for startDate
+        // Handle startDate - check if separate time is provided
         if (eventData.startDate !== undefined) {
-          const startParsed = parseDatetime(eventData.startDate);
-          sheet.getRange(rowIndex, 4).setValue(startParsed.date);  // StartDate
-          sheet.getRange(rowIndex, 6).setValue(startParsed.time);  // StartTime
+          if (eventData.startTime !== undefined && eventData.startTime !== '') {
+            // Separate date and time fields provided
+            const dateParsed = parseDate(eventData.startDate);
+            const timeParsed = parseTime(eventData.startTime);
+            sheet.getRange(rowIndex, 4).setValue(dateParsed);  // StartDate
+            sheet.getRange(rowIndex, 6).setValue(timeParsed);  // StartTime
+          } else {
+            // Combined datetime string (legacy support)
+            const startParsed = parseDatetime(eventData.startDate);
+            sheet.getRange(rowIndex, 4).setValue(startParsed.date);  // StartDate
+            sheet.getRange(rowIndex, 6).setValue(startParsed.time);  // StartTime
+          }
+        } else if (eventData.startTime !== undefined) {
+          // Only time provided (update time only)
+          const timeParsed = parseTime(eventData.startTime);
+          sheet.getRange(rowIndex, 6).setValue(timeParsed);  // StartTime
         }
         
-        // Parse datetime into separate date and time for endDate
+        // Handle endDate - check if separate time is provided
         if (eventData.endDate !== undefined) {
-          const endParsed = parseDatetime(eventData.endDate);
-          sheet.getRange(rowIndex, 5).setValue(endParsed.date);    // EndDate
-          sheet.getRange(rowIndex, 7).setValue(endParsed.time);    // EndTime
+          if (eventData.endTime !== undefined && eventData.endTime !== '') {
+            // Separate date and time fields provided
+            const dateParsed = parseDate(eventData.endDate);
+            const timeParsed = parseTime(eventData.endTime);
+            sheet.getRange(rowIndex, 5).setValue(dateParsed);  // EndDate
+            sheet.getRange(rowIndex, 7).setValue(timeParsed);  // EndTime
+          } else {
+            // Combined datetime string (legacy support)
+            const endParsed = parseDatetime(eventData.endDate);
+            sheet.getRange(rowIndex, 5).setValue(endParsed.date);    // EndDate
+            sheet.getRange(rowIndex, 7).setValue(endParsed.time);    // EndTime
+          }
+        } else if (eventData.endTime !== undefined) {
+          // Only time provided (update time only)
+          const timeParsed = parseTime(eventData.endTime);
+          sheet.getRange(rowIndex, 7).setValue(timeParsed);  // EndTime
         }
         
         if (eventData.locationName !== undefined) sheet.getRange(rowIndex, 8).setValue(eventData.locationName);
@@ -976,7 +1282,13 @@ function getUpcomingEvents(limit) {
       if (eventDate >= today && status !== 'Cancelled') {
         const event = {};
         headers.forEach((header, index) => {
-          event[header] = row[index];
+          let value = row[index];
+          // Convert Date objects to MM/DD/YYYY string format to avoid timezone issues
+          if (value instanceof Date && !isNaN(value)) {
+            const phDate = Utilities.formatDate(value, 'Asia/Manila', 'MM/dd/yyyy');
+            value = phDate;
+          }
+          event[header] = value;
         });
         events.push(event);
       }
@@ -1022,7 +1334,13 @@ function getPastEvents(limit) {
       if (eventDate < today) {
         const event = {};
         headers.forEach((header, index) => {
-          event[header] = row[index];
+          let value = row[index];
+          // Convert Date objects to MM/DD/YYYY string format to avoid timezone issues
+          if (value instanceof Date && !isNaN(value)) {
+            const phDate = Utilities.formatDate(value, 'Asia/Manila', 'MM/dd/yyyy');
+            value = phDate;
+          }
+          event[header] = value;
         });
         events.push(event);
       }

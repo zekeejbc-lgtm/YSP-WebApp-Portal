@@ -7175,3 +7175,47 @@ h1, h2, h3, h4, h5, h6 {
     transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0) scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), var(--tw-enter-scale, 1)) rotate(var(--tw-enter-rotate, 0));
   }
 }
+
+/* ===============================================
+   HTML5 QR Code Scanner Styles
+   =============================================== */
+#qr-reader-container {
+  width: 100%;
+  min-height: 300px;
+  background: #000;
+}
+
+#qr-reader-container video {
+  width: 100% !important;
+  height: auto !important;
+  max-height: 400px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+#qr-reader-container #qr-shaded-region {
+  border-color: rgba(232, 126, 4, 0.7) !important;
+}
+
+/* Hide the html5-qrcode branding */
+#qr-reader-container a[href*="scanapp.org"] {
+  display: none !important;
+}
+
+/* Style the scanner region border */
+#qr-reader-container > div:first-child {
+  border: none !important;
+}
+
+/* Scanning animation for the QR box */
+@keyframes qr-scan-line {
+  0% {
+    top: 0;
+  }
+  50% {
+    top: calc(100% - 4px);
+  }
+  100% {
+    top: 0;
+  }
+}

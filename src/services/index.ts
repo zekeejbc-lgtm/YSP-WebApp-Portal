@@ -125,3 +125,30 @@ export {
   type CreateEventData,
   type GASEventsResponse,
 } from './gasEventsService';
+
+// Attendance GAS Service
+export {
+  recordTimeIn,
+  recordTimeOut,
+  recordManualAttendance,
+  checkExistingAttendance,
+  getEventAttendanceRecords,
+  getMemberAttendanceHistory,
+  getMembersForAttendance,
+  clearMembersCache,
+  validateGeofence,
+  checkAttendanceApiHealth,
+  isAttendanceApiConfigured,
+  AttendanceErrorCodes,
+  AttendanceAPIError,
+  type AttendanceRecord,
+  type MemberForAttendance,
+  type RecordTimeInParams,
+  type RecordTimeOutParams,
+  type RecordManualAttendanceParams,
+  type TimeInResponse,
+  type TimeOutResponse,
+  type ManualAttendanceResponse,
+  type ExistingAttendanceResponse,
+  type GeofenceValidationResponse,
+} from './gasAttendanceService';
