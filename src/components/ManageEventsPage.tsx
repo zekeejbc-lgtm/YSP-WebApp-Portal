@@ -914,32 +914,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
         { label: "Attendance Management", onClick: undefined },
         { label: "Manage Events", onClick: undefined },
       ]}
-      actions={
-        <div className="flex items-center gap-3">
-          {/* Refresh Button */}
-          <button
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
-            title="Refresh Events"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          </button>
-          
-          {/* Create Event Button */}
-          <button
-            onClick={openCreateModal}
-            className="px-4 py-2 rounded-lg text-white transition-all hover:shadow-lg flex items-center gap-2"
-            style={{
-              background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-            }}
-          >
-            <Plus className="w-4 h-4" />
-            Create Event
-          </button>
-        </div>
-      }
+      actions={null}
     >
       {/* Skeleton Loading State */}
       {isLoading && (
@@ -961,20 +936,41 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
         </>
       )}
 
-      {/* Search Bar - only show when not loading */}
+      {/* Search Bar, Refresh, and Create Button - only show when not loading */}
       {!isLoading && (
-        <div className="mb-6 relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by Event Name or ID..."
-            className="w-full pl-12 pr-4 py-3 rounded-xl border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none"
+        <div className="mb-6 flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by Event Name or ID..."
+              className="w-full pl-12 pr-4 py-3 rounded-xl border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none"
+              style={{
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              }}
+            />
+          </div>
+          <button
+            onClick={handleRefresh}
+            disabled={isLoading}
+            className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
+            title="Refresh Events"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
+          <button
+            onClick={openCreateModal}
+            className="ml-2 px-4 py-3 rounded-xl text-white transition-all hover:shadow-lg flex items-center gap-2"
             style={{
-              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
             }}
-          />
+          >
+            <Plus className="w-5 h-5" />
+            Create
+          </button>
         </div>
       )}
 

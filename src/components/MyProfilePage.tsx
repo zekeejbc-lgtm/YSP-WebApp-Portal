@@ -534,17 +534,6 @@ export default function MyProfilePage({
         { label: "Home", onClick: onClose },
         { label: "My Profile", onClick: undefined },
       ]}
-      actions={
-        !isEditing && !isLoading ? (
-          <Button
-            variant="primary"
-            onClick={() => setIsEditing(true)}
-            icon={<Edit className="w-5 h-5" />}
-          >
-            Edit Profile
-          </Button>
-        ) : null
-      }
     >
       {/* Loading State - Skeleton UI */}
       {isLoading ? (
@@ -1309,7 +1298,7 @@ export default function MyProfilePage({
       </div>
 
       {/* Floating Action Buttons - Bottom Right */}
-      {isEditing && (
+      {isEditing ? (
         <div 
           className="fixed bottom-6 right-6 flex gap-3 z-50"
           style={{
@@ -1334,6 +1323,22 @@ export default function MyProfilePage({
             {isSaving ? 'Saving...' : 'Save Changes'}
           </Button>
         </div>
+      ) : (
+        !isLoading && (
+          <div
+            className="fixed bottom-6 right-6 z-50"
+            style={{ filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.15))' }}
+          >
+            <Button
+              variant="primary"
+              onClick={() => setIsEditing(true)}
+              icon={<Edit className="w-6 h-6" />}
+              className="rounded-lg !p-0 w-16 h-16 flex items-center justify-center shadow-lg"
+              style={{ borderRadius: '0.75rem', fontSize: '1.1rem' }}
+              aria-label="Edit Profile"
+            />
+          </div>
+        )
       )}
         </>
       )}

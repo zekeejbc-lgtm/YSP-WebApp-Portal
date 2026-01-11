@@ -341,17 +341,7 @@ export default function MyQRIDPage({
         { label: "Attendance Management", onClick: undefined },
         { label: "My QR ID", onClick: undefined },
       ]}
-      actions={
-        !isLoading && userData ? (
-          <Button
-            variant="primary"
-            onClick={handleSaveQR}
-            icon={<Download className="w-5 h-5" />}
-          >
-            Save as PNG
-          </Button>
-        ) : undefined
-      }
+      actions={undefined}
     >
       {/* QR Code Card */}
       <div
@@ -373,6 +363,7 @@ export default function MyQRIDPage({
           <SkeletonLoader isDark={isDark} />
         ) : userData ? (
           <>
+
             {/* QR Code Container with Orange Outline */}
             <div
               ref={qrRef}
@@ -391,7 +382,7 @@ export default function MyQRIDPage({
               />
             </div>
 
-            {/* User Information */}
+            {/* User Information: Name, Position, ID Code */}
             <div
               style={{
                 marginBottom: `${DESIGN_TOKENS.spacing.scale.xl}px`,
@@ -427,6 +418,17 @@ export default function MyQRIDPage({
               >
                 ID: {userData.idCode}
               </p>
+            </div>
+
+            {/* Save Button below ID Code */}
+            <div className="mb-6 flex justify-center">
+              <Button
+                variant="primary"
+                onClick={handleSaveQR}
+                icon={<Download className="w-5 h-5" />}
+              >
+                Save
+              </Button>
             </div>
 
             {/* Instructions */}

@@ -78,7 +78,6 @@ import ManageMembersPage from "./components/ManageMembersPage";
 import MembershipApplicationsPage from "./components/MembershipApplicationsPage";
 import FounderModal from "./components/FounderModal";
 import DeveloperModal from "./components/DeveloperModal";
-import { DebugPill } from "./components/DebugPill";
 import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
 import { FormattedText } from "./components/FormattedText";
 import { 
