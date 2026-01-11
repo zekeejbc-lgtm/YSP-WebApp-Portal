@@ -2854,80 +2854,79 @@ export default function App() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100" style={{ WebkitOverflowScrolling: 'touch', whiteSpace: 'nowrap', paddingBottom: 8, minHeight: 370 }}>
               {projects.map((project) => (
-                <GlowingCard
-                  key={project.projectId}
-                  isDark={isDark}
-                  glowOnHover={true}
-                  className={`overflow-hidden cursor-pointer transition-all duration-250 hover:scale-[1.03] relative ${
-                    selectedProjectIds.includes(project.projectId) ? "ring-2 ring-blue-500 ring-offset-2" : ""
-                  }`}
-                >
-                  {/* Checkbox for Admin */}
-                  {isAdmin && (
-                    <div
-                      className="absolute top-3 left-3 z-10 flex gap-2"
-                      onClick={(e) => e.stopPropagation()}
+                <span key={project.projectId} style={{ display: 'inline-block', verticalAlign: 'top', marginRight: 24, width: 350, maxWidth: '90vw' }}>
+                  <GlowingCard
+                    isDark={isDark}
+                    glowOnHover={true}
+                    className={`overflow-hidden cursor-pointer transition-all duration-250 hover:scale-[1.03] relative ${
+                      selectedProjectIds.includes(project.projectId) ? "ring-2 ring-blue-500 ring-offset-2" : ""
+                    }`}
                   >
-                    <label className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-blue-500 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={selectedProjectIds.includes(project.projectId)}
-                        onChange={() => toggleProjectSelection(project.projectId)}
-                        className="sr-only"
-                      />
-                      {selectedProjectIds.includes(project.projectId) && (
-                        <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                      )}
-                    </label>
-                    <button
-                      onClick={() => startEditProject(project)}
-                      className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-colors"
-                      title="Edit project"
+                    {/* Checkbox for Admin */}
+                    {isAdmin && (
+                      <div
+                        className="absolute top-3 left-3 z-10 flex gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <label className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-blue-500 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={selectedProjectIds.includes(project.projectId)}
+                            onChange={() => toggleProjectSelection(project.projectId)}
+                            className="sr-only"
+                          />
+                          {selectedProjectIds.includes(project.projectId) && (
+                            <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                        </label>
+                        <button
+                          onClick={() => startEditProject(project)}
+                          className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-colors"
+                          title="Edit project"
+                        >
+                          <Edit2 className="w-3.5 h-3.5 text-orange-500" />
+                        </button>
+                      </div>
+                    )}
+                    <div 
+                      onClick={() => openProjectModal(project)}
+                      className="w-full"
                     >
-                      <Edit2 className="w-3.5 h-3.5 text-orange-500" />
-                    </button>
-                  </div>
-                )}
-                <div 
-                  onClick={() => openProjectModal(project)}
-                  className="w-full"
-                >
-                  <div className="w-full h-48 overflow-hidden relative">
-                    <ImageWithFallback
-                      src={project.imageUrl}
-                      alt={project.title}
-                      className="w-full h-full object-cover object-center transition-transform duration-300 hover:scale-110"
-                    />
-                  </div>
-
-                  <div className="p-4">
-                    <h3
-                      className="mb-2 line-clamp-2"
-                      style={{
-                        fontFamily: "var(--font-headings)",
-                        fontSize: "1.125rem",
-                        fontWeight: "var(--font-weight-bold)",
-                        color: "#f6421f",
-                        lineHeight: "1.4",
-                      }}
-                    >
-                      <FormattedText text={project.title} />
-                    </h3>
-
-                    <div
-                      className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3"
-                      style={{ lineHeight: "1.5" }}
-                    >
-                      <FormattedText text={project.description} />
+                      <div className="w-full h-48 overflow-hidden relative">
+                        <ImageWithFallback
+                          src={project.imageUrl}
+                          alt={project.title}
+                          className="w-full h-full object-cover object-center transition-transform duration-300 hover:scale-110"
+                        />
+                      </div>
+                      <div className="p-4">
+                        <h3
+                          className="mb-2 line-clamp-2"
+                          style={{
+                            fontFamily: "var(--font-headings)",
+                            fontSize: "1.125rem",
+                            fontWeight: "var(--font-weight-bold)",
+                            color: "#f6421f",
+                            lineHeight: "1.4",
+                          }}
+                        >
+                          <FormattedText text={project.title} />
+                        </h3>
+                        <div
+                          className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3"
+                          style={{ lineHeight: "1.5" }}
+                        >
+                          <FormattedText text={project.description} />
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              </GlowingCard>
-            ))}
+                  </GlowingCard>
+                </span>
+              ))}
             </div>
           )}
         </div>
