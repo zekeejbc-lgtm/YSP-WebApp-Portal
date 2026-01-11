@@ -742,8 +742,9 @@ export default function ManageMembersPage({
         </div>
 
         {/* Search and Filters */}
-        <div className="flex flex-col md:flex-row gap-4 mb-4">
-          <div className="flex-1 relative">
+        {/* Search bar on top, filters below */}
+        <div className="mb-2">
+          <div className="relative mb-3">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
@@ -756,36 +757,43 @@ export default function ManageMembersPage({
               }}
             />
           </div>
-
-          <CustomDropdown
-            value={filterRole}
-            onChange={setFilterRole}
-            options={[
-              { value: "all", label: "All Roles" },
-              { value: "Admin", label: "Admin" },
-              { value: "Officer", label: "Officer" },
-              { value: "Member", label: "Member" },
-              { value: "Volunteer", label: "Volunteer" },
-            ]}
-            isDark={isDark}
-            size="md"
-            className="min-w-[180px]"
-          />
-
-          <CustomDropdown
-            value={filterCommittee}
-            onChange={setFilterCommittee}
-            options={[
-              { value: "all", label: "All Committees" },
-              { value: "Executive Board", label: "Executive Board" },
-              { value: "Community Development", label: "Community Development" },
-              { value: "Environmental Conservation", label: "Environmental Conservation" },
-              { value: "Youth Development", label: "Youth Development" },
-            ]}
-            isDark={isDark}
-            size="md"
-            className="min-w-[180px]"
-          />
+          <div className="flex flex-col sm:flex-row gap-3">
+            <CustomDropdown
+              value={filterRole}
+              onChange={setFilterRole}
+              options={[
+                { value: "all", label: "All Roles" },
+                { value: "Admin", label: "Admin" },
+                { value: "Auditor", label: "Auditor" },
+                { value: "Head", label: "Head" },
+                { value: "Member", label: "Member" },
+                { value: "Volunteer", label: "Volunteer" },
+                { value: "Guest", label: "Guest" },
+                { value: "Banned", label: "Banned" },
+                { value: "Suspended", label: "Suspended" },
+              ]}
+              isDark={isDark}
+              size="md"
+              className="min-w-[120px] max-w-[150px]"
+            />
+            <CustomDropdown
+              value={filterCommittee}
+              onChange={setFilterCommittee}
+              options={[
+                { value: "all", label: "All Committees" },
+                { value: "Membership and Internal Affairs Committee", label: "Membership and Internal Affairs\nCommittee" },
+                { value: "External Relations Committee", label: "External Relations\nCommittee" },
+                { value: "Secretariat and Documentation Committee", label: "Secretariat and Documentation\nCommittee" },
+                { value: "Finance and Treasury Committee", label: "Finance and Treasury\nCommittee" },
+                { value: "Program Development Committee", label: "Program Development\nCommittee" },
+                { value: "Communications and Marketing Committee", label: "Communications and Marketing\nCommittee" },
+              ]}
+              isDark={isDark}
+              size="md"
+              className="min-w-[120px] max-w-[180px] committee-dropdown-compact"
+              optionClassName="committee-dropdown-option"
+            />
+          </div>
         </div>
 
         {/* Controls Row: View Mode Toggle + Actions */}

@@ -1,3 +1,17 @@
+/* Compact committee dropdown styles */
+.committee-dropdown-compact .committee-dropdown-option {
+  white-space: pre-line;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.2;
+  min-height: 2.2em;
+  max-height: 2.6em;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
 /* Custom scrollbar for horizontal project cards */
 .scrollbar-thin {
   scrollbar-width: thin;
