@@ -3701,13 +3701,13 @@ export default function App() {
                 </a>{" "}
                 or send us an Email:{" "}
                 <a
-                  href="https://mail.google.com/mail/?view=cm&fs=1&to=YSPTagumChapter@gmail.com"
+                  href="https://mail.google.com/mail/u/0/?fs=1&to=ysptagumchapter%2Bportal@gmail.com&tf=cm"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[#f6421f] dark:text-[#ee8724] hover:underline transition-colors"
                   style={{ fontWeight: "500" }}
                 >
-                  YSPTagumChapter@gmail.com
+                  YSPTagumChapter+portal@gmail.com
                 </a>{" "}
                 for further assistance. We value your feedback
                 and will address your concerns as promptly as
