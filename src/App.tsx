@@ -58,6 +58,7 @@ import {
   LoginErrorCodes,
   type LoginUser,
 } from "./services/gasLoginService";
+import { logLogin, logLogout } from "./services/gasSystemToolsService";
 import { ImageWithFallback } from "./components/figma/ImageWithFallback";
 import { toast, Toaster } from "sonner";
 import DonationPage from "./components/DonationPage";
@@ -1472,6 +1473,9 @@ export default function App() {
         setUserProfilePicture(user.profilePic || '');
         setShowLoginPanel(false);
 
+        // Log successful login to Access Logs
+        logLogin(user.name || username, true);
+
         // Role-specific welcome messages
         const roleMessages: Record<string, string> = {
           auditor: 'Welcome, Auditor! You have full system access including audit logs.',
@@ -1486,6 +1490,9 @@ export default function App() {
         });
       }
     } catch (error: unknown) {
+      // Log failed login attempt
+      logLogin(username, false);
+      
       // Handle specific error types
       if (error && typeof error === 'object' && 'code' in error) {
         const loginError = error as { code: string; message: string };
@@ -1530,6 +1537,11 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    // Log logout before clearing session (need username)
+    if (userName) {
+      logLogout(userName);
+    }
+    
     // Clear session from storage
     clearSession();
     
@@ -2005,7 +2017,7 @@ export default function App() {
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><AccessLogsPage onClose={() => setShowAccessLogs(false)} isDark={isDark} /></>);
+    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><AccessLogsPage onClose={() => setShowAccessLogs(false)} isDark={isDark} username={userName || 'admin'} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} /></>);
   }
 
   // Show System Tools page

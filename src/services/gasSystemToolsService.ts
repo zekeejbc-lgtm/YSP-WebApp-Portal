@@ -487,3 +487,172 @@ export const AVAILABLE_PAGES_BACKEND = [
   { id: 'access-logs', name: 'Access Logs' },
   { id: 'system-tools', name: 'System Tools' },
 ];
+
+// =================== ACCESS LOGGING ===================
+
+export type AccessLogType = 'login' | 'logout' | 'view' | 'edit' | 'create' | 'delete';
+export type AccessLogStatus = 'success' | 'failed' | 'warning';
+
+export interface LogAccessParams {
+  username: string;
+  action: string;
+  actionType: AccessLogType;
+  status?: AccessLogStatus;
+  ipAddress?: string;
+  device?: string;
+}
+
+/**
+ * Get device information for logging
+ */
+export function getDeviceInfo(): string {
+  const ua = navigator.userAgent;
+  const platform = navigator.platform || 'Unknown';
+  
+  // Detect browser
+  let browser = 'Unknown';
+  if (ua.includes('Firefox')) browser = 'Firefox';
+  else if (ua.includes('Edg')) browser = 'Edge';
+  else if (ua.includes('Chrome')) browser = 'Chrome';
+  else if (ua.includes('Safari')) browser = 'Safari';
+  else if (ua.includes('Opera') || ua.includes('OPR')) browser = 'Opera';
+  
+  // Detect device type
+  let deviceType = 'Desktop';
+  if (/Mobile|Android|iPhone|iPad/i.test(ua)) {
+    deviceType = /iPad/i.test(ua) ? 'Tablet' : 'Mobile';
+  }
+  
+  return `${browser} on ${platform} (${deviceType})`;
+}
+
+/**
+ * Get client IP address (approximate - requires external service for real IP)
+ * For now, returns placeholder since GAS can't detect client IP directly
+ */
+export async function getClientIP(): Promise<string> {
+  try {
+    // Use a free IP lookup service (you can change this)
+    const response = await fetch('https://api.ipify.org?format=json', { 
+      signal: AbortSignal.timeout(3000) 
+    });
+    if (response.ok) {
+      const data = await response.json();
+      return data.ip || 'Unknown';
+    }
+  } catch {
+    // Silently fail - IP is optional
+  }
+  return 'Unknown';
+}
+
+/**
+ * Log a user access/action to the backend
+ * Call this when users perform important actions
+ */
+export async function logAccess(params: LogAccessParams): Promise<boolean> {
+  try {
+    // Get device info
+    const device = params.device || getDeviceInfo();
+    
+    // Get IP (don't wait too long for this)
+    let ipAddress = params.ipAddress || 'Unknown';
+    if (ipAddress === 'Unknown') {
+      // Try to get IP asynchronously but don't block
+      getClientIP().then(ip => {
+        if (ip !== 'Unknown') {
+          // Log again with IP if we got it (optional enhancement)
+          console.log('[AccessLog] IP resolved:', ip);
+        }
+      }).catch(() => {});
+    }
+    
+    await callSystemToolsAPI<{ message: string }>('logAccess', {
+      username: params.username,
+      action: params.action,
+      actionType: params.actionType,
+      status: params.status || 'success',
+      ipAddress,
+      device,
+    });
+    
+    console.log('[AccessLog] Logged:', params.action, 'by', params.username);
+    return true;
+  } catch (error) {
+    // Silently fail - access logging should not block user actions
+    console.error('[AccessLog] Failed to log access:', error);
+    return false;
+  }
+}
+
+/**
+ * Helper to log login events
+ */
+export function logLogin(username: string, success: boolean): void {
+  logAccess({
+    username,
+    action: success ? 'User logged in successfully' : 'Login attempt failed',
+    actionType: 'login',
+    status: success ? 'success' : 'failed',
+  });
+}
+
+/**
+ * Helper to log logout events
+ */
+export function logLogout(username: string): void {
+  logAccess({
+    username,
+    action: 'User logged out',
+    actionType: 'logout',
+    status: 'success',
+  });
+}
+
+/**
+ * Helper to log page views
+ */
+export function logPageView(username: string, pageName: string): void {
+  logAccess({
+    username,
+    action: `Viewed ${pageName}`,
+    actionType: 'view',
+    status: 'success',
+  });
+}
+
+/**
+ * Helper to log create actions
+ */
+export function logCreate(username: string, itemType: string, itemName?: string): void {
+  logAccess({
+    username,
+    action: `Created ${itemType}${itemName ? `: ${itemName}` : ''}`,
+    actionType: 'create',
+    status: 'success',
+  });
+}
+
+/**
+ * Helper to log edit actions
+ */
+export function logEdit(username: string, itemType: string, itemName?: string): void {
+  logAccess({
+    username,
+    action: `Edited ${itemType}${itemName ? `: ${itemName}` : ''}`,
+    actionType: 'edit',
+    status: 'success',
+  });
+}
+
+/**
+ * Helper to log delete actions
+ */
+export function logDelete(username: string, itemType: string, itemName?: string): void {
+  logAccess({
+    username,
+    action: `Deleted ${itemType}${itemName ? `: ${itemName}` : ''}`,
+    actionType: 'delete',
+    status: 'success',
+  });
+}

@@ -19,10 +19,10 @@
 
 import { DESIGN_TOKENS, getStatusColor } from "./tokens";
 
-type StatusType = "present" | "late" | "excused" | "absent" | "active" | "inactive" | "pending" | "verified" | "rejected";
+type StatusType = "present" | "late" | "excused" | "absent" | "active" | "inactive" | "pending" | "verified" | "rejected" | "success" | "failed" | "warning";
 
 interface StatusChipProps {
-  status: StatusType;
+  status: StatusType | string; // Allow string for flexibility
   label?: string;
   size?: "sm" | "md";
 }
@@ -83,6 +83,24 @@ export default function StatusChip({ status, label, size = "md" }: StatusChipPro
           backgroundColor: DESIGN_TOKENS.colors.status.absent,
           color: "white",
           label: label || "Rejected",
+        };
+      case "success":
+        return {
+          backgroundColor: DESIGN_TOKENS.colors.status.present,
+          color: "white",
+          label: label || "Success",
+        };
+      case "failed":
+        return {
+          backgroundColor: DESIGN_TOKENS.colors.status.absent,
+          color: "white",
+          label: label || "Failed",
+        };
+      case "warning":
+        return {
+          backgroundColor: DESIGN_TOKENS.colors.status.late,
+          color: "white",
+          label: label || "Warning",
         };
       default:
         return {

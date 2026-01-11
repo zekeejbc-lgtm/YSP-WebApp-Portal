@@ -205,33 +205,7 @@ export default function MaintenanceScreen({
                 transformOrigin: "center center",
               }}
             >
-              {/* Under Maintenance Badge - Top Right - Fades with left panel */}
-              <button 
-                className="absolute top-16 right-4 sm:top-20 sm:right-8 lg:top-16 lg:right-16 xl:right-24 cursor-pointer transition-all hover:scale-105 active:scale-95"
-                onClick={() => {
-                  const newCount = clickCount + 1;
-                  setClickCount(newCount);
-                  if (newCount === 3) {
-                    setShowLoginModal(true);
-                    setClickCount(0); // Reset counter
-                  }
-                }}
-                aria-label="Maintenance badge"
-              >
-                <div
-                  className="px-5 py-2.5 rounded-full shadow-lg"
-                  style={{
-                    background: DESIGN_TOKENS.colors.brand.red,
-                    fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
-                    fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
-                    color: "white",
-                    fontSize: "0.875rem",
-                    letterSpacing: "0.05em",
-                  }}
-                >
-                  Under Maintenance
-                </div>
-              </button>
+              {/* Under Maintenance Badge removed as requested */}
 
               <div className="space-y-8 sm:space-y-6">
                 {/* YSP Logo + Organization Name - Side by Side */}
@@ -769,7 +743,7 @@ export default function MaintenanceScreen({
   // For individual page maintenance, show the original card-style screen
   return (
     <div
-      className={`h-screen flex items-center justify-center ${isDark ? "bg-gray-900" : "bg-gray-50"}`}
+      className={`min-h-screen relative ${isDark ? "bg-gray-900" : "bg-gray-50"}`}
     >
       {/* Toast Notification */}
       {toast && (
@@ -790,13 +764,15 @@ export default function MaintenanceScreen({
         isDark={isDark}
       />
 
-      {/* Back Button - Top Left of Screen */}
+      {/* Back Button - Floating Top Left */}
       {onBack && (
         <button
           onClick={onBack}
-          className="absolute top-6 left-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md"
+          className="fixed top-16 left-24 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md"
           style={{
-            background: 'linear-gradient(135deg, rgba(238, 135, 36, 0.15), rgba(246, 66, 31, 0.15))',
+            background: isDark 
+              ? 'linear-gradient(135deg, rgba(238, 135, 36, 0.2), rgba(246, 66, 31, 0.2))'
+              : 'linear-gradient(135deg, rgba(238, 135, 36, 0.15), rgba(246, 66, 31, 0.15))',
             border: '2px solid rgba(238, 135, 36, 0.4)',
             color: DESIGN_TOKENS.colors.brand.orange,
             fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
@@ -809,81 +785,22 @@ export default function MaintenanceScreen({
         </button>
       )}
 
-      {/* Under Maintenance Badge - Top Right of Screen */}
-      <div className="absolute top-6 right-6 z-50">
+      {/* Under Maintenance Badge removed as requested */}
+
+      {/* Main Content Area - Centered */}
+      <div className="min-h-screen flex items-center justify-center px-6 py-24">
+        {/* Main Card - All Content Centered */}
         <div
-          className="px-5 py-2.5 rounded-full shadow-lg"
-          style={{
-            background: DESIGN_TOKENS.colors.brand.red,
-            fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
-            fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
-            color: "white",
-            fontSize: "0.875rem",
-            letterSpacing: "0.05em",
-          }}
+          className={`p-8 rounded-2xl shadow-xl max-w-lg w-full text-center ${isDark ? "bg-gray-800" : "bg-white"}`}
         >
-          Under Maintenance
-        </div>
-      </div>
-
-      {/* Contact Information - Bottom Left of Screen */}
-      <div
-        className={`absolute bottom-6 left-6 z-50 p-4 rounded-xl border-2 max-w-xs ${isDark ? "bg-gray-800/90 backdrop-blur-sm border-gray-600" : "bg-white/90 backdrop-blur-sm border-gray-200"}`}
-      >
-        <div className="flex items-center gap-2 mb-2">
-          <User className="w-4 h-4" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
-          <span
-            className={`text-sm ${isDark ? "text-gray-300" : "text-gray-700"}`}
-            style={{
-              fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-            }}
-          >
-            Contact
-          </span>
-        </div>
-        <p
-          className={`font-semibold ${isDark ? "text-white" : "text-gray-900"}`}
-          style={{
-            fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-            fontSize: "0.9375rem",
-          }}
-        >
-          Ezequiel John B. Crisostomo
-        </p>
-        <p
-          className={`text-xs ${isDark ? "text-gray-400" : "text-gray-600"}`}
-          style={{
-            fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
-          }}
-        >
-          Membership and Internal Affairs Officer
-        </p>
-        <p
-          className={`text-xs mt-2 ${isDark ? "text-gray-500" : "text-gray-500"}`}
-          style={{
-            fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
-            fontStyle: "italic",
-          }}
-        >
-          For inquiries and questions regarding the webapp portal
-        </p>
-      </div>
-
-      {/* Main Card - Centered */}
-      <div
-        className={`p-8 rounded-2xl shadow-lg max-w-lg text-center ${isDark ? "bg-gray-800" : "bg-white"}`}
-      >
-        {/* Main Content - Card Layout */}
-        <div className="flex flex-col items-center">
-          {/* YSP Logo + Organization Name - Side by Side */}
-          <div className="flex items-center justify-center gap-4 mb-8">
+          {/* YSP Logo + Organization Name - Centered */}
+          <div className="flex flex-col items-center gap-4 mb-8">
             <ImageWithFallback
               src="https://i.imgur.com/J4wddTW.png"
               alt="YSP Logo"
-              className="w-20 h-20 md:w-24 md:h-24 object-contain flex-shrink-0"
+              className="w-20 h-20 md:w-24 md:h-24 object-contain"
             />
-            <div className="text-left">
+            <div className="text-center">
               <h2
                 style={{
                   fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
@@ -891,7 +808,6 @@ export default function MaintenanceScreen({
                   fontSize: "1.5rem",
                   lineHeight: "1.2",
                   color: DESIGN_TOKENS.colors.brand.red,
-                  whiteSpace: "nowrap",
                 }}
               >
                 Youth Service Philippines
@@ -910,25 +826,23 @@ export default function MaintenanceScreen({
             </div>
           </div>
 
-          {/* Main Heading - Single Line */}
-          <div className="mb-6">
-            <h1
-              style={{
-                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
-                fontSize: "clamp(1.75rem, 5vw, 2.5rem)",
-                lineHeight: "1.1",
-                letterSpacing: "-0.03em",
-                background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-                textAlign: "center",
-              }}
-            >
-              UNDER MAINTENANCE
-            </h1>
-          </div>
+          {/* Main Heading - Centered */}
+          <h1
+            className="mb-6"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
+              fontSize: "clamp(1.75rem, 5vw, 2.5rem)",
+              lineHeight: "1.1",
+              letterSpacing: "-0.03em",
+              background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+            }}
+          >
+            UNDER MAINTENANCE
+          </h1>
 
           {/* Description - Centered */}
           <p
@@ -938,36 +852,37 @@ export default function MaintenanceScreen({
               fontSize: "1rem",
               lineHeight: "1.6",
               fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-              textAlign: "center",
             }}
           >
             {reason || "Web Portal is currently undergoing scheduled maintenance to improve your experience. We appreciate your patience and understanding."}
           </p>
 
-          {/* Estimated Time */}
+          {/* Estimated Time - Centered */}
           {estimatedTime && (
-            <div 
-              className={`inline-flex items-center gap-3 px-5 py-3 rounded-xl mb-8 border-2 ${isDark ? "bg-gray-800/50 border-gray-700" : "bg-gray-100 border-gray-200"}`}
-            >
-              <Clock 
-                className="w-5 h-5" 
-                style={{ color: DESIGN_TOKENS.colors.brand.orange }}
-              />
-              <span
-                className={`${isDark ? "text-gray-200" : "text-gray-700"}`}
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
-                  fontSize: "0.9375rem",
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-                }}
+            <div className="flex justify-center mb-8">
+              <div 
+                className={`inline-flex items-center gap-3 px-5 py-3 rounded-xl border-2 ${isDark ? "bg-gray-700/50 border-gray-600" : "bg-gray-100 border-gray-200"}`}
               >
-                Expected completion: <span style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>{estimatedTime}</span>
-              </span>
+                <Clock 
+                  className="w-5 h-5" 
+                  style={{ color: DESIGN_TOKENS.colors.brand.orange }}
+                />
+                <span
+                  className={`${isDark ? "text-gray-200" : "text-gray-700"}`}
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
+                    fontSize: "0.9375rem",
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                  }}
+                >
+                  Expected completion: <span style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>{estimatedTime}</span>
+                </span>
+              </div>
             </div>
           )}
 
-          {/* Social Media Links */}
-          <div className="text-center">
+          {/* Social Media Links - Centered */}
+          <div>
             <p
               className={`text-sm mb-4 ${isDark ? "text-gray-400" : "text-gray-600"}`}
               style={{

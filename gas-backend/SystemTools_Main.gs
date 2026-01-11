@@ -48,6 +48,16 @@ function doPost(e) {
       case 'clearAllMaintenance':
         return handleClearAllMaintenance(requestData.username);
       
+      // Access Logs
+      case 'getAccessLogs':
+        return handleGetAccessLogs(requestData.page || 1, requestData.limit || 50, requestData.filterType);
+      case 'logAccess':
+        return handleLogAccess(requestData.username, requestData.action, requestData.actionType, requestData.status, requestData.ipAddress, requestData.device) 
+          ? createSuccessResponse({ message: 'Access logged successfully' })
+          : createErrorResponse('Failed to log access', 500);
+      case 'getAccessLogsStats':
+        return handleGetAccessLogsStats();
+      
       // Debug
       case 'testConnection':
         return handleTestConnection();
@@ -1102,6 +1112,209 @@ function createErrorResponse(message, code) {
       code: code
     }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// =================== ACCESS LOGS MANAGEMENT ===================
+
+const ACCESS_LOGS_SHEET_NAME = 'Access Logs';
+
+/**
+ * Initialize Access Logs sheet if it doesn't exist
+ */
+function initializeAccessLogsSheet() {
+  try {
+    const ss = SpreadsheetApp.openById(SYSTEM_SETTINGS_SPREADSHEET_ID);
+    let logsSheet = ss.getSheetByName(ACCESS_LOGS_SHEET_NAME);
+    
+    if (!logsSheet) {
+      logsSheet = ss.insertSheet(ACCESS_LOGS_SHEET_NAME);
+      // Headers: User, Action, Type, Status, Timestamp, IP Address, Device
+      logsSheet.getRange('A1:G1').setValues([[
+        'User', 'Action', 'Type', 'Status', 'Timestamp', 'IP Address', 'Device'
+      ]]);
+      
+      // Format header row
+      logsSheet.getRange('A1:G1').setFontWeight('bold');
+      logsSheet.setFrozenRows(1);
+      
+      // Set column widths for readability
+      logsSheet.setColumnWidth(1, 150); // User
+      logsSheet.setColumnWidth(2, 200); // Action
+      logsSheet.setColumnWidth(3, 100); // Type
+      logsSheet.setColumnWidth(4, 100); // Status
+      logsSheet.setColumnWidth(5, 180); // Timestamp
+      logsSheet.setColumnWidth(6, 150); // IP Address
+      logsSheet.setColumnWidth(7, 200); // Device
+    }
+    
+    return logsSheet;
+  } catch (error) {
+    Logger.log('Error initializing Access Logs sheet: ' + error.toString());
+    throw error;
+  }
+}
+
+/**
+ * Log a user access/action to the Access Logs sheet
+ * Call this from frontend when user performs actions
+ */
+function handleLogAccess(username, action, actionType, status, ipAddress, device) {
+  try {
+    const sheet = initializeAccessLogsSheet();
+    const lastRow = sheet.getLastRow();
+    
+    const timestamp = new Date().toISOString();
+    
+    sheet.getRange(lastRow + 1, 1, 1, 7).setValues([[
+      username || 'Unknown',
+      action || '',
+      actionType || 'view',
+      status || 'success',
+      timestamp,
+      ipAddress || 'Unknown',
+      device || 'Unknown'
+    ]]);
+    
+    Logger.log('Access logged: ' + username + ' - ' + action);
+    return true;
+  } catch (error) {
+    Logger.log('Error logging access: ' + error.toString());
+    return false;
+  }
+}
+
+/**
+ * Get access logs from the Access Logs sheet
+ * Returns paginated logs with metadata
+ * Uses ONLY the Access Logs sheet in System Settings spreadsheet
+ */
+function handleGetAccessLogs(page = 1, limit = 50, filterType = null) {
+  try {
+    const sheet = initializeAccessLogsSheet();
+    const data = sheet.getDataRange().getValues();
+    
+    // Skip header row
+    const logs = [];
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      
+      // Skip empty rows
+      if (!row[0] && !row[1]) continue;
+      
+      const logType = row[2] || 'view';
+      
+      // Apply type filter if provided
+      if (filterType && filterType !== 'all' && logType !== filterType) {
+        continue;
+      }
+      
+      logs.push({
+        id: String(i),
+        user: row[0] || '',
+        action: row[1] || '',
+        type: logType,
+        status: row[3] || 'success',
+        timestamp: row[4] || '',
+        ipAddress: row[5] || 'Unknown',
+        device: row[6] || 'Unknown'
+      });
+    }
+    
+    // Sort by timestamp descending (newest first)
+    logs.sort((a, b) => {
+      const dateA = new Date(a.timestamp).getTime() || 0;
+      const dateB = new Date(b.timestamp).getTime() || 0;
+      return dateB - dateA;
+    });
+    
+    // Paginate
+    const totalLogs = logs.length;
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+    const paginatedLogs = logs.slice(startIndex, endIndex);
+    
+    const totalPages = Math.ceil(totalLogs / limit);
+    
+    Logger.log('Returning access logs: page ' + page + ' of ' + totalPages + ', total logs: ' + totalLogs);
+    
+    return createSuccessResponse({
+      logs: paginatedLogs,
+      pagination: {
+        page: page,
+        limit: limit,
+        totalLogs: totalLogs,
+        totalPages: totalPages,
+        hasMore: page < totalPages
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    Logger.log('Error getting access logs: ' + error.toString());
+    return createErrorResponse('Failed to get access logs: ' + error.message, 500);
+  }
+}
+
+/**
+ * Get access logs statistics
+ * Uses ONLY the Access Logs sheet in System Settings spreadsheet
+ */
+function handleGetAccessLogsStats() {
+  try {
+    const sheet = initializeAccessLogsSheet();
+    const data = sheet.getDataRange().getValues();
+    
+    let stats = {
+      totalLogs: 0,
+      byStatus: {},
+      byType: {},
+      recentLogs: []
+    };
+    
+    const logs = [];
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      
+      // Skip empty rows
+      if (!row[0] && !row[1]) continue;
+      
+      const status = row[3] || 'success';
+      const type = row[2] || 'view';
+      
+      stats.totalLogs++;
+      
+      // Count by status
+      stats.byStatus[status] = (stats.byStatus[status] || 0) + 1;
+      
+      // Count by type
+      stats.byType[type] = (stats.byType[type] || 0) + 1;
+      
+      logs.push({
+        user: row[0],
+        action: row[1],
+        type: type,
+        status: status,
+        timestamp: row[4]
+      });
+    }
+    
+    // Sort by timestamp and get 10 most recent
+    logs.sort((a, b) => {
+      const dateA = new Date(a.timestamp).getTime() || 0;
+      const dateB = new Date(b.timestamp).getTime() || 0;
+      return dateB - dateA;
+    });
+    
+    stats.recentLogs = logs.slice(0, 10);
+    
+    return createSuccessResponse({
+      stats: stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    Logger.log('Error getting access logs stats: ' + error.toString());
+    return createErrorResponse('Failed to get access logs stats: ' + error.message, 500);
+  }
 }
 
 // =================== TESTING FUNCTIONS ===================
