@@ -649,32 +649,52 @@ export default function App() {
     loadProjects();
   }, []);
 
-  // Fetch org chart URL from backend on mount
+  // Fetch org chart URL AND Contact Info from backend on mount
   useEffect(() => {
-    const loadOrgChartUrl = async () => {
+    const loadOtherContent = async () => {
       try {
         // Invalidate cache to ensure we get fresh data on mount
         invalidateOtherContentCache();
         
-        console.log('[App] Fetching org chart URL from backend (fresh)...');
+        console.log('[App] Fetching other content (Contact/OrgChart) from backend...');
         const otherContent = await fetchHomepageOtherContent();
-        console.log('[App] Homepage Other Content received:', JSON.stringify(otherContent, null, 2));
-        console.log('[App] orgChartUrl value:', otherContent.orgChartUrl);
-        console.log('[App] orgChartUrl type:', typeof otherContent.orgChartUrl);
-        console.log('[App] orgChartUrl length:', otherContent.orgChartUrl?.length || 0);
         
+        // 1. Update Org Chart State
         if (otherContent.orgChartUrl && otherContent.orgChartUrl.trim() !== '') {
           setOrgChartUrl(otherContent.orgChartUrl);
-          console.log('[App] Org chart URL set to state:', otherContent.orgChartUrl);
-        } else {
-          console.log('[App] No org chart URL found in backend response');
         }
+
+        // 2. Update Homepage Content State (Contact, Partners, Socials)
+        setHomepageContent(prev => ({
+          ...prev,
+          contact: {
+            title: otherContent.sectionTitle || prev.contact.title,
+            email: otherContent.orgEmail || prev.contact.email,
+            phone: otherContent.orgPhone || prev.contact.phone,
+            location: otherContent.orgLocation || prev.contact.location,
+            locationLink: otherContent.orgGoogleMapUrl || prev.contact.locationLink,
+            
+            // Map backend 'displayName' to frontend 'label'
+            socialLinks: otherContent.socialLinks?.map((link: any) => ({
+              id: link.id,
+              url: link.url,
+              label: link.displayName
+            })) || [],
+            
+            partnerTitle: otherContent.partnerTitle || prev.contact.partnerTitle,
+            partnerDescription: otherContent.partnerDescription || prev.contact.partnerDescription,
+            partnerButtonText: otherContent.partnerButtonText || prev.contact.partnerButtonText,
+            partnerButtonLink: otherContent.partnerGformUrl || prev.contact.partnerButtonLink,
+          }
+        }));
+
+        console.log('[App] Contact info updated from backend');
       } catch (error) {
-        console.error('[App] Error loading org chart URL:', error);
+        console.error('[App] Error loading other content:', error);
       }
     };
 
-    loadOrgChartUrl();
+    loadOtherContent();
   }, []);
 
   // Retry loading homepage content
@@ -1575,7 +1595,7 @@ export default function App() {
     setIsSavingHomepage(true);
     
     try {
-      // Prepare content for GAS API
+      // 1. Prepare Main Content (Hero, About, Mission, Vision)
       const contentToSave: HomepageMainContent = {
         hero: editedContent.hero,
         about: editedContent.about,
@@ -1584,22 +1604,54 @@ export default function App() {
         advocacyPillars: editedContent.advocacyPillars,
       };
 
-      // Try to save to GAS backend
-      const success = await updateHomepageContent(contentToSave);
+      // 2. Prepare Other Content (Contact, Socials, Partners)
+      // We map frontend field names to what the backend expects
+      const otherContentToSave = {
+        sectionTitle: editedContent.contact.title,
+        orgEmail: editedContent.contact.email,
+        orgPhone: editedContent.contact.phone,
+        orgLocation: editedContent.contact.location,
+        orgGoogleMapUrl: editedContent.contact.locationLink,
+        
+        // Partner Section
+        partnerTitle: editedContent.contact.partnerTitle,
+        partnerDescription: editedContent.contact.partnerDescription,
+        partnerButtonText: editedContent.contact.partnerButtonText,
+        partnerGformUrl: editedContent.contact.partnerButtonLink,
+        
+        // Social Links (Backend expects 'displayName', frontend uses 'label')
+        socialLinks: editedContent.contact.socialLinks.map(link => ({
+          url: link.url,
+          displayName: link.label
+        }))
+      };
+
+      // 3. Save BOTH to backend in parallel
+      const [mainSuccess, otherSuccess] = await Promise.all([
+        updateHomepageContent(contentToSave),
+        updateHomepageOtherContent(otherContentToSave)
+      ]);
       
-      if (success) {
+      if (mainSuccess && otherSuccess) {
         // Update local state
         setHomepageContent(editedContent);
         setIsEditingHomepage(false);
         toast.success('Homepage updated successfully!', {
-          description: 'Changes have been saved to the database.',
+          description: 'All sections have been saved to the database.',
+        });
+      } else if (mainSuccess || otherSuccess) {
+        // Partial success
+        setHomepageContent(editedContent);
+        setIsEditingHomepage(false);
+        toast.warning('Partial Save', {
+          description: 'Some sections saved, but others failed. Please check connection.',
         });
       } else {
-        // If API call fails, still update local state but warn user
+        // Total failure
         setHomepageContent(editedContent);
         setIsEditingHomepage(false);
         toast.warning('Saved locally only', {
-          description: 'Changes saved locally. Database sync failed - will retry later.',
+          description: 'Database sync failed. Changes saved locally for now.',
         });
       }
     } catch (error) {

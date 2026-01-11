@@ -2844,7 +2844,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       {/* Overwrite Confirmation Modal */}
       {showOverwriteWarning && previousRecord && pendingRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6 md:p-8"
           onClick={() => setShowOverwriteWarning(false)}
         >
           <div
@@ -3013,7 +3013,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       {/* Event Details Modal */}
       {showEventDetailsModal && selectedEvent && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
           onClick={() => setShowEventDetailsModal(false)}
         >
           <div
@@ -3461,7 +3461,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       {/* Verification Modal */}
       {showVerificationModal && pendingRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6 md:p-8"
           onClick={handleSuccessModalClose}
         >
           <div
