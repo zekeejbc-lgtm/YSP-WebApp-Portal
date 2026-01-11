@@ -3402,9 +3402,11 @@ export default function App() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-500 mb-1">Google Form Link (leave empty to hide)</label>
+                      <label className="block text-xs text-gray-500 mb-1">
+                        Google Form Link OR Email Address (leave empty to hide)
+                      </label>
                       <input
-                        type="url"
+                        type="text"
                         value={editedContent.contact.partnerButtonLink}
                         onChange={(e) =>
                           setEditedContent({
@@ -3412,7 +3414,7 @@ export default function App() {
                             contact: { ...editedContent.contact, partnerButtonLink: e.target.value },
                           })
                         }
-                        placeholder="https://forms.gle/..."
+                        placeholder="https://forms.gle/... OR email@example.com"
                         className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
                       />
                     </div>
@@ -3444,7 +3446,10 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Email Card */}
                 <a
-                  href={`mailto:${homepageContent.contact.email}`}
+                  // CHANGED: Use Gmail Web Compose with encodeURIComponent to handle '+' sign correctly
+                  href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(homepageContent.contact.email)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="flex items-center gap-4 p-4 md:p-5 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-xl transition-all duration-250 hover:-translate-y-0.5 hover:shadow-md cursor-pointer active:scale-[0.98]"
                 >
                   <div className="shrink-0">
@@ -3537,7 +3542,7 @@ export default function App() {
                 })}
               </div>
 
-              {/* Partner with Us Button - Only show if link exists */}
+              {/* Partner with Us Button - Smart Detection for Email vs Link */}
               {homepageContent.contact.partnerButtonLink && homepageContent.contact.partnerButtonLink.trim() !== "" && (
                 <div className="mt-8 p-6 bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-2xl text-center">
                   <h3
@@ -3557,23 +3562,50 @@ export default function App() {
                   >
                     {homepageContent.contact.partnerDescription}
                   </p>
-                  <a
-                    href={homepageContent.contact.partnerButtonLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:scale-105"
-                    style={{
-                      background:
-                        "linear-gradient(135deg, #f6421f 0%, #ee8724 50%, #fbcb29 100%)",
-                      fontFamily: "var(--font-headings)",
-                      fontWeight: "600",
-                      fontSize: "1.125rem",
-                      boxShadow: "0 4px 16px rgba(246, 66, 31, 0.4)",
-                    }}
-                  >
-                    <Globe className="w-5 h-5" />
-                    {homepageContent.contact.partnerButtonText}
-                  </a>
+                  
+                  {/* LOGIC: Determine if it is an email or a web link */}
+                  {(() => {
+                    let linkValue = homepageContent.contact.partnerButtonLink || "";
+                    linkValue = linkValue.trim();
+                    
+                    // Check if it is an email
+                    const isEmail = linkValue.includes("@") && !linkValue.toLowerCase().includes("http");
+                    
+                    let finalHref = linkValue;
+                    let target = "_blank"; // Default to new tab for web
+                    
+                    if (isEmail) {
+                      // OPTION: Force open in Gmail Web Compose
+                      // We must use encodeURIComponent to handle special characters like '+' in emails
+                      finalHref = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(linkValue)}`;
+                      target = "_blank"; // Open Gmail in new tab
+                    } else {
+                      // Standard Web Link
+                      if (!linkValue.startsWith("http://") && !linkValue.startsWith("https://")) {
+                        finalHref = `https://${linkValue}`;
+                      }
+                    }
+                    
+                    return (
+                      <a
+                        href={finalHref}
+                        target={target}
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:scale-105"
+                        style={{
+                          background:
+                            "linear-gradient(135deg, #f6421f 0%, #ee8724 50%, #fbcb29 100%)",
+                          fontFamily: "var(--font-headings)",
+                          fontWeight: "600",
+                          fontSize: "1.125rem",
+                          boxShadow: "0 4px 16px rgba(246, 66, 31, 0.4)",
+                        }}
+                      >
+                        {isEmail ? <Mail className="w-5 h-5" /> : <Globe className="w-5 h-5" />}
+                        {homepageContent.contact.partnerButtonText}
+                      </a>
+                    );
+                  })()}
                 </div>
               )}
             </>
