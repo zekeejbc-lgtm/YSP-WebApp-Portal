@@ -4253,8 +4253,7 @@ export default function App() {
         isDark={isDark}
       />
 
-      {/* Debug Pill */}
-      <DebugPill />
+
 
       {/* Upload Toast Container - Progress bars at bottom-right */}
       <UploadToastContainer
