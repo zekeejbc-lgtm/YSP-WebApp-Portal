@@ -34,6 +34,7 @@ interface Member {
   emergencyPhone?: string;
   bloodType?: string;
   medicalConditions?: string;
+  profilePicture?: string;
 }
 
 // ADD MEMBER MODAL
@@ -523,6 +524,7 @@ interface ViewMemberModalProps {
 }
 
 export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberModalProps) {
+
   return (
     <div
       className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
@@ -570,15 +572,25 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
         {/* Profile Header */}
         <div className="flex gap-6 mb-6 pb-6 border-b" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
           <div
-            className="rounded-full flex items-center justify-center bg-gradient-to-br from-[#f6421f] to-[#ee8724] text-white"
+            className="rounded-full flex items-center justify-center bg-gradient-to-br from-[#f6421f] to-[#ee8724] text-white overflow-hidden"
             style={{
               width: '100px',
               height: '100px',
               fontSize: '40px',
               fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
+              border: '3px solid #ee8724',
             }}
           >
-            {member.name.charAt(0)}
+            {member.profilePicture ? (
+              <img
+                src={member.profilePicture}
+                alt={member.name}
+                className="w-full h-full object-cover"
+                style={{ borderRadius: '9999px' }}
+              />
+            ) : (
+              member.name.charAt(0)
+            )}
           </div>
           <div className="flex-1">
             <h2
