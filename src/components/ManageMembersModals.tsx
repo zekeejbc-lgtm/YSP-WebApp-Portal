@@ -61,7 +61,8 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+      style={{ zIndex: 'var(--z-modal, 230)' }}
       onClick={onClose}
     >
       <div

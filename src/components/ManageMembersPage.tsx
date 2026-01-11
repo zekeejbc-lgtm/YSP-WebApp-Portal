@@ -935,7 +935,8 @@ export default function ManageMembersPage({
       {/* Pendings Modal */}
       {showPendingsModal && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          style={{ zIndex: 'var(--z-modal, 230)' }}
           onClick={() => setShowPendingsModal(false)}
         >
           <div
