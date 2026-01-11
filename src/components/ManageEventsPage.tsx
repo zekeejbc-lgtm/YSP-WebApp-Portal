@@ -712,8 +712,19 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
   };
 
   const handleCreateOrEdit = async () => {
+    // 1. Basic Field Validation
     if (!formData.name || !formData.startDate || !formData.startTime || !formData.endDate || !formData.endTime) {
       toast.error("Please fill in all required fields (name, date, and time)");
+      return;
+    }
+
+    // 2. FIX: Define the date variables that were missing causing the ReferenceError
+    const startParsed = new Date(`${formData.startDate}T${formData.startTime}`);
+    const endParsed = new Date(`${formData.endDate}T${formData.endTime}`);
+
+    // 3. Logic Validation (Compare the dates)
+    if (endParsed <= startParsed) {
+      toast.error("End time must be after start time");
       return;
     }
 
@@ -721,7 +732,6 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
     const toastId = `event-${Date.now()}`;
     const isEditing = !!editingEvent;
 
-    // Show progress toast
     addUploadToast({
       id: toastId,
       title: isEditing ? 'Updating Event' : 'Creating Event',
@@ -731,25 +741,20 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
     });
 
     try {
-      // Progress: Validating
       updateUploadToast(toastId, { progress: 20, message: 'Validating event details...' });
-      await new Promise(r => setTimeout(r, 200));
-
-      // Determine geofence values based on toggle
-      const geoLat = geofencingEnabled ? formData.lat : 0;
-      const geoLng = geofencingEnabled ? formData.lng : 0;
-      const geoRadius = geofencingEnabled ? formData.radius : 0;
+      
+      // Geo Data
+      const geoLat = formData.lat;
+      const geoLng = formData.lng;
+      const geoRadius = formData.radius;
 
       if (editingEvent) {
-        // Progress: Sending to backend
+        // --- UPDATE EXISTING EVENT ---
         updateUploadToast(toastId, { progress: 40, message: 'Connecting to backend...' });
-        await new Promise(r => setTimeout(r, 200));
-
-        updateUploadToast(toastId, { progress: 60, message: 'Updating event in database...' });
         
-        // Update existing event
+        // Use backend field names
         await updateEvent(editingEvent.id, {
-          title: formData.name,
+          title: formData.name, // Backend expects 'title', frontend uses 'name'
           description: formData.description,
           startDate: formData.startDate,
           startTime: formData.startTime,
@@ -764,6 +769,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
 
         updateUploadToast(toastId, { progress: 80, message: 'Refreshing local data...' });
 
+        // Update local state
         setEvents((prev) =>
           prev.map((event) =>
             event.id === editingEvent.id
@@ -790,16 +796,13 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           title: 'Event Updated!',
           message: `"${formData.name}" has been updated successfully.` 
         });
-      } else {
-        // Progress: Sending to backend
-        updateUploadToast(toastId, { progress: 40, message: 'Connecting to backend...' });
-        await new Promise(r => setTimeout(r, 200));
 
-        updateUploadToast(toastId, { progress: 60, message: 'Creating event in database...' });
+      } else {
+        // --- CREATE NEW EVENT ---
+        updateUploadToast(toastId, { progress: 40, message: 'Connecting to backend...' });
         
-        // Create new event
         const result = await createEvent({
-          title: formData.name,
+          title: formData.name, // Backend expects 'title'
           description: formData.description,
           startDate: formData.startDate,
           startTime: formData.startTime,
@@ -815,6 +818,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
 
         updateUploadToast(toastId, { progress: 80, message: 'Finalizing...' });
 
+        // Create new local event object
         const newEvent: Event = {
           id: result.eventId,
           name: formData.name,
@@ -830,7 +834,8 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           geofenceEnabled: geofencingEnabled,
           currentAttendees: 0,
         };
-        setEvents((prev) => [...prev, newEvent]);
+        
+        setEvents((prev) => [newEvent, ...prev]); // Add new event to top of list
         
         updateUploadToast(toastId, { 
           progress: 100, 
@@ -844,6 +849,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
       setEditingEvent(null);
       resetForm();
     } catch (error) {
+      console.error("Save error:", error);
       updateUploadToast(toastId, {
         status: 'error',
         progress: 100,
@@ -1129,14 +1135,15 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
       )}
 
       {/* Create/Edit Modal */}
-      {showModal && (
-        <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-80 flex items-start md:items-center justify-center overflow-y-auto"
-          onClick={() => setShowModal(false)}
-          style={{
-            padding: 'clamp(8px, 2vw, 24px)',
-          }}
-        >
+{showModal && (
+  <div
+    className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start md:items-center justify-center overflow-y-auto"
+    onClick={() => setShowModal(false)}
+    style={{
+      padding: 'clamp(8px, 2vw, 24px)',
+      zIndex: 9999 // <--- CHANGE THIS from 100 to 9999
+    }}
+  >
           <div
             className="rounded-xl w-full border z-90 flex flex-col"
             style={{
