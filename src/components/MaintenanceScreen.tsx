@@ -765,10 +765,11 @@ export default function MaintenanceScreen({
       />
 
       {/* Back Button - Floating Top Left */}
+      {/* FIXED: Increased margin from top-16/left-24 to top-6/left-6 for better spacing */}
       {onBack && (
         <button
           onClick={onBack}
-          className="fixed top-16 left-24 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md"
+          className="fixed top-6 left-6 md:top-8 md:left-8 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md"
           style={{
             background: isDark 
               ? 'linear-gradient(135deg, rgba(238, 135, 36, 0.2), rgba(246, 66, 31, 0.2))'
@@ -784,8 +785,6 @@ export default function MaintenanceScreen({
           <span>Back</span>
         </button>
       )}
-
-      {/* Under Maintenance Badge removed as requested */}
 
       {/* Main Content Area - Centered */}
       <div className="min-h-screen flex items-center justify-center px-6 py-24">
@@ -917,8 +916,10 @@ export default function MaintenanceScreen({
               >
                 <Instagram className="w-6 h-6 text-white" />
               </a>
+              
+              {/* FIXED: Updated mail link with +maintenance tag */}
               <a
-                href="mailto:ysptagumchapter@gmail.com"
+                href="mailto:ysptagumchapter+maintenance@gmail.com"
                 className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110 active:scale-95 shadow-md"
                 style={{
                   background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.yellow}, ${DESIGN_TOKENS.colors.brand.orange})`,
