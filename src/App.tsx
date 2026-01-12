@@ -58,7 +58,8 @@ import {
   LoginErrorCodes,
   type LoginUser,
 } from "./services/gasLoginService";
-import { logLogin, logLogout } from "./services/gasSystemToolsService";
+// ADDED getMaintenanceModeFromBackend HERE:
+import { logLogin, logLogout, getMaintenanceModeFromBackend } from "./services/gasSystemToolsService";
 import { ImageWithFallback } from "./components/figma/ImageWithFallback";
 import { toast, Toaster } from "sonner";
 import DonationPage from "./components/DonationPage";
@@ -471,6 +472,23 @@ export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [modalProject, setModalProject] =
     useState<Project | null>(null);
+
+  // --- START NEW CODE ---
+  // Sync maintenance mode immediately upon loading the website
+  useEffect(() => {
+    const initMaintenanceMode = async () => {
+      try {
+        // This fetches from your Google Sheet and updates LocalStorage
+        await getMaintenanceModeFromBackend(true); 
+        console.log("System maintenance status synced.");
+      } catch (error) {
+        console.error("Failed to sync maintenance status:", error);
+      }
+    };
+    initMaintenanceMode();
+  }, []);
+  // --- END NEW CODE ---
+  // ... rest of your code
   const [isAdmin, setIsAdmin] = useState(false);
   const [userRole, setUserRole] = useState<string>("guest"); // guest, member, admin
   const [userName, setUserName] = useState<string>("");
