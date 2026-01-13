@@ -16,7 +16,7 @@
 
 import { X, Copy, Check, Edit2, Smartphone } from 'lucide-react';
 import { useState } from 'react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 
 export interface PaymentMethod {
@@ -258,3 +258,4 @@ export default function PaymentMethodModal({
     </div>
   );
 }
+

@@ -34,7 +34,7 @@ interface Suggestion {
 interface SearchInputProps {
   value: string;
   onChange: (value: string) => void;
-  onClear: () => void;
+  onClear?: () => void;
   placeholder?: string;
   suggestions?: Suggestion[];
   onSelectSuggestion?: (suggestion: Suggestion) => void;
@@ -47,7 +47,7 @@ interface SearchInputProps {
 export default function SearchInput({
   value,
   onChange,
-  onClear,
+  onClear = () => {},
   placeholder = "Search...",
   suggestions = [],
   onSelectSuggestion,

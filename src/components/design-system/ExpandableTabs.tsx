@@ -49,7 +49,7 @@ const spanVariants = {
   exit: { width: 0, opacity: 0 },
 };
 
-const transition = { delay: 0, type: "spring", bounce: 0, duration: 0.3 };
+const transition = { delay: 0, type: "spring", bounce: 0, duration: 0.3 } as const;
 
 export function ExpandableTabs({
   tabs,
@@ -59,7 +59,7 @@ export function ExpandableTabs({
   activeTab,
 }: ExpandableTabsProps) {
   const [selected, setSelected] = React.useState<number | null>(null);
-  const outsideClickRef = React.useRef(null);
+  const outsideClickRef = React.useRef<HTMLDivElement | null>(null);
 
   // Find index of active tab based on scroll position
   const activeIndex = React.useMemo(() => {
@@ -69,7 +69,7 @@ export function ExpandableTabs({
     );
   }, [activeTab, tabs]);
 
-  useOnClickOutside(outsideClickRef, () => {
+  useOnClickOutside(outsideClickRef as React.RefObject<HTMLElement>, () => {
     setSelected(null);
     onChange?.(null);
   });

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ArrowLeft, Phone, Upload, X, Check, Copy, AlertCircle, Heart, Users, TrendingUp, Clock, CheckCircle, XCircle, Moon, Sun } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';

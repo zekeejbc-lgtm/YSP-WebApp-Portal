@@ -5,7 +5,7 @@ export interface UploadToastMessage {
   id: string;
   title: string;
   message: string;
-  status: 'loading' | 'success' | 'error';
+  status: 'loading' | 'success' | 'error' | 'info';
   progress?: number; // 0-100
 }
 
@@ -38,6 +38,8 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
           ? 'border-orange-100'
           : message.status === 'success'
           ? 'border-green-100'
+          : message.status === 'info'
+          ? 'border-blue-100'
           : 'border-red-100'
       }`}>
         
@@ -54,13 +56,15 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
         <div className="p-4 space-y-3">
           {/* Header with icon */}
           <div className="flex items-start gap-3">
-            <div className={`flex-shrink-0 mt-0.5 ${
+          <div className={`flex-shrink-0 mt-0.5 ${
               message.status === 'loading' ? 'text-orange-500' :
               message.status === 'success' ? 'text-green-500' :
+              message.status === 'info' ? 'text-blue-500' :
               'text-red-500'
             }`}>
               {message.status === 'loading' && <Loader2 className="w-5 h-5 animate-spin" />}
               {message.status === 'success' && <CheckCircle2 className="w-5 h-5" />}
+              {message.status === 'info' && <AlertCircle className="w-5 h-5" />}
               {message.status === 'error' && <AlertCircle className="w-5 h-5" />}
             </div>
 

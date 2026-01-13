@@ -18,7 +18,7 @@
 import { DESIGN_TOKENS } from "./tokens";
 
 interface ButtonProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   onClick?: () => void;
   variant?: "primary" | "secondary" | "ghost";
   size?: "sm" | "md" | "lg";
@@ -50,7 +50,7 @@ export default function Button({
     borderRadius: `${DESIGN_TOKENS.radius.button}px`,
     fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
     fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-    transition: `all ${DESIGN_TOKENS.motion.duration.fast}ms ${DESIGN_TOKENS.motion.easing.default}`,
+    transition: `all ${DESIGN_TOKENS.motion.duration.fast}ms ${DESIGN_TOKENS.motion.easing}`,
     cursor: disabled ? "not-allowed" : "pointer",
     width: fullWidth ? "100%" : "auto",
   };
@@ -117,7 +117,7 @@ export default function Button({
       }}
     >
       {icon && <span>{icon}</span>}
-      <span>{children}</span>
+      {children && <span>{children}</span>}
     </button>
   );
 }

@@ -16,7 +16,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-} from "recharts@2.15.2";
+} from "recharts";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance } from "../services/gasAttendanceService";
@@ -1019,7 +1019,7 @@ export default function AttendanceDashboardPage({
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}
                 outerRadius={120}
                 fill="#8884d8"
                 dataKey="value"
@@ -1044,7 +1044,7 @@ export default function AttendanceDashboardPage({
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}
                 innerRadius={80}
                 outerRadius={120}
                 fill="#8884d8"

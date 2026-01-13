@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import {
   Moon,
   Sun,
@@ -62,23 +62,23 @@ import {
 import { logLogin, logLogout, getMaintenanceModeFromBackend } from "./services/gasSystemToolsService";
 import { ImageWithFallback } from "./components/figma/ImageWithFallback";
 import { toast, Toaster } from "sonner";
-import DonationPage from "./components/DonationPage";
-import LoginPanel from "./components/LoginPanel";
-import FeedbackPage from "./components/FeedbackPage";
-import OfficerDirectoryPage from "./components/OfficerDirectoryPage";
-import AttendanceDashboardPage from "./components/AttendanceDashboardPage";
-import AttendanceRecordingPage from "./components/AttendanceRecordingPage";
-import ManageEventsPage from "./components/ManageEventsPage";
-import MyQRIDPage from "./components/MyQRIDPage";
-import AttendanceTransparencyPage from "./components/AttendanceTransparencyPage";
-import MyProfilePage from "./components/MyProfilePage";
-import AnnouncementsPage from "./components/AnnouncementsPage_Enhanced";
-import AccessLogsPage from "./components/AccessLogsPage";
-import SystemToolsPage from "./components/SystemToolsPage";
-import ManageMembersPage from "./components/ManageMembersPage";
-import MembershipApplicationsPage from "./components/MembershipApplicationsPage";
-import FounderModal from "./components/FounderModal";
-import DeveloperModal from "./components/DeveloperModal";
+const DonationPage = lazy(() => import("./components/DonationPage"));
+const LoginPanel = lazy(() => import("./components/LoginPanel"));
+const FeedbackPage = lazy(() => import("./components/FeedbackPage"));
+const OfficerDirectoryPage = lazy(() => import("./components/OfficerDirectoryPage"));
+const AttendanceDashboardPage = lazy(() => import("./components/AttendanceDashboardPage"));
+const AttendanceRecordingPage = lazy(() => import("./components/AttendanceRecordingPage"));
+const ManageEventsPage = lazy(() => import("./components/ManageEventsPage"));
+const MyQRIDPage = lazy(() => import("./components/MyQRIDPage"));
+const AttendanceTransparencyPage = lazy(() => import("./components/AttendanceTransparencyPage"));
+const MyProfilePage = lazy(() => import("./components/MyProfilePage"));
+const AnnouncementsPage = lazy(() => import("./components/AnnouncementsPage_Enhanced"));
+const AccessLogsPage = lazy(() => import("./components/AccessLogsPage"));
+const SystemToolsPage = lazy(() => import("./components/SystemToolsPage"));
+const ManageMembersPage = lazy(() => import("./components/ManageMembersPage"));
+const MembershipApplicationsPage = lazy(() => import("./components/MembershipApplicationsPage"));
+const FounderModal = lazy(() => import("./components/FounderModal"));
+const DeveloperModal = lazy(() => import("./components/DeveloperModal"));
 import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
 import { FormattedText } from "./components/FormattedText";
 import { 
@@ -466,6 +466,19 @@ const SocialIcon = ({ platform, className = "w-6 h-6" }: { platform: string; cla
   
   return icons[platform] || icons.globe;
 };
+
+const LazyFallback = ({ isDark, label = "Loading..." }: { isDark: boolean; label?: string }) => (
+  <div className="flex items-center justify-center py-12">
+    <div
+      className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border ${
+        isDark ? "bg-gray-900/60 text-gray-200 border-gray-700/60" : "bg-white/80 text-gray-600 border-gray-200/60"
+      }`}
+    >
+      <Loader2 className="w-5 h-5 animate-spin text-orange-500" />
+      <span className="text-sm font-medium">{label}</span>
+    </div>
+  </div>
+);
 
 export default function App() {
   const [isDark, setIsDark] = useState(false);
@@ -1639,6 +1652,7 @@ export default function App() {
         
         // Social Links (Backend expects 'displayName', frontend uses 'label')
         socialLinks: editedContent.contact.socialLinks.map(link => ({
+          id: link.id,
           url: link.url,
           displayName: link.label
         }))
@@ -1773,12 +1787,14 @@ export default function App() {
           pageName="Youth Service Philippines Tagum Chapter Web Portal"
           onContactDeveloper={() => setShowDeveloperModal(true)}
         />
-        <DeveloperModal
-          isOpen={showDeveloperModal}
-          onClose={() => setShowDeveloperModal(false)}
-          isDark={isDark}
-          isAdmin={isAdmin}
-        />
+        <Suspense fallback={null}>
+          <DeveloperModal
+            isOpen={showDeveloperModal}
+            onClose={() => setShowDeveloperModal(false)}
+            isDark={isDark}
+            isAdmin={isAdmin}
+          />
+        </Suspense>
       </>
     );
   }
@@ -1797,12 +1813,14 @@ export default function App() {
             pageName="Feedback"
             onContactDeveloper={() => setShowDeveloperModal(true)}
           />
-          <DeveloperModal
-            isOpen={showDeveloperModal}
-            onClose={() => setShowDeveloperModal(false)}
-            isDark={isDark}
-            isAdmin={isAdmin}
-          />
+          <Suspense fallback={null}>
+            <DeveloperModal
+              isOpen={showDeveloperModal}
+              onClose={() => setShowDeveloperModal(false)}
+              isDark={isDark}
+              isAdmin={isAdmin}
+            />
+          </Suspense>
         </>
       );
     }
@@ -1819,12 +1837,14 @@ export default function App() {
             },
           }}
         />
-        <FeedbackPage
-          onClose={() => setShowFeedbackPage(false)}
-          isAdmin={isAdmin}
-          isDark={isDark}
-          userRole={userRole}
-        />
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading feedback..." />}>
+          <FeedbackPage
+            onClose={() => setShowFeedbackPage(false)}
+            isAdmin={isAdmin}
+            isDark={isDark}
+            userRole={userRole}
+          />
+        </Suspense>
       </>
     );
   }
@@ -1843,12 +1863,14 @@ export default function App() {
             onBack={() => setShowMembershipApplicationsPage(false)}
             onContactDeveloper={() => setShowDeveloperModal(true)}
           />
-          <DeveloperModal
-            isOpen={showDeveloperModal}
-            onClose={() => setShowDeveloperModal(false)}
-            isDark={isDark}
-            isAdmin={isAdmin}
-          />
+          <Suspense fallback={null}>
+            <DeveloperModal
+              isOpen={showDeveloperModal}
+              onClose={() => setShowDeveloperModal(false)}
+              isDark={isDark}
+              isAdmin={isAdmin}
+            />
+          </Suspense>
         </>
       );
     }
@@ -1865,14 +1887,16 @@ export default function App() {
             },
           }}
         />
-        <MembershipApplicationsPage
-          onClose={() => setShowMembershipApplicationsPage(false)}
-          isDark={isDark}
-          userRole={userRole}
-          isLoggedIn={isAdmin}
-          pendingApplications={pendingApplications}
-          setPendingApplications={setPendingApplications}
-        />
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
+          <MembershipApplicationsPage
+            onClose={() => setShowMembershipApplicationsPage(false)}
+            isDark={isDark}
+            userRole={userRole}
+            isLoggedIn={isAdmin}
+            pendingApplications={pendingApplications}
+            setPendingApplications={setPendingApplications}
+          />
+        </Suspense>
       </>
     );
   }
@@ -1891,12 +1915,14 @@ export default function App() {
             onBack={() => setShowOfficerDirectory(false)}
             onContactDeveloper={() => setShowDeveloperModal(true)}
           />
-          <DeveloperModal
-            isOpen={showDeveloperModal}
-            onClose={() => setShowDeveloperModal(false)}
-            isDark={isDark}
-            isAdmin={isAdmin}
-          />
+          <Suspense fallback={null}>
+            <DeveloperModal
+              isOpen={showDeveloperModal}
+              onClose={() => setShowDeveloperModal(false)}
+              isDark={isDark}
+              isAdmin={isAdmin}
+            />
+          </Suspense>
         </>
       );
     }
@@ -1913,10 +1939,12 @@ export default function App() {
             },
           }}
         />
-        <OfficerDirectoryPage
-          onClose={() => setShowOfficerDirectory(false)}
-          isDark={isDark}
-        />
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading directory..." />}>
+          <OfficerDirectoryPage
+            onClose={() => setShowOfficerDirectory(false)}
+            isDark={isDark}
+          />
+        </Suspense>
       </>
     );
   }
@@ -1935,12 +1963,14 @@ export default function App() {
             onBack={() => setShowAttendanceDashboard(false)}
             onContactDeveloper={() => setShowDeveloperModal(true)}
           />
-          <DeveloperModal
-            isOpen={showDeveloperModal}
-            onClose={() => setShowDeveloperModal(false)}
-            isDark={isDark}
-            isAdmin={isAdmin}
-          />
+          <Suspense fallback={null}>
+            <DeveloperModal
+              isOpen={showDeveloperModal}
+              onClose={() => setShowDeveloperModal(false)}
+              isDark={isDark}
+              isAdmin={isAdmin}
+            />
+          </Suspense>
         </>
       );
     }
@@ -1957,13 +1987,15 @@ export default function App() {
             },
           }}
         />
-        <AttendanceDashboardPage
-          onClose={() => setShowAttendanceDashboard(false)}
-          isDark={isDark}
-          addUploadToast={addUploadToast}
-          updateUploadToast={updateUploadToast}
-          removeUploadToast={removeUploadToast}
-        />
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading dashboard..." />}>
+          <AttendanceDashboardPage
+            onClose={() => setShowAttendanceDashboard(false)}
+            isDark={isDark}
+            addUploadToast={addUploadToast}
+            updateUploadToast={updateUploadToast}
+            removeUploadToast={removeUploadToast}
+          />
+        </Suspense>
         {/* Upload Toast Container for export progress */}
         <UploadToastContainer
           messages={uploadToastMessages}
@@ -1982,11 +2014,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Attendance Recording" onBack={() => setShowAttendanceRecording(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><AttendanceRecordingPage onClose={() => setShowAttendanceRecording(false)} isDark={isDark} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading attendance..." />}>
+          <AttendanceRecordingPage onClose={() => setShowAttendanceRecording(false)} isDark={isDark} />
+        </Suspense>
+      </>
+    );
   }
 
   // Show Manage Events page
@@ -1996,11 +2037,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Manage Events" onBack={() => setShowManageEvents(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading events..." />}>
+          <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} />
+        </Suspense>
+      </>
+    );
   }
 
   // Show My QR ID page
@@ -2010,11 +2060,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="My QR ID" onBack={() => setShowMyQRID(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><MyQRIDPage onClose={() => setShowMyQRID(false)} isDark={isDark} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading QR..." />}>
+          <MyQRIDPage onClose={() => setShowMyQRID(false)} isDark={isDark} />
+        </Suspense>
+      </>
+    );
   }
 
   // Show Attendance Transparency page
@@ -2024,11 +2083,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Attendance Transparency" onBack={() => setShowAttendanceTransparency(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><AttendanceTransparencyPage onClose={() => setShowAttendanceTransparency(false)} isDark={isDark} userName={userName} memberId={userIdCode} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading attendance..." />}>
+          <AttendanceTransparencyPage onClose={() => setShowAttendanceTransparency(false)} isDark={isDark} userName={userName} memberId={userIdCode} />
+        </Suspense>
+      </>
+    );
   }
 
   // Show My Profile page
@@ -2038,20 +2106,24 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="My Profile" onBack={() => setShowMyProfile(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
     return (
       <>
         <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-        <MyProfilePage 
-          onClose={() => setShowMyProfile(false)} 
-          isDark={isDark}
-          addUploadToast={addUploadToast}
-          updateUploadToast={updateUploadToast}
-          onProfilePictureChange={(newUrl) => setUserProfilePicture(newUrl)}
-        />
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading profile..." />}>
+          <MyProfilePage 
+            onClose={() => setShowMyProfile(false)} 
+            isDark={isDark}
+            addUploadToast={addUploadToast}
+            updateUploadToast={updateUploadToast}
+            onProfilePictureChange={(newUrl) => setUserProfilePicture(newUrl)}
+          />
+        </Suspense>
         <UploadToastContainer
           messages={uploadToastMessages}
           onDismiss={removeUploadToast}
@@ -2068,11 +2140,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Announcements" onBack={() => setShowAnnouncements(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><AnnouncementsPage onClose={() => setShowAnnouncements(false)} isDark={isDark} userRole={userRole} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading announcements..." />}>
+          <AnnouncementsPage onClose={() => setShowAnnouncements(false)} isDark={isDark} userRole={userRole} />
+        </Suspense>
+      </>
+    );
   }
 
   // Show Access Logs page
@@ -2082,11 +2163,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Access Logs" onBack={() => setShowAccessLogs(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><AccessLogsPage onClose={() => setShowAccessLogs(false)} isDark={isDark} username={userName || 'admin'} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading access logs..." />}>
+          <AccessLogsPage onClose={() => setShowAccessLogs(false)} isDark={isDark} username={userName || 'admin'} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
+        </Suspense>
+      </>
+    );
   }
 
   // Show System Tools page
@@ -2096,20 +2186,24 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="System Tools" onBack={() => setShowSystemTools(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
     return (
       <>
         <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-        <SystemToolsPage 
-          onClose={() => setShowSystemTools(false)} 
-          isDark={isDark} 
-          username={userName || 'admin'}
-          addUploadToast={addUploadToast}
-          updateUploadToast={updateUploadToast}
-        />
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading system tools..." />}>
+          <SystemToolsPage 
+            onClose={() => setShowSystemTools(false)} 
+            isDark={isDark} 
+            username={userName || 'admin'}
+            addUploadToast={addUploadToast}
+            updateUploadToast={updateUploadToast}
+          />
+        </Suspense>
         <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
       </>
     );
@@ -2122,11 +2216,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Manage Members" onBack={() => setShowManageMembers(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userName} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading members..." />}>
+          <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userName} />
+        </Suspense>
+      </>
+    );
   }
 
   // Show Membership Applications page
@@ -2136,11 +2239,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Membership Applications" onBack={() => setShowMembershipApplications(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
+          <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} />
+        </Suspense>
+      </>
+    );
   }
 
   // Show donation page if flag is true
@@ -2150,11 +2262,20 @@ export default function App() {
       return (
         <>
           <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Donation Tracker" onBack={() => setShowDonationPage(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-          <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          <Suspense fallback={null}>
+            <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+          </Suspense>
         </>
       );
     }
-    return (<><Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/><DonationPage onClose={() => setShowDonationPage(false)} donations={donations} onDonationsUpdate={setDonations} isAdmin={isAdmin} /></>);
+    return (
+      <>
+        <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+        <Suspense fallback={<LazyFallback isDark={isDark} label="Loading donations..." />}>
+          <DonationPage onClose={() => setShowDonationPage(false)} donations={donations} onDonationsUpdate={setDonations} isAdmin={isAdmin} />
+        </Suspense>
+      </>
+    );
   }
 
   const visibleGroups = getVisibleGroups();
@@ -3126,11 +3247,12 @@ export default function App() {
               className="relative cursor-pointer rounded-xl overflow-hidden group"
               onClick={() =>
                 openProjectModal({
-                  id: 0,
+                  projectId: "org-chart",
                   title: "Organizational Chart",
                   description:
                     "Youth Service Philippines - Tagum Chapter organizational structure",
                   imageUrl: orgChartUrl,
+                  status: "Active",
                 })
               }
             >
@@ -4324,34 +4446,40 @@ export default function App() {
       )}
 
       {/* Founder Modal */}
-      <FounderModal
-        isOpen={showFounderModal}
-        onClose={() => setShowFounderModal(false)}
-        isDark={isDark}
-        isAdmin={isAdmin}
-        addUploadToast={addUploadToast}
-        updateUploadToast={updateUploadToast}
-        removeUploadToast={removeUploadToast}
-      />
+      <Suspense fallback={null}>
+        <FounderModal
+          isOpen={showFounderModal}
+          onClose={() => setShowFounderModal(false)}
+          isDark={isDark}
+          isAdmin={isAdmin}
+          addUploadToast={addUploadToast}
+          updateUploadToast={updateUploadToast}
+          removeUploadToast={removeUploadToast}
+        />
+      </Suspense>
 
       {/* Developer Modal */}
-      <DeveloperModal
-        isOpen={showDeveloperModal}
-        onClose={() => setShowDeveloperModal(false)}
-        isDark={isDark}
-        isAdmin={isAdmin}
-        addUploadToast={addUploadToast}
-        updateUploadToast={updateUploadToast}
-        removeUploadToast={removeUploadToast}
-      />
+      <Suspense fallback={null}>
+        <DeveloperModal
+          isOpen={showDeveloperModal}
+          onClose={() => setShowDeveloperModal(false)}
+          isDark={isDark}
+          isAdmin={isAdmin}
+          addUploadToast={addUploadToast}
+          updateUploadToast={updateUploadToast}
+          removeUploadToast={removeUploadToast}
+        />
+      </Suspense>
 
       {/* Login Panel */}
-      <LoginPanel
-        isOpen={showLoginPanel}
-        onClose={() => setShowLoginPanel(false)}
-        onLogin={handleLogin}
-        isDark={isDark}
-      />
+      <Suspense fallback={null}>
+        <LoginPanel
+          isOpen={showLoginPanel}
+          onClose={() => setShowLoginPanel(false)}
+          onLogin={handleLogin}
+          isDark={isDark}
+        />
+      </Suspense>
 
 
 

@@ -14,7 +14,7 @@ import { DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import { type UploadToastMessage } from "./UploadToast";
 
-interface Member {
+export interface Member {
   id?: string;
   name: string;
   position: string;

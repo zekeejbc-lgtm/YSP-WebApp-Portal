@@ -890,6 +890,43 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
   const [previousRecord, setPreviousRecord] = useState<any>(null);
   const [pendingRecord, setPendingRecord] = useState<any>(null);
+  const memberCacheRef = useRef<Map<string, MemberForAttendance>>(new Map());
+  const isProcessingScanRef = useRef(false);
+  const lastScanRef = useRef<{ id: string; at: number } | null>(null);
+  const skipNextMemberReloadRef = useRef(false);
+  const qrScanCooldownMs = 1500;
+
+  const normalizeMemberId = (value: string): string =>
+    value.trim().toLowerCase().replace(/\s+/g, "");
+
+  const extractMemberIdFromQr = (raw: string): string => {
+    const trimmed = raw.trim();
+
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const jsonId = parsed?.memberId || parsed?.id || parsed?.member_id;
+        if (typeof jsonId === "string" && jsonId.trim()) {
+          return jsonId.trim();
+        }
+      } catch {
+        // Fall back to string parsing
+      }
+    }
+
+    const keyMatch = trimmed.match(/(?:memberId|member_id|id)\s*[:=]\s*([A-Za-z0-9-]+)/i);
+    if (keyMatch?.[1]) {
+      return keyMatch[1];
+    }
+
+    return trimmed;
+  };
+
+  const cacheMember = (member: MemberForAttendance) => {
+    const normalizedId = normalizeMemberId(member.id);
+    memberCacheRef.current.set(member.id, member);
+    memberCacheRef.current.set(normalizedId, member);
+  };
 
   // Toast management functions
   const addUploadToast = (message: UploadToastMessage) => {
@@ -1183,6 +1220,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setIsLoadingMembers(true);
     try {
       const fetchedMembers = await getMembersForAttendance(search, 100);
+      fetchedMembers.forEach(cacheMember);
       setMembers(fetchedMembers);
     } catch (error) {
       console.error("Failed to load members:", error);
@@ -1204,6 +1242,11 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   // Debounced member search from backend
   useEffect(() => {
     const timeoutId = setTimeout(() => {
+      if (skipNextMemberReloadRef.current) {
+        skipNextMemberReloadRef.current = false;
+        return;
+      }
+
       if (memberSearchInput && memberSearchInput.length >= 2) {
         loadMembers(memberSearchInput);
       } else if (currentStep === "recording" && selectedMode === "manual" && !memberSearchInput) {
@@ -1410,22 +1453,38 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
   // Process QR code scan result
   const processQRScan = async (scannedData: string) => {
-    if (!selectedEvent) return;
+    if (!selectedEvent) {
+      isProcessingScanRef.current = false;
+      return;
+    }
+
+    const rawMemberId = extractMemberIdFromQr(scannedData);
+    const normalizedMemberId = normalizeMemberId(rawMemberId);
+    const now = Date.now();
+
+    if (lastScanRef.current?.id === normalizedMemberId && now - lastScanRef.current.at < qrScanCooldownMs) {
+      isProcessingScanRef.current = false;
+      return;
+    }
+    lastScanRef.current = { id: normalizedMemberId, at: now };
 
     setIsRecordingAttendance(true);
     
     try {
       // Parse QR data - expected format: "ID_CODE" or "MEM-XXX" or member ID
-      const memberId = scannedData.trim();
+      const memberId = rawMemberId;
       
       // Find member in our loaded list, or search for them
-      let member = members.find(m => m.id === memberId || m.id.includes(memberId));
+      let member = memberCacheRef.current.get(normalizedMemberId) ||
+        members.find(m => m.id === memberId || m.id.includes(memberId));
       
       if (!member) {
         // Try to fetch member from backend
         const fetchedMembers = await getMembersForAttendance(memberId, 1);
         if (fetchedMembers.length > 0) {
           member = fetchedMembers[0];
+          cacheMember(member);
+          setMembers(prev => prev.some(m => m.id === member?.id) ? prev : [...prev, member!]);
         }
       }
 
@@ -1550,12 +1609,15 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       });
     } finally {
       setIsRecordingAttendance(false);
+      isProcessingScanRef.current = false;
     }
   };
 
   // QR Scanner handlers - using html5-qrcode for real QR scanning
   const handleStartScanning = async () => {
     try {
+      isProcessingScanRef.current = false;
+
       // Clean up any existing scanner instance
       if (qrScannerRef.current) {
         try {
@@ -1579,6 +1641,9 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       qrScannerRef.current = html5QrCode;
 
       const qrCodeSuccessCallback = async (decodedText: string) => {
+        if (isProcessingScanRef.current) return;
+        isProcessingScanRef.current = true;
+
         console.log("QR Code scanned:", decodedText);
         
         // Stop scanning after successful scan
@@ -1817,6 +1882,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       setShowVerificationModal(true);
       
       // Reset form
+      skipNextMemberReloadRef.current = true;
       setSelectedMember("");
       setMemberSearchInput("");
       setShowMemberDropdown(false);
@@ -1872,6 +1938,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       
       // Reset form for manual mode
       if (selectedMode === "manual") {
+        skipNextMemberReloadRef.current = true;
         setSelectedMember("");
         setMemberSearchInput("");
         setShowMemberDropdown(false);
@@ -1895,6 +1962,16 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       toast.success(`${pendingRecord.status} - ${pendingRecord.member}`, {
         description: `${pendingRecord.timeType} recorded at ${pendingRecord.timestamp}`,
       });
+    }
+
+    setPendingRecord(null);
+
+    if (currentStep === "recording" && selectedMode === "qr" && cameraPermission !== "denied") {
+      setTimeout(() => {
+        if (currentStep === "recording" && selectedMode === "qr") {
+          handleStartScanning();
+        }
+      }, 200);
     }
   };
 

@@ -93,7 +93,7 @@ export default function MembershipRegistrationModal({
   isDark,
   onSubmit,
 }: MembershipRegistrationModalProps) {
-  const [currentTab, setCurrentTab] = useState<"personal" | "yspi nfo" | "additional">("personal");
+  const [currentTab, setCurrentTab] = useState<"personal" | "yspinfo" | "additional">("personal");
   
   const [formData, setFormData] = useState<RegistrationFormData>({
     fullName: "",

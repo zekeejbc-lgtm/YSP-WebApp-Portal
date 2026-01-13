@@ -18,7 +18,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
-import { AddMemberModal, EditMemberModal, ViewMemberModal } from "./ManageMembersModals";
+import { AddMemberModal, EditMemberModal, ViewMemberModal, type Member } from "./ManageMembersModals";
 import AccountCreationModal from "./AccountCreationModal";
 import CustomDropdown from "./CustomDropdown";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
@@ -166,29 +166,6 @@ function mapOfficerToMember(officer: DirectoryOfficer): Member {
     emergencyPhone: "",
     profilePicture: officer.profilePicture || "",
   };
-}
-
-interface Member {
-  id: string;
-  name: string;
-  position: string;
-  role: string;
-  committee: string;
-  status: "Active" | "Inactive" | "Suspended";
-  email: string;
-  phone: string;
-  dateJoined: string;
-  address?: string;
-  dateOfBirth?: string;
-  age?: number;
-  gender?: string;
-  civilStatus?: string;
-  nationality?: string;
-  emergencyContact?: string;
-  emergencyPhone?: string;
-  bloodType?: string;
-  medicalConditions?: string;
-  profilePicture?: string;
 }
 
 interface PendingApplication {
@@ -557,7 +534,7 @@ export default function ManageMembersPage({
       startY: 30,
       head: [["ID", "Name", "Position", "Role", "Committee", "Status", "Email", "Phone", "Date Joined"]],
       body: filteredMembers.map(m => [
-        m.id, m.name, m.position, m.role, m.committee, m.status, m.email, m.phone, m.dateJoined
+        m.id || "", m.name, m.position, m.role, m.committee, m.status, m.email, m.phone, m.dateJoined || ""
       ]),
       theme: 'grid',
       headStyles: {
@@ -1273,7 +1250,12 @@ export default function ManageMembersPage({
         <AccountCreationModal
           isOpen={showAccountModal}
           isDark={isDark}
-          applicantData={selectedApplication?.fullData || null}
+          applicantData={selectedApplication?.fullData ?? {
+            fullName: "",
+            email: "",
+            committeePreference: "",
+            desiredRole: "",
+          }}
           onClose={() => setShowAccountModal(false)}
           onCreateAccount={(data) => {
              // ... handle creation

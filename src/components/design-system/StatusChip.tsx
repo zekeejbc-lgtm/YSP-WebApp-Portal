@@ -25,10 +25,18 @@ interface StatusChipProps {
   status: StatusType | string; // Allow string for flexibility
   label?: string;
   size?: "sm" | "md";
+  customColor?: string;
 }
 
-export default function StatusChip({ status, label, size = "md" }: StatusChipProps) {
+export default function StatusChip({ status, label, size = "md", customColor }: StatusChipProps) {
   const getStatusStyles = () => {
+    if (customColor) {
+      return {
+        backgroundColor: customColor,
+        color: "white",
+        label: label || status,
+      };
+    }
     switch (status) {
       case "present":
         return {

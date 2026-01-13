@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Send, Star, MessageSquare, ThumbsUp, AlertCircle, Upload, X, Eye, User, Clock, CheckCircle, XCircle, Mail, Image as ImageIcon, Trash2, Search, RefreshCw, Copy } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import CustomDropdown from './CustomDropdown';
 import Breadcrumb from './design-system/Breadcrumb';
@@ -1466,3 +1466,4 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     </div>
   );
 }
+

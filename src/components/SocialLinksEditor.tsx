@@ -16,7 +16,7 @@
 
 import { useState } from 'react';
 import { Plus, Trash2, Facebook, Twitter, Instagram, Linkedin, Github, Youtube, Music, Globe, ExternalLink } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import CustomDropdown from './CustomDropdown';
 
 export interface SocialLink {
@@ -254,3 +254,4 @@ export default function SocialLinksEditor({ links, onChange, isDark, isEditing =
     </div>
   );
 }
+

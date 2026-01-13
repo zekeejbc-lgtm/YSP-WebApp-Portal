@@ -21,11 +21,17 @@ export const DESIGN_TOKENS = {
       orange: '#ee8724',   // Secondary YSP Orange
       yellow: '#fbcb29',   // Accent YSP Yellow
     },
+    primary: {
+      main: '#f6421f',
+      light: '#ee8724',
+    },
     status: {
       present: '#10b981',  // Green
       late: '#f59e0b',     // Amber
       excused: '#3b82f6',  // Blue
       absent: '#ef4444',   // Red
+      success: '#10b981',
+      error: '#ef4444',
     },
   },
 
@@ -107,6 +113,8 @@ export const DESIGN_TOKENS = {
       h1: 28,                        // 28px
       h2: 22,                        // 22px
       h3: 18,                        // 18px
+      h4: 16,                        // 16px
+      h5: 14,                        // 14px
       body: 16,                      // 16px
       caption: 14,                   // 14px
       small: 12,                     // 12px
