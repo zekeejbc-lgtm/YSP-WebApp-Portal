@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from "react";
 import {
   Moon,
   Sun,
@@ -833,7 +833,7 @@ export default function App() {
     "https://ui-avatars.com/api/?name=YSP&size=80&background=f6421f&color=fff";
 
   // Navigation Groups Configuration
-  const navigationGroups: NavGroup[] = [
+  const navigationGroups: NavGroup[] = useMemo(() => ([
     {
       id: "home-group",
       label: "Home",
@@ -1048,11 +1048,11 @@ export default function App() {
       ],
       roles: ["admin"], // admin and above can see this group
     },
-  ];
+  ]), []);
 
   // Role Hierarchy Helper - Check if user has access based on role hierarchy
   // auditor (highest) > admin > head > member > suspended > banned (no access)
-  const hasRoleAccess = (requiredRoles: string[] | undefined): boolean => {
+  const hasRoleAccess = useCallback((requiredRoles: string[] | undefined): boolean => {
     if (!requiredRoles || requiredRoles.length === 0) return true; // Public access
     
     // Define role hierarchy levels (higher number = more access)
@@ -1072,10 +1072,10 @@ export default function App() {
       const requiredLevel = roleHierarchy[role] || 0;
       return userLevel >= requiredLevel;
     });
-  };
+  }, [userRole]);
 
   // Filter groups and pages based on user role
-  const getVisibleGroups = () => {
+  const visibleGroups = useMemo(() => {
     // If not logged in, return public pages only (flat list for sidebar)
     // NOTE: Home and Login are handled by dedicated UI elements in the sidebar,
     // so they should NOT be included in this pages array to avoid duplicates
@@ -1164,20 +1164,20 @@ export default function App() {
         }),
       }))
       .filter((group) => group.pages.length > 0);
-  };
+  }, [hasRoleAccess, isAdmin, navigationGroups, userRole]);
 
-  const toggleDark = () => {
+  const toggleDark = useCallback(() => {
     setIsDark(!isDark);
     document.documentElement.classList.toggle("dark");
-  };
+  }, [isDark]);
 
-  const openProjectModal = (project: Project) => {
+  const openProjectModal = useCallback((project: Project) => {
     setModalProject(project);
-  };
+  }, []);
 
-  const closeModal = () => {
+  const closeModal = useCallback(() => {
     setModalProject(null);
-  };
+  }, []);
 
   // Project Management Functions
   const handleUploadProject = async () => {
@@ -1271,7 +1271,7 @@ export default function App() {
     }
   };
 
-  const startEditProject = (project: Project) => {
+  const startEditProject = useCallback((project: Project) => {
     setEditingProject(project);
     setNewProject({
       title: project.title,
@@ -1282,14 +1282,14 @@ export default function App() {
     });
     setProjectImageFile(null);
     setShowUploadProjectModal(true);
-  };
+  }, []);
 
-  const closeProjectModal = () => {
+  const closeProjectModal = useCallback(() => {
     setEditingProject(null);
     setNewProject({ title: "", description: "", imageUrl: "", link: "", linkText: "" });
     setProjectImageFile(null);
     setShowUploadProjectModal(false);
-  };
+  }, []);
 
   const handleDeleteSelectedProjects = () => {
     if (selectedProjectIds.length === 0) {
@@ -1475,13 +1475,13 @@ export default function App() {
     }
   };
 
-  const toggleProjectSelection = (projectId: string) => {
+  const toggleProjectSelection = useCallback((projectId: string) => {
     setSelectedProjectIds((prev) =>
       prev.includes(projectId)
         ? prev.filter((id) => id !== projectId)
         : [...prev, projectId]
     );
-  };
+  }, []);
 
   const handleLogin = async (username: string, password: string) => {
     // Real authentication via GAS backend
@@ -1774,6 +1774,105 @@ export default function App() {
     "membership-applications": "membership-applications",
     donation: "donation",
   };
+
+  const projectsContent = useMemo(() => {
+    if (isLoadingProjects) {
+      return <SkeletonCardGrid count={6} />;
+    }
+
+    if (projects.length === 0) {
+      return (
+        <div className="col-span-full text-center py-12">
+          <div className="text-gray-400 dark:text-gray-500 mb-4">
+            <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">No Projects Yet</h3>
+          <p className="text-sm text-gray-500 dark:text-gray-500">
+            {isAdmin ? "Click 'Add Project' to create your first project" : "Check back soon for upcoming projects!"}
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100" style={{ WebkitOverflowScrolling: 'touch', whiteSpace: 'nowrap', paddingBottom: 8, minHeight: 370 }}>
+        {projects.map((project) => (
+          <span key={project.projectId} style={{ display: 'inline-block', verticalAlign: 'top', marginRight: 24, width: 350, maxWidth: '90vw' }}>
+            <GlowingCard
+              isDark={isDark}
+              glowOnHover={true}
+              className={`overflow-hidden cursor-pointer transition-all duration-250 hover:scale-[1.03] relative ${
+                selectedProjectIds.includes(project.projectId) ? "ring-2 ring-blue-500 ring-offset-2" : ""
+              }`}
+            >
+              {/* Checkbox for Admin */}
+              {isAdmin && (
+                <div
+                  className="absolute top-3 left-3 z-10 flex gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <label className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-blue-500 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={selectedProjectIds.includes(project.projectId)}
+                      onChange={() => toggleProjectSelection(project.projectId)}
+                      className="sr-only"
+                    />
+                    {selectedProjectIds.includes(project.projectId) && (
+                      <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </label>
+                  <button
+                    onClick={() => startEditProject(project)}
+                    className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-colors"
+                    title="Edit project"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-orange-500" />
+                  </button>
+                </div>
+              )}
+              <div 
+                onClick={() => openProjectModal(project)}
+                className="w-full"
+              >
+                <div className="w-full h-48 overflow-hidden relative">
+                  <ImageWithFallback
+                    src={project.imageUrl}
+                    alt={project.title}
+                    className="w-full h-full object-cover object-center transition-transform duration-300 hover:scale-110"
+                  />
+                </div>
+                <div className="p-4">
+                  <h3
+                    className="mb-2 line-clamp-2"
+                    style={{
+                      fontFamily: "var(--font-headings)",
+                      fontSize: "1.125rem",
+                      fontWeight: "var(--font-weight-bold)",
+                      color: "#f6421f",
+                      lineHeight: "1.4",
+                    }}
+                  >
+                    <FormattedText text={project.title} />
+                  </h3>
+                  <div
+                    className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3"
+                    style={{ lineHeight: "1.5" }}
+                  >
+                    <FormattedText text={project.description} />
+                  </div>
+                </div>
+              </div>
+            </GlowingCard>
+          </span>
+        ))}
+      </div>
+    );
+  }, [isAdmin, isDark, isLoadingProjects, openProjectModal, projects, selectedProjectIds, startEditProject, toggleProjectSelection]);
 
   // Show Full PWA Maintenance Screen (for non-admin users)
   if (isFullMaintenance && !isAdmin) {
@@ -2121,6 +2220,7 @@ export default function App() {
             isDark={isDark}
             addUploadToast={addUploadToast}
             updateUploadToast={updateUploadToast}
+            removeUploadToast={removeUploadToast}
             onProfilePictureChange={(newUrl) => setUserProfilePicture(newUrl)}
           />
         </Suspense>
@@ -2278,8 +2378,6 @@ export default function App() {
     );
   }
 
-  const visibleGroups = getVisibleGroups();
-
   return (
     <div className="min-h-screen transition-colors duration-300" style={{ 
       overflow: 'visible',
@@ -2359,7 +2457,7 @@ export default function App() {
         isDark={isDark}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
-        navigationGroups={getVisibleGroups()}
+        navigationGroups={visibleGroups}
         activePage={activePage}
         openMobileGroup={openMobileGroup}
         onMobileGroupToggle={setOpenMobileGroup}
@@ -2493,16 +2591,6 @@ export default function App() {
           id="home"
           className={`text-center pb-12 md:pb-20 px-4 md:px-6 relative transition-all duration-300 ${isAdmin ? 'pt-24 md:pt-28' : isFullMaintenance ? 'pt-36 md:pt-40' : 'pt-28 md:pt-32'}`}
         >
-        {/* Loading State for Homepage Content */}
-        {isLoadingHomepage && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm z-20 rounded-xl">
-            <div className="flex flex-col items-center gap-3 p-6 bg-white dark:bg-gray-800 rounded-xl shadow-lg">
-              <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
-              <p className="text-gray-600 dark:text-gray-400">Loading content...</p>
-            </div>
-          </div>
-        )}
-
         {/* Error State for Homepage Content */}
         {homepageError && !isLoadingHomepage && (
           <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
@@ -2712,7 +2800,7 @@ export default function App() {
           ) : (
             <>
               <h2
-                className="mb-4"
+                className="mb-4 text-center md:text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
@@ -2786,7 +2874,7 @@ export default function App() {
           ) : (
             <>
               <h2
-                className="mb-4"
+                className="mb-4 text-center md:text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
@@ -2859,7 +2947,7 @@ export default function App() {
           ) : (
             <>
               <h2
-                className="mb-4"
+                className="mb-4 text-center md:text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
@@ -2938,7 +3026,7 @@ export default function App() {
           ) : (
             <>
               <h2
-                className="mb-4"
+                className="mb-4 text-center md:text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
@@ -2975,7 +3063,7 @@ export default function App() {
       >
         <div className="ysp-card p-6 md:p-8">
           <h2
-            className="mb-6"
+            className="mb-6 text-center md:text-left"
             style={{
               fontFamily: "var(--font-headings)",
               fontSize: "1.5rem",
@@ -3029,96 +3117,7 @@ export default function App() {
           )}
 
           {/* Projects Grid - Show skeleton while loading */}
-          {isLoadingProjects ? (
-            <SkeletonCardGrid count={6} />
-          ) : projects.length === 0 ? (
-            <div className="col-span-full text-center py-12">
-              <div className="text-gray-400 dark:text-gray-500 mb-4">
-                <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">No Projects Yet</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-500">
-                {isAdmin ? "Click 'Add Project' to create your first project" : "Check back soon for upcoming projects!"}
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100" style={{ WebkitOverflowScrolling: 'touch', whiteSpace: 'nowrap', paddingBottom: 8, minHeight: 370 }}>
-              {projects.map((project) => (
-                <span key={project.projectId} style={{ display: 'inline-block', verticalAlign: 'top', marginRight: 24, width: 350, maxWidth: '90vw' }}>
-                  <GlowingCard
-                    isDark={isDark}
-                    glowOnHover={true}
-                    className={`overflow-hidden cursor-pointer transition-all duration-250 hover:scale-[1.03] relative ${
-                      selectedProjectIds.includes(project.projectId) ? "ring-2 ring-blue-500 ring-offset-2" : ""
-                    }`}
-                  >
-                    {/* Checkbox for Admin */}
-                    {isAdmin && (
-                      <div
-                        className="absolute top-3 left-3 z-10 flex gap-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <label className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-blue-500 transition-colors">
-                          <input
-                            type="checkbox"
-                            checked={selectedProjectIds.includes(project.projectId)}
-                            onChange={() => toggleProjectSelection(project.projectId)}
-                            className="sr-only"
-                          />
-                          {selectedProjectIds.includes(project.projectId) && (
-                            <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
-                          )}
-                        </label>
-                        <button
-                          onClick={() => startEditProject(project)}
-                          className="flex items-center justify-center w-6 h-6 bg-white dark:bg-gray-800 rounded-md shadow-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 hover:border-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-colors"
-                          title="Edit project"
-                        >
-                          <Edit2 className="w-3.5 h-3.5 text-orange-500" />
-                        </button>
-                      </div>
-                    )}
-                    <div 
-                      onClick={() => openProjectModal(project)}
-                      className="w-full"
-                    >
-                      <div className="w-full h-48 overflow-hidden relative">
-                        <ImageWithFallback
-                          src={project.imageUrl}
-                          alt={project.title}
-                          className="w-full h-full object-cover object-center transition-transform duration-300 hover:scale-110"
-                        />
-                      </div>
-                      <div className="p-4">
-                        <h3
-                          className="mb-2 line-clamp-2"
-                          style={{
-                            fontFamily: "var(--font-headings)",
-                            fontSize: "1.125rem",
-                            fontWeight: "var(--font-weight-bold)",
-                            color: "#f6421f",
-                            lineHeight: "1.4",
-                          }}
-                        >
-                          <FormattedText text={project.title} />
-                        </h3>
-                        <div
-                          className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3"
-                          style={{ lineHeight: "1.5" }}
-                        >
-                          <FormattedText text={project.description} />
-                        </div>
-                      </div>
-                    </div>
-                  </GlowingCard>
-                </span>
-              ))}
-            </div>
-          )}
+          {projectsContent}
         </div>
       </section>
 
@@ -3129,7 +3128,7 @@ export default function App() {
         ) : (
         <div className="ysp-card p-6 md:p-8">
           <h2
-            className="mb-6 flex items-center gap-3"
+            className="mb-6 flex items-center justify-center gap-3 text-center md:justify-start md:text-left"
             style={{
               fontFamily: "var(--font-headings)",
               fontSize: "1.5rem",
@@ -3571,7 +3570,7 @@ export default function App() {
             <>
               {/* Display Mode */}
               <h2
-                className="mb-6"
+                className="mb-6 text-center md:text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
@@ -3965,7 +3964,7 @@ export default function App() {
               {/* Project Details */}
               <div className="p-5 sm:p-6 md:p-8">
                 <h2
-                  className="mb-3 md:mb-4 text-xl sm:text-2xl md:text-3xl"
+                  className="mb-3 md:mb-4 text-xl sm:text-2xl md:text-3xl text-center md:text-left"
                   style={{
                     fontFamily: "var(--font-headings)",
                     fontWeight: "var(--font-weight-bold)",
@@ -4056,7 +4055,7 @@ export default function App() {
             {/* Header */}
             <div className="flex items-center justify-between p-5 sm:p-6 border-b border-gray-200 dark:border-gray-700">
               <h2
-                className="text-xl sm:text-2xl"
+                className="flex-1 text-xl sm:text-2xl text-center md:text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontWeight: "var(--font-weight-bold)",
@@ -4269,7 +4268,7 @@ export default function App() {
                 </div>
                 <div>
                   <h2
-                    className="text-xl"
+                    className="text-xl text-center md:text-left"
                     style={{
                       fontFamily: "var(--font-headings)",
                       fontWeight: "var(--font-weight-bold)",
@@ -4377,7 +4376,7 @@ export default function App() {
                 </div>
                 <div>
                   <h2
-                    className="text-xl"
+                    className="text-xl text-center md:text-left"
                     style={{
                       fontFamily: "var(--font-headings)",
                       fontWeight: "var(--font-weight-bold)",

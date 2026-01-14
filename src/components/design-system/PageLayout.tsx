@@ -78,53 +78,40 @@ export default function PageLayout({
               ...glassStyle,
             }}
           >
-            {/* Mobile Layout - Stacked */}
-            <div className="flex flex-col gap-3 md:hidden">
-              {/* Top Row: Back Button and Actions */}
-              <div className="flex items-center justify-between gap-2">
-                <button
-                  onClick={onClose}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 hover:scale-105 active:scale-95 flex-shrink-0"
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(238, 135, 36, 0.15), rgba(246, 66, 31, 0.15))',
-                    border: '2px solid rgba(238, 135, 36, 0.3)',
-                    color: '#ee8724',
-                    fontWeight: '600',
-                    fontSize: '0.875rem'
-                  }}
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>Back</span>
-                </button>
-                {actions && <div className="flex-shrink-0">{actions}</div>}
-              </div>
-              
-              {/* Title Row - Full Width */}
-              <div className="text-center">
+            {/* Mobile Layout - Single Row */}
+            <div className="flex items-center gap-2 md:hidden">
+              <button
+                onClick={onClose}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all duration-300 hover:scale-105 active:scale-95 flex-shrink-0"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(238, 135, 36, 0.15), rgba(246, 66, 31, 0.15))',
+                  border: '2px solid rgba(238, 135, 36, 0.3)',
+                  color: '#ee8724',
+                  fontWeight: '600',
+                  fontSize: '0.75rem'
+                }}
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Back</span>
+              </button>
+
+              <div className="flex-1 min-w-0">
                 <h1
+                  className="break-words"
                   style={{
                     fontFamily: 'var(--font-headings)',
                     fontWeight: 'var(--font-weight-bold)',
                     letterSpacing: '-0.02em',
                     color: isDark ? '#fb923c' : '#ea580c',
-                    lineHeight: '1.2',
-                    fontSize: 'clamp(1.125rem, 4vw, 1.5rem)'
+                    lineHeight: '1.15',
+                    fontSize: 'clamp(0.9rem, 3.4vw, 1.2rem)'
                   }}
                 >
                   {title}
                 </h1>
-                {subtitle && (
-                  <p
-                    className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}
-                    style={{
-                      fontWeight: '500',
-                      lineHeight: '1.2'
-                    }}
-                  >
-                    {subtitle}
-                  </p>
-                )}
               </div>
+
+              {actions && <div className="flex-shrink-0">{actions}</div>}
             </div>
 
             {/* Desktop Layout - Horizontal */}

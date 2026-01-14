@@ -17,7 +17,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Download, FileText, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance } from "../services/gasAttendanceService";
 import jsPDF from "jspdf";
@@ -247,6 +247,7 @@ export default function AttendanceDashboardPage({
   const [chartType, setChartType] = useState<"pie" | "donut" | "bar" | "line" | "heatmap">("pie");
   const [showModal, setShowModal] = useState(false);
   const [modalData, setModalData] = useState<{ status: string; members: MemberForAttendance[] } | null>(null);
+  const [exportType, setExportType] = useState("");
 
   // Loading states
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
@@ -976,6 +977,12 @@ export default function AttendanceDashboardPage({
     }
   };
 
+  useEffect(() => {
+    if (exportType === "pdf") handleExportPDF();
+    if (exportType === "spreadsheet") handleExportSpreadsheet();
+    setExportType("");
+  }, [exportType]);
+
   // Helper function to load image
   const loadImage = (url: string): Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
@@ -1309,24 +1316,20 @@ export default function AttendanceDashboardPage({
               )}
             </div>
             <div className="flex flex-wrap gap-3">
-              <button
-                onClick={handleExportPDF}
-                disabled={isLoadingAttendance || attendanceRecords.length === 0}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#ee8724] text-white hover:bg-[#d97618] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
-              >
-                <FileText className="w-4 h-4" />
-                <span className="hidden sm:inline">PDF</span>
-              </button>
-              <button
-                onClick={handleExportSpreadsheet}
-                disabled={isLoadingAttendance || attendanceRecords.length === 0}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#fbcb29] text-gray-900 hover:bg-[#e0b624] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
-              >
-                <Download className="w-4 h-4" />
-                <span className="hidden sm:inline">Spreadsheet</span>
-              </button>
+              <div className="min-w-[180px]">
+                <CustomDropdown
+                  value={exportType}
+                  onChange={setExportType}
+                  options={[
+                    { value: "pdf", label: "Export as PDF" },
+                    { value: "spreadsheet", label: "Export as Spreadsheet" },
+                  ]}
+                  placeholder="Export"
+                  isDark={isDark}
+                  size="sm"
+                  disabled={isLoadingAttendance || attendanceRecords.length === 0}
+                />
+              </div>
             </div>
           </div>
           {renderChart()}

@@ -18,7 +18,6 @@
  */
 
 import { 
-  Download, 
   Filter, 
   AlertCircle, 
   User, 
@@ -34,13 +33,13 @@ import {
   Table as TableIcon,
   Monitor,
   X,
-  FileJson,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import CustomDropdown from "./CustomDropdown";
 
 // Organization branding (match AttendanceDashboardPage)
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -114,8 +113,7 @@ export default function AccessLogsPage({
     failed: 0,
     warnings: 0,
   });
-  
-  const [isExporting, setIsExporting] = useState(false);
+  const [exportType, setExportType] = useState("");
 
   const actionTypes = [
     { value: "all", label: "All", icon: Filter },
@@ -159,14 +157,14 @@ export default function AccessLogsPage({
 
       // Transform API response to component format
       const formattedLogs = (data.data?.logs || []).map((log: any) => ({
-        id: log.id,
-        user: log.user,
-        action: log.action,
-        type: (log.type || 'view').toLowerCase(),
-        status: log.status || 'success',
-        timestamp: log.timestamp,
-        ipAddress: log.ipAddress,
-        device: log.device,
+        id: String(log.id ?? ''),
+        user: String(log.user ?? ''),
+        action: String(log.action ?? ''),
+        type: String(log.type ?? 'view').toLowerCase(),
+        status: String(log.status ?? 'success').toLowerCase(),
+        timestamp: String(log.timestamp ?? ''),
+        ipAddress: String(log.ipAddress ?? ''),
+        device: String(log.device ?? ''),
       })) as AccessLog[];
 
       setLogs(formattedLogs);
@@ -203,9 +201,11 @@ export default function AccessLogsPage({
   }, [fetchAccessLogs]);
 
   const filteredLogs = logs.filter((log) => {
+    const userText = String(log.user ?? "");
+    const actionText = String(log.action ?? "");
     const matchesSearch =
-      log.user.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.action.toLowerCase().includes(searchQuery.toLowerCase());
+      userText.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      actionText.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesType =
       selectedType === "all" || log.type === selectedType;
     return matchesSearch && matchesType;
@@ -525,6 +525,12 @@ export default function AccessLogsPage({
     }
   };
 
+  useEffect(() => {
+    if (exportType === "pdf") handleExportPDF();
+    if (exportType === "csv") handleExportSpreadsheet();
+    setExportType("");
+  }, [exportType]);
+
   const getActionTypeIcon = (type: string) => {
     switch (type) {
       case "login":
@@ -776,28 +782,20 @@ export default function AccessLogsPage({
           />
         </div>
         <div className="flex gap-3">
-          <Button
-            variant="primary"
-            size="md"
-            onClick={handleExportPDF}
-            disabled={isLoading || filteredLogs.length === 0}
-            icon={<Download className="w-4 h-4" />}
-            className="flex-1 lg:flex-none"
-          >
-            <span className="hidden sm:inline">Export PDF</span>
-            <span className="sm:hidden">PDF</span>
-          </Button>
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={handleExportSpreadsheet}
-            disabled={isLoading || filteredLogs.length === 0}
-            icon={<FileJson className="w-4 h-4" />}
-            className="flex-1 lg:flex-none"
-          >
-            <span className="hidden sm:inline">Export CSV</span>
-            <span className="sm:hidden">CSV</span>
-          </Button>
+          <div className="min-w-[160px]">
+            <CustomDropdown
+              value={exportType}
+              onChange={setExportType}
+              options={[
+                { value: "pdf", label: "Export as PDF" },
+                { value: "csv", label: "Export as CSV" },
+              ]}
+              placeholder="Export"
+              isDark={isDark}
+              size="md"
+              disabled={isLoading || filteredLogs.length === 0}
+            />
+          </div>
         </div>
       </div>
 

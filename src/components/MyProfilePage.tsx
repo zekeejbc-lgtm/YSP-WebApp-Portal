@@ -15,7 +15,7 @@
  * =============================================================================
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { User as UserIcon, Save, Edit, Camera, Loader2, Lock, Mail, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
@@ -41,6 +41,7 @@ interface MyProfilePageProps {
   isDark: boolean;
   addUploadToast?: (message: UploadToastMessage) => void;
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
+  removeUploadToast?: (id: string) => void;
   onProfilePictureChange?: (newUrl: string) => void;
 }
 
@@ -49,6 +50,7 @@ export default function MyProfilePage({
   isDark,
   addUploadToast,
   updateUploadToast,
+  removeUploadToast,
   onProfilePictureChange,
 }: MyProfilePageProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -68,6 +70,7 @@ export default function MyProfilePage({
   const [isEmailVerified, setIsEmailVerified] = useState(false);
   const [verifiedEmail, setVerifiedEmail] = useState<string>(''); // Track which email was verified
   const [isCheckingVerification, setIsCheckingVerification] = useState(false);
+  const hasLoadedRef = useRef(false);
 
   const [profile, setProfile] = useState({
     // Personal Info
@@ -114,7 +117,12 @@ export default function MyProfilePage({
   // Fetch profile data on mount
   useEffect(() => {
     const loadProfile = async () => {
+      if (hasLoadedRef.current) {
+        return;
+      }
+      hasLoadedRef.current = true;
       setIsLoading(true);
+      const toastId = `profile-load-${Date.now()}`;
       
       // Get the logged-in user from session
       const storedUser = getStoredUser();
@@ -130,8 +138,27 @@ export default function MyProfilePage({
       setCurrentUsername(storedUser.username);
 
       try {
+        if (addUploadToast) {
+          addUploadToast({
+            id: toastId,
+            title: 'Loading Profile',
+            message: 'Starting up...',
+            status: 'loading',
+            progress: 5,
+            progressLabel: 'Loading...',
+          });
+        }
+
+        if (updateUploadToast) {
+          updateUploadToast(toastId, { progress: 20, message: 'Connecting to backend...' });
+        }
+
         const response = await fetchUserProfile(storedUser.username);
         
+        if (updateUploadToast) {
+          updateUploadToast(toastId, { progress: 55, message: 'Applying profile data...' });
+        }
+
         if (response.success && response.profile) {
           const p = response.profile;
           const loadedProfile = {
@@ -179,6 +206,9 @@ export default function MyProfilePage({
           // Check email verification status
           if (p.personalEmail) {
             setIsCheckingVerification(true);
+            if (updateUploadToast) {
+              updateUploadToast(toastId, { progress: 75, message: 'Checking email verification...' });
+            }
             try {
               const verifyResult = await checkEmailVerified(storedUser.username, p.personalEmail);
               if (verifyResult.success && verifyResult.verified) {
@@ -191,9 +221,47 @@ export default function MyProfilePage({
               setIsCheckingVerification(false);
             }
           }
+
+          if (updateUploadToast) {
+            updateUploadToast(toastId, {
+              status: 'success',
+              progress: 100,
+              title: 'Profile Ready',
+              message: 'Profile loaded successfully.',
+            });
+          }
+          if (removeUploadToast) {
+            setTimeout(() => removeUploadToast(toastId), 2500);
+          }
+        } else {
+          if (updateUploadToast) {
+            updateUploadToast(toastId, {
+              status: 'error',
+              progress: 100,
+              title: 'Load Failed',
+              message: response.message || 'Unable to load profile data.',
+            });
+          }
+          if (removeUploadToast) {
+            setTimeout(() => removeUploadToast(toastId), 5000);
+          }
+          toast.error('Failed to load profile', {
+            description: response.message || 'Please try again later',
+          });
         }
       } catch (error) {
         console.error('Failed to load profile:', error);
+        if (updateUploadToast) {
+          updateUploadToast(toastId, {
+            status: 'error',
+            progress: 100,
+            title: 'Load Failed',
+            message: error instanceof Error ? error.message : 'Please try again later',
+          });
+        }
+        if (removeUploadToast) {
+          setTimeout(() => removeUploadToast(toastId), 5000);
+        }
         toast.error('Failed to load profile', {
           description: error instanceof Error ? error.message : 'Please try again later'
         });

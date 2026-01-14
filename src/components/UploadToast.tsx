@@ -7,6 +7,7 @@ export interface UploadToastMessage {
   message: string;
   status: 'loading' | 'success' | 'error' | 'info';
   progress?: number; // 0-100
+  progressLabel?: string;
 }
 
 interface UploadToastProps {
@@ -92,7 +93,7 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
           {message.status === 'loading' && message.progress !== undefined && (
             <div className="space-y-1">
               <div className="flex justify-between items-center">
-                <span className="text-xs text-gray-600">Uploading...</span>
+                <span className="text-xs text-gray-600">{message.progressLabel || "Uploading..."}</span>
                 <span className="text-xs font-semibold text-orange-600">
                   {message.progress}%
                 </span>
