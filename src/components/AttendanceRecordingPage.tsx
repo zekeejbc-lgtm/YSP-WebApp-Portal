@@ -946,6 +946,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   // Load events from backend
   const loadEvents = useCallback(async (showToast: boolean = false) => {
     const toastId = `load-events-${Date.now()}`;
+    const controller = new AbortController();
+    const signal = showToast ? controller.signal : undefined;
     
     if (showToast) {
       addUploadToast({
@@ -954,6 +956,15 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         message: 'Fetching available events...',
         status: 'loading',
         progress: 10,
+        onCancel: () => {
+          controller.abort();
+          updateUploadToast(toastId, {
+            status: 'info',
+            progress: 100,
+            title: 'Cancelled',
+            message: 'Event load cancelled',
+          });
+        },
       });
     }
     
@@ -966,7 +977,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       clearEventsCache();
       
       // Fetch events from backend - only active/scheduled events for recording
-      const backendEvents = await fetchEvents();
+      const backendEvents = await fetchEvents(undefined, signal);
+      if (signal?.aborted) {
+        return;
+      }
       
       if (showToast) {
         updateUploadToast(toastId, { progress: 70, message: 'Processing event data...' });
@@ -995,6 +1009,9 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         });
       }
     } catch (error) {
+      if (signal?.aborted) {
+        return;
+      }
       console.error("Failed to load events:", error);
       
       if (showToast) {

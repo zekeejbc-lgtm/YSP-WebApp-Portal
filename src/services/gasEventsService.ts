@@ -167,7 +167,11 @@ function buildUrl(action: string, params?: Record<string, string | number | bool
 /**
  * Make GET request to GAS API
  */
-async function gasGet<T>(action: string, params?: Record<string, string | number | boolean>): Promise<GASEventsResponse<T>> {
+async function gasGet<T>(
+  action: string,
+  params?: Record<string, string | number | boolean>,
+  signal?: AbortSignal
+): Promise<GASEventsResponse<T>> {
   if (!isApiConfigured()) {
     throw new EventsAPIError(
       EventsErrorCodes.API_NOT_CONFIGURED,
@@ -177,6 +181,14 @@ async function gasGet<T>(action: string, params?: Record<string, string | number
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), GAS_EVENTS_CONFIG.TIMEOUT);
+  const onExternalAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
 
   try {
     const response = await fetch(buildUrl(action, params), {
@@ -185,6 +197,9 @@ async function gasGet<T>(action: string, params?: Record<string, string | number
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       throw new EventsAPIError(
@@ -197,6 +212,9 @@ async function gasGet<T>(action: string, params?: Record<string, string | number
     return data as GASEventsResponse<T>;
   } catch (error) {
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
     
     if (error instanceof EventsAPIError) {
       throw error;
@@ -216,7 +234,10 @@ async function gasGet<T>(action: string, params?: Record<string, string | number
 /**
  * Make POST request to GAS API
  */
-async function gasPost<T>(payload: Record<string, unknown>): Promise<GASEventsResponse<T>> {
+async function gasPost<T>(
+  payload: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<GASEventsResponse<T>> {
   if (!isApiConfigured()) {
     throw new EventsAPIError(
       EventsErrorCodes.API_NOT_CONFIGURED,
@@ -226,6 +247,14 @@ async function gasPost<T>(payload: Record<string, unknown>): Promise<GASEventsRe
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), GAS_EVENTS_CONFIG.TIMEOUT);
+  const onExternalAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
 
   try {
     const response = await fetch(GAS_EVENTS_CONFIG.API_URL, {
@@ -238,6 +267,9 @@ async function gasPost<T>(payload: Record<string, unknown>): Promise<GASEventsRe
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       throw new EventsAPIError(
@@ -250,6 +282,9 @@ async function gasPost<T>(payload: Record<string, unknown>): Promise<GASEventsRe
     return data as GASEventsResponse<T>;
   } catch (error) {
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
     
     if (error instanceof EventsAPIError) {
       throw error;
@@ -273,12 +308,15 @@ async function gasPost<T>(payload: Record<string, unknown>): Promise<GASEventsRe
 /**
  * Fetch all events with optional filtering
  */
-export async function fetchEvents(params?: {
+export async function fetchEvents(
+  params?: {
   status?: string;
   eventType?: string;
   startDate?: string;
   endDate?: string;
-}): Promise<EventData[]> {
+},
+  signal?: AbortSignal
+): Promise<EventData[]> {
   // Check cache first
   const now = Date.now();
   if (cachedEvents && (now - eventsCacheTimestamp) < GAS_EVENTS_CONFIG.CACHE_DURATION) {
@@ -292,7 +330,7 @@ export async function fetchEvents(params?: {
     return events;
   }
 
-  const response = await gasGet<EventData[]>('getEvents', params as Record<string, string>);
+  const response = await gasGet<EventData[]>('getEvents', params as Record<string, string>, signal);
   
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to fetch events');
@@ -307,12 +345,15 @@ export async function fetchEvents(params?: {
 /**
  * Fetch all events (safe version - returns empty array on error)
  */
-export async function fetchEventsSafe(params?: {
+export async function fetchEventsSafe(
+  params?: {
   status?: string;
   eventType?: string;
-}): Promise<EventData[]> {
+},
+  signal?: AbortSignal
+): Promise<EventData[]> {
   try {
-    return await fetchEvents(params);
+    return await fetchEvents(params, signal);
   } catch (error) {
     console.error('Failed to fetch events:', error);
     return [];
@@ -322,8 +363,11 @@ export async function fetchEventsSafe(params?: {
 /**
  * Fetch a single event by ID
  */
-export async function fetchEventById(eventId: string): Promise<EventData | null> {
-  const response = await gasGet<EventData>('getEvent', { eventId });
+export async function fetchEventById(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventData | null> {
+  const response = await gasGet<EventData>('getEvent', { eventId }, signal);
   
   if (!response.success) {
     if (response.error?.includes('not found')) {
@@ -338,8 +382,11 @@ export async function fetchEventById(eventId: string): Promise<EventData | null>
 /**
  * Fetch upcoming events
  */
-export async function fetchUpcomingEvents(limit: number = 10): Promise<EventData[]> {
-  const response = await gasGet<EventData[]>('getUpcomingEvents', { limit });
+export async function fetchUpcomingEvents(
+  limit: number = 10,
+  signal?: AbortSignal
+): Promise<EventData[]> {
+  const response = await gasGet<EventData[]>('getUpcomingEvents', { limit }, signal);
   
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to fetch upcoming events');
@@ -351,8 +398,11 @@ export async function fetchUpcomingEvents(limit: number = 10): Promise<EventData
 /**
  * Fetch past events
  */
-export async function fetchPastEvents(limit: number = 10): Promise<EventData[]> {
-  const response = await gasGet<EventData[]>('getPastEvents', { limit });
+export async function fetchPastEvents(
+  limit: number = 10,
+  signal?: AbortSignal
+): Promise<EventData[]> {
+  const response = await gasGet<EventData[]>('getPastEvents', { limit }, signal);
   
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to fetch past events');
@@ -364,7 +414,10 @@ export async function fetchPastEvents(limit: number = 10): Promise<EventData[]> 
 /**
  * Create a new event
  */
-export async function createEvent(eventData: CreateEventData): Promise<{ eventId: string; event: EventData }> {
+export async function createEvent(
+  eventData: CreateEventData,
+  signal?: AbortSignal
+): Promise<{ eventId: string; event: EventData }> {
   const response = await gasPost<{ eventId: string; event: EventData }>({
     action: 'createEvent',
     eventData: {
@@ -383,7 +436,7 @@ export async function createEvent(eventData: CreateEventData): Promise<{ eventId
       createdBy: eventData.createdBy || '',
       notes: eventData.notes || '',
     },
-  });
+  }, signal);
 
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to create event');
@@ -401,7 +454,11 @@ export async function createEvent(eventData: CreateEventData): Promise<{ eventId
 /**
  * Update an existing event
  */
-export async function updateEvent(eventId: string, eventData: Partial<CreateEventData>): Promise<void> {
+export async function updateEvent(
+  eventId: string,
+  eventData: Partial<CreateEventData>,
+  signal?: AbortSignal
+): Promise<void> {
   const response = await gasPost({
     action: 'updateEvent',
     eventId,
@@ -420,7 +477,7 @@ export async function updateEvent(eventId: string, eventData: Partial<CreateEven
       status: eventData.status,
       notes: eventData.notes,
     },
-  });
+  }, signal);
 
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to update event');
@@ -433,11 +490,14 @@ export async function updateEvent(eventId: string, eventData: Partial<CreateEven
 /**
  * Delete an event
  */
-export async function deleteEvent(eventId: string): Promise<void> {
+export async function deleteEvent(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<void> {
   const response = await gasPost({
     action: 'deleteEvent',
     eventId,
-  });
+  }, signal);
 
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to delete event');
@@ -450,12 +510,16 @@ export async function deleteEvent(eventId: string): Promise<void> {
 /**
  * Cancel an event
  */
-export async function cancelEvent(eventId: string, reason?: string): Promise<void> {
+export async function cancelEvent(
+  eventId: string,
+  reason?: string,
+  signal?: AbortSignal
+): Promise<void> {
   const response = await gasPost({
     action: 'cancelEvent',
     eventId,
     reason: reason || '',
-  });
+  }, signal);
 
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to cancel event');
@@ -468,11 +532,14 @@ export async function cancelEvent(eventId: string, reason?: string): Promise<voi
 /**
  * Duplicate an event
  */
-export async function duplicateEvent(eventId: string): Promise<{ eventId: string }> {
+export async function duplicateEvent(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<{ eventId: string }> {
   const response = await gasPost<{ eventId: string }>({
     action: 'duplicateEvent',
     eventId,
-  });
+  }, signal);
 
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to duplicate event');
@@ -491,8 +558,11 @@ export async function duplicateEvent(eventId: string): Promise<{ eventId: string
 /**
  * Fetch attendance for an event
  */
-export async function fetchEventAttendance(eventId: string): Promise<EventAttendanceRecord[]> {
-  const response = await gasGet<EventAttendanceRecord[]>('getEventAttendance', { eventId });
+export async function fetchEventAttendance(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventAttendanceRecord[]> {
+  const response = await gasGet<EventAttendanceRecord[]>('getEventAttendance', { eventId }, signal);
   
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to fetch attendance');
@@ -507,14 +577,15 @@ export async function fetchEventAttendance(eventId: string): Promise<EventAttend
 export async function recordEventAttendance(
   eventId: string,
   memberId: string,
-  status: string
+  status: string,
+  signal?: AbortSignal
 ): Promise<{ attendanceId: string }> {
   const response = await gasPost<{ attendanceId: string }>({
     action: 'recordAttendance',
     eventId,
     memberId,
     status,
-  });
+  }, signal);
 
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to record attendance');
@@ -528,13 +599,14 @@ export async function recordEventAttendance(
  */
 export async function bulkRecordEventAttendance(
   eventId: string,
-  attendanceRecords: Array<{ memberId: string; status: string }>
+  attendanceRecords: Array<{ memberId: string; status: string }>,
+  signal?: AbortSignal
 ): Promise<void> {
   const response = await gasPost({
     action: 'bulkRecordAttendance',
     eventId,
     attendanceRecords,
-  });
+  }, signal);
 
   if (!response.success) {
     throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to record attendance');

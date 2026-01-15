@@ -1197,6 +1197,8 @@ export default function App() {
     setIsUploadingProjectImage(true);
     const toastId = `project-upload-${Date.now()}`;
     const isEditing = !!editingProject;
+    const controller = new AbortController();
+    const { signal } = controller;
 
     try {
       // Show progress toast
@@ -1206,6 +1208,15 @@ export default function App() {
         message: isEditing ? 'Saving project changes...' : 'Preparing upload...',
         status: 'loading',
         progress: 10,
+        onCancel: () => {
+          controller.abort();
+          updateUploadToast(toastId, {
+            status: 'info',
+            progress: 100,
+            title: 'Cancelled',
+            message: isEditing ? 'Project update cancelled' : 'Project upload cancelled',
+          });
+        },
       });
 
       const projectData = {
@@ -1221,16 +1232,23 @@ export default function App() {
 
       let result;
       if (isEditing) {
-        result = await updateProject(editingProject.projectId, projectData, projectImageFile || undefined);
+        result = await updateProject(editingProject.projectId, projectData, projectImageFile || undefined, signal);
       } else {
-        result = await addProject(projectData, projectImageFile || undefined);
+        result = await addProject(projectData, projectImageFile || undefined, signal);
+      }
+
+      if (signal.aborted) {
+        return;
       }
 
       if (result.success) {
         updateUploadToast(toastId, { progress: 80, message: isEditing ? 'Updating backend...' : 'Syncing to backend...', status: 'loading' });
 
         // Reload projects from backend
-        const projectsResult = await fetchAllProjects();
+        const projectsResult = await fetchAllProjects(signal);
+        if (signal.aborted) {
+          return;
+        }
         if (!projectsResult.error) {
           setProjects(projectsResult.projects);
         }
@@ -1258,6 +1276,9 @@ export default function App() {
         setTimeout(() => removeUploadToast(toastId), 5000);
       }
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Upload error:', error);
       updateUploadToast(toastId, {
         status: 'error',
@@ -1303,6 +1324,8 @@ export default function App() {
   const confirmDeleteProjects = async () => {
     const count = selectedProjectIds.length;
     const toastId = `project-delete-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
     
     addUploadToast({
       id: toastId,
@@ -1310,6 +1333,15 @@ export default function App() {
       message: `Removing ${count} project${count > 1 ? 's' : ''} from database...`,
       status: 'loading',
       progress: 10,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Delete cancelled',
+        });
+      },
     });
 
     try {
@@ -1318,6 +1350,9 @@ export default function App() {
       let failCount = 0;
       
       for (let i = 0; i < selectedProjectIds.length; i++) {
+        if (signal.aborted) {
+          return;
+        }
         const projectId = selectedProjectIds[i];
         const progress = Math.round(10 + ((i + 1) / selectedProjectIds.length) * 80);
         
@@ -1326,7 +1361,10 @@ export default function App() {
           progress,
         });
         
-        const result = await deleteProject(projectId);
+        const result = await deleteProject(projectId, signal);
+        if (signal.aborted) {
+          return;
+        }
         if (result.success) {
           successCount++;
         } else {
@@ -1336,7 +1374,10 @@ export default function App() {
       }
       
       // Reload projects from backend to sync state
-      const projectsResult = await fetchAllProjects();
+      const projectsResult = await fetchAllProjects(signal);
+      if (signal.aborted) {
+        return;
+      }
       if (!projectsResult.error) {
         setProjects(projectsResult.projects);
       } else {
@@ -1365,6 +1406,9 @@ export default function App() {
         toast.error(`${failCount} project${failCount > 1 ? 's' : ''} failed to delete`);
       }
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Delete error:', error);
       updateUploadToast(toastId, {
         status: 'error',
@@ -1382,6 +1426,8 @@ export default function App() {
     
     setIsUploadingOrgChart(true);
     const toastId = `org-chart-upload-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
     
     addUploadToast({
       id: toastId,
@@ -1389,14 +1435,27 @@ export default function App() {
       message: 'Preparing image...',
       status: 'loading',
       progress: 0,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Upload cancelled',
+        });
+      },
     });
 
     try {
       updateUploadToast(toastId, { progress: 30, message: 'Uploading to Google Drive...' });
       console.log('[App] Starting org chart upload:', file.name);
       
-      const result = await uploadOrgChart(file);
+      const result = await uploadOrgChart(file, signal);
       console.log('[App] Upload result:', result);
+
+      if (signal.aborted) {
+        return;
+      }
       
       if (result.success && result.imageUrl) {
         // The backend already saves the URL to the sheet, just update local state
@@ -1420,6 +1479,9 @@ export default function App() {
         toast.error(result.error || 'Failed to upload org chart');
       }
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('[App] Org chart upload error:', error);
       updateUploadToast(toastId, {
         status: 'error',
@@ -1436,6 +1498,8 @@ export default function App() {
   // Org Chart Delete Handler
   const confirmDeleteOrgChart = async () => {
     const toastId = `org-chart-delete-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
     
     addUploadToast({
       id: toastId,
@@ -1443,13 +1507,26 @@ export default function App() {
       message: 'Removing from database...',
       status: 'loading',
       progress: 50,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Delete cancelled',
+        });
+      },
     });
 
     try {
       // Clear from backend - this updates the sheet to have empty org chart URL
       console.log('[App] Deleting org chart from backend...');
-      const success = await updateHomepageOtherContent({ orgChartUrl: '' });
+      const success = await updateHomepageOtherContent({ orgChartUrl: '' }, signal);
       console.log('[App] Delete result:', success);
+
+      if (signal.aborted) {
+        return;
+      }
       
       setOrgChartUrl(''); // Clear the org chart URL locally
       setShowDeleteOrgChartModal(false);
@@ -1462,6 +1539,9 @@ export default function App() {
       });
       toast.success('Org chart deleted successfully!');
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('[App] Org chart delete error:', error);
       setOrgChartUrl(''); // Still clear locally
       setShowDeleteOrgChartModal(false);

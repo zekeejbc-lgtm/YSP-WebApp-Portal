@@ -339,6 +339,10 @@ function forcePermissions() {
 
 // =================== WEB API ENTRY POINT ===================
 
+function isRequestCancelled_(params) {
+  return !!(params && (params.cancelled === true || params.cancelled === 'true' || params.action === 'cancel'));
+}
+
 /**
  * Handle POST requests for authentication
  * @param {Object} e - Event object containing postData
@@ -349,6 +353,9 @@ function doPost(e) {
     // Parse the request body
     const requestData = JSON.parse(e.postData.contents);
     const { action, username, password } = requestData;
+    if (isRequestCancelled_(requestData)) {
+      return createErrorResponse('Request cancelled', 499);
+    }
 
     // Route to appropriate handler
     switch (action) {

@@ -271,7 +271,10 @@ export async function checkLoginApiHealth(): Promise<boolean> {
  * @param username - Username to fetch profile for
  * @returns Promise<ProfileResponse>
  */
-export async function fetchUserProfile(username: string): Promise<ProfileResponse> {
+export async function fetchUserProfile(
+  username: string,
+  signal?: AbortSignal
+): Promise<ProfileResponse> {
   if (!LOGIN_CONFIG.API_URL) {
     throw new LoginAPIError(
       'Login service not configured',
@@ -289,6 +292,14 @@ export async function fetchUserProfile(username: string): Promise<ProfileRespons
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     const response = await fetch(LOGIN_CONFIG.API_URL, {
       method: 'POST',
@@ -303,6 +314,9 @@ export async function fetchUserProfile(username: string): Promise<ProfileRespons
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       throw new LoginAPIError(
@@ -357,7 +371,8 @@ export async function fetchUserProfile(username: string): Promise<ProfileRespons
  */
 export async function updateUserProfile(
   username: string,
-  profileData: Partial<UserProfile>
+  profileData: Partial<UserProfile>,
+  signal?: AbortSignal
 ): Promise<ProfileUpdateResponse> {
   if (!LOGIN_CONFIG.API_URL) {
     throw new LoginAPIError(
@@ -376,6 +391,14 @@ export async function updateUserProfile(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     const response = await fetch(LOGIN_CONFIG.API_URL, {
       method: 'POST',
@@ -391,6 +414,9 @@ export async function updateUserProfile(
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       throw new LoginAPIError(
@@ -413,6 +439,9 @@ export async function updateUserProfile(
     return data;
 
   } catch (error) {
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
     if (error instanceof LoginAPIError) {
       throw error;
     }
@@ -457,7 +486,8 @@ export interface ProfilePictureUploadResponse {
  */
 export async function uploadProfilePicture(
   file: File,
-  username: string
+  username: string,
+  signal?: AbortSignal
 ): Promise<ProfilePictureUploadResponse> {
   if (!LOGIN_CONFIG.API_URL) {
     throw new LoginAPIError(
@@ -493,10 +523,18 @@ export async function uploadProfilePicture(
 
   try {
     // Convert file to base64
-    const base64Image = await fileToBase64(file);
+    const base64Image = await fileToBase64(file, signal);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout for uploads
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     // Use text/plain to avoid CORS preflight
     const response = await fetch(LOGIN_CONFIG.API_URL, {
@@ -515,6 +553,9 @@ export async function uploadProfilePicture(
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       throw new LoginAPIError(
@@ -563,9 +604,24 @@ export async function uploadProfilePicture(
 /**
  * Convert file to base64 string
  */
-function fileToBase64(file: File): Promise<string> {
+function fileToBase64(file: File, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    if (signal) {
+      if (signal.aborted) {
+        reader.abort();
+        reject(new DOMException('Operation cancelled', 'AbortError'));
+        return;
+      }
+      const onAbort = () => {
+        reader.abort();
+        reject(new DOMException('Operation cancelled', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      reader.onloadend = () => {
+        signal.removeEventListener('abort', onAbort);
+      };
+    }
     reader.onload = () => {
       // Return full data URL (includes data:image/xxx;base64,)
       resolve(reader.result as string);
@@ -726,7 +782,8 @@ export function isRestricted(role: LoginUser['role']): boolean {
  */
 export async function verifyPassword(
   username: string,
-  password: string
+  password: string,
+  signal?: AbortSignal
 ): Promise<{ valid: boolean; error?: string }> {
   if (!LOGIN_CONFIG.API_URL) {
     console.error('GAS Login API URL not configured');
@@ -736,6 +793,14 @@ export async function verifyPassword(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     const response = await fetch(LOGIN_CONFIG.API_URL, {
       method: 'POST',
@@ -751,6 +816,9 @@ export async function verifyPassword(
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       return { valid: false, error: 'Server error' };
@@ -765,6 +833,9 @@ export async function verifyPassword(
     }
   } catch (error) {
     console.error('verifyPassword Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       return { valid: false, error: 'Request timed out' };
     }
@@ -782,7 +853,8 @@ export async function verifyPassword(
 export async function changePassword(
   username: string,
   currentPassword: string,
-  newPassword: string
+  newPassword: string,
+  signal?: AbortSignal
 ): Promise<{ success: boolean; error?: string }> {
   if (!LOGIN_CONFIG.API_URL) {
     console.error('GAS Login API URL not configured');
@@ -792,6 +864,14 @@ export async function changePassword(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     const response = await fetch(LOGIN_CONFIG.API_URL, {
       method: 'POST',
@@ -808,6 +888,9 @@ export async function changePassword(
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       return { success: false, error: 'Server error' };
@@ -822,6 +905,9 @@ export async function changePassword(
     }
   } catch (error) {
     console.error('changePassword Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
     }
@@ -860,7 +946,8 @@ export interface CheckEmailVerifiedResponse {
  */
 export async function sendVerificationOTP(
   username: string,
-  email: string
+  email: string,
+  signal?: AbortSignal
 ): Promise<SendOTPResponse> {
   if (!LOGIN_CONFIG.API_URL) {
     return { success: false, error: 'Service not configured' };
@@ -869,6 +956,14 @@ export async function sendVerificationOTP(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     const response = await fetch(LOGIN_CONFIG.API_URL, {
       method: 'POST',
@@ -884,6 +979,9 @@ export async function sendVerificationOTP(
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       return { success: false, error: 'Server error' };
@@ -893,6 +991,9 @@ export async function sendVerificationOTP(
     return data;
   } catch (error) {
     console.error('sendVerificationOTP Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
     }
@@ -910,7 +1011,8 @@ export async function sendVerificationOTP(
 export async function verifyOTP(
   username: string,
   email: string,
-  otp: string
+  otp: string,
+  signal?: AbortSignal
 ): Promise<VerifyOTPResponse> {
   if (!LOGIN_CONFIG.API_URL) {
     return { success: false, error: 'Service not configured' };
@@ -919,6 +1021,14 @@ export async function verifyOTP(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     const response = await fetch(LOGIN_CONFIG.API_URL, {
       method: 'POST',
@@ -935,6 +1045,9 @@ export async function verifyOTP(
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       return { success: false, error: 'Server error' };
@@ -944,6 +1057,9 @@ export async function verifyOTP(
     return data;
   } catch (error) {
     console.error('verifyOTP Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
     }
@@ -959,7 +1075,8 @@ export async function verifyOTP(
  */
 export async function checkEmailVerified(
   username: string,
-  email: string
+  email: string,
+  signal?: AbortSignal
 ): Promise<CheckEmailVerifiedResponse> {
   if (!LOGIN_CONFIG.API_URL) {
     return { success: false, error: 'Service not configured' };
@@ -968,6 +1085,14 @@ export async function checkEmailVerified(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     const response = await fetch(LOGIN_CONFIG.API_URL, {
       method: 'POST',
@@ -983,6 +1108,9 @@ export async function checkEmailVerified(
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (!response.ok) {
       return { success: false, error: 'Server error' };
@@ -992,6 +1120,9 @@ export async function checkEmailVerified(
     return data;
   } catch (error) {
     console.error('checkEmailVerified Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
     }

@@ -176,12 +176,24 @@
     }
   };
 
+  function isRequestCancelled_(params) {
+    return !!(params && (params.cancelled === true || params.cancelled === 'true' || params.action === 'cancel'));
+  }
+
   /**
   * Handle GET requests - Fetch homepage or projects content
   */
   function doGet(e) {
     try {
       const action = e && e.parameter ? e.parameter.action : 'getHomepage';
+      if (isRequestCancelled_(e && e.parameter)) {
+        return createJsonResponse({
+          success: false,
+          cancelled: true,
+          message: 'Request cancelled',
+          timestamp: new Date().toISOString()
+        });
+      }
 
       // Handle health check
       if (action === 'health') {
@@ -263,6 +275,14 @@
   function doPost(e) {
     try {
       const payload = JSON.parse(e.postData.contents);
+      if (isRequestCancelled_(payload)) {
+        return createJsonResponse({
+          success: false,
+          cancelled: true,
+          message: 'Request cancelled',
+          timestamp: new Date().toISOString()
+        });
+      }
       
       // Homepage update
       if (payload.action === 'updateHomepage' && payload.data) {

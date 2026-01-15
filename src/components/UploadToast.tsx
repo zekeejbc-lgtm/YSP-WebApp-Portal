@@ -8,6 +8,7 @@ export interface UploadToastMessage {
   status: 'loading' | 'success' | 'error' | 'info';
   progress?: number; // 0-100
   progressLabel?: string;
+  onCancel?: () => void;
 }
 
 interface UploadToastProps {
@@ -19,7 +20,7 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
   const [isVisible, setIsVisible] = useState(true);
 
   useEffect(() => {
-    if (message.status === 'success' || message.status === 'error') {
+    if (message.status === 'success' || message.status === 'error' || message.status === 'info') {
       const timer = setTimeout(() => {
         setIsVisible(false);
         setTimeout(() => onDismiss(message.id), 300);
@@ -80,6 +81,10 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
 
             <button
               onClick={() => {
+                if (message.onCancel) {
+                  message.onCancel();
+                  return;
+                }
                 setIsVisible(false);
                 setTimeout(() => onDismiss(message.id), 300);
               }}

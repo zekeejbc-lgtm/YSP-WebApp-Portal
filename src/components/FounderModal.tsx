@@ -338,6 +338,8 @@ export default function FounderModal({
   const handleSave = async () => {
     setIsSaving(true);
     const toastId = `founder-save-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
     
     addUploadToast({
       id: toastId,
@@ -345,6 +347,15 @@ export default function FounderModal({
       message: 'Starting save...',
       status: 'loading',
       progress: 0,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Save cancelled',
+        });
+      },
     });
 
     try {
@@ -354,7 +365,10 @@ export default function FounderModal({
       if (pendingImageFile) {
         updateUploadToast(toastId, { progress: 10, message: 'Uploading profile image to Google Drive...' });
         
-        const uploadResult = await uploadFounderProfile(pendingImageFile);
+        const uploadResult = await uploadFounderProfile(pendingImageFile, signal);
+        if (signal.aborted) {
+          return;
+        }
         if (uploadResult.success && uploadResult.imageUrl) {
           finalProfileUrl = uploadResult.imageUrl;
           updateUploadToast(toastId, { progress: 40, message: 'Image uploaded! Saving profile data...' });
@@ -391,7 +405,10 @@ export default function FounderModal({
 
       updateUploadToast(toastId, { progress: 60, message: 'Sending to Google Sheets API...' });
 
-      const success = await updateFounderInfoContent(backendData);
+      const success = await updateFounderInfoContent(backendData, signal);
+      if (signal.aborted) {
+        return;
+      }
 
       if (success) {
         updateUploadToast(toastId, { progress: 90, message: 'Updating local state...' });
@@ -422,6 +439,9 @@ export default function FounderModal({
         });
       }
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       updateUploadToast(toastId, {
         status: 'error',
         progress: 100,

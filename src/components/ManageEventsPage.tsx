@@ -393,17 +393,31 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
     if (!event || event.status === newStatus) return;
 
     const toastId = `status-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
     addUploadToast({
       id: toastId,
       title: 'Updating Status',
       message: `Changing to ${newStatus}...`,
       status: 'loading',
       progress: 30,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Status update cancelled',
+        });
+      },
     });
 
     try {
       updateUploadToast(toastId, { progress: 60, message: 'Saving to backend...' });
-      await updateEvent(eventId, { status: newStatus });
+      await updateEvent(eventId, { status: newStatus }, signal);
+      if (signal.aborted) {
+        return;
+      }
       setEvents((prev) =>
         prev.map((e) =>
           e.id === eventId ? { ...e, status: newStatus } : e
@@ -411,6 +425,9 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
       );
       updateUploadToast(toastId, { progress: 100, status: 'success', title: 'Status Updated!', message: `Event is now ${newStatus}` });
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       updateUploadToast(toastId, { progress: 100, status: 'error', title: 'Failed to Update', message: error instanceof Error ? error.message : 'Unknown error' });
     }
   };
@@ -433,21 +450,38 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
     setIsDeleting(eventId);
 
     const toastId = `delete-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
     addUploadToast({
       id: toastId,
       title: 'Deleting Event',
       message: `Removing "${eventName}"...`,
       status: 'loading',
       progress: 20,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Delete cancelled',
+        });
+      },
     });
 
     try {
       updateUploadToast(toastId, { progress: 50, message: 'Connecting to backend...' });
-      await deleteEvent(eventId);
+      await deleteEvent(eventId, signal);
+      if (signal.aborted) {
+        return;
+      }
       updateUploadToast(toastId, { progress: 80, message: 'Updating local data...' });
       setEvents((prev) => prev.filter((e) => e.id !== eventId));
       updateUploadToast(toastId, { progress: 100, status: 'success', title: 'Event Deleted!', message: `"${eventName}" has been removed successfully.` });
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       updateUploadToast(toastId, { progress: 100, status: 'error', title: 'Delete Failed', message: error instanceof Error ? error.message : 'Unknown error' });
     } finally {
       setIsDeleting(null);
@@ -471,6 +505,8 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
     setIsSaving(true);
     const toastId = `event-${Date.now()}`;
     const isEditing = !!editingEvent;
+    const controller = new AbortController();
+    const { signal } = controller;
 
     addUploadToast({
       id: toastId,
@@ -478,6 +514,15 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
       message: 'Preparing event data...',
       status: 'loading',
       progress: 10,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: isEditing ? 'Update cancelled' : 'Creation cancelled',
+        });
+      },
     });
 
     try {
@@ -501,7 +546,11 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           longitude: geoLng,
           radius: geoRadius,
           geofenceEnabled: geofencingEnabled,
-        });
+        }, signal);
+
+        if (signal.aborted) {
+          return;
+        }
 
         updateUploadToast(toastId, { progress: 80, message: 'Refreshing local data...' });
 
@@ -540,7 +589,11 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           radius: geoRadius,
           geofenceEnabled: geofencingEnabled,
           status: "Scheduled",
-        });
+        }, signal);
+
+        if (signal.aborted) {
+          return;
+        }
 
         updateUploadToast(toastId, { progress: 80, message: 'Finalizing...' });
 
@@ -569,6 +622,9 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
       resetForm();
     } catch (error) {
       console.error("Save error:", error);
+      if (signal.aborted) {
+        return;
+      }
       updateUploadToast(toastId, { status: 'error', progress: 100, title: isEditing ? 'Update Failed' : 'Creation Failed', message: error instanceof Error ? error.message : 'Unknown error occurred' });
     } finally {
       setIsSaving(false);

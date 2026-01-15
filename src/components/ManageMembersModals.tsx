@@ -276,6 +276,8 @@ export function EditMemberModal({
     e.preventDefault();
     
     const toastId = `update-member-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
     setIsSaving(true);
     
     // Start the progress toast
@@ -285,6 +287,15 @@ export function EditMemberModal({
       message: 'Preparing changes...',
       status: 'loading',
       progress: 0,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Member update cancelled',
+        });
+      },
     });
     
     try {
@@ -292,12 +303,22 @@ export function EditMemberModal({
       
       // Simulate a small delay for backend sync (in real implementation, this would be the actual API call)
       await new Promise(resolve => setTimeout(resolve, 500));
+
+      if (signal.aborted) {
+        return;
+      }
       
       updateUploadToast(toastId, { progress: 70, message: 'Saving to database...' });
       
       // Call the parent's onSave (which handles the actual backend call)
+      if (signal.aborted) {
+        return;
+      }
       onSave(formData);
       
+      if (signal.aborted) {
+        return;
+      }
       updateUploadToast(toastId, {
         status: 'success',
         progress: 100,
@@ -305,6 +326,9 @@ export function EditMemberModal({
         message: `${formData.name}'s profile updated successfully`,
       });
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       updateUploadToast(toastId, {
         status: 'error',
         progress: 100,

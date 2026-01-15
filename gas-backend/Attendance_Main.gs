@@ -43,6 +43,10 @@ function getLoginSpreadsheetId() {
 // WEB APP ENTRY POINTS FOR ATTENDANCE
 // =====================================================
 
+function isRequestCancelled_(params) {
+  return !!(params && (params.cancelled === true || params.cancelled === 'true' || params.action === 'cancel'));
+}
+
 /**
  * Handle GET requests for attendance
  */
@@ -53,6 +57,12 @@ function doGetAttendance(e) {
   let result;
   
   try {
+    if (isRequestCancelled_(params)) {
+      result = { success: false, cancelled: true, message: 'Request cancelled' };
+      return ContentService
+        .createTextOutput(JSON.stringify(result))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
     switch (action) {
       case 'getEventAttendanceRecords':
         result = getEventAttendanceRecords(params.eventId);
@@ -99,6 +109,12 @@ function doPostAttendance(e) {
   let result;
   
   try {
+    if (isRequestCancelled_(params)) {
+      result = { success: false, cancelled: true, message: 'Request cancelled' };
+      return ContentService
+        .createTextOutput(JSON.stringify(result))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
     switch (action) {
       case 'recordTimeIn':
         result = recordTimeIn(params);

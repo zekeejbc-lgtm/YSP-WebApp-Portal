@@ -122,7 +122,8 @@ export const SystemToolsErrorCodes = {
 
 async function callSystemToolsAPI<T>(
   action: string,
-  data: Record<string, unknown> = {}
+  data: Record<string, unknown> = {},
+  signal?: AbortSignal
 ): Promise<T> {
   if (!GAS_API_URL) {
     console.error('[SystemTools] API URL not configured!');
@@ -141,6 +142,7 @@ async function callSystemToolsAPI<T>(
         'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify({ action, ...data }),
+      signal,
     });
 
     console.log('[SystemTools] Response status:', response.status, response.statusText);
@@ -190,8 +192,11 @@ export async function getSystemHealth(): Promise<SystemHealthData> {
 /**
  * Create a database backup
  */
-export async function createDatabaseBackup(username: string): Promise<BackupResult> {
-  return callSystemToolsAPI<BackupResult>('databaseBackup', { username });
+export async function createDatabaseBackup(
+  username: string,
+  signal?: AbortSignal
+): Promise<BackupResult> {
+  return callSystemToolsAPI<BackupResult>('databaseBackup', { username }, signal);
 }
 
 // =================== EXPORT DATA ===================
@@ -199,8 +204,11 @@ export async function createDatabaseBackup(username: string): Promise<BackupResu
 /**
  * Export all data to a new spreadsheet
  */
-export async function exportData(username: string): Promise<ExportResult> {
-  return callSystemToolsAPI<ExportResult>('exportData', { username });
+export async function exportData(
+  username: string,
+  signal?: AbortSignal
+): Promise<ExportResult> {
+  return callSystemToolsAPI<ExportResult>('exportData', { username }, signal);
 }
 
 // =================== CACHE VERSION MANAGEMENT ===================
@@ -216,8 +224,11 @@ export async function getCacheVersionFromBackend(): Promise<number> {
 /**
  * Bump cache version (force all clients to refresh)
  */
-export async function bumpCacheVersion(username: string): Promise<CacheVersionResult> {
-  const result = await callSystemToolsAPI<CacheVersionResult>('bumpCacheVersion', { username });
+export async function bumpCacheVersion(
+  username: string,
+  signal?: AbortSignal
+): Promise<CacheVersionResult> {
+  const result = await callSystemToolsAPI<CacheVersionResult>('bumpCacheVersion', { username }, signal);
   
   // Update local cache version to match
   localStorage.setItem(CACHE_VERSION_KEY, result.newVersion.toString());
@@ -336,11 +347,13 @@ export async function getMaintenanceModeFromBackend(forceRefresh = false): Promi
 export async function enableMaintenanceModeBackend(
   pageId: string,
   config: Omit<MaintenanceConfig, 'enabled' | 'enabledAt' | 'enabledBy'>,
-  username: string
+  username: string,
+  signal?: AbortSignal
 ): Promise<{ pageId: string; enabled: boolean; message: string }> {
   const result = await callSystemToolsAPI<{ pageId: string; enabled: boolean; message: string }>(
     'enableMaintenanceMode',
-    { pageId, config, username }
+    { pageId, config, username },
+    signal
   );
   
   // Clear maintenance mode cache
@@ -355,11 +368,13 @@ export async function enableMaintenanceModeBackend(
  */
 export async function disableMaintenanceModeBackend(
   pageId: string,
-  username: string
+  username: string,
+  signal?: AbortSignal
 ): Promise<{ pageId: string; enabled: boolean; message: string }> {
   const result = await callSystemToolsAPI<{ pageId: string; enabled: boolean; message: string }>(
     'disableMaintenanceMode',
-    { pageId, username }
+    { pageId, username },
+    signal
   );
   
   // Clear maintenance mode cache
@@ -373,11 +388,13 @@ export async function disableMaintenanceModeBackend(
  * Clear all maintenance modes
  */
 export async function clearAllMaintenanceBackend(
-  username: string
+  username: string,
+  signal?: AbortSignal
 ): Promise<{ message: string }> {
   const result = await callSystemToolsAPI<{ message: string }>(
     'clearAllMaintenance',
-    { username }
+    { username },
+    signal
   );
   
   // Clear maintenance mode cache

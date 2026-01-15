@@ -23,11 +23,11 @@ interface EmailVerificationModalProps {
   onClose: () => void;
   email: string;
   username: string;
-  onSendOTP: (email: string) => Promise<{ success: boolean; error?: string }>;
-  onVerifyOTP: (otp: string) => Promise<{ success: boolean; verified?: boolean; error?: string }>;
+  onSendOTP: (email: string, signal?: AbortSignal) => Promise<{ success: boolean; error?: string }>;
+  onVerifyOTP: (otp: string, signal?: AbortSignal) => Promise<{ success: boolean; verified?: boolean; error?: string }>;
   isDark: boolean;
-  addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error'; progress?: number }) => void;
-  updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error'; progress?: number }>) => void;
+  addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number; onCancel?: () => void }) => void;
+  updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number }>) => void;
 }
 
 export default function EmailVerificationModal({
@@ -118,6 +118,8 @@ export default function EmailVerificationModal({
     setError("");
 
     const toastId = `otp-send-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
 
     try {
       if (addUploadToast) {
@@ -127,10 +129,24 @@ export default function EmailVerificationModal({
           message: `Sending verification code to ${email}...`,
           status: "loading",
           progress: 30,
+          onCancel: () => {
+            controller.abort();
+            if (updateUploadToast) {
+              updateUploadToast(toastId, {
+                title: "Cancelled",
+                message: "OTP send cancelled",
+                status: "info",
+                progress: 100,
+              });
+            }
+          },
         });
       }
 
-      const result = await onSendOTP(email);
+      const result = await onSendOTP(email, signal);
+      if (signal.aborted) {
+        return;
+      }
 
       if (result.success) {
         if (updateUploadToast) {
@@ -155,6 +171,9 @@ export default function EmailVerificationModal({
         setError(result.error || "Failed to send verification code");
       }
     } catch (err) {
+      if (signal.aborted) {
+        return;
+      }
       if (updateUploadToast) {
         updateUploadToast(toastId, {
           message: "Failed to send verification code",
@@ -184,6 +203,8 @@ export default function EmailVerificationModal({
     setError("");
 
     const toastId = `otp-verify-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
 
     try {
       if (addUploadToast) {
@@ -193,10 +214,24 @@ export default function EmailVerificationModal({
           message: "Verifying code...",
           status: "loading",
           progress: 50,
+          onCancel: () => {
+            controller.abort();
+            if (updateUploadToast) {
+              updateUploadToast(toastId, {
+                title: "Cancelled",
+                message: "Verification cancelled",
+                status: "info",
+                progress: 100,
+              });
+            }
+          },
         });
       }
 
-      const result = await onVerifyOTP(otpCode);
+      const result = await onVerifyOTP(otpCode, signal);
+      if (signal.aborted) {
+        return;
+      }
 
       if (result.success && result.verified) {
         if (updateUploadToast) {
@@ -228,6 +263,9 @@ export default function EmailVerificationModal({
         }
       }
     } catch (err) {
+      if (signal.aborted) {
+        return;
+      }
       if (updateUploadToast) {
         updateUploadToast(toastId, {
           message: "Failed to verify code",

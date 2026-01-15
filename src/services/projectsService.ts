@@ -20,10 +20,17 @@ export interface ProjectError {
   message: string;
 }
 
+const CANCELED_ERROR: ProjectError = {
+  code: 'PJ_CANCELLED',
+  message: 'Operation cancelled',
+};
+
 /**
  * Fetch all projects from backend
  */
-export async function fetchAllProjects(): Promise<{ projects: Project[]; error?: ProjectError }> {
+export async function fetchAllProjects(
+  signal?: AbortSignal
+): Promise<{ projects: Project[]; error?: ProjectError }> {
   try {
     if (!PROJECTS_API_BASE) {
       return {
@@ -35,8 +42,16 @@ export async function fetchAllProjects(): Promise<{ projects: Project[]; error?:
       };
     }
 
+    if (signal?.aborted) {
+      return {
+        projects: [],
+        error: CANCELED_ERROR,
+      };
+    }
+
     const response = await fetch(`${PROJECTS_API_BASE}?action=getProjects`, {
-      method: 'GET'
+      method: 'GET',
+      signal,
     });
 
     const data = await response.json();
@@ -56,6 +71,12 @@ export async function fetchAllProjects(): Promise<{ projects: Project[]; error?:
     };
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        projects: [],
+        error: CANCELED_ERROR,
+      };
+    }
     console.error('[Projects] Fetch error:', error);
     return {
       projects: [],
@@ -72,14 +93,19 @@ export async function fetchAllProjects(): Promise<{ projects: Project[]; error?:
  */
 export async function addProject(
   projectData: Omit<Project, 'projectId'>,
-  imageFile?: File
+  imageFile?: File,
+  signal?: AbortSignal
 ): Promise<{ success: boolean; projectId?: string; error?: ProjectError }> {
   try {
     let imageUrl = projectData.imageUrl;
 
+    if (signal?.aborted) {
+      return { success: false, error: CANCELED_ERROR };
+    }
+
     // Upload image if provided
     if (imageFile) {
-      const uploadResult = await uploadProjectImage(imageFile);
+      const uploadResult = await uploadProjectImage(imageFile, signal);
       if (!uploadResult.success) {
         return {
           success: false,
@@ -100,7 +126,8 @@ export async function addProject(
           ...projectData,
           imageUrl
         }
-      })
+      }),
+      signal,
     });
 
     const data = await response.json();
@@ -121,6 +148,9 @@ export async function addProject(
     };
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: CANCELED_ERROR };
+    }
     console.error('[Projects] Add error:', error);
     return {
       success: false,
@@ -138,14 +168,19 @@ export async function addProject(
 export async function updateProject(
   projectId: string,
   projectData: Partial<Project>,
-  imageFile?: File
+  imageFile?: File,
+  signal?: AbortSignal
 ): Promise<{ success: boolean; error?: ProjectError }> {
   try {
     let updateData = { ...projectData };
 
+    if (signal?.aborted) {
+      return { success: false, error: CANCELED_ERROR };
+    }
+
     // Upload new image if provided
     if (imageFile) {
-      const uploadResult = await uploadProjectImage(imageFile);
+      const uploadResult = await uploadProjectImage(imageFile, signal);
       if (!uploadResult.success) {
         return {
           success: false,
@@ -164,7 +199,8 @@ export async function updateProject(
         action: 'updateProject',
         projectId,
         data: updateData
-      })
+      }),
+      signal,
     });
 
     const data = await response.json();
@@ -182,6 +218,9 @@ export async function updateProject(
     };
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: CANCELED_ERROR };
+    }
     console.error('[Projects] Update error:', error);
     return {
       success: false,
@@ -196,7 +235,10 @@ export async function updateProject(
 /**
  * Delete project
  */
-export async function deleteProject(projectId: string): Promise<{ success: boolean; error?: ProjectError }> {
+export async function deleteProject(
+  projectId: string,
+  signal?: AbortSignal
+): Promise<{ success: boolean; error?: ProjectError }> {
   try {
     const response = await fetch(PROJECTS_API_BASE, {
       method: 'POST',
@@ -206,7 +248,8 @@ export async function deleteProject(projectId: string): Promise<{ success: boole
       body: JSON.stringify({
         action: 'deleteProject',
         projectId
-      })
+      }),
+      signal,
     });
 
     const data = await response.json();
@@ -224,6 +267,9 @@ export async function deleteProject(projectId: string): Promise<{ success: boole
     };
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: CANCELED_ERROR };
+    }
     console.error('[Projects] Delete error:', error);
     return {
       success: false,
@@ -238,8 +284,15 @@ export async function deleteProject(projectId: string): Promise<{ success: boole
 /**
  * Upload image to Google Drive via backend
  */
-export async function uploadProjectImage(file: File): Promise<{ success: boolean; imageUrl?: string; error?: ProjectError }> {
+export async function uploadProjectImage(
+  file: File,
+  signal?: AbortSignal
+): Promise<{ success: boolean; imageUrl?: string; error?: ProjectError }> {
   try {
+    if (signal?.aborted) {
+      return { success: false, error: CANCELED_ERROR };
+    }
+
     // Validate file
     if (!file.type.startsWith('image/')) {
       return {
@@ -262,7 +315,11 @@ export async function uploadProjectImage(file: File): Promise<{ success: boolean
     }
 
     // Convert file to base64
-    const base64Data = await fileToBase64(file);
+    const base64Data = await fileToBase64(file, signal);
+
+    if (signal?.aborted) {
+      return { success: false, error: CANCELED_ERROR };
+    }
 
     // Use text/plain to avoid CORS preflight (simple request)
     // application/json triggers OPTIONS preflight which GAS doesn't handle
@@ -275,7 +332,8 @@ export async function uploadProjectImage(file: File): Promise<{ success: boolean
         action: 'uploadImage',
         fileName: file.name,
         fileData: base64Data
-      })
+      }),
+      signal,
     });
 
     const data = await response.json();
@@ -296,6 +354,9 @@ export async function uploadProjectImage(file: File): Promise<{ success: boolean
     };
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: CANCELED_ERROR };
+    }
     console.error('[Projects] Upload error:', error);
     return {
       success: false,
@@ -310,9 +371,24 @@ export async function uploadProjectImage(file: File): Promise<{ success: boolean
 /**
  * Convert file to base64
  */
-function fileToBase64(file: File): Promise<string> {
+function fileToBase64(file: File, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    if (signal) {
+      if (signal.aborted) {
+        reader.abort();
+        reject(new DOMException('Operation cancelled', 'AbortError'));
+        return;
+      }
+      const onAbort = () => {
+        reader.abort();
+        reject(new DOMException('Operation cancelled', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      reader.onloadend = () => {
+        signal.removeEventListener('abort', onAbort);
+      };
+    }
     reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1];
       resolve(base64);

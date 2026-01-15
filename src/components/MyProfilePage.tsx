@@ -123,6 +123,8 @@ export default function MyProfilePage({
       hasLoadedRef.current = true;
       setIsLoading(true);
       const toastId = `profile-load-${Date.now()}`;
+      const controller = new AbortController();
+      const { signal } = controller;
       
       // Get the logged-in user from session
       const storedUser = getStoredUser();
@@ -146,6 +148,17 @@ export default function MyProfilePage({
             status: 'loading',
             progress: 5,
             progressLabel: 'Loading...',
+            onCancel: () => {
+              controller.abort();
+              if (updateUploadToast) {
+                updateUploadToast(toastId, {
+                  status: 'info',
+                  progress: 100,
+                  title: 'Cancelled',
+                  message: 'Profile load cancelled',
+                });
+              }
+            },
           });
         }
 
@@ -153,7 +166,10 @@ export default function MyProfilePage({
           updateUploadToast(toastId, { progress: 20, message: 'Connecting to backend...' });
         }
 
-        const response = await fetchUserProfile(storedUser.username);
+        const response = await fetchUserProfile(storedUser.username, signal);
+        if (signal.aborted) {
+          return;
+        }
         
         if (updateUploadToast) {
           updateUploadToast(toastId, { progress: 55, message: 'Applying profile data...' });
@@ -210,7 +226,10 @@ export default function MyProfilePage({
               updateUploadToast(toastId, { progress: 75, message: 'Checking email verification...' });
             }
             try {
-              const verifyResult = await checkEmailVerified(storedUser.username, p.personalEmail);
+              const verifyResult = await checkEmailVerified(storedUser.username, p.personalEmail, signal);
+              if (signal.aborted) {
+                return;
+              }
               if (verifyResult.success && verifyResult.verified) {
                 setIsEmailVerified(true);
                 setVerifiedEmail(p.personalEmail);
@@ -250,6 +269,9 @@ export default function MyProfilePage({
           });
         }
       } catch (error) {
+        if (signal.aborted) {
+          return;
+        }
         console.error('Failed to load profile:', error);
         if (updateUploadToast) {
           updateUploadToast(toastId, {
@@ -361,6 +383,8 @@ export default function MyProfilePage({
 
     setIsSaving(true);
     const toastId = `profile-save-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
     
     // Show progress toast
     if (addUploadToast) {
@@ -370,6 +394,17 @@ export default function MyProfilePage({
         message: 'Preparing data...',
         status: 'loading',
         progress: 10,
+        onCancel: () => {
+          controller.abort();
+          if (updateUploadToast) {
+            updateUploadToast(toastId, {
+              status: 'info',
+              progress: 100,
+              title: 'Cancelled',
+              message: 'Profile save cancelled',
+            });
+          }
+        },
       });
     }
     
@@ -386,7 +421,11 @@ export default function MyProfilePage({
         }
         
         try {
-          const uploadResult = await uploadProfilePicture(pendingImageFile, currentUsername);
+          const uploadResult = await uploadProfilePicture(pendingImageFile, currentUsername, signal);
+
+          if (signal.aborted) {
+            return;
+          }
           
           if (uploadResult.success && uploadResult.imageUrl) {
             // Update the profile image with the new URL
@@ -466,7 +505,11 @@ export default function MyProfilePage({
         updateUploadToast(toastId, { progress: 60, message: 'Sending to backend...' });
       }
 
-      const response = await updateUserProfile(currentUsername, updateData);
+      const response = await updateUserProfile(currentUsername, updateData, signal);
+
+      if (signal.aborted) {
+        return;
+      }
       
       // Update progress
       if (updateUploadToast) {
@@ -540,6 +583,9 @@ export default function MyProfilePage({
         }
       }
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Failed to save profile:', error);
       const errorMessage = error instanceof Error ? error.message : "Please try again later.";
       
@@ -1418,8 +1464,8 @@ export default function MyProfilePage({
         onVerifyPassword={async (password) => {
           return await verifyPassword(currentUsername, password);
         }}
-        onChangePassword={async (currentPwd, newPwd) => {
-          return await changePassword(currentUsername, currentPwd, newPwd);
+        onChangePassword={async (currentPwd, newPwd, signal) => {
+          return await changePassword(currentUsername, currentPwd, newPwd, signal);
         }}
         isDark={isDark}
         addUploadToast={addUploadToast}
@@ -1443,12 +1489,12 @@ export default function MyProfilePage({
         }}
         email={profile.personalEmail}
         username={currentUsername}
-        onSendOTP={async (email) => {
-          const result = await sendVerificationOTP(currentUsername, email);
+        onSendOTP={async (email, signal) => {
+          const result = await sendVerificationOTP(currentUsername, email, signal);
           return result;
         }}
-        onVerifyOTP={async (otp) => {
-          const result = await verifyOTP(currentUsername, profile.personalEmail, otp);
+        onVerifyOTP={async (otp, signal) => {
+          const result = await verifyOTP(currentUsername, profile.personalEmail, otp, signal);
           if (result.success && result.verified) {
             setIsEmailVerified(true);
             setVerifiedEmail(profile.personalEmail);

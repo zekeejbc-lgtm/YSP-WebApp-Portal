@@ -44,6 +44,10 @@ function setEventsSpreadsheetId(spreadsheetId) {
 // WEB APP ENTRY POINTS
 // =====================================================
 
+function isRequestCancelled_(params) {
+  return !!(params && (params.cancelled === true || params.cancelled === 'true' || params.action === 'cancel'));
+}
+
 /**
  * Handle GET requests
  */
@@ -54,6 +58,12 @@ function doGet(e) {
   let result;
   
   try {
+    if (isRequestCancelled_(params)) {
+      result = { success: false, cancelled: true, message: 'Request cancelled' };
+      return ContentService
+        .createTextOutput(JSON.stringify(result))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
     switch (action) {
       case 'getEvents':
         result = getEvents(params);
@@ -122,6 +132,12 @@ function doPost(e) {
   let result;
   
   try {
+    if (isRequestCancelled_(params)) {
+      result = { success: false, cancelled: true, message: 'Request cancelled' };
+      return ContentService
+        .createTextOutput(JSON.stringify(result))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
     switch (action) {
       case 'createEvent':
         result = createEvent(params.eventData);

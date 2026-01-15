@@ -133,8 +133,8 @@ function formatDateValue(dateValue: any): string {
 interface AttendanceDashboardPageProps {
   onClose: () => void;
   isDark: boolean;
-  addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error'; progress?: number }) => void;
-  updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error'; progress?: number }>) => void;
+  addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number; onCancel?: () => void }) => void;
+  updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number }>) => void;
   removeUploadToast?: (id: string) => void;
 }
 
@@ -429,6 +429,7 @@ export default function AttendanceDashboardPage({
 
     // Generate unique toast ID
     const toastId = `pdf-export-${Date.now()}`;
+    let cancelled = false;
 
     // Use existing upload toast system if available, otherwise fallback to regular toast
     if (addUploadToast && updateUploadToast) {
@@ -438,6 +439,15 @@ export default function AttendanceDashboardPage({
         message: 'Preparing document...',
         status: 'loading',
         progress: 0,
+        onCancel: () => {
+          cancelled = true;
+          updateUploadToast(toastId, {
+            status: 'info',
+            progress: 100,
+            title: 'Cancelled',
+            message: 'PDF export cancelled',
+          });
+        },
       });
     } else {
       toast.loading('Preparing PDF export...', { id: toastId });
@@ -449,6 +459,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Initializing document...', progress: 10 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       const doc = new jsPDF('portrait', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -459,6 +470,7 @@ export default function AttendanceDashboardPage({
       if (updateUploadToast) {
         updateUploadToast(toastId, { message: 'Loading organization logo...', progress: 25 });
       }
+      if (cancelled) return;
 
       // Load logo image
       let logoLoaded = false;
@@ -492,6 +504,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Adding header and branding...', progress: 40 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       doc.setTextColor(255, 255, 255);
       const orgNameX = logoLoaded ? margin + 35 : margin;
@@ -524,6 +537,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Adding event information...', progress: 55 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       const currentEvent = events.find(e => e.EventID === selectedEvent);
       let yPosition = 52;
@@ -609,6 +623,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Calculating attendance statistics...', progress: 65 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Section title with underline
       doc.setFontSize(11);
@@ -656,6 +671,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Preparing attendee table...', progress: 75 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Attendee list section title
       doc.setFontSize(11);
@@ -688,6 +704,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Generating table...', progress: 90 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Create professional table with autoTable
       autoTable(doc, {
@@ -768,6 +785,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Saving PDF file...', progress: 100 });
       }
       await new Promise(resolve => setTimeout(resolve, 200));
+      if (cancelled) return;
 
       // Generate filename
       const eventTitle = currentEvent?.Title?.replace(/[^a-zA-Z0-9]/g, '_') || 'Event';
@@ -792,6 +810,9 @@ export default function AttendanceDashboardPage({
         });
       }
     } catch (error) {
+      if (cancelled) {
+        return;
+      }
       console.error('PDF Export Error:', error);
       if (updateUploadToast && removeUploadToast) {
         updateUploadToast(toastId, { 
@@ -818,6 +839,7 @@ export default function AttendanceDashboardPage({
 
     // Generate unique toast ID
     const toastId = `spreadsheet-export-${Date.now()}`;
+    let cancelled = false;
 
     // Use existing upload toast system if available
     if (addUploadToast && updateUploadToast) {
@@ -827,6 +849,15 @@ export default function AttendanceDashboardPage({
         message: 'Preparing workbook...',
         status: 'loading',
         progress: 0,
+        onCancel: () => {
+          cancelled = true;
+          updateUploadToast(toastId, {
+            status: 'info',
+            progress: 100,
+            title: 'Cancelled',
+            message: 'Spreadsheet export cancelled',
+          });
+        },
       });
     } else {
       toast.loading('Preparing spreadsheet export...', { id: toastId });
@@ -838,6 +869,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Initializing workbook...', progress: 20 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       const currentEvent = events.find(e => e.EventID === selectedEvent);
       const filteredRecords = getFilteredAttendance();
@@ -847,6 +879,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Preparing attendance data...', progress: 50 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Create workbook and worksheet
       const workbook = XLSX.utils.book_new();
@@ -889,6 +922,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Processing attendee records...', progress: 70 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Add attendee data
       filteredRecords.forEach((record, index) => {
@@ -912,6 +946,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Creating spreadsheet...', progress: 85 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       const worksheet = XLSX.utils.aoa_to_sheet(headerData);
 
@@ -936,6 +971,7 @@ export default function AttendanceDashboardPage({
         updateUploadToast(toastId, { message: 'Saving spreadsheet file...', progress: 100 });
       }
       await new Promise(resolve => setTimeout(resolve, 200));
+      if (cancelled) return;
 
       // Generate filename
       const eventTitle = currentEvent?.Title?.replace(/[^a-zA-Z0-9]/g, '_') || 'Event';
@@ -960,6 +996,9 @@ export default function AttendanceDashboardPage({
         });
       }
     } catch (error) {
+      if (cancelled) {
+        return;
+      }
       console.error('Spreadsheet Export Error:', error);
       if (updateUploadToast && removeUploadToast) {
         updateUploadToast(toastId, { 

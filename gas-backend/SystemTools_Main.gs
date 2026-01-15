@@ -1,5 +1,9 @@
 // =================== WEB APP ENTRY POINTS ===================
 
+function isRequestCancelled_(params) {
+  return !!(params && (params.cancelled === true || params.cancelled === 'true' || params.action === 'cancel'));
+}
+
 /**
  * Handle GET requests - for testing connectivity
  */
@@ -18,6 +22,9 @@ function doPost(e) {
   try {
     const requestData = JSON.parse(e.postData.contents);
     const action = requestData.action;
+    if (isRequestCancelled_(requestData)) {
+      return createErrorResponse('Request cancelled', 499);
+    }
     
     Logger.log('doPost received action: ' + action);
     

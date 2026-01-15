@@ -222,6 +222,7 @@ export default function AccessLogsPage({
     }
 
     const toastId = `access-logs-pdf-export-${Date.now()}`;
+    let cancelled = false;
 
     addUploadToast({
       id: toastId,
@@ -229,12 +230,23 @@ export default function AccessLogsPage({
       message: 'Preparing document...',
       status: 'loading',
       progress: 0,
+      onCancel: () => {
+        cancelled = true;
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'PDF export cancelled',
+        });
+      },
     });
 
     try {
       // Step 1: Initialize PDF (10%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Initializing document...', progress: 10 });
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       const doc = new jsPDF('landscape', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -242,8 +254,10 @@ export default function AccessLogsPage({
       const margin = 20;
 
       // Step 2: Add header and branding (25%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Adding header and branding...', progress: 25 });
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Try to load logo and draw header
       let logoLoaded = false;
@@ -293,8 +307,10 @@ export default function AccessLogsPage({
       let yPosition = 50;
 
       // Step 3: Add statistics summary (40%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Calculating statistics...', progress: 40 });
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Add divider line
       doc.setDrawColor(246, 66, 31);
@@ -331,8 +347,10 @@ export default function AccessLogsPage({
 
 
       // Step 4: Prepare table data (60%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Preparing table data...', progress: 60 });
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       const tableData = filteredLogs.map((log, index) => [
         String(index + 1),
@@ -346,8 +364,10 @@ export default function AccessLogsPage({
       ]);
 
       // Step 5: Generate table (80%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Generating table...', progress: 80 });
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       autoTable(doc, {
         startY: yPosition,
@@ -411,8 +431,10 @@ export default function AccessLogsPage({
       });
 
       // Step 6: Save file (100%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Saving PDF file...', progress: 100 });
       await new Promise(resolve => setTimeout(resolve, 200));
+      if (cancelled) return;
 
       const dateStr2 = new Date().toISOString().split('T')[0];
       const filename = `AccessLogs_${dateStr2}.pdf`;
@@ -427,6 +449,9 @@ export default function AccessLogsPage({
 
       setTimeout(() => removeUploadToast(toastId), 3000);
     } catch (error) {
+      if (cancelled) {
+        return;
+      }
       console.error('PDF Export Error:', error);
       updateUploadToast(toastId, {
         message: 'An error occurred while generating the PDF.',
@@ -447,6 +472,7 @@ export default function AccessLogsPage({
     }
 
     const toastId = `access-logs-sheet-export-${Date.now()}`;
+    let cancelled = false;
 
     addUploadToast({
       id: toastId,
@@ -454,12 +480,23 @@ export default function AccessLogsPage({
       message: 'Preparing data...',
       status: 'loading',
       progress: 0,
+      onCancel: () => {
+        cancelled = true;
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Export cancelled',
+        });
+      },
     });
 
     try {
       // Step 1: Format data (20%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Formatting data...', progress: 20 });
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Prepare spreadsheet data
       const headers = ['User', 'Action', 'Type', 'Status', 'Timestamp', 'IP Address', 'Device'];
@@ -474,8 +511,10 @@ export default function AccessLogsPage({
       ]);
 
       // Step 2: Create CSV content (50%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Generating spreadsheet...', progress: 50 });
       await new Promise(resolve => setTimeout(resolve, 200));
+      if (cancelled) return;
 
       const csvContent = [
         headers.join(','),
@@ -483,8 +522,10 @@ export default function AccessLogsPage({
       ].join('\n');
 
       // Step 3: Prepare download (80%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Preparing download...', progress: 80 });
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       // Create blob and download
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -501,6 +542,7 @@ export default function AccessLogsPage({
       document.body.appendChild(link);
 
       // Step 4: Save file (100%)
+      if (cancelled) return;
       updateUploadToast(toastId, { message: 'Saving file...', progress: 100 });
       link.click();
 
@@ -515,6 +557,9 @@ export default function AccessLogsPage({
 
       setTimeout(() => removeUploadToast(toastId), 3000);
     } catch (error) {
+      if (cancelled) {
+        return;
+      }
       console.error('Spreadsheet Export Error:', error);
       updateUploadToast(toastId, {
         message: 'An error occurred while exporting the spreadsheet.',

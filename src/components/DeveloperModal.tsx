@@ -301,6 +301,8 @@ export default function DeveloperModal({
   const handleSave = async () => {
     const toastId = `devinfo-save-${Date.now()}`;
     setIsSaving(true);
+    const controller = new AbortController();
+    const { signal } = controller;
     
     addUploadToast({
       id: toastId,
@@ -308,6 +310,15 @@ export default function DeveloperModal({
       message: 'Preparing data...',
       status: 'loading',
       progress: 0,
+      onCancel: () => {
+        controller.abort();
+        updateUploadToast(toastId, {
+          status: 'info',
+          progress: 100,
+          title: 'Cancelled',
+          message: 'Save cancelled',
+        });
+      },
     });
     
     console.log('[DevModal] Starting save process...');
@@ -320,7 +331,11 @@ export default function DeveloperModal({
         updateUploadToast(toastId, { progress: 10, message: 'Uploading profile image to Google Drive...' });
         console.log('[DevModal] Uploading pending image file:', pendingImageFile.name);
         
-        const uploadResult = await uploadDevProfile(pendingImageFile);
+        const uploadResult = await uploadDevProfile(pendingImageFile, signal);
+
+        if (signal.aborted) {
+          return;
+        }
         
         if (uploadResult.success && uploadResult.imageUrl) {
           finalProfileUrl = uploadResult.imageUrl;
@@ -367,7 +382,11 @@ export default function DeveloperModal({
       updateUploadToast(toastId, { progress: 60, message: 'Sending to Google Sheets API...' });
       console.log('[DevModal] Saving data to backend:', backendData);
       
-      const success = await updateDevInfoContent(backendData);
+      const success = await updateDevInfoContent(backendData, signal);
+
+      if (signal.aborted) {
+        return;
+      }
       
       if (success) {
         updateUploadToast(toastId, { progress: 90, message: 'Updating local state...' });
@@ -397,6 +416,9 @@ export default function DeveloperModal({
       }
     } catch (error) {
       console.error('[DevModal] Save error:', error);
+      if (signal.aborted) {
+        return;
+      }
       updateUploadToast(toastId, {
         status: 'error',
         progress: 100,

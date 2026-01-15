@@ -179,9 +179,9 @@ export default function SystemToolsPage({
   const [selectedPage, setSelectedPage] = useState<string | null>(null);
 
   // Helper functions for progress toast
-  const showProgressToast = (id: string, title: string, message: string, progress: number) => {
+  const showProgressToast = (id: string, title: string, message: string, progress: number, onCancel?: () => void) => {
     if (addUploadToast) {
-      addUploadToast({ id, title, message, status: 'loading', progress });
+      addUploadToast({ id, title, message, status: 'loading', progress, onCancel });
     }
   };
 
@@ -250,19 +250,32 @@ export default function SystemToolsPage({
 
   const handleBackupDatabase = async () => {
     const toastId = 'backup-' + Date.now();
+    const controller = new AbortController();
+    const { signal } = controller;
     setIsOperationLoading(true);
     
-    showProgressToast(toastId, 'Database Backup', 'Starting backup...', 0);
+    showProgressToast(toastId, 'Database Backup', 'Starting backup...', 0, () => {
+      controller.abort();
+      updateProgressToast(toastId, {
+        status: 'info',
+        progress: 100,
+        title: 'Cancelled',
+        message: 'Backup cancelled',
+      });
+    });
     
     try {
       updateProgressToast(toastId, { progress: 10, message: 'Connecting to database...' });
       await new Promise(resolve => setTimeout(resolve, 500));
+      if (signal.aborted) return;
       
       updateProgressToast(toastId, { progress: 30, message: 'Copying sheets...' });
-      const result = await createDatabaseBackup(username);
+      const result = await createDatabaseBackup(username, signal);
+      if (signal.aborted) return;
       
       updateProgressToast(toastId, { progress: 80, message: 'Finalizing backup...' });
       await new Promise(resolve => setTimeout(resolve, 300));
+      if (signal.aborted) return;
       
       updateProgressToast(toastId, {
         status: 'success',
@@ -281,8 +294,12 @@ export default function SystemToolsPage({
         });
       }
       
+      if (signal.aborted) return;
       fetchSystemHealth();
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Backup error:', error);
       updateProgressToast(toastId, {
         status: 'error',
@@ -297,16 +314,28 @@ export default function SystemToolsPage({
 
   const handleClearCache = async () => {
     const toastId = 'cache-' + Date.now();
+    const controller = new AbortController();
+    const { signal } = controller;
     setIsOperationLoading(true);
     
-    showProgressToast(toastId, 'Clear Cache', 'Bumping cache version...', 0);
+    showProgressToast(toastId, 'Clear Cache', 'Bumping cache version...', 0, () => {
+      controller.abort();
+      updateProgressToast(toastId, {
+        status: 'info',
+        progress: 100,
+        title: 'Cancelled',
+        message: 'Cache clear cancelled',
+      });
+    });
     
     try {
       updateProgressToast(toastId, { progress: 20, message: 'Updating server cache version...' });
-      const result = await bumpCacheVersion(username);
+      const result = await bumpCacheVersion(username, signal);
+      if (signal.aborted) return;
       
       updateProgressToast(toastId, { progress: 60, message: 'Clearing local caches...' });
       await new Promise(resolve => setTimeout(resolve, 500));
+      if (signal.aborted) return;
       
       updateProgressToast(toastId, {
         status: 'success',
@@ -330,6 +359,9 @@ export default function SystemToolsPage({
         fetchSystemHealth();
       }
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Clear cache error:', error);
       updateProgressToast(toastId, {
         status: 'error',
@@ -344,19 +376,32 @@ export default function SystemToolsPage({
 
   const handleExportData = async () => {
     const toastId = 'export-' + Date.now();
+    const controller = new AbortController();
+    const { signal } = controller;
     setIsOperationLoading(true);
     
-    showProgressToast(toastId, 'Export Data', 'Starting export...', 0);
+    showProgressToast(toastId, 'Export Data', 'Starting export...', 0, () => {
+      controller.abort();
+      updateProgressToast(toastId, {
+        status: 'info',
+        progress: 100,
+        title: 'Cancelled',
+        message: 'Export cancelled',
+      });
+    });
     
     try {
       updateProgressToast(toastId, { progress: 10, message: 'Connecting to database...' });
       await new Promise(resolve => setTimeout(resolve, 500));
+      if (signal.aborted) return;
       
       updateProgressToast(toastId, { progress: 30, message: 'Exporting sheets...' });
-      const result = await exportData(username);
+      const result = await exportData(username, signal);
+      if (signal.aborted) return;
       
       updateProgressToast(toastId, { progress: 80, message: 'Finalizing export...' });
       await new Promise(resolve => setTimeout(resolve, 300));
+      if (signal.aborted) return;
       
       updateProgressToast(toastId, {
         status: 'success',
@@ -375,8 +420,12 @@ export default function SystemToolsPage({
         });
       }
       
+      if (signal.aborted) return;
       fetchSystemHealth();
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Export error:', error);
       updateProgressToast(toastId, {
         status: 'error',
@@ -417,8 +466,18 @@ export default function SystemToolsPage({
   const handleEnableMaintenance = async (config: MaintenanceFormData) => {
     const pageId = selectedPage || 'fullPWA';
     const toastId = 'maintenance-' + Date.now();
+    const controller = new AbortController();
+    const { signal } = controller;
     
-    showProgressToast(toastId, 'Maintenance Mode', 'Enabling...', 0);
+    showProgressToast(toastId, 'Maintenance Mode', 'Enabling...', 0, () => {
+      controller.abort();
+      updateProgressToast(toastId, {
+        status: 'info',
+        progress: 100,
+        title: 'Cancelled',
+        message: 'Enable maintenance cancelled',
+      });
+    });
     
     try {
       updateProgressToast(toastId, { progress: 50, message: 'Updating backend...' });
@@ -432,8 +491,10 @@ export default function SystemToolsPage({
           maintenanceDate: config.maintenanceDate,
           durationDays: config.durationDays,
         },
-        username
+        username,
+        signal
       );
+      if (signal.aborted) return;
       
       // Also update local storage for immediate effect
       if (pageId === 'fullPWA') {
@@ -462,8 +523,12 @@ export default function SystemToolsPage({
         message: pageId === 'fullPWA' ? 'Full PWA is now in maintenance mode.' : `${pageId} is now in maintenance mode.`,
       });
       
+      if (signal.aborted) return;
       await fetchMaintenanceMode();
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Enable maintenance error:', error);
       updateProgressToast(toastId, {
         status: 'error',
@@ -479,13 +544,24 @@ export default function SystemToolsPage({
 
   const handleDisableMaintenance = async (pageId: string) => {
     const toastId = 'maintenance-' + Date.now();
+    const controller = new AbortController();
+    const { signal } = controller;
     
-    showProgressToast(toastId, 'Maintenance Mode', 'Disabling...', 0);
+    showProgressToast(toastId, 'Maintenance Mode', 'Disabling...', 0, () => {
+      controller.abort();
+      updateProgressToast(toastId, {
+        status: 'info',
+        progress: 100,
+        title: 'Cancelled',
+        message: 'Disable maintenance cancelled',
+      });
+    });
     
     try {
       updateProgressToast(toastId, { progress: 50, message: 'Updating backend...' });
       
-      await disableMaintenanceModeBackend(pageId, username);
+      await disableMaintenanceModeBackend(pageId, username, signal);
+      if (signal.aborted) return;
       
       // Also update local storage
       if (pageId === 'fullPWA') {
@@ -501,8 +577,12 @@ export default function SystemToolsPage({
         message: pageId === 'fullPWA' ? 'Full PWA maintenance disabled.' : `${pageId} maintenance disabled.`,
       });
       
+      if (signal.aborted) return;
       await fetchMaintenanceMode();
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Disable maintenance error:', error);
       updateProgressToast(toastId, {
         status: 'error',
@@ -517,13 +597,24 @@ export default function SystemToolsPage({
     if (!confirm("Are you sure you want to clear all maintenance modes?")) return;
     
     const toastId = 'clear-maintenance-' + Date.now();
+    const controller = new AbortController();
+    const { signal } = controller;
     
-    showProgressToast(toastId, 'Clear Maintenance', 'Clearing all...', 0);
+    showProgressToast(toastId, 'Clear Maintenance', 'Clearing all...', 0, () => {
+      controller.abort();
+      updateProgressToast(toastId, {
+        status: 'info',
+        progress: 100,
+        title: 'Cancelled',
+        message: 'Clear maintenance cancelled',
+      });
+    });
     
     try {
       updateProgressToast(toastId, { progress: 50, message: 'Updating backend...' });
       
-      await clearAllMaintenanceBackend(username);
+      await clearAllMaintenanceBackend(username, signal);
+      if (signal.aborted) return;
       clearAllMaintenance(); // Also clear local
       
       updateProgressToast(toastId, {
@@ -533,8 +624,12 @@ export default function SystemToolsPage({
         message: 'All maintenance modes have been disabled.',
       });
       
+      if (signal.aborted) return;
       await fetchMaintenanceMode();
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Clear all maintenance error:', error);
       updateProgressToast(toastId, {
         status: 'error',

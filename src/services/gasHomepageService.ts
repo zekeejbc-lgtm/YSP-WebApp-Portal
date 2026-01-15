@@ -703,7 +703,10 @@ export const getDefaultHomepageOtherContent = (): HomepageOtherContent => {
 /**
  * Update Homepage_Other (Contact Section) content via GAS API
  */
-export const updateHomepageOtherContent = async (content: Partial<HomepageOtherContent>): Promise<boolean> => {
+export const updateHomepageOtherContent = async (
+  content: Partial<HomepageOtherContent>,
+  signal?: AbortSignal
+): Promise<boolean> => {
   if (!GAS_CONFIG.HOMEPAGE_API_URL) {
     console.error('[GAS Homepage_Other] API URL not configured');
     return false;
@@ -723,6 +726,7 @@ export const updateHomepageOtherContent = async (content: Partial<HomepageOtherC
         'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify(payload),
+      signal,
     });
 
     const responseText = await response.text();
@@ -752,6 +756,9 @@ export const updateHomepageOtherContent = async (content: Partial<HomepageOtherC
     throw new Error(result.error || 'Failed to update content');
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return false;
+    }
     console.error('[GAS Homepage_Other] Error updating content:', error);
     return false;
   }
@@ -761,12 +768,19 @@ export const updateHomepageOtherContent = async (content: Partial<HomepageOtherC
  * Upload Org Chart image via GAS API
  * Uses the same mechanism as project image uploads
  */
-export const uploadOrgChart = async (file: File): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
+export const uploadOrgChart = async (
+  file: File,
+  signal?: AbortSignal
+): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
   if (!GAS_CONFIG.HOMEPAGE_API_URL) {
     return { success: false, error: 'API URL not configured' };
   }
 
   try {
+    if (signal?.aborted) {
+      return { success: false, error: 'Operation cancelled' };
+    }
+
     // Validate file
     if (!file.type.startsWith('image/')) {
       return { success: false, error: 'Only image files are allowed' };
@@ -777,7 +791,11 @@ export const uploadOrgChart = async (file: File): Promise<{ success: boolean; im
     }
 
     // Convert file to base64
-    const base64Data = await fileToBase64(file);
+    const base64Data = await fileToBase64(file, signal);
+
+    if (signal?.aborted) {
+      return { success: false, error: 'Operation cancelled' };
+    }
 
     console.log('[GAS Homepage_Other] Uploading org chart:', file.name, 'size:', file.size);
     console.log('[GAS Homepage_Other] API URL:', GAS_CONFIG.HOMEPAGE_API_URL);
@@ -793,7 +811,8 @@ export const uploadOrgChart = async (file: File): Promise<{ success: boolean; im
         action: 'uploadOrgChart',
         fileName: file.name,
         fileData: base64Data
-      })
+      }),
+      signal,
     });
 
     console.log('[GAS Homepage_Other] Response status:', response.status);
@@ -821,6 +840,9 @@ export const uploadOrgChart = async (file: File): Promise<{ success: boolean; im
     return { success: false, error: data.message || data.error || 'Failed to upload org chart' };
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Operation cancelled' };
+    }
     console.error('[GAS Homepage_Other] Upload error:', error);
     return { success: false, error: 'Error uploading org chart: ' + (error as Error).message };
   }
@@ -953,9 +975,24 @@ export const clearHomepageOtherCache = (): void => {
 /**
  * Convert file to base64 (helper function)
  */
-function fileToBase64(file: File): Promise<string> {
+function fileToBase64(file: File, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    if (signal) {
+      if (signal.aborted) {
+        reader.abort();
+        reject(new DOMException('Operation cancelled', 'AbortError'));
+        return;
+      }
+      const onAbort = () => {
+        reader.abort();
+        reject(new DOMException('Operation cancelled', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      reader.onloadend = () => {
+        signal.removeEventListener('abort', onAbort);
+      };
+    }
     reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1];
       resolve(base64);
@@ -1194,7 +1231,10 @@ export const getDefaultDevInfoContent = (): DevInfoContent => {
 /**
  * Update Dev Info (Developer Profile) content via GAS API
  */
-export const updateDevInfoContent = async (content: Partial<DevInfoContent>): Promise<boolean> => {
+export const updateDevInfoContent = async (
+  content: Partial<DevInfoContent>,
+  signal?: AbortSignal
+): Promise<boolean> => {
   if (!GAS_CONFIG.HOMEPAGE_API_URL) {
     console.error('[GAS DevInfo] API URL not configured');
     return false;
@@ -1214,6 +1254,7 @@ export const updateDevInfoContent = async (content: Partial<DevInfoContent>): Pr
         'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify(payload),
+      signal,
     });
 
     const responseText = await response.text();
@@ -1243,6 +1284,9 @@ export const updateDevInfoContent = async (content: Partial<DevInfoContent>): Pr
     throw new Error(result.error || 'Failed to update content');
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return false;
+    }
     console.error('[GAS DevInfo] Error updating content:', error);
     return false;
   }
@@ -1251,12 +1295,19 @@ export const updateDevInfoContent = async (content: Partial<DevInfoContent>): Pr
 /**
  * Upload Dev Profile image via GAS API
  */
-export const uploadDevProfile = async (file: File): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
+export const uploadDevProfile = async (
+  file: File,
+  signal?: AbortSignal
+): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
   if (!GAS_CONFIG.HOMEPAGE_API_URL) {
     return { success: false, error: 'API URL not configured' };
   }
 
   try {
+    if (signal?.aborted) {
+      return { success: false, error: 'Operation cancelled' };
+    }
+
     // Validate file
     if (!file.type.startsWith('image/')) {
       return { success: false, error: 'Only image files are allowed' };
@@ -1267,7 +1318,11 @@ export const uploadDevProfile = async (file: File): Promise<{ success: boolean; 
     }
 
     // Convert file to base64
-    const base64Data = await fileToBase64(file);
+    const base64Data = await fileToBase64(file, signal);
+
+    if (signal?.aborted) {
+      return { success: false, error: 'Operation cancelled' };
+    }
 
     console.log('[GAS DevInfo] Uploading profile image:', file.name, 'size:', file.size);
     
@@ -1280,7 +1335,8 @@ export const uploadDevProfile = async (file: File): Promise<{ success: boolean; 
         action: 'uploadDevProfile',
         fileName: file.name,
         fileData: base64Data
-      })
+      }),
+      signal,
     });
 
     console.log('[GAS DevInfo] Response status:', response.status);
@@ -1308,6 +1364,9 @@ export const uploadDevProfile = async (file: File): Promise<{ success: boolean; 
     return { success: false, error: data.message || data.error || 'Failed to upload profile image' };
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Operation cancelled' };
+    }
     console.error('[GAS DevInfo] Upload error:', error);
     return { success: false, error: 'Error uploading profile image: ' + (error as Error).message };
   }
@@ -1716,7 +1775,10 @@ export const fetchFounderInfoContent = async (): Promise<FounderInfoContent> => 
 /**
  * Update Founder Info content in GAS
  */
-export const updateFounderInfoContent = async (content: Partial<FounderInfoContent>): Promise<boolean> => {
+export const updateFounderInfoContent = async (
+  content: Partial<FounderInfoContent>,
+  signal?: AbortSignal
+): Promise<boolean> => {
   if (!GAS_CONFIG.HOMEPAGE_API_URL) {
     console.warn('[GAS FounderInfo] API URL not configured');
     return false;
@@ -1734,6 +1796,7 @@ export const updateFounderInfoContent = async (content: Partial<FounderInfoConte
         action: 'updateFounderInfo',
         data: content,
       }),
+      signal,
     });
 
     const responseText = await response.text();
@@ -1751,6 +1814,9 @@ export const updateFounderInfoContent = async (content: Partial<FounderInfoConte
     return false;
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return false;
+    }
     console.error('[GAS FounderInfo] Update error:', error);
     return false;
   }
@@ -1759,7 +1825,10 @@ export const updateFounderInfoContent = async (content: Partial<FounderInfoConte
 /**
  * Upload Founder profile image to Google Drive via GAS
  */
-export const uploadFounderProfile = async (file: File): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
+export const uploadFounderProfile = async (
+  file: File,
+  signal?: AbortSignal
+): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
   if (!GAS_CONFIG.HOMEPAGE_API_URL) {
     return { success: false, error: 'API URL not configured' };
   }
@@ -1777,18 +1846,16 @@ export const uploadFounderProfile = async (file: File): Promise<{ success: boole
   }
 
   try {
+    if (signal?.aborted) {
+      return { success: false, error: 'Operation cancelled' };
+    }
+
     // Convert file to base64
-    const base64Data = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        // Remove the data URL prefix (e.g., "data:image/jpeg;base64,")
-        const base64 = result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+    const base64Data = await fileToBase64(file, signal);
+
+    if (signal?.aborted) {
+      return { success: false, error: 'Operation cancelled' };
+    }
 
     // Generate unique filename
     const timestamp = Date.now();
@@ -1807,6 +1874,7 @@ export const uploadFounderProfile = async (file: File): Promise<{ success: boole
         fileName,
         fileData: base64Data,
       }),
+      signal,
     });
 
     const responseText = await response.text();
@@ -1823,6 +1891,9 @@ export const uploadFounderProfile = async (file: File): Promise<{ success: boole
     return { success: false, error: result.message || 'Failed to upload profile image' };
 
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Operation cancelled' };
+    }
     console.error('[GAS FounderInfo] Profile upload error:', error);
     return { success: false, error: 'Error uploading profile image' };
   }

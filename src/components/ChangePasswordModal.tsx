@@ -19,11 +19,11 @@ import { DESIGN_TOKENS, Button } from "./design-system";
 interface ChangePasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onChangePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  onChangePassword: (currentPassword: string, newPassword: string, signal?: AbortSignal) => Promise<{ success: boolean; error?: string }>;
   onVerifyPassword: (password: string) => Promise<{ valid: boolean; error?: string }>;
   isDark: boolean;
-  addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error'; progress?: number }) => void;
-  updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error'; progress?: number }>) => void;
+  addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number; onCancel?: () => void }) => void;
+  updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number }>) => void;
 }
 
 interface PasswordStrength {
@@ -146,6 +146,8 @@ export default function ChangePasswordModal({
 
     // Generate toast ID
     const toastId = `password-change-${Date.now()}`;
+    const controller = new AbortController();
+    const { signal } = controller;
 
     try {
       // Show progress toast
@@ -156,10 +158,24 @@ export default function ChangePasswordModal({
           message: "Changing password...",
           status: "loading",
           progress: 30,
+          onCancel: () => {
+            controller.abort();
+            if (updateUploadToast) {
+              updateUploadToast(toastId, {
+                title: "Cancelled",
+                message: "Password change cancelled",
+                status: "info",
+                progress: 100,
+              });
+            }
+          },
         });
       }
 
-      const result = await onChangePassword(verifiedPassword, newPassword);
+      const result = await onChangePassword(verifiedPassword, newPassword, signal);
+      if (signal.aborted) {
+        return;
+      }
 
       if (result.success) {
         // Update toast to success
@@ -187,6 +203,9 @@ export default function ChangePasswordModal({
         setError(result.error || "Failed to change password. Please try again.");
       }
     } catch (err) {
+      if (signal.aborted) {
+        return;
+      }
       if (updateUploadToast) {
         updateUploadToast(toastId, {
           message: "Failed to change password",
