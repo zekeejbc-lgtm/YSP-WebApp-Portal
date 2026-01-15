@@ -239,14 +239,14 @@ export default function MyProfilePage({
               status: 'error',
               progress: 100,
               title: 'Load Failed',
-              message: response.message || 'Unable to load profile data.',
+              message: response.error || 'Unable to load profile data.',
             });
           }
           if (removeUploadToast) {
             setTimeout(() => removeUploadToast(toastId), 5000);
           }
           toast.error('Failed to load profile', {
-            description: response.message || 'Please try again later',
+            description: response.error || 'Please try again later',
           });
         }
       } catch (error) {
