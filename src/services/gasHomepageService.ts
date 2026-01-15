@@ -229,7 +229,7 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
       hero: {
         mainHeading: result.data.mainHeading || 'Welcome to Youth Service Philippines',
         subHeading: result.data.subHeading || 'Tagum Chapter',
-        tagline: result.data.tagline || 'Empowering youth to serve communities',
+        tagline: result.data.tagline || 'Shaping the Future to a Greater Society',
         loginButtonText: 'Log In',
         memberButtonText: 'Be a Member!',
       },
@@ -412,7 +412,7 @@ export const getDefaultHomepageContent = (): HomepageMainContent => {
     hero: {
       mainHeading: 'Welcome to Youth Service Philippines',
       subHeading: 'Tagum Chapter',
-      tagline: 'Empowering youth to serve communities and build a better future for all Filipinos',
+      tagline: 'Shaping the Future to a Greater Society',
       loginButtonText: 'Log In',
       memberButtonText: 'Be a Member!',
     },

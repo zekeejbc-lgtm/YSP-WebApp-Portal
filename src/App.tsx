@@ -3893,7 +3893,7 @@ export default function App() {
             Chapter. All rights reserved.
           </p>
           <p className="mt-2">
-            Empowering Filipino youth to serve and lead.
+            Shaping the Future to a Greater Society
           </p>
         </div>
       </footer>

@@ -22,8 +22,7 @@ export default defineConfig({
       manifest: {
         name: 'Youth Service Philippines - Tagum Chapter',
         short_name: 'YSP Tagum',
-        description:
-          'Empowering youth to serve communities through leadership and social responsibility.',
+        description: 'Shaping the Future to a Greater Society',
         start_url: '/',
         scope: '/',
         display: 'standalone',
