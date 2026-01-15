@@ -3964,7 +3964,7 @@ export default function App() {
               {/* Project Details */}
               <div className="p-5 sm:p-6 md:p-8">
                 <h2
-                  className="mb-3 md:mb-4 text-xl sm:text-2xl md:text-3xl text-center md:text-left"
+                  className="mb-3 md:mb-4 text-xl sm:text-2xl md:text-3xl text-left"
                   style={{
                     fontFamily: "var(--font-headings)",
                     fontWeight: "var(--font-weight-bold)",
@@ -3989,13 +3989,13 @@ export default function App() {
             </div>
 
             {/* Fixed Footer with Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-2 p-5 sm:p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-b-3xl">
+            <div className="grid grid-cols-2 gap-3 p-5 sm:p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-b-3xl">
               {modalProject.link && modalProject.linkText && (
                 <a
                   href={modalProject.link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg flex-1 text-sm group"
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg text-sm sm:text-base group min-w-0"
                   style={{
                     background:
                       "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
@@ -4005,19 +4005,21 @@ export default function App() {
                   }}
                 >
                   <ExternalLink className="w-4 h-4 group-hover:rotate-45 transition-transform" />
-                  {modalProject.linkText}
+                  <span className="truncate">{modalProject.linkText}</span>
                 </a>
               )}
               <button
                 onClick={closeModal}
-                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border-2 transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex-1 text-sm"
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm sm:text-base min-w-0 ${
+                  modalProject.link && modalProject.linkText ? "" : "col-span-2"
+                }`}
                 style={{
                   borderColor: "#f6421f",
                   color: "#f6421f",
                   fontWeight: "600",
                 }}
               >
-                Close
+                <span className="truncate">Close</span>
               </button>
             </div>
           </div>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=5.0"
+    />
+    <title>Offline - YSP Tagum</title>
+    <meta name="theme-color" content="#f6421f" />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --text: #1f2937;
+        --muted: #6b7280;
+        --brand: #f6421f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Lexend", "Roboto", system-ui, -apple-system, sans-serif;
+        background: radial-gradient(circle at top, #fff7ed 0%, var(--bg) 45%);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .card {
+        max-width: 520px;
+        width: 100%;
+        background: var(--card);
+        border-radius: 24px;
+        padding: 32px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+        border: 1px solid #fed7aa;
+        text-align: center;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: #ffedd5;
+        color: var(--brand);
+        font-weight: 600;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 16px 0 8px;
+        font-size: 24px;
+        color: var(--brand);
+      }
+      p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .actions {
+        margin-top: 24px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: center;
+      }
+      .btn {
+        border: 0;
+        border-radius: 12px;
+        padding: 12px 18px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .primary {
+        background: linear-gradient(135deg, #f6421f 0%, #ee8724 100%);
+        color: #fff;
+      }
+      .ghost {
+        background: #fff7ed;
+        color: var(--brand);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="badge">Offline Mode</div>
+      <h1>You are offline</h1>
+      <p>
+        We cannot reach the YSP Tagum servers right now. Please check your
+        connection and try again.
+      </p>
+      <div class="actions">
+        <button class="btn primary" onclick="location.reload()">
+          Retry
+        </button>
+        <button class="btn ghost" onclick="location.href='/'">
+          Go Home
+        </button>
+      </div>
+    </div>
+  </body>
+</html>

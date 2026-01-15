@@ -1,10 +1,56 @@
 
-  import { defineConfig } from 'vite';
-  import react from '@vitejs/plugin-react-swc';
-  import path from 'path';
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react-swc';
+import { VitePWA } from 'vite-plugin-pwa';
+import path from 'path';
 
-  export default defineConfig({
-    plugins: [react()],
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
+      registerType: 'autoUpdate',
+      includeAssets: [
+        'offline.html',
+        'icons/pwa-192x192.png',
+        'icons/pwa-512x512.png',
+        'icons/maskable-512x512.png',
+        'icons/apple-touch-icon.png',
+      ],
+      manifest: {
+        name: 'Youth Service Philippines - Tagum Chapter',
+        short_name: 'YSP Tagum',
+        description:
+          'Empowering youth to serve communities through leadership and social responsibility.',
+        start_url: '/',
+        scope: '/',
+        display: 'standalone',
+        orientation: 'portrait',
+        theme_color: '#f6421f',
+        background_color: '#f8fafc',
+        icons: [
+          {
+            src: '/icons/pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+          },
+          {
+            src: '/icons/pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+          },
+          {
+            src: '/icons/maskable-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+    }),
+  ],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
       alias: {
