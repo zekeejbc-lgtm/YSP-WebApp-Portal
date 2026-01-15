@@ -659,7 +659,7 @@
     const defaultValues = [
       'Welcome to Youth Service Philippines',
       'Tagum Chapter',
-      'Empowering youth to serve communities and build a better future for all Filipinos',
+      'Shaping the Future to a Greater Society',
       'About Us',
       'Youth Service Philippines - Tagum Chapter is a dynamic organization dedicated to mobilizing Filipino youth.',
       'Our Mission',
