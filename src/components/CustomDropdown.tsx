@@ -35,6 +35,7 @@ interface CustomDropdownProps {
   size?: "sm" | "md" | "lg";
   variant?: "default" | "filled" | "outlined";
   forceDirection?: "up" | "down"; // Force dropdown to always open in a specific direction
+  maxHeight?: number;
 }
 
 export default function CustomDropdown({
@@ -48,20 +49,23 @@ export default function CustomDropdown({
   size = "md",
   variant = "default",
   forceDirection,
+  maxHeight,
 }: CustomDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [maxHeight, setMaxHeight] = useState(200);
+  const [dropdownMaxHeight, setDropdownMaxHeight] = useState(200);
   const [openDirection, setOpenDirection] = useState<'down' | 'up'>('down');
 
   // Function to calculate position and open dropdown
   const calculateAndOpen = () => {
     if (!dropdownRef.current) return;
+
+    const maxDropdownHeight = maxHeight ?? 200;
     
     // If forceDirection is set, use it directly
     if (forceDirection) {
       setOpenDirection(forceDirection);
-      setMaxHeight(180);
+      setDropdownMaxHeight(maxDropdownHeight);
       setIsOpen(true);
       return;
     }
@@ -104,11 +108,11 @@ export default function CustomDropdown({
     if (spaceBelow < minDropdownHeight && spaceAbove > spaceBelow) {
       // Open upward - not enough space below
       setOpenDirection('up');
-      setMaxHeight(Math.min(200, Math.max(80, spaceAbove)));
+      setDropdownMaxHeight(Math.min(maxDropdownHeight, Math.max(80, spaceAbove)));
     } else {
       // Open downward (default)
       setOpenDirection('down');
-      setMaxHeight(Math.min(200, Math.max(80, spaceBelow)));
+      setDropdownMaxHeight(Math.min(maxDropdownHeight, Math.max(80, spaceBelow)));
     }
     
     setIsOpen(true);
@@ -186,9 +190,9 @@ export default function CustomDropdown({
       fontSize: "14px",
     },
     lg: {
-      height: "52px",
+      height: "56px",
       padding: "0 20px",
-      fontSize: "16px",
+      fontSize: "18px",
     },
   };
 
@@ -277,7 +281,7 @@ export default function CustomDropdown({
               : "rgba(255, 255, 255, 0.98)",
             backdropFilter: "blur(20px)",
             border: `2px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
-            maxHeight: `${maxHeight}px`,
+            maxHeight: `${dropdownMaxHeight}px`,
             overflowY: "auto",
             zIndex: 50,
           }}

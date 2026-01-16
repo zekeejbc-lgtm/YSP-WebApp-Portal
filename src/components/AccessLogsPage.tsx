@@ -66,6 +66,86 @@ function loadImage(url: string): Promise<string> {
 }
 import { type UploadToastMessage } from "./UploadToast";
 
+function PaginationControls({
+  currentPage,
+  totalPages,
+  totalItems,
+  pageSize,
+  isDark,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  isDark: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
+  const maxButtons = 5;
+  const half = Math.floor(maxButtons / 2);
+  const startPage = Math.max(1, Math.min(currentPage - half, totalPages - maxButtons + 1));
+  const endPage = Math.min(totalPages, startPage + maxButtons - 1);
+  const pages = Array.from({ length: endPage - startPage + 1 }, (_, i) => startPage + i);
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pb-6">
+      <div className="text-xs text-muted-foreground">
+        Showing {startItem}-{endItem} of {totalItems}
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage === 1}
+          className="px-3 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.85)",
+            border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+          }}
+        >
+          Prev
+        </button>
+        {pages.map((page) => (
+          <button
+            key={page}
+            onClick={() => onPageChange(page)}
+            className="px-3 py-1.5 rounded-lg text-sm transition-colors"
+            style={{
+              background:
+                page === currentPage
+                  ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
+                  : isDark
+                  ? "rgba(255, 255, 255, 0.06)"
+                  : "rgba(255, 255, 255, 0.85)",
+              color: page === currentPage ? "#ffffff" : undefined,
+              border:
+                page === currentPage
+                  ? "none"
+                  : `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+            }}
+          >
+            {page}
+          </button>
+        ))}
+        <button
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage === totalPages}
+          className="px-3 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.85)",
+            border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+          }}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface AccessLog {
   id: string;
   user: string;
@@ -90,6 +170,7 @@ const GAS_SYSTEM_TOOLS_API_URL =
   import.meta.env.VITE_GAS_SYSTEM_TOOLS_API_URL ||
   import.meta.env.VITE_GAS_LOGIN_API_URL ||
   '';
+const ITEMS_PER_PAGE = 12;
 
 export default function AccessLogsPage({
   onClose,
@@ -107,6 +188,7 @@ export default function AccessLogsPage({
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const [stats, setStats] = useState({
     totalLogs: 0,
     successful: 0,
@@ -210,6 +292,25 @@ export default function AccessLogsPage({
       selectedType === "all" || log.type === selectedType;
     return matchesSearch && matchesType;
   });
+
+  const viewToggleLabel = viewMode === "table" ? "Table View" : "Tile View";
+  const ViewToggleIcon = viewMode === "table" ? TableIcon : LayoutGrid;
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / ITEMS_PER_PAGE));
+  const paginatedLogs = filteredLogs.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedType]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   /**
    * Export logs to PDF with progress tracking
@@ -911,94 +1012,40 @@ export default function AccessLogsPage({
 
       {/* Action Type Filter & View Toggle */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        {/* Filter Buttons */}
-        <div className="flex gap-2 overflow-x-auto pb-2 w-full sm:w-auto">
-          {actionTypes.map((type) => {
-            const Icon = type.icon;
-            return (
-              <button
-                key={type.value}
-                onClick={() => setSelectedType(type.value)}
-                disabled={isLoading}
-                className={`px-3 sm:px-4 py-2 rounded-lg transition-all whitespace-nowrap flex items-center gap-2 disabled:opacity-50 ${
-                  selectedType === type.value
-                    ? "shadow-lg"
-                    : "hover:shadow-md"
-                }`}
-                style={{
-                  background: selectedType === type.value
-                    ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
-                    : isDark
-                    ? "rgba(255, 255, 255, 0.05)"
-                    : "rgba(255, 255, 255, 0.8)",
-                  color: selectedType === type.value
-                    ? "#ffffff"
-                    : isDark
-                    ? "#e5e7eb"
-                    : "#374151",
-                  fontSize: "14px",
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  border: selectedType === type.value
-                    ? "none"
-                    : `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
-                }}
-              >
-                <Icon className="w-4 h-4" />
-                <span className="hidden sm:inline">{type.label}</span>
-              </button>
-            );
-          })}
+        {/* Filter Dropdown */}
+          <div className="w-auto" style={{ width: "min(220px, 100%)" }}>
+          <CustomDropdown
+            value={selectedType}
+            onChange={setSelectedType}
+            options={actionTypes.map((type) => ({
+              value: type.value,
+              label: type.label,
+            }))}
+              placeholder="Filter actions"
+              isDark={isDark}
+              size="sm"
+              disabled={isLoading}
+              maxHeight={360}
+              forceDirection="down"
+            />
         </div>
 
         {/* View Mode Toggle */}
-        <div className="flex gap-2">
-          <button
-            onClick={() => setViewMode("tile")}
-            disabled={isLoading}
-            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 ${
-              viewMode === "tile" ? "shadow-lg" : "hover:shadow-md"
-            }`}
-            style={{
-              background: viewMode === "tile"
-                ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
-                : isDark
-                ? "rgba(255, 255, 255, 0.05)"
-                : "rgba(255, 255, 255, 0.8)",
-              color: viewMode === "tile" ? "#ffffff" : isDark ? "#e5e7eb" : "#374151",
-              fontSize: "14px",
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              border: viewMode === "tile"
-                ? "none"
-                : `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
-            }}
-          >
-            <LayoutGrid className="w-4 h-4" />
-            <span className="hidden sm:inline">Tile View</span>
-          </button>
-          <button
-            onClick={() => setViewMode("table")}
-            disabled={isLoading}
-            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 ${
-              viewMode === "table" ? "shadow-lg" : "hover:shadow-md"
-            }`}
-            style={{
-              background: viewMode === "table"
-                ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
-                : isDark
-                ? "rgba(255, 255, 255, 0.05)"
-                : "rgba(255, 255, 255, 0.8)",
-              color: viewMode === "table" ? "#ffffff" : isDark ? "#e5e7eb" : "#374151",
-              fontSize: "14px",
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              border: viewMode === "table"
-                ? "none"
-                : `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
-            }}
-          >
-            <TableIcon className="w-4 h-4" />
-            <span className="hidden sm:inline">Table View</span>
-          </button>
-        </div>
+        <button
+          onClick={() => setViewMode(viewMode === "table" ? "tile" : "table")}
+          disabled={isLoading}
+          className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 hover:shadow-md"
+          style={{
+            background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+            color: "#ffffff",
+            fontSize: "14px",
+            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            border: "none",
+          }}
+        >
+          <ViewToggleIcon className="w-4 h-4" />
+          <span className="hidden sm:inline">{viewToggleLabel}</span>
+        </button>
       </div>
 
       {/* Loading State */}
@@ -1030,7 +1077,7 @@ export default function AccessLogsPage({
       {/* Tile View */}
       {viewMode === "tile" && !isLoading && !error && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredLogs.map((log) => (
+          {paginatedLogs.map((log) => (
             <div
               key={log.id}
               className="p-5 rounded-xl border transition-all hover:shadow-xl cursor-pointer"
@@ -1146,6 +1193,17 @@ export default function AccessLogsPage({
         </div>
       )}
 
+      {viewMode === "tile" && !isLoading && !error && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredLogs.length}
+          pageSize={ITEMS_PER_PAGE}
+          isDark={isDark}
+          onPageChange={setCurrentPage}
+        />
+      )}
+
       {/* Table View */}
       {viewMode === "table" && !isLoading && !error && (
         <div className="overflow-x-auto rounded-xl border pb-6" style={{
@@ -1184,7 +1242,7 @@ export default function AccessLogsPage({
               </tr>
             </thead>
             <tbody>
-              {filteredLogs.map((log, index) => (
+              {paginatedLogs.map((log, index) => (
                 <tr
                   key={log.id}
                   className="border-b transition-all hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer"
@@ -1287,6 +1345,17 @@ export default function AccessLogsPage({
             </tbody>
           </table>
         </div>
+      )}
+
+      {viewMode === "table" && !isLoading && !error && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredLogs.length}
+          pageSize={ITEMS_PER_PAGE}
+          isDark={isDark}
+          onPageChange={setCurrentPage}
+        />
       )}
 
       {/* Empty State */}

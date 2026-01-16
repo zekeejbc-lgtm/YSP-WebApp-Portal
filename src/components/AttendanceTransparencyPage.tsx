@@ -23,6 +23,8 @@ import { getMemberAttendanceHistory, type AttendanceRecord as BackendAttendanceR
 import { fetchEvents, type EventData } from "../services/gasEventsService";
 import { toast } from "sonner";
 
+const ITEMS_PER_PAGE = 10;
+
 // =====================================================
 // TYPES
 // =====================================================
@@ -136,6 +138,86 @@ function formatDisplayDate(dateStr: string): string {
   }
 }
 
+function PaginationControls({
+  currentPage,
+  totalPages,
+  totalItems,
+  pageSize,
+  isDark,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  isDark: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
+  const maxButtons = 5;
+  const half = Math.floor(maxButtons / 2);
+  const startPage = Math.max(1, Math.min(currentPage - half, totalPages - maxButtons + 1));
+  const endPage = Math.min(totalPages, startPage + maxButtons - 1);
+  const pages = Array.from({ length: endPage - startPage + 1 }, (_, i) => startPage + i);
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pb-6">
+      <div className="text-xs text-muted-foreground">
+        Showing {startItem}-{endItem} of {totalItems}
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage === 1}
+          className="px-3 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.85)",
+            border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+          }}
+        >
+          Prev
+        </button>
+        {pages.map((page) => (
+          <button
+            key={page}
+            onClick={() => onPageChange(page)}
+            className="px-3 py-1.5 rounded-lg text-sm transition-colors"
+            style={{
+              background:
+                page === currentPage
+                  ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
+                  : isDark
+                  ? "rgba(255, 255, 255, 0.06)"
+                  : "rgba(255, 255, 255, 0.85)",
+              color: page === currentPage ? "#ffffff" : undefined,
+              border:
+                page === currentPage
+                  ? "none"
+                  : `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+            }}
+          >
+            {page}
+          </button>
+        ))}
+        <button
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage === totalPages}
+          className="px-3 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.85)",
+            border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+          }}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // =====================================================
 // SKELETON COMPONENTS
 // =====================================================
@@ -231,6 +313,7 @@ export default function AttendanceTransparencyPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [dateFilter, setDateFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [currentPage, setCurrentPage] = useState(1);
   
   // View mode: detect mobile and set default view
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
@@ -326,6 +409,22 @@ export default function AttendanceTransparencyPage({
     return new Date(b.date).getTime() - new Date(a.date).getTime();
   });
 
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / ITEMS_PER_PAGE));
+  const paginatedRecords = filteredRecords.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, dateFilter, statusFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   // =====================================================
   // STATISTICS
   // =====================================================
@@ -342,6 +441,7 @@ export default function AttendanceTransparencyPage({
     ((statusCounts.present + statusCounts.late) / totalEvents) * 100
   ) : 0;
 
+  const viewToggleLabel = viewMode === "table" ? "Table View" : "Tile View";
   const glassStyle = getGlassStyle(isDark);
 
   // =====================================================
@@ -612,9 +712,10 @@ export default function AttendanceTransparencyPage({
           <p className="text-muted-foreground text-sm mb-6 text-center max-w-md">
             Your attendance records will appear here once you've attended events.
           </p>
-          <Button onClick={fetchAttendanceData} variant="secondary" size="sm">
-            <RefreshCw className="w-4 h-4 mr-2" />Refresh
-          </Button>
+            <Button onClick={fetchAttendanceData} variant="secondary" size="sm">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
+            </Button>
         </div>
       )}
 
@@ -631,9 +732,9 @@ export default function AttendanceTransparencyPage({
             ...glassStyle,
           }}
         >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="flex flex-col gap-4">
             {/* Search Input */}
-            <div className="md:col-span-1">
+            <div>
               <label
                 className="block mb-2"
                 style={{
@@ -666,102 +767,88 @@ export default function AttendanceTransparencyPage({
               </div>
             </div>
 
-            {/* Date Filter */}
-            <div className="md:col-span-1">
-              <label
-                className="block mb-2"
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  color: DESIGN_TOKENS.colors.brand.orange,
-                }}
-              >
-                Filter by Date
-              </label>
-              <div className="relative">
-                <Calendar 
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" 
-                />
-                <input
-                  type="date"
-                  value={dateFilter}
-                  onChange={(e) => setDateFilter(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 rounded-lg border bg-transparent transition-all"
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Date Filter */}
+              <div>
+                <label
+                  className="block mb-2"
                   style={{
-                    borderRadius: `${DESIGN_TOKENS.radius.input}px`,
-                    borderColor: isDark
-                      ? "rgba(255, 255, 255, 0.1)"
-                      : "rgba(0, 0, 0, 0.1)",
-                    fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: DESIGN_TOKENS.colors.brand.orange,
                   }}
+                >
+                  Filter by Date
+                </label>
+                <div className="relative">
+                  <Calendar 
+                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" 
+                  />
+                  <input
+                    type="date"
+                    value={dateFilter}
+                    onChange={(e) => setDateFilter(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 rounded-lg border bg-transparent transition-all"
+                    style={{
+                      borderRadius: `${DESIGN_TOKENS.radius.input}px`,
+                      borderColor: isDark
+                        ? "rgba(255, 255, 255, 0.1)"
+                        : "rgba(0, 0, 0, 0.1)",
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Status Filter */}
+              <div>
+                <label
+                  className="block mb-2"
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: DESIGN_TOKENS.colors.brand.orange,
+                  }}
+                >
+                  Filter by Status
+                </label>
+                <CustomDropdown
+                  value={statusFilter}
+                  onChange={(value) => setStatusFilter(value)}
+                  options={[
+                    { value: "all", label: "All Status" },
+                    { value: "present", label: "Present" },
+                    { value: "late", label: "Late" },
+                    { value: "excused", label: "Excused" },
+                    { value: "absent", label: "Absent" },
+                  ]}
+                  isDark={isDark}
+                  size="md"
                 />
               </div>
-            </div>
-
-            {/* Status Filter */}
-            <div className="md:col-span-1">
-              <label
-                className="block mb-2"
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  color: DESIGN_TOKENS.colors.brand.orange,
-                }}
-              >
-                Filter by Status
-              </label>
-              <CustomDropdown
-                value={statusFilter}
-                onChange={(value) => setStatusFilter(value)}
-                options={[
-                  { value: "all", label: "All Status" },
-                  { value: "present", label: "Present" },
-                  { value: "late", label: "Late" },
-                  { value: "excused", label: "Excused" },
-                  { value: "absent", label: "Absent" },
-                ]}
-                isDark={isDark}
-                size="md"
-              />
             </div>
           </div>
         </div>
       )}
 
-      {/* View Toggle Buttons */}
+      {/* View Toggle Button */}
       {(isLoading || attendanceRecords.length > 0) && !error && (
-        <div className="flex justify-end mb-4 gap-2">
+        <div className="flex justify-end mb-4">
           <button
-            onClick={() => setViewMode("tile")}
-            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${
-              viewMode === "tile"
-                ? "bg-[#f6421f] text-white"
-                : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
-            }`}
+            onClick={() => setViewMode(viewMode === "table" ? "tile" : "table")}
+            className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 hover:shadow-md"
             style={{
-              borderRadius: `${DESIGN_TOKENS.radius.button}px`,
+              background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+              color: "#ffffff",
+              fontSize: "14px",
               fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              border: "none",
             }}
           >
-            <LayoutGrid className="w-4 h-4" />
-            <span className="hidden sm:inline">Tile View</span>
-          </button>
-          <button
-            onClick={() => setViewMode("table")}
-            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${
-              viewMode === "table"
-                ? "bg-[#f6421f] text-white"
-                : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
-            }`}
-            style={{
-              borderRadius: `${DESIGN_TOKENS.radius.button}px`,
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-            }}
-          >
-            <TableIcon className="w-4 h-4" />
-            <span className="hidden sm:inline">Table View</span>
+            {viewMode === "table" ? <TableIcon className="w-4 h-4" /> : <LayoutGrid className="w-4 h-4" />}
+            <span className="hidden sm:inline">{viewToggleLabel}</span>
           </button>
         </div>
       )}
@@ -778,7 +865,7 @@ export default function AttendanceTransparencyPage({
       {/* Tile View - Data */}
       {!isLoading && !error && viewMode === "tile" && filteredRecords.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-          {filteredRecords.map((record) => (
+          {paginatedRecords.map((record) => (
             <div
               key={record.id}
               onClick={() => {
@@ -862,6 +949,17 @@ export default function AttendanceTransparencyPage({
             </div>
           ))}
         </div>
+      )}
+
+      {!isLoading && !error && viewMode === "tile" && filteredRecords.length > 0 && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredRecords.length}
+          pageSize={ITEMS_PER_PAGE}
+          isDark={isDark}
+          onPageChange={setCurrentPage}
+        />
       )}
 
       {/* Table View - Loading */}
@@ -1001,7 +1099,7 @@ export default function AttendanceTransparencyPage({
                 </tr>
               </thead>
               <tbody>
-                {filteredRecords.map((record) => (
+                {paginatedRecords.map((record) => (
                   <tr
                     key={record.id}
                     onClick={() => {
@@ -1323,6 +1421,17 @@ export default function AttendanceTransparencyPage({
             </div>
           </div>
         </div>
+      )}
+
+      {!isLoading && !error && viewMode === "table" && filteredRecords.length > 0 && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredRecords.length}
+          pageSize={ITEMS_PER_PAGE}
+          isDark={isDark}
+          onPageChange={setCurrentPage}
+        />
       )}
 
       {/* Shimmer animation styles */}

@@ -422,6 +422,7 @@ export default function ManageMembersPage({
   const totalMembers = members.length;
   const activeMembers = members.filter((m) => m.status === "Active").length;
   const pendingCount = pendingApplications.filter((a) => a.status === "pending").length;
+  const viewToggleLabel = viewMode === "table" ? "Table View" : "Tile View";
 
   const [exportType, setExportType] = useState("");
 
@@ -817,8 +818,8 @@ export default function ManageMembersPage({
         </div>
 
         {/* Search and Filters */}
-        <div className="flex flex-col md:flex-row gap-4 mb-4">
-          <div className="flex-1 relative">
+        <div className="flex flex-col gap-4 mb-4">
+          <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
@@ -832,81 +833,55 @@ export default function ManageMembersPage({
             />
           </div>
 
-          <CustomDropdown
-            value={filterRole}
-            onChange={setFilterRole}
-            options={[
-              { value: "all", label: "All Roles" },
-              { value: "Admin", label: "Admin" },
-              { value: "Officer", label: "Officer" },
-              { value: "Member", label: "Member" },
-              { value: "Volunteer", label: "Volunteer" },
-            ]}
-            isDark={isDark}
-            size="md"
-            className="min-w-[180px]"
-          />
+          <div className="flex flex-col sm:flex-row gap-4">
+            <CustomDropdown
+              value={filterRole}
+              onChange={setFilterRole}
+              options={[
+                { value: "all", label: "All Roles" },
+                { value: "Admin", label: "Admin" },
+                { value: "Officer", label: "Officer" },
+                { value: "Member", label: "Member" },
+                { value: "Volunteer", label: "Volunteer" },
+              ]}
+              isDark={isDark}
+              size="md"
+              className="min-w-[180px]"
+            />
 
-          <CustomDropdown
-            value={filterCommittee}
-            onChange={setFilterCommittee}
-            options={[
-              { value: "all", label: "All Committees" },
-              { value: "Executive Board", label: "Executive Board" },
-              { value: "Community Development", label: "Community Development" },
-              { value: "Environmental Conservation", label: "Environmental Conservation" },
-              { value: "Youth Development", label: "Youth Development" },
-            ]}
-            isDark={isDark}
-            size="md"
-            className="min-w-[180px]"
-          />
+            <CustomDropdown
+              value={filterCommittee}
+              onChange={setFilterCommittee}
+              options={[
+                { value: "all", label: "All Committees" },
+                { value: "Executive Board", label: "Executive Board" },
+                { value: "Community Development", label: "Community Development" },
+                { value: "Environmental Conservation", label: "Environmental Conservation" },
+                { value: "Youth Development", label: "Youth Development" },
+              ]}
+              isDark={isDark}
+              size="md"
+              className="min-w-[180px]"
+            />
+          </div>
         </div>
 
         {/* Controls Row: View Mode Toggle + Actions */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-6">
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={() => setViewMode('tile')}
-              className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${viewMode === 'tile' ? 'shadow-lg' : 'hover:shadow-md'}`}
-              style={{
-                background: viewMode === 'tile'
-                  ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
-                  : isDark
-                  ? 'rgba(255, 255, 255, 0.05)'
-                  : 'rgba(255, 255, 255, 0.8)',
-                color: viewMode === 'tile' ? '#ffffff' : isDark ? '#e5e7eb' : '#374151',
-                fontSize: '14px',
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                border: viewMode === 'tile'
-                  ? 'none'
-                  : `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
-              }}
-            >
-              <LayoutGrid className="w-4 h-4" />
-              <span className="hidden sm:inline">Tile View</span>
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${viewMode === 'table' ? 'shadow-lg' : 'hover:shadow-md'}`}
-              style={{
-                background: viewMode === 'table'
-                  ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
-                  : isDark
-                  ? 'rgba(255, 255, 255, 0.05)'
-                  : 'rgba(255, 255, 255, 0.8)',
-                color: viewMode === 'table' ? '#ffffff' : isDark ? '#e5e7eb' : '#374151',
-                fontSize: '14px',
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                border: viewMode === 'table'
-                  ? 'none'
-                  : `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
-              }}
-            >
-              <TableIcon className="w-4 h-4" />
-              <span className="hidden sm:inline">Table View</span>
-            </button>
-          </div>
+          <button
+            onClick={() => setViewMode(viewMode === "table" ? "tile" : "table")}
+            className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 hover:shadow-md"
+            style={{
+              background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+              color: "#ffffff",
+              fontSize: "14px",
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              border: "none",
+            }}
+          >
+            {viewMode === "table" ? <TableIcon className="w-4 h-4" /> : <LayoutGrid className="w-4 h-4" />}
+            <span className="hidden sm:inline">{viewToggleLabel}</span>
+          </button>
           <div className="flex flex-wrap gap-2 justify-end">
             <Button
               variant="secondary"
