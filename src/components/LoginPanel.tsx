@@ -84,6 +84,8 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
       className="fixed flex items-center justify-center animate-[fadeIn_0.3s_ease]"
       style={{
         padding: '1rem',
+        paddingTop: 'calc(1rem + env(safe-area-inset-top))',
+        paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))',
         background: 'rgba(0, 0, 0, 0.15)',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
@@ -93,7 +95,8 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
         right: 0,
         bottom: 0,
         width: '100vw',
-        height: '100vh',
+        height: '100dvh',
+        minHeight: '100vh',
       }}
       onClick={onClose}
     >
@@ -106,7 +109,8 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
           right: 0,
           bottom: 0,
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
+          minHeight: '100vh',
           background: isDark 
             ? 'radial-gradient(circle at 50% 50%, rgba(246, 66, 31, 0.05), rgba(0, 0, 0, 0.2))' 
             : 'radial-gradient(circle at 50% 50%, rgba(246, 66, 31, 0.03), rgba(0, 0, 0, 0.12))',
@@ -124,7 +128,8 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
         right: 0,
         bottom: 0,
         width: '100vw',
-        height: '100vh',
+        height: '100dvh',
+        minHeight: '100vh',
       }}>
         <div 
           className="absolute top-1/4 left-1/4 w-72 h-72 rounded-full opacity-20 blur-3xl animate-blob"
