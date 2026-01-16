@@ -528,7 +528,10 @@ export default function DeveloperModal({
         right: 0,
         bottom: 0,
         width: '100vw',
-        height: '100vh',
+        height: '100dvh',
+        minHeight: '100vh',
+        paddingTop: 'calc(1rem + env(safe-area-inset-top))',
+        paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))',
       }}
     >
       {/* Backdrop */}
@@ -540,7 +543,8 @@ export default function DeveloperModal({
           right: 0,
           bottom: 0,
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
+          minHeight: '100vh',
         }}
         onClick={onClose}
       />
