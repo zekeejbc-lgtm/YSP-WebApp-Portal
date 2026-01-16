@@ -867,7 +867,7 @@ export default function AttendanceTransparencyPage({
       {/* Table View - Loading */}
       {isLoading && viewMode === "table" && (
         <div
-          className="border rounded-lg overflow-hidden mb-8"
+          className="border rounded-lg overflow-hidden pb-6"
           style={{
             borderRadius: `${DESIGN_TOKENS.radius.card}px`,
             borderColor: isDark
@@ -912,7 +912,7 @@ export default function AttendanceTransparencyPage({
       {/* Table View - Data */}
       {!isLoading && !error && viewMode === "table" && filteredRecords.length > 0 && (
         <div
-          className="border rounded-lg overflow-hidden mb-8"
+          className="border rounded-lg overflow-hidden pb-6"
           style={{
             borderRadius: `${DESIGN_TOKENS.radius.card}px`,
             borderColor: isDark

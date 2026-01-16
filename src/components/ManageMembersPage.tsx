@@ -138,6 +138,86 @@ function MemberTableSkeleton({ isDark, rows = 5 }: { isDark: boolean; rows?: num
   );
 }
 
+function PaginationControls({
+  currentPage,
+  totalPages,
+  totalItems,
+  pageSize,
+  isDark,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  isDark: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
+  const maxButtons = 5;
+  const half = Math.floor(maxButtons / 2);
+  const startPage = Math.max(1, Math.min(currentPage - half, totalPages - maxButtons + 1));
+  const endPage = Math.min(totalPages, startPage + maxButtons - 1);
+  const pages = Array.from({ length: endPage - startPage + 1 }, (_, i) => startPage + i);
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pb-6">
+      <div className="text-xs text-muted-foreground">
+        Showing {startItem}-{endItem} of {totalItems}
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage === 1}
+          className="px-3 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.85)",
+            border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+          }}
+        >
+          Prev
+        </button>
+        {pages.map((page) => (
+          <button
+            key={page}
+            onClick={() => onPageChange(page)}
+            className="px-3 py-1.5 rounded-lg text-sm transition-colors"
+            style={{
+              background:
+                page === currentPage
+                  ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
+                  : isDark
+                  ? "rgba(255, 255, 255, 0.06)"
+                  : "rgba(255, 255, 255, 0.85)",
+              color: page === currentPage ? "#ffffff" : undefined,
+              border:
+                page === currentPage
+                  ? "none"
+                  : `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+            }}
+          >
+            {page}
+          </button>
+        ))}
+        <button
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage === totalPages}
+          className="px-3 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.85)",
+            border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+          }}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // =================== TYPE MAPPER ===================
 
 function mapOfficerToMember(officer: DirectoryOfficer): Member {
@@ -224,6 +304,7 @@ interface ManageMembersPageProps {
 
 // Logo URL for PDF export
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
+const ITEMS_PER_PAGE = 10;
 
 export default function ManageMembersPage({ 
   onClose, 
@@ -248,6 +329,7 @@ export default function ManageMembersPage({
   const [members, setMembers] = useState<Member[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
@@ -331,11 +413,27 @@ export default function ManageMembersPage({
     return matchesRole && matchesCommittee;
   });
 
+  const totalPages = Math.max(1, Math.ceil(filteredMembers.length / ITEMS_PER_PAGE));
+  const paginatedMembers = filteredMembers.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
   const totalMembers = members.length;
   const activeMembers = members.filter((m) => m.status === "Active").length;
   const pendingCount = pendingApplications.filter((a) => a.status === "pending").length;
 
   const [exportType, setExportType] = useState("");
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterRole, filterCommittee]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const handleExportCSV = () => {
     if (!filteredMembers.length) {
@@ -851,7 +949,7 @@ export default function ManageMembersPage({
                 <MemberTileSkeleton key={i} isDark={isDark} />
               ))
             ) : filteredMembers.length > 0 ? (
-              filteredMembers.map((member) => (
+              paginatedMembers.map((member) => (
                 <div 
                   key={member.id} 
                   className="p-4 rounded-xl border transition-all hover:shadow-lg"
@@ -949,6 +1047,17 @@ export default function ManageMembersPage({
           </div>
         )}
 
+        {viewMode === "tile" && !error && !isLoading && (
+          <PaginationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={filteredMembers.length}
+            pageSize={ITEMS_PER_PAGE}
+            isDark={isDark}
+            onPageChange={setCurrentPage}
+          />
+        )}
+
         {/* Table View */}
         {viewMode === "table" && !error && (
           isLoading ? (
@@ -986,7 +1095,7 @@ export default function ManageMembersPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {filteredMembers.map((member) => (
+                  {paginatedMembers.map((member) => (
                     <tr key={member.id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
                         {member.id}
@@ -1081,6 +1190,17 @@ export default function ManageMembersPage({
               )}
             </div>
           )
+        )}
+
+        {viewMode === "table" && !error && !isLoading && (
+          <PaginationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={filteredMembers.length}
+            pageSize={ITEMS_PER_PAGE}
+            isDark={isDark}
+            onPageChange={setCurrentPage}
+          />
         )}
       </PageLayout>
 

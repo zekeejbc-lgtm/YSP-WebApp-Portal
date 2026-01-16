@@ -550,7 +550,7 @@ function MobileSideBar({
                 }}
               >
                 {/* Logo + YSP Text */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 min-w-0">
                   {logoUrl && (
                     <img
                       src={logoUrl}
@@ -558,14 +558,17 @@ function MobileSideBar({
                       className="w-8 h-8 object-contain flex-shrink-0"
                     />
                   )}
-                  <div className="flex flex-col">
+                  <div className="flex flex-col min-w-0">
                     <div
                       style={{
                         fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                        fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                        fontSize: `${DESIGN_TOKENS.typography.fontSize.caption - 1}px`,
                         fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                         color: DESIGN_TOKENS.colors.brand.orange,
                         lineHeight: 1.2,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                       }}
                     >
                       Youth Service Philippines

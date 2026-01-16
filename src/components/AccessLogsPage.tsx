@@ -755,7 +755,7 @@ export default function AccessLogsPage({
 
   // Table skeleton
   const TableSkeleton = () => (
-    <div className="overflow-x-auto rounded-xl border" style={{
+    <div className="overflow-x-auto rounded-xl border pb-6" style={{
       borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
       background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.5)",
     }}>
@@ -1148,7 +1148,7 @@ export default function AccessLogsPage({
 
       {/* Table View */}
       {viewMode === "table" && !isLoading && !error && (
-        <div className="overflow-x-auto rounded-xl border" style={{
+        <div className="overflow-x-auto rounded-xl border pb-6" style={{
           borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
           background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.5)",
         }}>
