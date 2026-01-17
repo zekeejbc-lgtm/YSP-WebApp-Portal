@@ -6,6 +6,14 @@ import App from "./App.tsx";
 import { clearAppBadge } from "./utils/appBadge";
 import "./index.css";
 
+if (import.meta.env.PROD) {
+  const noop = () => {};
+  console.log = noop;
+  console.info = noop;
+  console.warn = noop;
+  console.debug = noop;
+}
+
 createRoot(document.getElementById("root")!).render(<App />);
 
 let updateToastId: string | number | undefined;
