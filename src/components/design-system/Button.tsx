@@ -53,6 +53,8 @@ export default function Button({
     transition: `all ${DESIGN_TOKENS.motion.duration.fast}ms ${DESIGN_TOKENS.motion.easing}`,
     cursor: disabled ? "not-allowed" : "pointer",
     width: fullWidth ? "100%" : "auto",
+    backgroundClip: "border-box",
+    backgroundOrigin: "border-box",
   };
 
   const sizeStyles = {
@@ -78,7 +80,7 @@ export default function Button({
 
   const variantStyles = {
     primary: {
-      background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+      background: DESIGN_TOKENS.colors.brand.orange,
       color: "#ffffff",
       boxShadow: "0 4px 12px rgba(246, 66, 31, 0.3)",
       border: "2px solid transparent",

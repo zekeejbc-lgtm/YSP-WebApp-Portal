@@ -32,6 +32,7 @@ import {
   type MaintenanceModeState,
 } from "../utils/maintenanceMode";
 import MaintenanceModeModal, { type MaintenanceFormData } from "./MaintenanceModeModal";
+import { MODAL_REGULATIONS, getHeaderGradient, getModalStyles } from "./modal-regulations";
 import {
   getSystemHealth,
   createDatabaseBackup,
@@ -64,6 +65,7 @@ import {
   ExternalLink,
   Clock,
   Users,
+  X,
 } from "lucide-react";
 
 interface SystemToolsPageProps {
@@ -162,6 +164,124 @@ function ToolCardSkeleton({ isDark }: { isDark: boolean }) {
   );
 }
 
+interface CacheRefreshModalProps {
+  isOpen: boolean;
+  isDark: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}
+
+function CacheRefreshModal({ isOpen, isDark, onConfirm, onClose }: CacheRefreshModalProps) {
+  if (!isOpen) return null;
+
+  const modalStyles = getModalStyles(isDark, "small");
+
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4 md:p-8"
+      style={{
+        background: modalStyles.overlay.background,
+        backdropFilter: modalStyles.overlay.backdropFilter,
+        zIndex: 9999,
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full overflow-hidden"
+        style={{
+          maxWidth: modalStyles.panel.maxWidth,
+          maxHeight: MODAL_REGULATIONS.panel.maxHeight,
+          background: modalStyles.panel.background,
+          backdropFilter: modalStyles.panel.backdropFilter,
+          border: `${modalStyles.panel.borderWidth} solid ${modalStyles.panel.borderColor}`,
+          borderRadius: modalStyles.panel.borderRadius,
+          boxShadow: modalStyles.panel.boxShadow,
+          transition: MODAL_REGULATIONS.transitions.normal,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center justify-between px-4 py-4 md:px-6 border-b"
+          style={{
+            background: getHeaderGradient(isDark, "blue"),
+            borderColor: modalStyles.header.borderColor,
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className="p-2 rounded-lg"
+              style={{
+                backgroundColor: `${DESIGN_TOKENS.colors.brand.orange}20`,
+                color: DESIGN_TOKENS.colors.brand.orange,
+              }}
+            >
+              <RefreshCw className="w-5 h-5" />
+            </div>
+            <h2
+              className="text-base md:text-lg"
+              style={{
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              }}
+            >
+              Hard Refresh Required
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg transition-colors active:scale-95"
+            style={{ background: "transparent", transition: MODAL_REGULATIONS.transitions.fast }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = isDark
+                ? MODAL_REGULATIONS.closeButton.background.hover.dark
+                : MODAL_REGULATIONS.closeButton.background.hover.light;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+            }}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="px-4 py-5 md:px-6">
+          <p
+            className="text-sm md:text-base"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
+              color: isDark ? "#e5e7eb" : "#374151",
+            }}
+          >
+            Cache version has been updated. Please do a hard refresh to clear cached data and load
+            the latest changes.
+          </p>
+          <p
+            className="mt-2 text-xs md:text-sm"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
+              color: isDark ? "#9ca3af" : "#6b7280",
+            }}
+          >
+            Tip: You can also press Ctrl+Shift+R.
+          </p>
+        </div>
+
+        <div
+          className="flex flex-col-reverse gap-2 px-4 py-4 md:px-6 border-t sm:flex-row sm:justify-end"
+          style={{ borderColor: modalStyles.footer.borderColor }}
+        >
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Not Now
+          </Button>
+          <Button variant="primary" size="sm" onClick={onConfirm}>
+            Hard Refresh
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SystemToolsPage({
   onClose,
   isDark,
@@ -178,6 +298,7 @@ export default function SystemToolsPage({
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
   const [maintenanceMode, setMaintenanceMode] = useState<MaintenanceModeState>(getMaintenanceMode());
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
+  const [showCacheRefreshModal, setShowCacheRefreshModal] = useState(false);
   const [selectedPage, setSelectedPage] = useState<string | null>(null);
 
   // Helper functions for progress toast
@@ -352,16 +473,8 @@ export default function SystemToolsPage({
         description: 'All users will see the refresh prompt on their next page load.',
         duration: 5000,
       });
-      
-      const confirmRefresh = window.confirm(
-        'Cache version has been updated. Do you want to refresh your browser now to apply changes?'
-      );
-      
-      if (confirmRefresh) {
-        await forceClearAllCaches();
-      } else {
-        fetchSystemHealth();
-      }
+
+      setShowCacheRefreshModal(true);
     } catch (error) {
       if (signal.aborted) {
         return;
@@ -376,6 +489,16 @@ export default function SystemToolsPage({
     } finally {
       setIsOperationLoading(false);
     }
+  };
+
+  const handleConfirmHardRefresh = async () => {
+    setShowCacheRefreshModal(false);
+    await forceClearAllCaches();
+  };
+
+  const handleDismissHardRefresh = () => {
+    setShowCacheRefreshModal(false);
+    fetchSystemHealth();
   };
 
   const handleExportData = async () => {
@@ -1248,41 +1371,52 @@ export default function SystemToolsPage({
       </div>
 
       {/* Warning Notice */}
-      <div
-        className="p-4 rounded-xl border-l-4"
-        style={{
-          background: isDark
-            ? "rgba(239, 68, 68, 0.1)"
-            : "rgba(239, 68, 68, 0.05)",
-          borderColor: "#ef4444",
-        }}
-      >
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <div>
+        <div
+          className="relative overflow-hidden rounded-2xl border border-red-200/70 dark:border-red-500/30 p-5"
+          style={{
+            background: isDark
+              ? "linear-gradient(120deg, rgba(127,29,29,0.35), rgba(30,41,59,0.6))"
+              : "linear-gradient(120deg, rgba(254,242,242,0.96), rgba(255,255,255,0.96))",
+            boxShadow: isDark
+              ? "0 16px 32px -26px rgba(248, 113, 113, 0.7)"
+              : "0 16px 32px -26px rgba(185, 28, 28, 0.45)",
+          }}
+        >
+          <div
+            className="absolute inset-x-0 top-0 h-1"
+            style={{ background: "linear-gradient(90deg, #ef4444, #f97316)" }}
+          />
+          <div className="flex items-start gap-3">
             <div
-              className="mb-1"
+              className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full"
               style={{
-                fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                color: "#ef4444",
+                background: isDark ? "rgba(239,68,68,0.2)" : "rgba(239,68,68,0.12)",
               }}
             >
-              Critical Operations Warning
+              <AlertTriangle className="w-5 h-5 text-red-500" />
             </div>
-            <p
-              style={{
-                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
-                color: isDark ? "#fca5a5" : "#dc2626",
-              }}
-            >
-              System tools perform critical operations that can affect data integrity and
-              system availability. Always create a backup before making major changes.
-              Contact the system administrator if you're unsure about any operation.
-            </p>
+            <div>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-red-600 dark:text-red-300">
+                  Critical Warning
+                </span>
+                <span className="rounded-full border border-red-200/70 dark:border-red-400/30 px-2 py-0.5 text-[0.7rem] font-medium text-red-600 dark:text-red-200">
+                  Proceed carefully
+                </span>
+              </div>
+              <p
+                style={{
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                  color: isDark ? "#fecaca" : "#b91c1c",
+                }}
+              >
+                System tools perform critical operations that can affect data integrity and
+                system availability. Always create a backup before making major changes.
+                Contact the system administrator if you're unsure about any operation.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Maintenance Mode Configuration Modal */}
       <MaintenanceModeModal
@@ -1294,6 +1428,13 @@ export default function SystemToolsPage({
         onProceed={handleEnableMaintenance}
         title={selectedPage ? `Enable Maintenance: ${selectedPage}` : "Enable Full PWA Maintenance"}
         isDark={isDark}
+      />
+
+      <CacheRefreshModal
+        isOpen={showCacheRefreshModal}
+        isDark={isDark}
+        onConfirm={handleConfirmHardRefresh}
+        onClose={handleDismissHardRefresh}
       />
     </PageLayout>
   );

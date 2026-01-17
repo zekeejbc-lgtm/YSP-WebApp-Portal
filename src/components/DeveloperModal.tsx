@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Mail, Phone, MapPin, Code2, Edit2, Save, Upload, Trash2, Plus, Link, Loader2 } from 'lucide-react';
+import { X, Mail, Phone, MapPin, Code2, Edit2, Save, Upload, Trash2, Plus, Link, Loader2, LifeBuoy } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { type UploadToastMessage } from './UploadToast';
 import {
@@ -1051,15 +1051,37 @@ export default function DeveloperModal({
             )}
           </div>
 
-          {/* Support Notice */}
-          <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-500 dark:border-amber-600 rounded-r-lg">
-            <p
-              className="text-gray-900 dark:text-white"
-              style={{ fontSize: '0.875rem', lineHeight: '1.625', fontWeight: '500' }}
+            {/* Support Notice */}
+            <div
+              className="relative overflow-hidden rounded-2xl border border-amber-200/80 dark:border-amber-700/40 p-5"
+              style={{
+                background: isDark
+                  ? 'linear-gradient(135deg, rgba(120,53,15,0.35), rgba(30,41,59,0.6))'
+                  : 'linear-gradient(135deg, rgba(255,248,235,0.95), rgba(255,255,255,0.95))',
+                boxShadow: isDark
+                  ? '0 12px 30px -22px rgba(251, 191, 36, 0.6)'
+                  : '0 12px 30px -22px rgba(217, 119, 6, 0.45)',
+              }}
             >
-              <strong>Need Technical Support?</strong> Should you encounter any issues, errors, or technical difficulties while using this Web App, please feel free to reach out. Your feedback helps improve the platform for everyone.
-            </p>
-          </div>
+              <div
+                className="absolute -top-8 -right-10 h-24 w-24 rounded-full"
+                style={{
+                  background: isDark ? 'rgba(251,191,36,0.18)' : 'rgba(251,191,36,0.22)',
+                }}
+              />
+              <div className="relative flex flex-col gap-3">
+                <span className="inline-flex w-fit items-center gap-2 rounded-full bg-amber-100/80 dark:bg-amber-800/40 px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                  <LifeBuoy className="h-3.5 w-3.5" />
+                  Support Desk
+                </span>
+                <p
+                  className="text-gray-900 dark:text-gray-100"
+                  style={{ fontSize: '0.875rem', lineHeight: '1.6', fontWeight: '500' }}
+                >
+                  <span className="font-semibold">Need Technical Support?</span> Should you encounter any issues, errors, or technical difficulties while using this Web App, please feel free to reach out. Your feedback helps improve the platform for everyone.
+                </p>
+              </div>
+            </div>
         </div>
         )}
       </div>

@@ -1,0 +1,344 @@
+# YSP Tagum WebApp Documentation
+
+## Purpose
+This document is the public, plain-language guide to the YSP Tagum WebApp. It explains what the app does, how to use it, what features are available, and how administrators manage the system.
+
+If you are a member, you can read the User sections. If you are an admin or auditor, see the Admin and Operations sections.
+
+## What This WebApp Is
+The YSP Tagum WebApp is the official portal for Youth Service Philippines - Tagum Chapter. It combines:
+- A public-facing website for visitors and supporters.
+- A role-based portal for members and leaders.
+- A backend powered by Google Apps Script and Google Sheets.
+- A Progressive Web App (PWA) experience with offline support.
+
+## Audience
+- Public visitors: discover the organization and campaigns.
+- Members: access announcements, attendance, profile, and QR ID.
+- Heads and admins: manage events, attendance, members, and tools.
+- Auditors: access logs and compliance reports.
+
+## Quick Start (For Everyone)
+1. Open the web app link in your browser.
+2. Explore public pages: Home, About, Projects, Contact, Feedback, Tabang ta Bai.
+3. If you are a member, click Login and use your credentials.
+4. After login, use the sidebar to access member-only features.
+
+## Quick Start (For Developers)
+Prerequisites: Node.js 18+, npm or yarn.
+1. Install: `npm install`
+2. Start dev server: `npm run dev`
+3. Build: `npm run build`
+4. Preview build: `npm run preview`
+
+## Tech Stack
+- Frontend: React 18, TypeScript, Vite
+- UI: Tailwind CSS, Radix UI, shadcn/ui
+- Backend: Google Apps Script + Google Sheets
+- Hosting: Vercel
+- PWA: Workbox service worker, offline fallback
+- Notifications: Firebase Cloud Messaging (optional)
+
+## Navigation Overview
+Public (logged out):
+- Top bar tabs: Home, About, Projects, Contact, Feedback, Tabang ta Bai
+- Separate Login button (not part of the tabs)
+Mobile: uses the hamburger menu only
+
+Logged in:
+- Sidebar grouped navigation (Home, Dashboard, Attendance, Communication, Logs, Profile)
+- Top bar tabs are hidden on mobile
+
+See: `src/NAVIGATION_STRUCTURE.md` for the strict rules.
+
+## Roles and Access
+Roles are hierarchical. Higher roles inherit lower role access.
+- Auditor: full access including Access Logs
+- Admin: management access to members, events, tools
+- Head: leadership access to attendance and dashboard
+- Member: standard portal access
+- Suspended: profile-only access
+- Banned: cannot log in
+
+Demo accounts (default password: demo123):
+- auditor, admin, head, member, suspended, banned
+
+## Main User Journeys
+
+### Visitor Journey (Public)
+1. Land on the homepage.
+2. Read About, Mission, Vision, and Advocacy Pillars.
+3. Browse Projects and view details.
+4. Send Feedback or join a campaign via Tabang ta Bai.
+5. Use Contact section for inquiries.
+
+### Member Journey
+1. Log in with your account.
+2. Check Announcements for updates.
+3. View your My QR ID for attendance scanning.
+4. View your Attendance Transparency for participation records.
+5. Update your profile and verify your email.
+
+### Admin Journey
+1. Log in as admin.
+2. Manage members and applications.
+3. Create or edit events and attendance settings.
+4. Post announcements to members.
+5. Use System Tools for backups and maintenance.
+
+### Auditor Journey
+1. Log in as auditor.
+2. Review Access Logs and exports.
+3. Verify activity for compliance.
+
+## Feature Guide (Plain Language)
+
+### Public Website
+The public site explains who YSP Tagum is and what the chapter does.
+- Hero section with headline and call-to-action.
+- About, Mission, Vision, and Advocacy Pillars.
+- Projects gallery with modal details.
+- Contact information and social links.
+- Feedback center for user comments.
+- Tabang ta Bai donation campaigns.
+
+### Tabang ta Bai (Donation System)
+This campaign page supports donations and fundraising.
+- Campaign cards with goals and progress.
+- Multiple payment options (e.g., GCash, Maya, GoTyme).
+- Copy-to-clipboard for account numbers.
+- Receipt upload with file size and type checks.
+- Admin verification flow (approve or reject).
+- Donor history shows only verified donations.
+
+### Feedback Center
+Collects community feedback.
+- Star rating and category selection.
+- Optional contact info for follow-up.
+- Admin can review and track feedback.
+
+### Authentication and Sessions
+Login is handled by the GAS backend with session storage.
+- Users log in with username or email.
+- Session tokens stored locally.
+- Role is returned by backend and controls navigation visibility.
+
+### My Profile
+Members can view and edit their information.
+- Profile photo upload with preview.
+- Edit details and save to backend.
+- Change password flow.
+- Email verification with OTP.
+
+### Email Verification (OTP)
+The system verifies personal email addresses.
+- A 6-digit OTP is sent to the user.
+- OTP expires after 15 minutes.
+- Rate limiting and lockout protect against abuse.
+
+### Officer Directory
+Search for officers by name, ID code, committee, or position.
+- Results are cached for speed.
+
+### Announcements
+Admins can broadcast updates.
+- Create, edit, and delete announcements.
+- Priority levels and categories.
+- Pin announcements to the top.
+- Optional image attachments (up to 5).
+
+### Attendance and Events
+Attendance is tied to events and QR scanning.
+- Events include location and geofence settings.
+- QR Attendance Scanner for time-in and time-out.
+- Manual attendance entry for admin use.
+- Attendance dashboard for analytics.
+- Member view for transparency and history.
+
+### Manage Members
+Admin can manage member records.
+- Search, filters, and member details.
+- Export member list to PDF with branding.
+- Account creation and updates.
+
+### Membership Applications
+Admin controls application intake.
+- Open or close applications.
+- Create application opportunities with deadlines.
+- Customize form fields and requirements.
+- Review pending applications.
+
+### System Tools
+Admin utilities for operational control.
+- System health status.
+- Backup and export of data.
+- Cache version bump to force refresh.
+- Maintenance mode for full app or per-page.
+
+### Access Logs (Auditor Only)
+Tracks access and actions for compliance.
+- Filters and search.
+- Table and tile views.
+- CSV and PDF export.
+
+### PWA and Offline Support
+The app supports offline fallback.
+- Installs as an app on mobile and desktop.
+- Offline fallback page if no network.
+- Background sync for non-file operations.
+- Caches pages, fonts, and images for speed.
+
+### Notifications (Optional)
+If Firebase is configured:
+- Push notifications can be delivered.
+- Tokens are registered to the backend.
+
+## Pages and Modules
+Public pages:
+- Home, About, Projects, Contact, Feedback, Tabang ta Bai
+
+Member pages:
+- Officer Directory, My QR ID, Attendance Transparency
+- Announcements (view)
+- My Profile
+
+Admin pages:
+- Manage Members
+- Manage Events
+- Attendance Dashboard
+- Manual Attendance Entry
+- System Tools
+- Membership Applications
+
+Auditor pages:
+- Access Logs
+
+## Data and Backend (Simple Explanation)
+The backend uses Google Apps Script and Google Sheets.
+- Each feature reads and writes to a sheet.
+- The frontend uses services in `src/services` to call the API.
+- Content is cached for speed and reduced API calls.
+
+Key backend files:
+- `gas-backend/Homepage_Main.gs`
+- `gas-backend/Loginpage_Main.gs`
+- `gas-backend/Loginpage_Hash.gs`
+- `gas-backend/Directory_Main.gs`
+- `gas-backend/Attendance_Main.gs`
+- `gas-backend/Attendance_Events.gs`
+- `gas-backend/SystemTools_Main.gs`
+- `gas-backend/Notifications_Main.gs`
+
+Key sheets:
+- Homepage_Main
+- User Profiles
+- Events
+- EventAttendance
+- System Settings
+- Email_Verification_OTPs
+- OTP_Failed_Attempts
+- Projects (if enabled)
+
+## Environment Variables
+Required:
+- `VITE_GAS_HOMEPAGE_API_URL`
+- `VITE_GAS_LOGIN_API_URL`
+- `VITE_GAS_SYSTEM_TOOLS_API_URL`
+- `VITE_GAS_EVENTS_API_URL`
+
+Optional:
+- `VITE_GAS_NOTIFICATIONS_API_URL`
+- `VITE_GAS_PROJECTS_API_URL`
+
+Firebase (push notifications):
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+- `VITE_FIREBASE_VAPID_KEY`
+
+## How Updates Work (Non-Technical)
+When admins update content:
+1. The app sends data to the Google Apps Script backend.
+2. The backend writes to the Google Sheet.
+3. The app refreshes cached data for all users.
+
+## Admin Operating Procedures
+
+### Posting Announcements
+1. Go to Announcements.
+2. Click Create Announcement.
+3. Add title, content, and priority.
+4. Pin if important.
+5. Publish.
+
+### Managing Events
+1. Open Manage Events.
+2. Create or edit event.
+3. Set date, time, and location.
+4. Enable geofence if required.
+5. Save and notify.
+
+### Recording Attendance
+1. Use QR scanner for time-in/out.
+2. For exceptions, use Manual Attendance Entry.
+3. Check Attendance Dashboard for stats.
+
+### Managing Members
+1. Search for the member.
+2. View or edit details.
+3. Save changes and verify.
+4. Export if needed.
+
+### Using System Tools
+1. Check system health.
+2. Run backups monthly.
+3. Export data when required.
+4. Use maintenance mode only for planned downtime.
+
+## Privacy and Security
+- Sessions use tokens stored in the browser.
+- OTP verification prevents fake or invalid email changes.
+- Access Logs provide audit trails.
+- CORS is handled by GAS web app deployment.
+
+## Troubleshooting (Common)
+- API URL not configured: check `.env` and rebuild.
+- No data loading: confirm GAS deployment and access.
+- Login failed: verify account status and role.
+- Offline page: check network, then refresh.
+- Missing notifications: ensure Firebase setup and HTTPS.
+
+## Testing and Verification
+Suggested checks after changes:
+- Login with each role and verify navigation.
+- Create an announcement and view as member.
+- Create an event and record attendance.
+- Export logs as auditor.
+- Test offline mode by disabling network.
+
+Reference guides:
+- `src/TESTING_QUICK_REFERENCE.md`
+- `src/QUICK_TEST_GUIDE_FINAL.md`
+
+## Glossary
+- GAS: Google Apps Script
+- PWA: Progressive Web App
+- OTP: One-Time Password
+- RBAC: Role-Based Access Control
+- FCM: Firebase Cloud Messaging
+
+## File Map (For Developers)
+- `src/App.tsx`: routing and navigation
+- `src/index.css`: global styles
+- `src/sw.ts`: service worker and offline logic
+- `src/components`: feature pages and UI
+- `src/services`: backend API wrappers
+- `gas-backend`: Apps Script backend
+
+## Notes
+- Some admin pages use local sample data until connected to GAS.
+- Keep navigation rules aligned with `src/NAVIGATION_STRUCTURE.md`.
+- Follow design system rules in `src/INSTRUCTIONS.md`.
