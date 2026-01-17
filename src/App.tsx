@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import {
   Moon,
   Sun,
@@ -491,6 +491,11 @@ const LazyFallback = ({ isDark, label = "Loading..." }: { isDark: boolean; label
 );
 
 export default function App() {
+  const LAST_VIEW_KEY = "ysp_last_view";
+  const LAST_SCROLL_KEY = "ysp_last_scroll";
+  const hasRestoredViewRef = useRef(false);
+  const pendingScrollRestoreRef = useRef<number | null>(null);
+  const hasRestoredScrollRef = useRef(false);
   const [isDark, setIsDark] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [modalProject, setModalProject] =
@@ -513,6 +518,7 @@ export default function App() {
   // --- END NEW CODE ---
   // ... rest of your code
   const [isAdmin, setIsAdmin] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [userRole, setUserRole] = useState<string>("guest"); // guest, member, admin
   const [userName, setUserName] = useState<string>("");
   const [userIdCode, setUserIdCode] = useState<string>("");
@@ -679,6 +685,7 @@ export default function App() {
       setUserProfilePicture(storedUser.profilePic || '');
       console.log('[App] Session restored for user:', storedUser.name);
     }
+    setSessionChecked(true);
   }, []);
 
   // Fetch homepage content from GAS backend on mount
@@ -1950,6 +1957,11 @@ export default function App() {
               }
             }
           }
+          try {
+            localStorage.setItem(LAST_SCROLL_KEY, String(window.scrollY));
+          } catch {
+            // Ignore storage failures.
+          }
           ticking = false;
         });
         ticking = true;
@@ -1959,6 +1971,239 @@ export default function App() {
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  const currentView = useMemo(() => {
+    if (showFeedbackPage) return "feedback";
+    if (showMembershipApplicationsPage) return "membership-editor";
+    if (showMembershipApplications) return "membership-applications";
+    if (showOfficerDirectory) return "officer-directory";
+    if (showAttendanceDashboard) return "attendance-dashboard";
+    if (showAttendanceRecording) return "attendance-recording";
+    if (showManageEvents) return "manage-events";
+    if (showMyQRID) return "my-qrid";
+    if (showAttendanceTransparency) return "attendance-transparency";
+    if (showMyProfile) return "my-profile";
+    if (showAnnouncements) return "announcements";
+    if (showAccessLogs) return "access-logs";
+    if (showSystemTools) return "system-tools";
+    if (showManageMembers) return "manage-members";
+    if (showSettings) return "settings";
+    if (showDonationPage) return "donation";
+    return activePage;
+  }, [
+    activePage,
+    showAccessLogs,
+    showAnnouncements,
+    showAttendanceDashboard,
+    showAttendanceRecording,
+    showAttendanceTransparency,
+    showDonationPage,
+    showFeedbackPage,
+    showManageEvents,
+    showManageMembers,
+    showMembershipApplications,
+    showMembershipApplicationsPage,
+    showMyProfile,
+    showMyQRID,
+    showOfficerDirectory,
+    showSettings,
+    showSystemTools,
+  ]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_VIEW_KEY, currentView);
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [currentView]);
+
+  const openStoredView = useCallback((view: string) => {
+    if (!view) return false;
+
+    switch (view) {
+      case "home":
+      case "about":
+      case "projects":
+      case "contact":
+      case "org-chart":
+        setActivePage(view);
+        return true;
+      case "feedback":
+        setActivePage("feedback");
+        setShowFeedbackPage(true);
+        return true;
+      case "membership-applications":
+        setActivePage("membership-applications");
+        setShowMembershipApplications(true);
+        return true;
+      case "membership-editor":
+        if (hasRoleAccess(["admin", "auditor", "head"])) {
+          setActivePage("membership-editor");
+          setShowMembershipApplicationsPage(true);
+          return true;
+        }
+        return false;
+      case "officer-directory":
+        if (hasRoleAccess(["member"])) {
+          setActivePage("officer-directory");
+          setShowOfficerDirectory(true);
+          return true;
+        }
+        return false;
+      case "attendance-dashboard":
+        if (hasRoleAccess(["head"])) {
+          setActivePage("attendance-dashboard");
+          setShowAttendanceDashboard(true);
+          return true;
+        }
+        return false;
+      case "attendance-recording":
+        if (hasRoleAccess(["head"])) {
+          setActivePage("attendance-recording");
+          setShowAttendanceRecording(true);
+          return true;
+        }
+        return false;
+      case "manage-events":
+        if (hasRoleAccess(["admin"])) {
+          setActivePage("manage-events");
+          setShowManageEvents(true);
+          return true;
+        }
+        return false;
+      case "my-qrid":
+        if (hasRoleAccess(["member"])) {
+          setActivePage("my-qrid");
+          setShowMyQRID(true);
+          return true;
+        }
+        return false;
+      case "attendance-transparency":
+        if (hasRoleAccess(["member"])) {
+          setActivePage("attendance-transparency");
+          setShowAttendanceTransparency(true);
+          return true;
+        }
+        return false;
+      case "my-profile":
+        if (isAdmin || userRole === "suspended") {
+          setActivePage("my-profile");
+          setShowMyProfile(true);
+          return true;
+        }
+        return false;
+      case "announcements":
+        if (hasRoleAccess(["member"])) {
+          setActivePage("announcements");
+          setShowAnnouncements(true);
+          return true;
+        }
+        return false;
+      case "access-logs":
+        if (hasRoleAccess(["auditor"])) {
+          setActivePage("access-logs");
+          setShowAccessLogs(true);
+          return true;
+        }
+        return false;
+      case "system-tools":
+        if (hasRoleAccess(["admin"])) {
+          setActivePage("system-tools");
+          setShowSystemTools(true);
+          return true;
+        }
+        return false;
+      case "manage-members":
+        if (hasRoleAccess(["admin"])) {
+          setActivePage("manage-members");
+          setShowManageMembers(true);
+          return true;
+        }
+        return false;
+      case "settings":
+        if (hasRoleAccess(["member"])) {
+          setActivePage("settings");
+          setShowSettings(true);
+          return true;
+        }
+        return false;
+      case "donation":
+        if (isAdmin) {
+          setActivePage("donation");
+          setShowDonationPage(true);
+          return true;
+        }
+        return false;
+      default:
+        return false;
+    }
+  }, [
+    hasRoleAccess,
+    isAdmin,
+    userRole,
+    setActivePage,
+    setShowAccessLogs,
+    setShowAnnouncements,
+    setShowAttendanceDashboard,
+    setShowAttendanceRecording,
+    setShowAttendanceTransparency,
+    setShowDonationPage,
+    setShowFeedbackPage,
+    setShowManageEvents,
+    setShowManageMembers,
+    setShowMembershipApplications,
+    setShowMembershipApplicationsPage,
+    setShowMyProfile,
+    setShowMyQRID,
+    setShowOfficerDirectory,
+    setShowSettings,
+    setShowSystemTools,
+  ]);
+
+  useEffect(() => {
+    if (!sessionChecked || hasRestoredViewRef.current) return;
+
+    let storedView: string | null = null;
+    let storedScroll: string | null = null;
+    try {
+      storedView = localStorage.getItem(LAST_VIEW_KEY);
+      storedScroll = localStorage.getItem(LAST_SCROLL_KEY);
+    } catch {
+      hasRestoredViewRef.current = true;
+      return;
+    }
+
+    if (storedScroll) {
+      const parsed = Number(storedScroll);
+      if (!Number.isNaN(parsed)) {
+        pendingScrollRestoreRef.current = parsed;
+      }
+    }
+
+    if (storedView) {
+      const opened = openStoredView(storedView);
+      if (!opened) {
+        setActivePage("home");
+      }
+    }
+
+    hasRestoredViewRef.current = true;
+  }, [openStoredView, sessionChecked]);
+
+  useEffect(() => {
+    if (hasRestoredScrollRef.current) return;
+    if (pendingScrollRestoreRef.current === null) return;
+    if (isLoadingHomepage || isLoadingProjects) return;
+
+    const targetScroll = pendingScrollRestoreRef.current;
+    const timer = window.setTimeout(() => {
+      window.scrollTo({ top: targetScroll, behavior: "auto" });
+      hasRestoredScrollRef.current = true;
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [currentView, isLoadingHomepage, isLoadingProjects]);
 
   // Check for Full PWA Maintenance Mode (blocks logged-in features only)
   // Public home page remains accessible with Login and Feedback buttons (if not in maintenance)

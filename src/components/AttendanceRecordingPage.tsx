@@ -892,9 +892,45 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const [pendingRecord, setPendingRecord] = useState<any>(null);
   const memberCacheRef = useRef<Map<string, MemberForAttendance>>(new Map());
   const isProcessingScanRef = useRef(false);
+  const isStartingScannerRef = useRef(false);
+  const scanPauseRef = useRef(false);
   const lastScanRef = useRef<{ id: string; at: number } | null>(null);
   const skipNextMemberReloadRef = useRef(false);
-  const qrScanCooldownMs = 1500;
+  const qrScanCooldownMs = 800;
+  const hasPrefetchedMembersRef = useRef(false);
+  const currentUser = getStoredUser();
+  const isScannerPriorityUser = currentUser?.role === "head" || currentUser?.role === "admin" || currentUser?.role === "auditor";
+  const MEMBERS_CACHE_KEY = "ysp_attendance_members_cache_v1";
+  const MEMBERS_CACHE_TS_KEY = "ysp_attendance_members_cache_ts_v1";
+  const MEMBERS_CACHE_TTL_MS = 5 * 60 * 1000;
+  const navEntries = performance.getEntriesByType("navigation");
+  const isReload = navEntries.length > 0 && (navEntries[0] as PerformanceNavigationTiming).type === "reload";
+
+  const loadMembersFromCache = (): MemberForAttendance[] | null => {
+    try {
+      const cachedAtRaw = localStorage.getItem(MEMBERS_CACHE_TS_KEY);
+      const cachedAt = cachedAtRaw ? Number(cachedAtRaw) : 0;
+      if (!cachedAt || Date.now() - cachedAt > MEMBERS_CACHE_TTL_MS) {
+        return null;
+      }
+      const raw = localStorage.getItem(MEMBERS_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return null;
+      return parsed as MemberForAttendance[];
+    } catch {
+      return null;
+    }
+  };
+
+  const saveMembersToCache = (membersToCache: MemberForAttendance[]) => {
+    try {
+      localStorage.setItem(MEMBERS_CACHE_KEY, JSON.stringify(membersToCache));
+      localStorage.setItem(MEMBERS_CACHE_TS_KEY, String(Date.now()));
+    } catch {
+      // Ignore cache write failures (e.g., storage full or disabled).
+    }
+  };
 
   const normalizeMemberId = (value: string): string =>
     value.trim().toLowerCase().replace(/\s+/g, "");
@@ -1222,8 +1258,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setIsRefreshing(true);
     clearEventsCache();
     clearMembersCache();
+    localStorage.removeItem(MEMBERS_CACHE_KEY);
+    localStorage.removeItem(MEMBERS_CACHE_TS_KEY);
     await loadEvents(true);
-    await loadMembers();
+    await loadMembers(undefined, 100, true, false);
     setIsRefreshing(false);
   };
 
@@ -1233,19 +1271,38 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const [isRecordingAttendance, setIsRecordingAttendance] = useState(false);
 
   // Load members from backend
-  const loadMembers = useCallback(async (search?: string) => {
-    setIsLoadingMembers(true);
+  const loadMembers = useCallback(async (search?: string, limit: number = 100, showLoading: boolean = true, useCache: boolean = true) => {
+    if (showLoading) {
+      setIsLoadingMembers(true);
+    }
     try {
-      const fetchedMembers = await getMembersForAttendance(search, 100);
+      if (!search && isReload) {
+        localStorage.removeItem(MEMBERS_CACHE_KEY);
+        localStorage.removeItem(MEMBERS_CACHE_TS_KEY);
+      }
+      if (!search && useCache) {
+        const cachedMembers = loadMembersFromCache();
+        if (cachedMembers && cachedMembers.length > 0) {
+          cachedMembers.forEach(cacheMember);
+          setMembers(cachedMembers);
+          return;
+        }
+      }
+      const fetchedMembers = await getMembersForAttendance(search, limit);
       fetchedMembers.forEach(cacheMember);
       setMembers(fetchedMembers);
+      if (!search) {
+        saveMembersToCache(fetchedMembers);
+      }
     } catch (error) {
       console.error("Failed to load members:", error);
       toast.error("Failed to load members", {
         description: error instanceof Error ? error.message : "Unknown error",
       });
     } finally {
-      setIsLoadingMembers(false);
+      if (showLoading) {
+        setIsLoadingMembers(false);
+      }
     }
   }, []);
 
@@ -1256,6 +1313,22 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     }
   }, [currentStep, selectedMode, loadMembers]);
 
+  // Warm members cache for faster QR lookups
+  useEffect(() => {
+    if (currentStep === "recording" && selectedMode === "qr" && !hasPrefetchedMembersRef.current) {
+      hasPrefetchedMembersRef.current = true;
+      loadMembers(undefined, 500, false);
+    }
+  }, [currentStep, selectedMode, loadMembers]);
+
+  // Prefetch members early for heads/admins to reduce scan latency
+  useEffect(() => {
+    if (isScannerPriorityUser && !hasPrefetchedMembersRef.current) {
+      hasPrefetchedMembersRef.current = true;
+      loadMembers(undefined, 500, false);
+    }
+  }, [isScannerPriorityUser, loadMembers]);
+
   // Debounced member search from backend
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -1265,7 +1338,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       }
 
       if (memberSearchInput && memberSearchInput.length >= 2) {
-        loadMembers(memberSearchInput);
+        loadMembers(memberSearchInput, 100, true, false);
       } else if (currentStep === "recording" && selectedMode === "manual" && !memberSearchInput) {
         loadMembers();
       }
@@ -1308,6 +1381,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     if (currentStep === "recording") {
       setCurrentStep("mode-selection");
       setIsScanning(false);
+      scanPauseRef.current = false;
       setSelectedMember("");
       setMemberSearchInput("");
       setShowMemberDropdown(false);
@@ -1324,6 +1398,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setSelectedEvent(null);
     setSelectedMode(null);
     setIsScanning(false);
+    scanPauseRef.current = false;
     setSelectedMember("");
     setMemberSearchInput("");
     setShowMemberDropdown(false);
@@ -1334,6 +1409,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setCurrentStep("mode-selection");
     setSelectedMode(null);
     setIsScanning(false);
+    scanPauseRef.current = false;
     setSelectedMember("");
     setMemberSearchInput("");
     setShowMemberDropdown(false);
@@ -1474,6 +1550,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       isProcessingScanRef.current = false;
       return;
     }
+    if (scanPauseRef.current) {
+      isProcessingScanRef.current = false;
+      return;
+    }
 
     const rawMemberId = extractMemberIdFromQr(scannedData);
     const normalizedMemberId = normalizeMemberId(rawMemberId);
@@ -1550,6 +1630,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             date: fullDate,
             attendanceId: response.attendanceId,
           });
+          scanPauseRef.current = true;
           setShowVerificationModal(true);
         } catch (error) {
           if (error instanceof AttendanceAPIError && error.code === AttendanceErrorCodes.EXISTING_RECORD) {
@@ -1573,6 +1654,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
               timestamp: timestamp,
               date: fullDate,
             });
+            scanPauseRef.current = true;
             setShowOverwriteWarning(true);
           } else {
             throw error;
@@ -1600,6 +1682,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             attendanceId: response.attendanceId,
             timeIn: response.timeIn,
           });
+          scanPauseRef.current = true;
           setShowVerificationModal(true);
         } catch (error) {
           if (error instanceof AttendanceAPIError) {
@@ -1632,8 +1715,14 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
   // QR Scanner handlers - using html5-qrcode for real QR scanning
   const handleStartScanning = async () => {
+    if (isScanning || isStartingScannerRef.current) {
+      return;
+    }
+
+    isStartingScannerRef.current = true;
     try {
       isProcessingScanRef.current = false;
+      scanPauseRef.current = false;
 
       // Clean up any existing scanner instance
       if (qrScannerRef.current) {
@@ -1658,27 +1747,23 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       qrScannerRef.current = html5QrCode;
 
       const qrCodeSuccessCallback = async (decodedText: string) => {
-        if (isProcessingScanRef.current) return;
+        if (scanPauseRef.current || isProcessingScanRef.current) return;
         isProcessingScanRef.current = true;
 
         console.log("QR Code scanned:", decodedText);
-        
-        // Stop scanning after successful scan
-        try {
-          await html5QrCode.stop();
-        } catch {
-          // Ignore stop errors
-        }
-        setIsScanning(false);
-        
+
         // Process the scanned QR code (member ID)
         await processQRScan(decodedText.trim());
       };
 
       const config = { 
-        fps: 10, 
-        qrbox: { width: 250, height: 250 },
+        fps: 20, 
+        qrbox: { width: 280, height: 280 },
         aspectRatio: 1.0,
+        disableFlip: true,
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true,
+        },
       };
 
       // Start scanning with back camera
@@ -1699,6 +1784,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         description: "Please enable camera permissions in your browser settings.",
       });
       setIsScanning(false);
+    } finally {
+      isStartingScannerRef.current = false;
     }
   };
 
@@ -1716,6 +1803,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       qrScannerRef.current = null;
     }
     setIsScanning(false);
+    isProcessingScanRef.current = false;
+    scanPauseRef.current = false;
   };
 
   // Cleanup scanner on unmount or when leaving QR mode
@@ -1738,6 +1827,20 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       handleStopScanning();
     }
   }, [currentStep, selectedMode]);
+
+  // Auto-start scanning when entering QR mode
+  useEffect(() => {
+    if (
+      currentStep === "recording" &&
+      selectedMode === "qr" &&
+      cameraPermission !== "denied" &&
+      !isScanning &&
+      !showVerificationModal &&
+      !showOverwriteWarning
+    ) {
+      handleStartScanning();
+    }
+  }, [currentStep, selectedMode, cameraPermission, isScanning, showVerificationModal, showOverwriteWarning]);
 
   // Manual attendance handlers - with real backend
   const handleRecordAttendance = async () => {
@@ -1926,6 +2029,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const confirmOverwrite = async () => {
     if (!pendingRecord?.memberData || !selectedEvent) {
       setShowOverwriteWarning(false);
+      scanPauseRef.current = false;
       return;
     }
 
@@ -1966,6 +2070,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       toast.error("Failed to update attendance", {
         description: error instanceof Error ? error.message : "Unknown error",
       });
+      scanPauseRef.current = false;
     } finally {
       setIsRecordingAttendance(false);
     }
@@ -1973,6 +2078,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
   const handleSuccessModalClose = () => {
     setShowVerificationModal(false);
+    scanPauseRef.current = false;
     
     // Show toast notification
     if (pendingRecord) {
@@ -1983,9 +2089,9 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
     setPendingRecord(null);
 
-    if (currentStep === "recording" && selectedMode === "qr" && cameraPermission !== "denied") {
+    if (currentStep === "recording" && selectedMode === "qr" && cameraPermission !== "denied" && !isScanning) {
       setTimeout(() => {
-        if (currentStep === "recording" && selectedMode === "qr") {
+        if (currentStep === "recording" && selectedMode === "qr" && !isScanning) {
           handleStartScanning();
         }
       }, 200);
@@ -2939,7 +3045,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       {showOverwriteWarning && previousRecord && pendingRecord && (
         <div
           className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6 md:p-8"
-          onClick={() => setShowOverwriteWarning(false)}
+          onClick={() => {
+            setShowOverwriteWarning(false);
+            scanPauseRef.current = false;
+          }}
         >
           <div
             className="rounded-xl w-full max-w-md md:max-w-lg border max-h-[85vh] flex flex-col overflow-hidden"
@@ -3083,7 +3192,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
               }}
             >
               <button
-                onClick={() => setShowOverwriteWarning(false)}
+                onClick={() => {
+                  setShowOverwriteWarning(false);
+                  scanPauseRef.current = false;
+                }}
                 className="flex-1 px-4 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-sm md:text-base"
                 style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
               >
