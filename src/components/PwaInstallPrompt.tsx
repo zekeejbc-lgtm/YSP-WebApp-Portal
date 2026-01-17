@@ -126,9 +126,11 @@ export default function PwaInstallPrompt({
   if (!enabled || installed || isDismissed || hasSeen) return null;
 
   if (shouldRenderPrompt && isIos && !deferredPrompt) {
+    const panelClasses =
+      "fixed bottom-6 right-6 z-50 w-[320px] max-w-[90vw] rounded-xl border border-orange-100 bg-white p-3 shadow-xl";
     return (
       <div
-        className="fixed bottom-4 left-1/2 z-50 w-[92%] max-w-md -translate-x-1/2 rounded-2xl border border-orange-200 bg-white/95 p-4 shadow-xl backdrop-blur"
+        className={panelClasses}
         role="dialog"
         aria-live="polite"
       >
@@ -168,9 +170,12 @@ export default function PwaInstallPrompt({
 
   if (!shouldRenderPrompt) return null;
 
+  const panelClasses =
+    "fixed bottom-6 right-6 z-50 w-[320px] max-w-[90vw] rounded-xl border border-orange-100 bg-white p-3 shadow-xl";
+
   return (
     <div
-      className="fixed bottom-4 left-1/2 z-50 w-[92%] max-w-md -translate-x-1/2 rounded-2xl border border-orange-200 bg-white/95 p-4 shadow-xl backdrop-blur"
+      className={panelClasses}
       role="dialog"
       aria-live="polite"
     >

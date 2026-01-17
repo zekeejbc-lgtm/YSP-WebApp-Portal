@@ -74,7 +74,6 @@ const MyQRIDPage = lazy(() => import("./components/MyQRIDPage"));
 const AttendanceTransparencyPage = lazy(() => import("./components/AttendanceTransparencyPage"));
 const MyProfilePage = lazy(() => import("./components/MyProfilePage"));
 const AnnouncementsPage = lazy(() => import("./components/AnnouncementsPage_Enhanced"));
-const AccessLogsPage = lazy(() => import("./components/AccessLogsPage"));
 const SystemToolsPage = lazy(() => import("./components/SystemToolsPage"));
 const ManageMembersPage = lazy(() => import("./components/ManageMembersPage"));
 const MembershipApplicationsPage = lazy(() => import("./components/MembershipApplicationsPage"));
@@ -95,6 +94,7 @@ import { SideBar } from "./components/design-system";
 import TopBar from "./components/design-system/TopBar";
 import AnimatedHamburger from "./components/design-system/AnimatedHamburger";
 import GlowingCard from "./components/GlowingCard";
+import AccessLogsPage from "./components/AccessLogsPage";
 import MaintenanceScreen from "./components/MaintenanceScreen";
 import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import {

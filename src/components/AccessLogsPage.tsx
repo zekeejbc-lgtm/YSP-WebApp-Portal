@@ -34,12 +34,13 @@ import {
   Monitor,
   X,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import CustomDropdown from "./CustomDropdown";
+import { logAccess } from "../services/gasSystemToolsService";
 
 // Organization branding (match AttendanceDashboardPage)
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -196,6 +197,7 @@ export default function AccessLogsPage({
     warnings: 0,
   });
   const [exportType, setExportType] = useState("");
+  const hasLoggedViewRef = useRef(false);
 
   const actionTypes = [
     { value: "all", label: "All", icon: Filter },
@@ -214,6 +216,20 @@ export default function AccessLogsPage({
     setIsLoading(true);
     setError(null);
     try {
+      if (!hasLoggedViewRef.current) {
+        hasLoggedViewRef.current = true;
+        try {
+          await logAccess({
+            username,
+            action: "Viewed Access Logs",
+            actionType: "view",
+            status: "success",
+          });
+        } catch (logError) {
+          console.warn("Failed to log access logs view:", logError);
+        }
+      }
+
       const response = await fetch(GAS_SYSTEM_TOOLS_API_URL, {
         method: 'POST',
         headers: {
@@ -273,7 +289,7 @@ export default function AccessLogsPage({
     } finally {
       setIsLoading(false);
     }
-  }, [selectedType]);
+  }, [selectedType, username]);
 
   /**
    * Load logs on component mount and when selectedType changes
