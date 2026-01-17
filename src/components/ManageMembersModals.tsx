@@ -16,6 +16,7 @@ import { type UploadToastMessage } from "./UploadToast";
 
 export interface Member {
   id?: string;
+  username?: string;
   name: string;
   position: string;
   role: string;
@@ -256,7 +257,7 @@ interface EditMemberModalProps {
   isDark: boolean;
   member: Member;
   onClose: () => void;
-  onSave: (member: Member) => void;
+  onSave: (member: Member, signal?: AbortSignal) => Promise<void>;
   addUploadToast?: (message: UploadToastMessage) => void;
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
 }
@@ -301,20 +302,12 @@ export function EditMemberModal({
     try {
       updateUploadToast(toastId, { progress: 30, message: 'Syncing to backend...' });
       
-      // Simulate a small delay for backend sync (in real implementation, this would be the actual API call)
-      await new Promise(resolve => setTimeout(resolve, 500));
-
       if (signal.aborted) {
         return;
       }
       
       updateUploadToast(toastId, { progress: 70, message: 'Saving to database...' });
-      
-      // Call the parent's onSave (which handles the actual backend call)
-      if (signal.aborted) {
-        return;
-      }
-      onSave(formData);
+      await onSave(formData, signal);
       
       if (signal.aborted) {
         return;

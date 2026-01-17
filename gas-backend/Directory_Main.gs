@@ -333,6 +333,7 @@ function buildOfficerObject(row, idx) {
     // Core identification
     idCode: getDirectoryValue(row, idx.idCode),
     fullName: getDirectoryValue(row, idx.fullName),
+    username: getDirectoryValue(row, idx.username),
     
     // YSP Role Info
     position: getDirectoryValue(row, idx.position),

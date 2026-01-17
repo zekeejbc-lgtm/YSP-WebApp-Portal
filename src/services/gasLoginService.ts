@@ -466,6 +466,119 @@ export async function updateUserProfile(
   }
 }
 
+/**
+ * Update user profile on backend as an admin/auditor
+ * @param username - Username to update
+ * @param profileData - Partial profile data to update
+ * @param adminUsername - Admin/auditor username performing the update
+ * @returns Promise<ProfileUpdateResponse>
+ */
+export async function updateUserProfileAsAdmin(
+  username: string,
+  profileData: Partial<UserProfile>,
+  adminUsername: string,
+  signal?: AbortSignal
+): Promise<ProfileUpdateResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    throw new LoginAPIError(
+      'Login service not configured',
+      LoginErrorCodes.NO_API_URL
+    );
+  }
+
+  if (!username) {
+    throw new LoginAPIError(
+      'Username is required',
+      LoginErrorCodes.INVALID_RESPONSE
+    );
+  }
+
+  if (!adminUsername) {
+    throw new LoginAPIError(
+      'Admin username is required',
+      LoginErrorCodes.INVALID_RESPONSE
+    );
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'updateProfile',
+        username: username.trim(),
+        adminUsername: adminUsername.trim(),
+        profileData: profileData,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+
+    if (!response.ok) {
+      throw new LoginAPIError(
+        `Server responded with status ${response.status}`,
+        LoginErrorCodes.SERVER_ERROR,
+        response.status
+      );
+    }
+
+    const data: ProfileUpdateResponse = await response.json();
+
+    if (!data.success) {
+      throw new LoginAPIError(
+        data.error || 'Failed to update profile',
+        LoginErrorCodes.SERVER_ERROR,
+        data.code
+      );
+    }
+
+    return data;
+
+  } catch (error) {
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+    if (error instanceof LoginAPIError) {
+      throw error;
+    }
+
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        throw new LoginAPIError(
+          'Request timed out. Please try again.',
+          LoginErrorCodes.TIMEOUT_ERROR
+        );
+      }
+      throw new LoginAPIError(
+        error.message || 'Network error occurred',
+        LoginErrorCodes.NETWORK_ERROR
+      );
+    }
+
+    throw new LoginAPIError(
+      'An unexpected error occurred',
+      LoginErrorCodes.SERVER_ERROR
+    );
+  }
+}
+
 // =================== PROFILE PICTURE UPLOAD ===================
 
 export interface ProfilePictureUploadResponse {
@@ -1137,6 +1250,7 @@ export default {
   checkLoginApiHealth,
   fetchUserProfile,
   updateUserProfile,
+  updateUserProfileAsAdmin,
   storeSession,
   getSessionToken,
   getStoredUser,

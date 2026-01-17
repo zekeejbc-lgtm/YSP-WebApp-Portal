@@ -14,6 +14,7 @@ export interface DirectoryOfficer {
   // Core identification
   idCode: string;
   fullName: string;
+  username: string;
   
   // YSP Role Info
   position: string;

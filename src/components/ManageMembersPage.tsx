@@ -28,7 +28,9 @@ import {
   DirectoryOfficer,
   DirectoryAPIError,
   DirectoryErrorCodes,
+  clearDirectoryCache,
 } from "../services/gasDirectoryService";
+import { updateUserProfileAsAdmin, type UserProfile } from "../services/gasLoginService";
 
 // =================== SKELETON COMPONENTS ===================
 
@@ -228,6 +230,7 @@ function mapOfficerToMember(officer: DirectoryOfficer): Member {
 
   return {
     id: officer.idCode || "",
+    username: officer.username || "",
     name: officer.fullName || "",
     position: officer.position || "Member",
     role: officer.role || "Member",
@@ -1314,8 +1317,39 @@ export default function ManageMembersPage({
             setShowEditMemberModal(false);
             setSelectedMember(null);
           }}
-          onSave={(updatedMember) => {
+          onSave={async (updatedMember, signal) => {
+            if (!updatedMember.username) {
+              throw new Error("Member username is missing. Please refresh the list and try again.");
+            }
+
+            const updateData: Partial<UserProfile> = {};
+            if (selectedMember) {
+              if (updatedMember.name !== selectedMember.name) updateData.fullName = updatedMember.name;
+              if (updatedMember.position !== selectedMember.position) updateData.position = updatedMember.position;
+              if (updatedMember.role !== selectedMember.role) updateData.role = updatedMember.role;
+              if (updatedMember.committee !== selectedMember.committee) updateData.committee = updatedMember.committee;
+              if (updatedMember.status !== selectedMember.status) updateData.status = updatedMember.status;
+            } else {
+              updateData.fullName = updatedMember.name;
+              updateData.position = updatedMember.position;
+              updateData.role = updatedMember.role;
+              updateData.committee = updatedMember.committee;
+              updateData.status = updatedMember.status;
+            }
+
+            if (Object.keys(updateData).length === 0) {
+              return;
+            }
+
+            await updateUserProfileAsAdmin(
+              updatedMember.username,
+              updateData,
+              currentUserName,
+              signal
+            );
+
             setMembers(members.map(m => m.id === updatedMember.id ? updatedMember : m));
+            clearDirectoryCache();
             setShowEditMemberModal(false);
             setSelectedMember(null);
           }}
