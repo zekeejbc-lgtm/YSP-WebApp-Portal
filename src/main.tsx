@@ -3,16 +3,10 @@ import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
 import { registerSW } from "virtual:pwa-register";
 import App from "./App.tsx";
-import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import { clearAppBadge } from "./utils/appBadge";
 import "./index.css";
 
-createRoot(document.getElementById("root")!).render(
-  <>
-    <App />
-    <PwaInstallPrompt />
-  </>
-);
+createRoot(document.getElementById("root")!).render(<App />);
 
 let updateToastId: string | number | undefined;
 let updateToastActive = false;

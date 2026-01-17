@@ -96,6 +96,7 @@ import TopBar from "./components/design-system/TopBar";
 import AnimatedHamburger from "./components/design-system/AnimatedHamburger";
 import GlowingCard from "./components/GlowingCard";
 import MaintenanceScreen from "./components/MaintenanceScreen";
+import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import {
   isFullPWAInMaintenance,
   isPageInMaintenance,
@@ -2623,6 +2624,7 @@ export default function App() {
           },
         }}
       />
+      <PwaInstallPrompt enabled={!isAdmin && activePage === "home"} delayMs={800} />
 
       {/* Top Bar - Floating Header - Only on Homepage */}
       {!showOfficerDirectory && !showAttendanceDashboard && !showAttendanceRecording && 

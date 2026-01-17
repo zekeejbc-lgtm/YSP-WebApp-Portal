@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download } from "lucide-react";
 import Button from "./design-system/Button";
 
@@ -8,6 +8,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const DISMISS_KEY = "pwa-install-dismissed-at";
+const SEEN_KEY = "pwa-install-seen";
 const DISMISS_DURATION_MS = 1000 * 60 * 60 * 24 * 7;
 
 const isAppInstalled = () => {
@@ -17,11 +18,20 @@ const isAppInstalled = () => {
 
 const isIosDevice = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
 
-export default function PwaInstallPrompt() {
+export default function PwaInstallPrompt({
+  enabled = true,
+  delayMs = 0,
+}: {
+  enabled?: boolean;
+  delayMs?: number;
+}) {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [isIos, setIsIos] = useState(false);
+  const [hasSeen, setHasSeen] = useState(false);
+  const [isReady, setIsReady] = useState(delayMs === 0);
+  const hasRecordedSeen = useRef(false);
 
   useEffect(() => {
     setInstalled(isAppInstalled());
@@ -55,10 +65,44 @@ export default function PwaInstallPrompt() {
     }
   }, []);
 
+  useEffect(() => {
+    const raw = localStorage.getItem(SEEN_KEY);
+    if (raw === "true") {
+      setHasSeen(true);
+      hasRecordedSeen.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) {
+      setIsReady(false);
+      return;
+    }
+    if (delayMs === 0) {
+      setIsReady(true);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setIsReady(true);
+    }, delayMs);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [enabled, delayMs]);
+
   const isDismissed = useMemo(() => {
     if (!dismissedAt) return false;
     return Date.now() - dismissedAt < DISMISS_DURATION_MS;
   }, [dismissedAt]);
+
+  const shouldOfferInstall = enabled && isReady && !installed && !isDismissed && !hasSeen;
+  const shouldRenderPrompt = shouldOfferInstall && (isIos ? !deferredPrompt : Boolean(deferredPrompt));
+
+  useEffect(() => {
+    if (!shouldRenderPrompt || hasRecordedSeen.current) return;
+    localStorage.setItem(SEEN_KEY, "true");
+    hasRecordedSeen.current = true;
+  }, [shouldRenderPrompt]);
 
   const handleInstall = async () => {
     if (!deferredPrompt) return;
@@ -79,9 +123,9 @@ export default function PwaInstallPrompt() {
     setDeferredPrompt(null);
   };
 
-  if (installed || isDismissed) return null;
+  if (!enabled || installed || isDismissed || hasSeen) return null;
 
-  if (!deferredPrompt && isIos) {
+  if (shouldRenderPrompt && isIos && !deferredPrompt) {
     return (
       <div
         className="fixed bottom-4 left-1/2 z-50 w-[92%] max-w-md -translate-x-1/2 rounded-2xl border border-orange-200 bg-white/95 p-4 shadow-xl backdrop-blur"
@@ -122,7 +166,7 @@ export default function PwaInstallPrompt() {
     );
   }
 
-  if (!deferredPrompt) return null;
+  if (!shouldRenderPrompt) return null;
 
   return (
     <div
