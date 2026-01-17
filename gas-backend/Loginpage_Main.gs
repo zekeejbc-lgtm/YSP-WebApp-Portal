@@ -494,7 +494,6 @@ function handleLogin(username, password) {
     }
 
     if (!userRow) {
-      logLoginAttempt(username, false);
       return createErrorResponse('Invalid username or password', 401);
     }
 
@@ -503,8 +502,6 @@ function handleLogin(username, password) {
     const inputHash = hashString(password);
     
     if (storedHash !== inputHash) {
-      // Log failed attempt for security monitoring
-      logLoginAttempt(username, false);
       return createErrorResponse('Invalid username or password', 401);
     }
 
@@ -529,12 +526,8 @@ function handleLogin(username, password) {
 
     // Handle BANNED accounts - no access
     if (role === 'banned' || status === 'banned') {
-      logLoginAttempt(username, false);
       return createErrorResponse('This account has been permanently banned. Contact admin for assistance.', 403);
     }
-
-    // Log successful login
-    logLoginAttempt(username, true);
 
     // Generate session token
     const sessionToken = generateSessionToken(userRow[idx.idCode] || username);
@@ -1226,40 +1219,6 @@ function generateSessionToken(userId) {
   const random = Math.random().toString(36).substring(2);
   const payload = userId + ':' + timestamp + ':' + random;
   return Utilities.base64Encode(payload);
-}
-
-/**
- * Log login attempt for security monitoring
- * @param {string} username - Username that attempted login
- * @param {boolean} success - Whether the login was successful
- */
-function logLoginAttempt(username, success) {
-  try {
-    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
-    let logSheet = ss.getSheetByName('Login Logs');
-    
-    // Create log sheet if it doesn't exist
-    if (!logSheet) {
-      logSheet = ss.insertSheet('Login Logs');
-      logSheet.appendRow(['Timestamp', 'Username', 'Success', 'IP Info']);
-    }
-    
-    logSheet.appendRow([
-      new Date(),
-      username,
-      success ? 'Yes' : 'No',
-      'Web App'
-    ]);
-    
-    // Keep only last 1000 entries to avoid sheet bloat
-    const lastRow = logSheet.getLastRow();
-    if (lastRow > 1001) {
-      logSheet.deleteRows(2, lastRow - 1001);
-    }
-  } catch (error) {
-    Logger.log('logLoginAttempt Error: ' + error.toString());
-    // Don't throw - logging failure shouldn't break login
-  }
 }
 
 // =================== RESPONSE HELPERS ===================
