@@ -20,9 +20,15 @@
  * =============================================================================
  */
 
+import { useEffect, useState } from "react";
 import { X, ArrowLeft } from "lucide-react";
 import { DESIGN_TOKENS, getGlassStyle } from "./tokens";
 import Breadcrumb, { BreadcrumbItem } from "./Breadcrumb";
+import {
+  getCacheVersionFromBackend,
+  getLocalCacheVersion,
+  setLocalCacheVersion,
+} from "../../services/gasSystemToolsService";
 
 interface PageLayoutProps {
   children: React.ReactNode;
@@ -44,6 +50,50 @@ export default function PageLayout({
   breadcrumbs,
 }: PageLayoutProps) {
   const glassStyle = getGlassStyle(isDark);
+  const [cacheVersion, setCacheVersion] = useState<number>(() => {
+    try {
+      return getLocalCacheVersion();
+    } catch {
+      return 0;
+    }
+  });
+  const appVersion = import.meta.env.VITE_APP_VERSION || "1.0.0";
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncCacheVersion = async () => {
+      try {
+        const backendVersion = await getCacheVersionFromBackend();
+        if (!isMounted) return;
+        setLocalCacheVersion(backendVersion);
+        setCacheVersion(backendVersion);
+      } catch {
+        if (!isMounted) return;
+        setCacheVersion(getLocalCacheVersion());
+      }
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === "ysp_cache_version") {
+        setCacheVersion(getLocalCacheVersion());
+      }
+    };
+
+    const handleCacheVersionChange = () => {
+      setCacheVersion(getLocalCacheVersion());
+    };
+
+    syncCacheVersion();
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("cache-version-changed", handleCacheVersionChange);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("cache-version-changed", handleCacheVersionChange);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background transition-colors duration-300 relative">
@@ -191,6 +241,18 @@ export default function PageLayout({
 
           {/* Page Content */}
           <div>{children}</div>
+
+          <footer className="border-t border-border py-8 relative mt-8">
+            <div className="text-center text-sm text-muted-foreground">
+              <p>
+                &copy; 2025 Youth Service Philippines - Tagum Chapter. All rights reserved.
+              </p>
+              <p className="mt-2">Shaping the Future to a Greater Society</p>
+              <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                App version: {appVersion} | Cache version: {cacheVersion}
+              </p>
+            </div>
+          </footer>
         </div>
       </div>
     </div>

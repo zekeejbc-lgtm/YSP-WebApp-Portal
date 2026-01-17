@@ -383,6 +383,15 @@ function doPost(e) {
         return handleVerifyOTP(requestData.username, requestData.email, requestData.otp);
       case 'checkEmailVerified':
         return handleCheckEmailVerified(requestData.username, requestData.email);
+      // Password reset actions
+      case 'lookupPasswordResetUser':
+        return handleLookupPasswordResetUser(requestData.identifier);
+      case 'sendPasswordResetOTP':
+        return handleSendPasswordResetOTP(requestData.username, requestData.email);
+      case 'verifyPasswordResetOTP':
+        return handleVerifyPasswordResetOTP(requestData.username, requestData.email, requestData.otp);
+      case 'resetPasswordWithToken':
+        return handleResetPasswordWithToken(requestData.username, requestData.resetToken, requestData.newPassword);
       // Directory actions
       case 'searchOfficers':
         return handleSearchOfficers(requestData.query);
@@ -1512,6 +1521,9 @@ function handleChangePassword(username, currentPassword, newPassword) {
 
 const OTP_SHEET_NAME = 'Email_Verification_OTPs';
 const OTP_EXPIRY_MINUTES = 15;
+const PASSWORD_RESET_SESSION_SHEET = 'Password_Reset_Sessions';
+const PASSWORD_RESET_SESSION_EXPIRY_MINUTES = 15;
+const EMAIL_QUOTA_SHEET_NAME = 'Email_Quota_Daily';
 
 // Security Configuration - Progressive Cooldowns (anti-spam)
 // Format: [seconds to wait before next request]
@@ -1966,6 +1978,202 @@ function setupEmailVerificationSheet() {
     Logger.log('');
     Logger.log('=== SETUP COMPLETE ===');
     
+  } catch (error) {
+    Logger.log('❌ Error creating sheet: ' + error.toString());
+    Logger.log('Make sure you have edit access to the spreadsheet.');
+  }
+}
+
+/**
+ * 🔧 RUN THIS FUNCTION TO CREATE THE EMAIL QUOTA SHEET 🔧
+ *
+ * Creates the Email_Quota_Daily sheet and logs the current remaining quota.
+ */
+function setupEmailQuotaSheet() {
+  Logger.log('=== SETTING UP EMAIL QUOTA SHEET ===');
+
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    let sheet = ss.getSheetByName(EMAIL_QUOTA_SHEET_NAME);
+
+    if (!sheet) {
+      sheet = ss.insertSheet(EMAIL_QUOTA_SHEET_NAME);
+      const headers = ['Date', 'Time', 'Remaining_Quota'];
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+      sheet.setColumnWidth(1, 120);
+      sheet.setColumnWidth(2, 100);
+      sheet.setColumnWidth(3, 160);
+      Logger.log('✅ Sheet "' + EMAIL_QUOTA_SHEET_NAME + '" created successfully!');
+    } else {
+      Logger.log('ℹ️ Sheet "' + EMAIL_QUOTA_SHEET_NAME + '" already exists.');
+    }
+
+    logEmailQuotaSnapshot_();
+    Logger.log('=== EMAIL QUOTA SHEET READY ===');
+  } catch (error) {
+    Logger.log('❌ setupEmailQuotaSheet Error: ' + error.toString());
+  }
+}
+
+/**
+ * Log a snapshot of the current remaining daily email quota.
+ */
+function logEmailQuotaSnapshot_() {
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(EMAIL_QUOTA_SHEET_NAME);
+    if (!sheet) {
+      Logger.log('❌ Email quota sheet not found. Run setupEmailQuotaSheet first.');
+      return;
+    }
+
+    const now = new Date();
+    const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    const timeStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm:ss');
+    const remainingQuota = MailApp.getRemainingDailyQuota();
+
+    sheet.appendRow([dateStr, timeStr, remainingQuota]);
+    Logger.log('✅ Logged email quota snapshot: ' + remainingQuota);
+  } catch (error) {
+    Logger.log('❌ logEmailQuotaSnapshot_ Error: ' + error.toString());
+  }
+}
+
+/**
+ * Custom menu for Google Sheets (only works in a container-bound script).
+ */
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('YSP Tools')
+    .addItem('Create/Update Email Quota Sheet', 'setupEmailQuotaSheet')
+    .addItem('Log Email Quota Snapshot', 'logEmailQuotaSnapshot_')
+    .addItem('Show Email Quota Sidebar', 'showEmailQuotaSidebar')
+    .addToUi();
+}
+
+/**
+ * Show a sidebar that refreshes and displays the current remaining email quota.
+ */
+function showEmailQuotaSidebar() {
+  const html = `
+    <div style="font-family: Arial, sans-serif; padding: 12px;">
+      <div style="font-size: 14px; font-weight: 700; margin-bottom: 6px;">Email Quota</div>
+      <div style="font-size: 12px; color: #666; margin-bottom: 12px;">
+        Remaining daily quota (MailApp)
+      </div>
+      <div id="quotaValue" style="font-size: 28px; font-weight: 700; margin-bottom: 8px;">--</div>
+      <div id="quotaTime" style="font-size: 11px; color: #666;">Last updated: --</div>
+      <div id="quotaError" style="font-size: 11px; color: #c53030; margin-top: 8px;"></div>
+    </div>
+    <script>
+      function renderQuota(data) {
+        if (data && typeof data.remainingQuota !== 'undefined') {
+          document.getElementById('quotaValue').textContent = data.remainingQuota;
+          document.getElementById('quotaTime').textContent = 'Last updated: ' + data.timestamp;
+          document.getElementById('quotaError').textContent = '';
+          return;
+        }
+        document.getElementById('quotaError').textContent = 'Failed to load quota.';
+      }
+
+      function refreshQuota() {
+        google.script.run
+          .withSuccessHandler(renderQuota)
+          .withFailureHandler(function(err) {
+            var msg = (err && err.message) ? err.message : err;
+            document.getElementById('quotaError').textContent = 'Error: ' + msg;
+          })
+          .getEmailQuotaSnapshot();
+      }
+
+      refreshQuota();
+      setInterval(refreshQuota, 30000); // refresh every 30s
+    </script>
+  `;
+
+  SpreadsheetApp.getUi()
+    .showSidebar(HtmlService.createHtmlOutput(html).setTitle('Email Quota'));
+}
+
+/**
+ * Return the current remaining daily email quota with a timestamp.
+ * Used by the sidebar.
+ */
+function getEmailQuotaSnapshot_() {
+  const now = new Date();
+  const timeStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  return {
+    remainingQuota: MailApp.getRemainingDailyQuota(),
+    timestamp: timeStr
+  };
+}
+
+/**
+ * Public wrapper for sidebar calls.
+ */
+function getEmailQuotaSnapshot() {
+  return getEmailQuotaSnapshot_();
+}
+
+/**
+ * 🔧 RUN THIS FUNCTION TO CREATE THE PASSWORD RESET SESSION SHEET 🔧
+ *
+ * Creates the Password_Reset_Sessions sheet with proper structure
+ * Run this once in Apps Script editor before using forgot password flow
+ */
+function setupPasswordResetSessionSheet() {
+  Logger.log('=== SETTING UP PASSWORD RESET SESSION SHEET ===');
+
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    let sheet = ss.getSheetByName(PASSWORD_RESET_SESSION_SHEET);
+
+    if (sheet) {
+      Logger.log('⚠️ Sheet "' + PASSWORD_RESET_SESSION_SHEET + '" already exists.');
+      Logger.log('Checking structure...');
+
+      const headers = sheet.getRange(1, 1, 1, 6).getValues()[0];
+      const expectedHeaders = ['Username', 'Email', 'Reset_Token', 'Created_At', 'Expires_At', 'Used'];
+      const headersMatch = expectedHeaders.every((h, i) => headers[i] === h);
+
+      if (headersMatch) {
+        Logger.log('✅ Sheet structure is correct!');
+      } else {
+        Logger.log('⚠️ Sheet exists but headers are different. Current headers: ' + JSON.stringify(headers));
+        Logger.log('Expected headers: ' + JSON.stringify(expectedHeaders));
+      }
+      return;
+    }
+
+    sheet = ss.insertSheet(PASSWORD_RESET_SESSION_SHEET);
+
+    const headers = ['Username', 'Email', 'Reset_Token', 'Created_At', 'Expires_At', 'Used'];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+    const headerRange = sheet.getRange(1, 1, 1, headers.length);
+    headerRange.setFontWeight('bold');
+    headerRange.setBackground('#FF8800');
+    headerRange.setFontColor('#FFFFFF');
+
+    sheet.setColumnWidth(1, 150); // Username
+    sheet.setColumnWidth(2, 250); // Email
+    sheet.setColumnWidth(3, 250); // Reset_Token
+    sheet.setColumnWidth(4, 180); // Created_At
+    sheet.setColumnWidth(5, 180); // Expires_At
+    sheet.setColumnWidth(6, 80);  // Used
+    sheet.setFrozenRows(1);
+
+    Logger.log('✅ Sheet "' + PASSWORD_RESET_SESSION_SHEET + '" created successfully!');
+    Logger.log('Column Structure:');
+    Logger.log('  A: Username - The user requesting reset');
+    Logger.log('  B: Email - Email address on file');
+    Logger.log('  C: Reset_Token - UUID reset token');
+    Logger.log('  D: Created_At - When token was created');
+    Logger.log('  E: Expires_At - When token expires');
+    Logger.log('  F: Used - TRUE if token consumed');
+    Logger.log('=== SETUP COMPLETE ===');
   } catch (error) {
     Logger.log('❌ Error creating sheet: ' + error.toString());
     Logger.log('Make sure you have edit access to the spreadsheet.');
@@ -2507,5 +2715,507 @@ function handleCheckEmailVerified(username, email) {
   } catch (error) {
     Logger.log('handleCheckEmailVerified Error: ' + error.toString());
     return createErrorResponse('Failed to check verification status: ' + error.message, 500);
+  }
+}
+
+// =================== PASSWORD RESET (FORGOT PASSWORD) ===================
+
+function handleLookupPasswordResetUser(identifier) {
+  const input = (identifier || '').toString().trim();
+  if (!input) {
+    return createErrorResponse('Username, full name, or email is required', 400);
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const isEmail = emailRegex.test(input);
+
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) {
+      return createErrorResponse('User sheet not found', 500);
+    }
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const idx = {
+      username: headers.indexOf('Username'),
+      name: headers.indexOf('Full name'),
+      email: headers.indexOf('Email Address'),
+      idCode: headers.indexOf('ID Code'),
+    };
+
+    if (idx.username === -1 || idx.name === -1 || idx.email === -1) {
+      return createErrorResponse('User profile columns not found', 500);
+    }
+
+    const inputLower = input.toLowerCase();
+    const emailMatches = [];
+    const usernameMatches = [];
+    const nameMatches = [];
+
+    for (let i = 1; i < data.length; i++) {
+      const rowUsername = (data[i][idx.username] || '').toString().trim();
+      const rowName = (data[i][idx.name] || '').toString().trim();
+      const rowEmail = (data[i][idx.email] || '').toString().trim();
+      const rowIdCode = (idx.idCode !== -1 ? data[i][idx.idCode] : '') || '';
+
+      const rowUsernameLower = rowUsername.toLowerCase();
+      const rowNameLower = rowName.toLowerCase();
+      const rowEmailLower = rowEmail.toLowerCase();
+
+      const payload = {
+        username: rowUsername,
+        fullName: rowName,
+        email: rowEmail,
+        idCode: rowIdCode,
+      };
+
+      if (isEmail) {
+        if (rowEmailLower === inputLower) {
+          emailMatches.push({ ...payload, matchedBy: 'email' });
+        }
+      } else {
+        if (rowUsernameLower === inputLower) {
+          usernameMatches.push({ ...payload, matchedBy: 'username' });
+        }
+        if (rowNameLower === inputLower) {
+          nameMatches.push({ ...payload, matchedBy: 'fullName' });
+        }
+      }
+    }
+
+    const matches = isEmail ? emailMatches : usernameMatches.length ? usernameMatches : nameMatches;
+
+    if (matches.length === 0) {
+      return createErrorResponse('No account found with that information', 404);
+    }
+
+    if (!isEmail && usernameMatches.length === 0 && matches.length > 1) {
+      return createErrorResponse('Multiple accounts match that name. Please use username or email.', 409);
+    }
+
+    const user = matches[0];
+    if (!user.email) {
+      return createErrorResponse('No email address is on file for this account.', 400);
+    }
+
+    return createSuccessResponse({
+      success: true,
+      user: {
+        fullName: user.fullName,
+        username: user.username,
+        email: user.email,
+        idCode: user.idCode,
+      },
+      matchedBy: user.matchedBy,
+    });
+  } catch (error) {
+    Logger.log('handleLookupPasswordResetUser Error: ' + error.toString());
+    return createErrorResponse('Failed to look up account: ' + error.message, 500);
+  }
+}
+
+function handleSendPasswordResetOTP(username, email) {
+  Logger.log('=== handleSendPasswordResetOTP ===');
+
+  const cleanUsername = (username || '').toString().trim();
+  const cleanEmail = (email || '').toString().trim();
+
+  if (!cleanUsername || !cleanEmail) {
+    return createErrorResponse('Username and email are required', 400);
+  }
+
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(cleanEmail)) {
+    return createErrorResponse('Invalid email format', 400);
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) {
+      return createErrorResponse('User sheet not found', 500);
+    }
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const usernameIdx = headers.indexOf('Username');
+    const emailIdx = headers.indexOf('Email Address');
+    const nameIdx = headers.indexOf('Full name');
+
+    if (usernameIdx === -1 || emailIdx === -1) {
+      return createErrorResponse('User profile columns not found', 500);
+    }
+
+    const usernameLower = cleanUsername.toLowerCase();
+    let storedEmail = '';
+    let userName = 'Member';
+    for (let i = 1; i < data.length; i++) {
+      const rowUsername = (data[i][usernameIdx] || '').toString().toLowerCase().trim();
+      if (rowUsername === usernameLower) {
+        storedEmail = (data[i][emailIdx] || '').toString().trim();
+        userName = nameIdx !== -1 ? (data[i][nameIdx] || 'Member') : 'Member';
+        break;
+      }
+    }
+
+    if (!storedEmail) {
+      return createErrorResponse('No email address is on file for this account.', 400);
+    }
+
+    if (storedEmail.toLowerCase() !== cleanEmail.toLowerCase()) {
+      return createErrorResponse('Email does not match the account on file.', 403);
+    }
+
+    // Check progressive cooldown (anti-spam)
+    const requestHistory = getOTPRequestHistory(cleanUsername);
+    if (!requestHistory.canRequest) {
+      const waitTimeStr = formatWaitTime(requestHistory.waitSeconds);
+      return createErrorResponse(
+        'Please wait ' + waitTimeStr + ' before requesting another verification code.',
+        429
+      );
+    }
+
+    // Check if user is locked out from failed attempts
+    const failedInfo = getFailedAttempts(cleanUsername, cleanEmail);
+    if (failedInfo.isLocked) {
+      const lockTimeStr = failedInfo.lockedUntil ? failedInfo.lockedUntil.toLocaleTimeString() : 'later';
+      return createErrorResponse(
+        'Account temporarily locked due to too many failed verification attempts. Please try again after ' + lockTimeStr + '.',
+        423
+      );
+    }
+
+    const otp = generateOTP();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
+    // Store OTP in Password_Reset_Sessions (Reset_Token column)
+    upsertPasswordResetOTP_(ss, cleanUsername, cleanEmail, otp, now, expiresAt);
+
+    // Record this request for progressive cooldown
+    const cooldownInfo = recordOTPRequest(cleanUsername);
+
+    try {
+      sendOTPVerificationEmail(cleanEmail, userName, otp);
+    } catch (emailError) {
+      Logger.log('Failed to send password reset OTP email: ' + emailError.toString());
+      return createErrorResponse('Failed to send verification email. Please try again.', 500);
+    }
+
+    const nextCooldownIndex = Math.min(cooldownInfo.requestCount, OTP_COOLDOWNS.length - 1);
+    const nextCooldownSeconds = OTP_COOLDOWNS[nextCooldownIndex];
+    const nextCooldownMsg = formatWaitTime(nextCooldownSeconds);
+
+    return createSuccessResponse({
+      success: true,
+      message: 'Verification code sent to ' + cleanEmail,
+      expiresInMinutes: OTP_EXPIRY_MINUTES,
+      requestNumber: cooldownInfo.requestCount,
+      nextCooldown: nextCooldownMsg
+    });
+  } catch (error) {
+    Logger.log('handleSendPasswordResetOTP Error: ' + error.toString());
+    return createErrorResponse('Failed to send reset code: ' + error.message, 500);
+  }
+}
+
+function handleVerifyPasswordResetOTP(username, email, otp) {
+  const cleanUsername = (username || '').toString().trim();
+  const cleanEmail = (email || '').toString().trim();
+  const cleanOtp = (otp || '').toString().trim();
+
+  if (!cleanUsername || !cleanEmail || !cleanOtp) {
+    return createErrorResponse('Username, email, and OTP are required', 400);
+  }
+
+  try {
+    // Check if user is locked out from failed attempts
+    const failedInfo = getFailedAttempts(cleanUsername, cleanEmail);
+    if (failedInfo.isLocked) {
+      const lockTimeStr = failedInfo.lockedUntil ? failedInfo.lockedUntil.toLocaleTimeString() : 'later';
+      return createErrorResponse(
+        'Account temporarily locked due to too many failed verification attempts. Please try again after ' + lockTimeStr + '.',
+        423
+      );
+    }
+
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ensurePasswordResetSessionSheet_(ss);
+    const data = sheet.getDataRange().getValues();
+    const now = new Date();
+
+    for (let i = 1; i < data.length; i++) {
+      const rowUsername = (data[i][0] || '').toString().toLowerCase().trim();
+      const rowEmail = (data[i][1] || '').toString().toLowerCase().trim();
+      const rowToken = (data[i][2] || '').toString().trim();
+      const rowExpiry = new Date(data[i][4]);
+      const rowUsed = data[i][5] === true;
+
+      if (rowUsername === cleanUsername.toLowerCase() && rowEmail === cleanEmail.toLowerCase()) {
+        if (rowUsed) {
+          return createErrorResponse('Reset session already used. Please start again.', 409);
+        }
+
+        if (now > rowExpiry) {
+          sheet.deleteRow(i + 1);
+          return createErrorResponse('Verification code has expired. Please request a new one.', 410);
+        }
+
+        // If token is already a UUID, OTP was already verified
+        if (rowToken && rowToken.length > 10 && rowToken.indexOf('-') !== -1) {
+          return createSuccessResponse({
+            success: true,
+            verified: true,
+            message: 'Code already verified',
+            resetToken: rowToken,
+          });
+        }
+
+        if (rowToken === cleanOtp) {
+          resetFailedAttempts(cleanUsername, cleanEmail);
+          resetOTPRequestHistory(cleanUsername);
+
+          const resetToken = createPasswordResetSession_(cleanUsername, cleanEmail);
+          return createSuccessResponse({
+            success: true,
+            verified: true,
+            message: 'Code verified',
+            resetToken: resetToken,
+          });
+        }
+
+        const attemptResult = recordFailedAttempt(cleanUsername, cleanEmail);
+        const remainingAttempts = MAX_FAILED_ATTEMPTS - attemptResult.attempts;
+
+        if (attemptResult.isLocked) {
+          return createErrorResponse(
+            'Too many failed attempts. Account locked for ' + LOCKOUT_MINUTES + ' minutes.',
+            423
+          );
+        }
+
+        return createErrorResponse(
+          'Invalid verification code. ' + remainingAttempts + ' attempts remaining.',
+          401
+        );
+      }
+    }
+
+    return createErrorResponse('No pending verification found for this email', 404);
+  } catch (error) {
+    Logger.log('handleVerifyPasswordResetOTP Error: ' + error.toString());
+    return createErrorResponse('Failed to verify code: ' + error.message, 500);
+  }
+}
+
+function handleResetPasswordWithToken(username, resetToken, newPassword) {
+  const cleanUsername = (username || '').toString().trim();
+  const cleanToken = (resetToken || '').toString().trim();
+  const cleanPassword = (newPassword || '').toString().trim();
+
+  if (!cleanUsername || !cleanToken || !cleanPassword) {
+    return createErrorResponse('Username, reset token, and new password are required', 400);
+  }
+
+  if (cleanPassword.length < 8) {
+    return createErrorResponse('New password must be at least 8 characters long', 400);
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+
+    if (!isResetSessionValid_(ss, cleanUsername, cleanToken)) {
+      return createErrorResponse('Reset session expired or invalid. Please restart the process.', 401);
+    }
+
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) {
+      return createErrorResponse('User sheet not found', 500);
+    }
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const idx = {
+      username: headers.indexOf('Username'),
+      password: headers.indexOf('Password'),
+      email: headers.indexOf('Email Address'),
+      name: headers.indexOf('Full name'),
+    };
+
+    if (idx.username === -1 || idx.password === -1) {
+      return createErrorResponse('User profile columns not found', 500);
+    }
+
+    const usernameLower = cleanUsername.toLowerCase();
+    let rowIndex = -1;
+    let userEmail = '';
+    let userName = 'Member';
+    let currentHash = '';
+
+    for (let i = 1; i < data.length; i++) {
+      const rowUsername = (data[i][idx.username] || '').toString().toLowerCase().trim();
+      if (rowUsername === usernameLower) {
+        rowIndex = i + 1;
+        currentHash = (data[i][idx.password] || '').toString().trim();
+        userEmail = idx.email !== -1 ? data[i][idx.email] : '';
+        userName = idx.name !== -1 ? data[i][idx.name] : 'Member';
+        break;
+      }
+    }
+
+    if (rowIndex === -1) {
+      return createErrorResponse('User not found', 404);
+    }
+
+    const newHash = hashString(cleanPassword);
+    if (newHash === currentHash) {
+      return createErrorResponse('New password must be different from current password', 400);
+    }
+
+    for (let i = 1; i < data.length; i++) {
+      if (i + 1 === rowIndex) continue;
+      const otherHash = (data[i][idx.password] || '').toString().trim();
+      if (otherHash && otherHash === newHash) {
+        return createErrorResponse('This password is already in use. Please choose a different password.', 400);
+      }
+    }
+
+    sheet.getRange(rowIndex, idx.password + 1).setValue(newHash);
+
+    markResetSessionUsed_(ss, cleanUsername, cleanToken);
+
+    if (userEmail) {
+      try {
+        sendPasswordChangeEmail(userEmail, userName, cleanUsername);
+      } catch (emailError) {
+        Logger.log('Password reset email failed: ' + emailError.toString());
+      }
+    }
+
+    return createSuccessResponse({ success: true, message: 'Password reset successfully' });
+  } catch (error) {
+    Logger.log('handleResetPasswordWithToken Error: ' + error.toString());
+    return createErrorResponse('Failed to reset password: ' + error.message, 500);
+  }
+}
+
+function ensurePasswordResetSessionSheet_(ss) {
+  let sheet = ss.getSheetByName(PASSWORD_RESET_SESSION_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(PASSWORD_RESET_SESSION_SHEET);
+    sheet.appendRow(['Username', 'Email', 'Reset_Token', 'Created_At', 'Expires_At', 'Used']);
+    sheet.setColumnWidth(1, 150);
+    sheet.setColumnWidth(2, 220);
+    sheet.setColumnWidth(3, 220);
+    sheet.setColumnWidth(4, 180);
+    sheet.setColumnWidth(5, 180);
+    sheet.setColumnWidth(6, 80);
+  }
+  return sheet;
+}
+
+function cleanupResetSessions_(ss) {
+  try {
+    const sheet = ensurePasswordResetSessionSheet_(ss);
+    const data = sheet.getDataRange().getValues();
+    const now = new Date();
+
+    for (let i = data.length - 1; i >= 1; i--) {
+      const expiresAt = new Date(data[i][4]);
+      const used = data[i][5] === true;
+      if (used || now > expiresAt) {
+        sheet.deleteRow(i + 1);
+      }
+    }
+  } catch (error) {
+    Logger.log('cleanupResetSessions_ Error: ' + error.toString());
+  }
+}
+
+function createPasswordResetSession_(username, email) {
+  const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+  cleanupResetSessions_(ss);
+  const sheet = ensurePasswordResetSessionSheet_(ss);
+  const data = sheet.getDataRange().getValues();
+  const usernameLower = username.toLowerCase().trim();
+
+  const token = Utilities.getUuid();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PASSWORD_RESET_SESSION_EXPIRY_MINUTES * 60 * 1000);
+
+  for (let i = 1; i < data.length; i++) {
+    const rowUsername = (data[i][0] || '').toString().toLowerCase().trim();
+    const rowEmail = (data[i][1] || '').toString().toLowerCase().trim();
+    if (rowUsername === usernameLower && rowEmail === email.toLowerCase().trim()) {
+      sheet.getRange(i + 1, 3).setValue(token);
+      sheet.getRange(i + 1, 4).setValue(now);
+      sheet.getRange(i + 1, 5).setValue(expiresAt);
+      sheet.getRange(i + 1, 6).setValue(false);
+      return token;
+    }
+  }
+
+  sheet.appendRow([username, email, token, now, expiresAt, false]);
+  return token;
+}
+
+function upsertPasswordResetOTP_(ss, username, email, otp, createdAt, expiresAt) {
+  const sheet = ensurePasswordResetSessionSheet_(ss);
+  const data = sheet.getDataRange().getValues();
+  const usernameLower = username.toLowerCase().trim();
+  const emailLower = email.toLowerCase().trim();
+
+  for (let i = 1; i < data.length; i++) {
+    const rowUsername = (data[i][0] || '').toString().toLowerCase().trim();
+    const rowEmail = (data[i][1] || '').toString().toLowerCase().trim();
+    if (rowUsername === usernameLower && rowEmail === emailLower) {
+      sheet.getRange(i + 1, 3).setValue(otp);
+      sheet.getRange(i + 1, 4).setValue(createdAt);
+      sheet.getRange(i + 1, 5).setValue(expiresAt);
+      sheet.getRange(i + 1, 6).setValue(false);
+      return;
+    }
+  }
+
+  sheet.appendRow([username, email, otp, createdAt, expiresAt, false]);
+}
+
+function isResetSessionValid_(ss, username, token) {
+  cleanupResetSessions_(ss);
+  const sheet = ensurePasswordResetSessionSheet_(ss);
+  const data = sheet.getDataRange().getValues();
+  const usernameLower = username.toLowerCase().trim();
+
+  for (let i = 1; i < data.length; i++) {
+    const rowUsername = (data[i][0] || '').toString().toLowerCase().trim();
+    const rowToken = (data[i][2] || '').toString().trim();
+    const expiresAt = new Date(data[i][4]);
+    const used = data[i][5] === true;
+
+    if (rowUsername === usernameLower && rowToken === token) {
+      if (used) return false;
+      if (new Date() > expiresAt) return false;
+      return true;
+    }
+  }
+  return false;
+}
+
+function markResetSessionUsed_(ss, username, token) {
+  const sheet = ensurePasswordResetSessionSheet_(ss);
+  const data = sheet.getDataRange().getValues();
+  const usernameLower = username.toLowerCase().trim();
+
+  for (let i = 1; i < data.length; i++) {
+    const rowUsername = (data[i][0] || '').toString().toLowerCase().trim();
+    const rowToken = (data[i][2] || '').toString().trim();
+    if (rowUsername === usernameLower && rowToken === token) {
+      sheet.getRange(i + 1, 6).setValue(true);
+      return;
+    }
   }
 }

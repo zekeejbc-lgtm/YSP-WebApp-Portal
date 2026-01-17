@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import CustomDropdown from './CustomDropdown';
 import Breadcrumb from './design-system/Breadcrumb';
+import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 
 // Complete Backend Schema
 interface Feedback {
@@ -31,6 +32,7 @@ interface FeedbackPageProps {
   isAdmin: boolean;
   isDark: boolean;
   userRole?: string;
+  username?: string;
 }
 
 // Skeleton Loading Component
@@ -50,7 +52,7 @@ const SkeletonCard = () => (
   </div>
 );
 
-export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'guest' }: FeedbackPageProps) {
+export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'guest', username = 'guest' }: FeedbackPageProps) {
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState<Feedback | null>(null);
@@ -248,6 +250,8 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
           description: 'Thank you for your valuable feedback. We\'ll review it shortly!'
         });
       }
+      const logUser = username || (formData.anonymous ? 'Anonymous' : formData.author || 'Guest');
+      logCreate(logUser, "Feedback", newFeedback.id);
 
       // Reset form
       setFormData({
@@ -363,6 +367,8 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
   const handleUpdateFeedback = () => {
     if (!editingFeedback) return;
+    const wasDropped = selectedFeedback?.status === 'Dropped';
+    const isDropped = editingFeedback.status === 'Dropped';
 
     const updatedFeedbacks = feedbacks.map(f => 
       f.id === editingFeedback.id ? {
@@ -378,6 +384,11 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     toast.success('Feedback updated!', {
       description: 'Changes have been saved successfully.'
     });
+    if (!wasDropped && isDropped) {
+      logDelete(username || 'admin', "Feedback", editingFeedback.id);
+    } else {
+      logEdit(username || 'admin', "Feedback", editingFeedback.id);
+    }
     setShowDetailModal(false);
   };
 

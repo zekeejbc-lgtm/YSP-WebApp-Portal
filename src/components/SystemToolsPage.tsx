@@ -44,6 +44,8 @@ import {
   clearAllMaintenanceBackend,
   AVAILABLE_PAGES_BACKEND,
   type SystemHealthData,
+  logCreate,
+  logEdit,
 } from "../services/gasSystemToolsService";
 
 import {
@@ -283,6 +285,7 @@ export default function SystemToolsPage({
         title: 'Backup Complete!',
         message: `${result.sheetsCount} sheets backed up successfully.`,
       });
+      logCreate(username, "Database backup", result.backupName);
       
       if (result.backupUrl) {
         toast.success('Backup Created', {
@@ -343,6 +346,7 @@ export default function SystemToolsPage({
         title: 'Cache Cleared!',
         message: `Version bumped from ${result.previousVersion} to ${result.newVersion}. All clients will refresh.`,
       });
+      logEdit(username, "Cache version", `${result.previousVersion} -> ${result.newVersion}`);
       
       toast.info('Cache Refresh', {
         description: 'All users will see the refresh prompt on their next page load.',
@@ -409,6 +413,7 @@ export default function SystemToolsPage({
         title: 'Export Complete!',
         message: `${result.sheetsCount} sheets (${result.totalRows.toLocaleString()} rows) exported.`,
       });
+      logCreate(username, "Database export", result.exportName);
       
       if (result.exportUrl) {
         toast.success('Data Exported', {
@@ -522,6 +527,7 @@ export default function SystemToolsPage({
         title: 'Maintenance Enabled',
         message: pageId === 'fullPWA' ? 'Full PWA is now in maintenance mode.' : `${pageId} is now in maintenance mode.`,
       });
+      logEdit(username, "Maintenance mode", `${pageId} enabled`);
       
       if (signal.aborted) return;
       await fetchMaintenanceMode();
@@ -576,6 +582,7 @@ export default function SystemToolsPage({
         title: 'Maintenance Disabled',
         message: pageId === 'fullPWA' ? 'Full PWA maintenance disabled.' : `${pageId} maintenance disabled.`,
       });
+      logEdit(username, "Maintenance mode", `${pageId} disabled`);
       
       if (signal.aborted) return;
       await fetchMaintenanceMode();
@@ -623,6 +630,7 @@ export default function SystemToolsPage({
         title: 'All Cleared',
         message: 'All maintenance modes have been disabled.',
       });
+      logEdit(username, "Maintenance mode", "Cleared all");
       
       if (signal.aborted) return;
       await fetchMaintenanceMode();

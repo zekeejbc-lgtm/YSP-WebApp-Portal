@@ -18,6 +18,7 @@ import { useState } from "react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import { toast } from "sonner";
+import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 
 interface Announcement {
   id: string;
@@ -36,12 +37,14 @@ interface AnnouncementsPageProps {
   onClose: () => void;
   isDark: boolean;
   userRole: string;
+  username?: string;
 }
 
 export default function AnnouncementsPageEnhanced({
   onClose,
   isDark,
   userRole,
+  username = "admin",
 }: AnnouncementsPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
@@ -187,8 +190,10 @@ export default function AnnouncementsPageEnhanced({
       toast.error("Only admins can delete announcements");
       return;
     }
+    const target = announcements.find((ann) => ann.id === id);
     setAnnouncements((prev) => prev.filter((ann) => ann.id !== id));
     toast.success("Announcement deleted");
+    logDelete(username, "Announcement", target?.title || id);
   };
 
   const handleEdit = (announcement: Announcement) => {
@@ -328,6 +333,7 @@ export default function AnnouncementsPageEnhanced({
         )
       );
       toast.success("Announcement updated successfully");
+      logEdit(username, "Announcement", `${formData.title} - ${formData.subject}`);
     } else {
       const newAnnouncement: Announcement = {
         id: `ANN-${Date.now()}`,
@@ -343,6 +349,7 @@ export default function AnnouncementsPageEnhanced({
       };
       setAnnouncements((prev) => [newAnnouncement, ...prev]);
       toast.success("Announcement created successfully");
+      logCreate(username, "Announcement", newAnnouncement.title);
     }
 
     setShowCreateModal(false);

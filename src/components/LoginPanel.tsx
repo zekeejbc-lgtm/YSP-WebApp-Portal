@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Lock, User, Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import ForgotPasswordModal from './ForgotPasswordModal';
 
 interface LoginPanelProps {
   isOpen: boolean;
@@ -15,6 +16,7 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<{ username?: string; password?: string }>({});
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -36,6 +38,7 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
       setShowPassword(false);
       setErrors({});
       setIsLoading(false);
+      setShowForgotPassword(false);
     }
   }, [isOpen]);
 
@@ -74,7 +77,7 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
   };
 
   const handleForgotPassword = () => {
-    alert('For password reset, please contact:\nYSPTagumChapter@gmail.com');
+    setShowForgotPassword(true);
   };
 
   if (!isOpen) return null;
@@ -442,6 +445,11 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
           </div>
         </div>
       </div>
+      <ForgotPasswordModal
+        isOpen={showForgotPassword}
+        onClose={() => setShowForgotPassword(false)}
+        isDark={isDark}
+      />
     </div>
   );
 }

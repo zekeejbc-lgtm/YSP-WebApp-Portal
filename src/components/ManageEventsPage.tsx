@@ -13,6 +13,7 @@ import {
   getEventGeofence,
   type EventData,
 } from "../services/gasEventsService";
+import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 
 // --- COMPONENTS ---
 
@@ -305,9 +306,10 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
 interface ManageEventsPageProps {
   onClose: () => void;
   isDark: boolean;
+  username?: string;
 }
 
-export default function ManageEventsPage({ onClose, isDark }: ManageEventsPageProps) {
+export default function ManageEventsPage({ onClose, isDark, username = 'admin' }: ManageEventsPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
@@ -424,6 +426,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
         )
       );
       updateUploadToast(toastId, { progress: 100, status: 'success', title: 'Status Updated!', message: `Event is now ${newStatus}` });
+      logEdit(username, "Event status", `${event.name}: ${newStatus}`);
     } catch (error) {
       if (signal.aborted) {
         return;
@@ -478,6 +481,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
       updateUploadToast(toastId, { progress: 80, message: 'Updating local data...' });
       setEvents((prev) => prev.filter((e) => e.id !== eventId));
       updateUploadToast(toastId, { progress: 100, status: 'success', title: 'Event Deleted!', message: `"${eventName}" has been removed successfully.` });
+      logDelete(username, "Event", eventName);
     } catch (error) {
       if (signal.aborted) {
         return;
@@ -574,6 +578,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
           )
         );
         updateUploadToast(toastId, { progress: 100, status: 'success', title: 'Event Updated!', message: `"${formData.name}" has been updated successfully.` });
+        logEdit(username, "Event", formData.name);
       } else {
         updateUploadToast(toastId, { progress: 40, message: 'Connecting to backend...' });
         const result = await createEvent({
@@ -615,6 +620,7 @@ export default function ManageEventsPage({ onClose, isDark }: ManageEventsPagePr
         
         setEvents((prev) => [newEvent, ...prev]);
         updateUploadToast(toastId, { progress: 100, status: 'success', title: 'Event Created!', message: `"${formData.name}" has been created successfully.` });
+        logCreate(username, "Event", formData.name);
       }
 
       setShowModal(false);

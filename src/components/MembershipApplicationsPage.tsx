@@ -59,6 +59,7 @@ interface MembershipApplicationsPageProps {
   isLoggedIn?: boolean;
   pendingApplications: any[];
   setPendingApplications: (apps: any[]) => void;
+  username?: string;
 }
 
 export default function MembershipApplicationsPage({
@@ -68,6 +69,7 @@ export default function MembershipApplicationsPage({
   isLoggedIn = false,
   pendingApplications,
   setPendingApplications,
+  username = "admin",
 }: MembershipApplicationsPageProps) {
   // Global application status
   const [applicationsOpen, setApplicationsOpen] = useState(true);
@@ -812,6 +814,7 @@ export default function MembershipApplicationsPage({
             toast.success("Form customized successfully");
             setShowCustomizeFormModal(false);
           }}
+          username={username}
         />
       )}
     </PageLayout>

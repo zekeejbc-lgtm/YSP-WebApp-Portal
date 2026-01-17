@@ -60,7 +60,14 @@ import {
   type LoginUser,
 } from "./services/gasLoginService";
 // ADDED getMaintenanceModeFromBackend HERE:
-import { logLogin, logLogout, getMaintenanceModeFromBackend } from "./services/gasSystemToolsService";
+import {
+  logLogin,
+  logLogout,
+  getMaintenanceModeFromBackend,
+  getCacheVersionFromBackend,
+  getLocalCacheVersion,
+  setLocalCacheVersion,
+} from "./services/gasSystemToolsService";
 import { ImageWithFallback } from "./components/figma/ImageWithFallback";
 import { toast, Toaster } from "sonner";
 const DonationPage = lazy(() => import("./components/DonationPage"));
@@ -532,6 +539,50 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showFounderModal, setShowFounderModal] = useState(false);
   const [showDeveloperModal, setShowDeveloperModal] = useState(false);
+  const [cacheVersion, setCacheVersion] = useState<number>(() => {
+    try {
+      return getLocalCacheVersion();
+    } catch {
+      return 0;
+    }
+  });
+  const appVersion = import.meta.env.VITE_APP_VERSION || "1.0.0";
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncCacheVersion = async () => {
+      try {
+        const backendVersion = await getCacheVersionFromBackend();
+        if (!isMounted) return;
+        setLocalCacheVersion(backendVersion);
+        setCacheVersion(backendVersion);
+      } catch {
+        if (!isMounted) return;
+        setCacheVersion(getLocalCacheVersion());
+      }
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === "ysp_cache_version") {
+        setCacheVersion(getLocalCacheVersion());
+      }
+    };
+
+    const handleCacheVersionChange = () => {
+      setCacheVersion(getLocalCacheVersion());
+    };
+
+    syncCacheVersion();
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("cache-version-changed", handleCacheVersionChange);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("cache-version-changed", handleCacheVersionChange);
+    };
+  }, []);
   
   // Upload Toast State for progress bar at bottom-right
   const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
@@ -2110,6 +2161,7 @@ export default function App() {
             isAdmin={isAdmin}
             isDark={isDark}
             userRole={userRole}
+            username={userName || (userRole === 'guest' ? 'Guest' : 'admin')}
           />
         </Suspense>
       </>
@@ -2162,6 +2214,7 @@ export default function App() {
             isLoggedIn={isAdmin}
             pendingApplications={pendingApplications}
             setPendingApplications={setPendingApplications}
+            username={userName || 'admin'}
           />
         </Suspense>
       </>
@@ -2314,7 +2367,7 @@ export default function App() {
       <>
         <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
         <Suspense fallback={<LazyFallback isDark={isDark} label="Loading events..." />}>
-          <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} />
+          <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} username={userName || 'admin'} />
         </Suspense>
       </>
     );
@@ -2418,7 +2471,7 @@ export default function App() {
       <>
         <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
         <Suspense fallback={<LazyFallback isDark={isDark} label="Loading announcements..." />}>
-          <AnnouncementsPage onClose={() => setShowAnnouncements(false)} isDark={isDark} userRole={userRole} />
+          <AnnouncementsPage onClose={() => setShowAnnouncements(false)} isDark={isDark} userRole={userRole} username={userName || 'admin'} />
         </Suspense>
       </>
     );
@@ -2517,7 +2570,7 @@ export default function App() {
       <>
         <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
         <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
-          <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} />
+          <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userName || 'admin'} />
         </Suspense>
       </>
     );
@@ -4116,6 +4169,9 @@ export default function App() {
           </p>
           <p className="mt-2">
             Shaping the Future to a Greater Society
+          </p>
+          <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+            App version: {appVersion} | Cache version: {cacheVersion}
           </p>
         </div>
       </footer>

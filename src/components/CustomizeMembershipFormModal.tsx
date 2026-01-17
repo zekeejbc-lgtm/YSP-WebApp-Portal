@@ -48,6 +48,7 @@ import { toast } from "sonner";
 import { Button, DESIGN_TOKENS } from "./design-system";
 import { MODAL_REGULATIONS, getModalStyles } from "./modal-regulations";
 import AddFieldDropdown from "./AddFieldDropdown";
+import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 
 export interface MembershipFormField {
   id: string;
@@ -74,6 +75,7 @@ interface CustomizeMembershipFormModalProps {
   isDark: boolean;
   fields: MembershipFormField[];
   onSave: (fields: MembershipFormField[]) => void;
+  username?: string;
 }
 
 export default function CustomizeMembershipFormModal({
@@ -82,6 +84,7 @@ export default function CustomizeMembershipFormModal({
   isDark,
   fields: initialFields,
   onSave,
+  username = "admin",
 }: CustomizeMembershipFormModalProps) {
   const [currentTab, setCurrentTab] = useState<"fields" | "settings" | "preview">("fields");
   const [fields, setFields] = useState<MembershipFormField[]>(initialFields);
@@ -226,6 +229,7 @@ export default function CustomizeMembershipFormModal({
     toast.success(`New ${fieldType} field added to ${categories.find(c => c.id === categoryId)?.label}`);
     setSelectedFieldId(newFieldId);
     setCurrentTab("settings");
+    logCreate(username, "Membership form field", newField.label);
   };
 
   // Delete custom field
@@ -238,6 +242,7 @@ export default function CustomizeMembershipFormModal({
     
     setFields(fields.filter(f => f.id !== fieldId));
     toast.success("Field deleted successfully");
+    logDelete(username, "Membership form field", field?.label || fieldId);
     if (selectedFieldId === fieldId) {
       setSelectedFieldId(null);
     }
@@ -855,6 +860,7 @@ export default function CustomizeMembershipFormModal({
               onClick={() => {
                 onSave(fields);
                 toast.success("Form configuration saved successfully!");
+                logEdit(username, "Membership form", "Configuration saved");
               }}
               className="flex-1 sm:flex-none"
             >

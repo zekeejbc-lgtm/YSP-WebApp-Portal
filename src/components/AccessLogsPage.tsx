@@ -33,6 +33,7 @@ import {
   Table as TableIcon,
   Monitor,
   X,
+  RefreshCw,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
@@ -41,6 +42,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import CustomDropdown from "./CustomDropdown";
 import { logAccess } from "../services/gasSystemToolsService";
+import { searchOfficers } from "../services/gasDirectoryService";
 
 // Organization branding (match AttendanceDashboardPage)
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -171,7 +173,7 @@ const GAS_SYSTEM_TOOLS_API_URL =
   import.meta.env.VITE_GAS_SYSTEM_TOOLS_API_URL ||
   import.meta.env.VITE_GAS_LOGIN_API_URL ||
   '';
-const ITEMS_PER_PAGE = 12;
+const ITEMS_PER_PAGE = 10;
 
 export default function AccessLogsPage({
   onClose,
@@ -198,6 +200,7 @@ export default function AccessLogsPage({
   });
   const [exportType, setExportType] = useState("");
   const hasLoggedViewRef = useRef(false);
+  const [selectedProfilePic, setSelectedProfilePic] = useState<string | null>(null);
 
   const actionTypes = [
     { value: "all", label: "All", icon: Filter },
@@ -327,6 +330,41 @@ export default function AccessLogsPage({
       setCurrentPage(totalPages);
     }
   }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    let isActive = true;
+    setSelectedProfilePic(null);
+
+    if (!selectedLog?.user) {
+      return () => {
+        isActive = false;
+      };
+    }
+
+    const loadProfileImage = async () => {
+      try {
+        const result = await searchOfficers(selectedLog.user);
+        if (!isActive || !result.success || !result.officers?.length) return;
+
+        const normalizedName = selectedLog.user.trim().toLowerCase();
+        const matched =
+          result.officers.find((officer) => officer.fullName.trim().toLowerCase() === normalizedName) ||
+          result.officers[0];
+        const imageUrl = matched.profilePicture || "";
+        if (imageUrl) {
+          setSelectedProfilePic(imageUrl);
+        }
+      } catch {
+        // Ignore profile image failures
+      }
+    };
+
+    loadProfileImage();
+
+    return () => {
+      isActive = false;
+    };
+  }, [selectedLog]);
 
   /**
    * Export logs to PDF with progress tracking
@@ -1029,7 +1067,7 @@ export default function AccessLogsPage({
       {/* Action Type Filter & View Toggle */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         {/* Filter Dropdown */}
-          <div className="w-auto" style={{ width: "min(220px, 100%)" }}>
+        <div className="w-auto" style={{ width: "min(220px, 100%)" }}>
           <CustomDropdown
             value={selectedType}
             onChange={setSelectedType}
@@ -1047,21 +1085,40 @@ export default function AccessLogsPage({
         </div>
 
         {/* View Mode Toggle */}
-        <button
-          onClick={() => setViewMode(viewMode === "table" ? "tile" : "table")}
-          disabled={isLoading}
-          className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 hover:shadow-md"
-          style={{
-            background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
-            color: "#ffffff",
-            fontSize: "14px",
-            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-            border: "none",
-          }}
-        >
-          <ViewToggleIcon className="w-4 h-4" />
-          <span className="hidden sm:inline">{viewToggleLabel}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchAccessLogs}
+            disabled={isLoading}
+            className="px-3 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50"
+            style={{
+              background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.85)",
+              border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.1)"}`,
+              color: isDark ? "#e5e7eb" : "#374151",
+              fontSize: "12px",
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+            }}
+            aria-label="Reload access logs"
+            title="Reload access logs"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Reload</span>
+          </button>
+          <button
+            onClick={() => setViewMode(viewMode === "table" ? "tile" : "table")}
+            disabled={isLoading}
+            className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 hover:shadow-md"
+            style={{
+              background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+              color: "#ffffff",
+              fontSize: "14px",
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              border: "none",
+            }}
+          >
+            <ViewToggleIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">{viewToggleLabel}</span>
+          </button>
+        </div>
       </div>
 
       {/* Loading State */}
@@ -1404,6 +1461,7 @@ export default function AccessLogsPage({
           style={{
             background: "rgba(0, 0, 0, 0.6)",
             backdropFilter: "blur(8px)",
+            zIndex: 299,
           }}
           onClick={() => setShowDetailModal(false)}
         >
@@ -1417,6 +1475,7 @@ export default function AccessLogsPage({
               borderColor: isDark
                 ? "rgba(255, 255, 255, 0.1)"
                 : "rgba(0, 0, 0, 0.1)",
+              zIndex: 300,
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1471,7 +1530,16 @@ export default function AccessLogsPage({
                       color: getActionColor(selectedLog.type),
                     }}
                   >
-                    <User className="w-8 h-8" />
+                    {selectedProfilePic ? (
+                      <img
+                        src={selectedProfilePic}
+                        alt={`${selectedLog.user} profile`}
+                        className="w-full h-full rounded-full object-cover"
+                        onError={() => setSelectedProfilePic(null)}
+                      />
+                    ) : (
+                      <User className="w-8 h-8" />
+                    )}
                   </div>
                   <div>
                     <div

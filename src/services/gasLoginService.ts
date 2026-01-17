@@ -1051,6 +1051,28 @@ export interface CheckEmailVerifiedResponse {
   error?: string;
 }
 
+// =================== PASSWORD RESET ===================
+
+export interface PasswordResetLookupResponse {
+  success: boolean;
+  user?: {
+    fullName: string;
+    username: string;
+    email: string;
+    idCode?: string;
+  };
+  matchedBy?: 'email' | 'username' | 'fullName';
+  error?: string;
+}
+
+export interface PasswordResetVerifyResponse {
+  success: boolean;
+  verified?: boolean;
+  resetToken?: string;
+  message?: string;
+  error?: string;
+}
+
 /**
  * Send OTP verification email
  * @param username - Username requesting verification
@@ -1243,6 +1265,252 @@ export async function checkEmailVerified(
   }
 }
 
+/**
+ * Lookup account details for password reset
+ * @param identifier - Username, full name, or email
+ */
+export async function lookupPasswordResetUser(
+  identifier: string,
+  signal?: AbortSignal
+): Promise<PasswordResetLookupResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'lookupPasswordResetUser',
+        identifier: identifier.trim(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('lookupPasswordResetUser Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+/**
+ * Send password reset OTP
+ */
+export async function sendPasswordResetOTP(
+  username: string,
+  email: string,
+  signal?: AbortSignal
+): Promise<SendOTPResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'sendPasswordResetOTP',
+        username: username.trim(),
+        email: email.trim(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('sendPasswordResetOTP Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+/**
+ * Verify password reset OTP
+ */
+export async function verifyPasswordResetOTP(
+  username: string,
+  email: string,
+  otp: string,
+  signal?: AbortSignal
+): Promise<PasswordResetVerifyResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'verifyPasswordResetOTP',
+        username,
+        email,
+        otp,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('verifyPasswordResetOTP Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+/**
+ * Reset password using a verified token
+ */
+export async function resetPasswordWithToken(
+  username: string,
+  resetToken: string,
+  newPassword: string,
+  signal?: AbortSignal
+): Promise<{ success: boolean; error?: string }> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'resetPasswordWithToken',
+        username,
+        resetToken,
+        newPassword,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    if (data.success) {
+      return { success: true };
+    }
+    return { success: false, error: data.error || 'Failed to reset password' };
+  } catch (error) {
+    console.error('resetPasswordWithToken Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
 // =================== DEFAULT EXPORT ===================
 
 export default {
@@ -1266,5 +1534,9 @@ export default {
   sendVerificationOTP,
   verifyOTP,
   checkEmailVerified,
+  lookupPasswordResetUser,
+  sendPasswordResetOTP,
+  verifyPasswordResetOTP,
+  resetPasswordWithToken,
   LoginErrorCodes,
 };
