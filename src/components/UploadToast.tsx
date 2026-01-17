@@ -9,6 +9,8 @@ export interface UploadToastMessage {
   progress?: number; // 0-100
   progressLabel?: string;
   onCancel?: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
 }
 
 interface UploadToastProps {
@@ -18,16 +20,17 @@ interface UploadToastProps {
 
 export function UploadToast({ message, onDismiss }: UploadToastProps) {
   const [isVisible, setIsVisible] = useState(true);
+  const hasAction = Boolean(message.onAction && message.actionLabel);
 
   useEffect(() => {
-    if (message.status === 'success' || message.status === 'error' || message.status === 'info') {
+    if (!hasAction && (message.status === 'success' || message.status === 'error' || message.status === 'info')) {
       const timer = setTimeout(() => {
         setIsVisible(false);
         setTimeout(() => onDismiss(message.id), 300);
       }, 4000);
       return () => clearTimeout(timer);
     }
-  }, [message.status, message.id, onDismiss]);
+  }, [message.status, message.id, onDismiss, hasAction]);
 
   return (
     <div
@@ -109,6 +112,21 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
                   style={{ width: `${message.progress}%` }}
                 />
               </div>
+            </div>
+          )}
+
+          {hasAction && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => {
+                  message.onAction?.();
+                  setIsVisible(false);
+                  setTimeout(() => onDismiss(message.id), 300);
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+              >
+                {message.actionLabel}
+              </button>
             </div>
           )}
         </div>

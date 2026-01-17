@@ -210,7 +210,7 @@ function generateUniqueID(sheet, position, colIndex) {
     "Tagum Chapter President": { prefix: "YSPTPR", fixed: "100" },
     "Membership and Internal Affairs Officer": { prefix: "YSPTIR", fixed: "200" },
     "External Relations Officer": { prefix: "YSPTER", fixed: "300" },
-    "Secretariat and Documentation Officer": { prefix: "YSPTSD", fixed: "400" },
+    "Secretary and Documentation Officer": { prefix: "YSPTSD", fixed: "400" },
     "Finance and Treasury Officer": { prefix: "YSPTFR", fixed: "500" },
     "Program Development Officer": { prefix: "YSPTPD", fixed: "600" },
     "Communications and Marketing Officer": { prefix: "YSPTCM", fixed: "700" },
@@ -515,4 +515,34 @@ function sendYSPEmail(email, name, type, data) {
     subject: subjectLine,
     htmlBody: htmlBody
   });
+}
+
+/**
+ * Creates an installable onEdit trigger that can send emails
+ * RUN THIS ONCE to set up the trigger
+ */
+function createEditTrigger() {
+  // Delete any existing onEdit triggers first
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'onEditInstallable') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+  
+  // Create new installable trigger
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  ScriptApp.newTrigger('onEditInstallable')
+    .forSpreadsheet(ss)
+    .onEdit()
+    .create();
+  
+  Logger.log('✅ Installable onEdit trigger created successfully!');
+}
+
+/**
+ * Installable onEdit trigger - has full permissions including email
+ */
+function onEditInstallable(e) {
+  onEdit(e);  // Call the existing onEdit function
 }

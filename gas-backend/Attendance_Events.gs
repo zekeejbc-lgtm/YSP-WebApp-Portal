@@ -534,6 +534,26 @@ function parseEventTime(timeValue) {
   return null;
 }
 
+/**
+ * Format cell values for API response.
+ * Dates use MM/dd/yyyy, times use h:mm a (PH timezone).
+ */
+function formatCellValue(header, value) {
+  if (value instanceof Date && !isNaN(value)) {
+    const timezone = 'Asia/Manila';
+    const normalizedHeader = String(header || '')
+      .replace(/\s+/g, '')
+      .toLowerCase();
+    const isTimeHeader = normalizedHeader === 'starttime' || normalizedHeader === 'endtime';
+    const isTimeOnlyDate = value.getFullYear() === 1899;
+    if (isTimeHeader || isTimeOnlyDate) {
+      return Utilities.formatDate(value, timezone, 'h:mm a');
+    }
+    return Utilities.formatDate(value, timezone, 'MM/dd/yyyy');
+  }
+  return value;
+}
+
 // =====================================================
 // EVENT CRUD OPERATIONS
 // =====================================================
@@ -561,14 +581,7 @@ function getEvents(params) {
       
       const event = {};
       headers.forEach((header, index) => {
-        let value = row[index];
-        // Convert Date objects to MM/DD/YYYY string format to avoid timezone issues
-        if (value instanceof Date && !isNaN(value)) {
-          // Use Philippines timezone for date formatting
-          const phDate = Utilities.formatDate(value, 'Asia/Manila', 'MM/dd/yyyy');
-          value = phDate;
-        }
-        event[header] = value;
+        event[header] = formatCellValue(header, row[index]);
       });
       
       // Calculate dynamic status based on current date/time
@@ -617,13 +630,7 @@ function getEventById(eventId) {
       if (data[i][0] === eventId) {
         const event = {};
         headers.forEach((header, index) => {
-          let value = data[i][index];
-          // Convert Date objects to MM/DD/YYYY string format to avoid timezone issues
-          if (value instanceof Date && !isNaN(value)) {
-            const phDate = Utilities.formatDate(value, 'Asia/Manila', 'MM/dd/yyyy');
-            value = phDate;
-          }
-          event[header] = value;
+          event[header] = formatCellValue(header, data[i][index]);
         });
         
         // Calculate dynamic status based on current date/time
@@ -1298,13 +1305,7 @@ function getUpcomingEvents(limit) {
       if (eventDate >= today && status !== 'Cancelled') {
         const event = {};
         headers.forEach((header, index) => {
-          let value = row[index];
-          // Convert Date objects to MM/DD/YYYY string format to avoid timezone issues
-          if (value instanceof Date && !isNaN(value)) {
-            const phDate = Utilities.formatDate(value, 'Asia/Manila', 'MM/dd/yyyy');
-            value = phDate;
-          }
-          event[header] = value;
+          event[header] = formatCellValue(header, row[index]);
         });
         events.push(event);
       }
@@ -1350,13 +1351,7 @@ function getPastEvents(limit) {
       if (eventDate < today) {
         const event = {};
         headers.forEach((header, index) => {
-          let value = row[index];
-          // Convert Date objects to MM/DD/YYYY string format to avoid timezone issues
-          if (value instanceof Date && !isNaN(value)) {
-            const phDate = Utilities.formatDate(value, 'Asia/Manila', 'MM/dd/yyyy');
-            value = phDate;
-          }
-          event[header] = value;
+          event[header] = formatCellValue(header, row[index]);
         });
         events.push(event);
       }

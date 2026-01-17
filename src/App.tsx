@@ -32,6 +32,7 @@ import {
   Loader2,
   RefreshCw,
   AlertCircle,
+  Settings,
 } from "lucide-react";
 import {
   fetchHomepageContent,
@@ -77,6 +78,7 @@ const AccessLogsPage = lazy(() => import("./components/AccessLogsPage"));
 const SystemToolsPage = lazy(() => import("./components/SystemToolsPage"));
 const ManageMembersPage = lazy(() => import("./components/ManageMembersPage"));
 const MembershipApplicationsPage = lazy(() => import("./components/MembershipApplicationsPage"));
+const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const FounderModal = lazy(() => import("./components/FounderModal"));
 const DeveloperModal = lazy(() => import("./components/DeveloperModal"));
 import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
@@ -526,6 +528,7 @@ export default function App() {
   const [showSystemTools, setShowSystemTools] = useState(false);
   const [showManageMembers, setShowManageMembers] = useState(false);
   const [showMembershipApplications, setShowMembershipApplications] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showFounderModal, setShowFounderModal] = useState(false);
   const [showDeveloperModal, setShowDeveloperModal] = useState(false);
   
@@ -629,11 +632,22 @@ export default function App() {
   // Fetch homepage content from GAS backend on mount
   useEffect(() => {
     const loadHomepageContent = async () => {
+      const toastId = `homepage-sync-${Date.now()}`;
+      addUploadToast({
+        id: toastId,
+        title: 'Syncing Homepage',
+        message: 'Connecting to backend...',
+        status: 'loading',
+        progress: 0,
+        progressLabel: 'Starting...',
+      });
       setIsLoadingHomepage(true);
       setHomepageError(null);
       
       try {
+        updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
         const content = await fetchHomepageContent();
+        updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
         setHomepageContent(prev => ({
           ...prev,
           hero: content.hero,
@@ -643,9 +657,27 @@ export default function App() {
           advocacyPillars: content.advocacyPillars,
         }));
         console.log('[App] Homepage content loaded from GAS');
+        updateUploadToast(toastId, {
+          status: 'success',
+          progress: 100,
+          title: 'Homepage Synced',
+          message: 'Content loaded from backend.',
+        });
+        setTimeout(() => removeUploadToast(toastId), 3000);
       } catch (error) {
         console.error('[App] Error loading homepage content:', error);
         setHomepageError('Failed to load homepage content. Using cached data.');
+        updateUploadToast(toastId, {
+          status: 'error',
+          progress: 100,
+          title: 'Sync Failed',
+          message: 'Homepage content failed to load. Tap reload to try again.',
+          actionLabel: 'Reload',
+          onAction: () => {
+            removeUploadToast(toastId);
+            retryLoadHomepage();
+          },
+        });
       } finally {
         setIsLoadingHomepage(false);
       }
@@ -730,11 +762,22 @@ export default function App() {
 
   // Retry loading homepage content
   const retryLoadHomepage = async () => {
+    const toastId = `homepage-retry-${Date.now()}`;
+    addUploadToast({
+      id: toastId,
+      title: 'Reloading Homepage',
+      message: 'Connecting to backend...',
+      status: 'loading',
+      progress: 0,
+      progressLabel: 'Starting...',
+    });
     setIsLoadingHomepage(true);
     setHomepageError(null);
     
     try {
+      updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
       const content = await fetchHomepageContent();
+      updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
       setHomepageContent(prev => ({
         ...prev,
         hero: content.hero,
@@ -743,11 +786,27 @@ export default function App() {
         vision: content.vision,
         advocacyPillars: content.advocacyPillars,
       }));
-      toast.success('Homepage content refreshed!');
+      updateUploadToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Homepage Refreshed',
+        message: 'Homepage content updated.',
+      });
+      setTimeout(() => removeUploadToast(toastId), 3000);
     } catch (error) {
       console.error('[App] Error retrying homepage content:', error);
       setHomepageError('Failed to load homepage content.');
-      toast.error('Failed to refresh content');
+      updateUploadToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Sync Failed',
+        message: 'Homepage content failed to load. Tap reload to try again.',
+        actionLabel: 'Reload',
+        onAction: () => {
+          removeUploadToast(toastId);
+          retryLoadHomepage();
+        },
+      });
     } finally {
       setIsLoadingHomepage(false);
     }
@@ -1048,6 +1107,25 @@ export default function App() {
       ],
       roles: ["admin"], // admin and above can see this group
     },
+    {
+      id: "account-settings",
+      label: "Account",
+      icon: <Settings className="w-5 h-5" />,
+      pages: [
+        {
+          id: "settings",
+          label: "Settings",
+          action: () => {
+            setActivePage("settings");
+            setShowSettings(true);
+            setOpenDropdown(null);
+            setIsMenuOpen(false);
+          },
+          roles: ["member"],
+        },
+      ],
+      roles: ["member"],
+    },
   ]), []);
 
   // Role Hierarchy Helper - Check if user has access based on role hierarchy
@@ -1142,6 +1220,15 @@ export default function App() {
             action: () => {
               setActivePage("my-profile");
               setShowMyProfile(true);
+              setIsSidebarOpen(false);
+            },
+          },
+          {
+            id: "settings",
+            label: "Settings",
+            action: () => {
+              setActivePage("settings");
+              setShowSettings(true);
               setIsSidebarOpen(false);
             },
           },
@@ -2435,6 +2522,59 @@ export default function App() {
     );
   }
 
+  // Show Settings page
+  if (showSettings) {
+    if (isPageInMaintenance("settings")) {
+      const config = getPageMaintenanceConfig("settings");
+      return (
+        <>
+          <MaintenanceScreen
+            isDark={isDark}
+            message={config.message}
+            estimatedTime={config.estimatedTime}
+            pageName="Settings"
+            onBack={() => setShowSettings(false)}
+            onContactDeveloper={() => setShowDeveloperModal(true)}
+          />
+          <Suspense fallback={null}>
+            <DeveloperModal
+              isOpen={showDeveloperModal}
+              onClose={() => setShowDeveloperModal(false)}
+              isDark={isDark}
+              isAdmin={isAdmin}
+            />
+          </Suspense>
+        </>
+      );
+    }
+    return (
+      <>
+        <Toaster
+          position="top-center"
+          richColors
+          closeButton
+          theme={isDark ? "dark" : "light"}
+          toastOptions={{
+            style: {
+              fontFamily: "var(--font-sans)",
+            },
+          }}
+        />
+        <Suspense fallback={null}>
+          <SettingsPage
+            onClose={() => setShowSettings(false)}
+            isDark={isDark}
+            onToggleDark={toggleDark}
+            addUploadToast={addUploadToast}
+            updateUploadToast={updateUploadToast}
+            removeUploadToast={removeUploadToast}
+          />
+        </Suspense>
+        <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
+      </>
+    );
+  }
+
   // Show donation page if flag is true
   if (showDonationPage) {
     if (isPageInMaintenance("donation")) {
@@ -2489,7 +2629,7 @@ export default function App() {
        !showManageEvents && !showMyQRID && 
        !showAttendanceTransparency && !showAnnouncements && !showAccessLogs && 
        !showSystemTools && !showManageMembers && !showFeedbackPage && 
-       !showMembershipApplicationsPage && !showMyProfile && (
+       !showMembershipApplicationsPage && !showMyProfile && !showSettings && (
         <TopBar
           isDark={isDark}
           onToggleDark={toggleDark}
@@ -2880,7 +3020,7 @@ export default function App() {
           ) : (
             <>
               <h2
-                className="mb-4 text-center md:text-left"
+                className="mb-4 text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
@@ -2954,7 +3094,7 @@ export default function App() {
           ) : (
             <>
               <h2
-                className="mb-4 text-center md:text-left"
+                className="mb-4 text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
@@ -3027,7 +3167,7 @@ export default function App() {
           ) : (
             <>
               <h2
-                className="mb-4 text-center md:text-left"
+                className="mb-4 text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
@@ -3106,7 +3246,7 @@ export default function App() {
           ) : (
             <>
               <h2
-                className="mb-4 text-center md:text-left"
+                className="mb-4 text-left"
                 style={{
                   fontFamily: "var(--font-headings)",
                   fontSize: "1.5rem",
