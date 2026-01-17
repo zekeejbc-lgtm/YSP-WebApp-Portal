@@ -586,7 +586,7 @@ export async function logAccess(params: LogAccessParams): Promise<boolean> {
     
     await callSystemToolsAPI<{ message: string }>('logAccess', {
       username: params.username,
-      action: params.action,
+      logAction: params.action,
       actionType: params.actionType,
       status: params.status || 'success',
       ipAddress,

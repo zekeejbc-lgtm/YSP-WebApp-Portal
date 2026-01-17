@@ -27,6 +27,21 @@ function doPost(e) {
     }
     
     Logger.log('doPost received action: ' + action);
+
+    // Legacy support: action message overwrote route action in old clients
+    const isLegacyLogAccess = action && action !== 'logAccess' && requestData.actionType && requestData.username;
+    if (isLegacyLogAccess) {
+      return handleLogAccess(
+        requestData.username,
+        action,
+        requestData.actionType,
+        requestData.status,
+        requestData.ipAddress,
+        requestData.device
+      )
+        ? createSuccessResponse({ message: 'Access logged successfully' })
+        : createErrorResponse('Failed to log access', 500);
+    }
     
     switch (action) {
       // System Health
@@ -58,10 +73,12 @@ function doPost(e) {
       // Access Logs
       case 'getAccessLogs':
         return handleGetAccessLogs(requestData.page || 1, requestData.limit || 50, requestData.filterType);
-      case 'logAccess':
-        return handleLogAccess(requestData.username, requestData.action, requestData.actionType, requestData.status, requestData.ipAddress, requestData.device) 
+      case 'logAccess': {
+        const logAction = requestData.logAction || requestData.actionMessage || '';
+        return handleLogAccess(requestData.username, logAction, requestData.actionType, requestData.status, requestData.ipAddress, requestData.device)
           ? createSuccessResponse({ message: 'Access logged successfully' })
           : createErrorResponse('Failed to log access', 500);
+      }
       case 'getAccessLogsStats':
         return handleGetAccessLogsStats();
       
