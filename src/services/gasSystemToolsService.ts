@@ -572,16 +572,14 @@ export async function logAccess(params: LogAccessParams): Promise<boolean> {
     // Get device info
     const device = params.device || getDeviceInfo();
     
-    // Get IP (don't wait too long for this)
+    // Get IP (wait briefly so logs include it when possible)
     let ipAddress = params.ipAddress || 'Unknown';
     if (ipAddress === 'Unknown') {
-      // Try to get IP asynchronously but don't block
-      getClientIP().then(ip => {
-        if (ip !== 'Unknown') {
-          // Log again with IP if we got it (optional enhancement)
-          console.log('[AccessLog] IP resolved:', ip);
-        }
-      }).catch(() => {});
+      try {
+        ipAddress = await getClientIP();
+      } catch {
+        ipAddress = 'Unknown';
+      }
     }
     
     await callSystemToolsAPI<{ message: string }>('logAccess', {

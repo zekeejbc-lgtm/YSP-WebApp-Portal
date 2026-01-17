@@ -1187,7 +1187,11 @@ function handleLogAccess(username, action, actionType, status, ipAddress, device
     const sheet = initializeAccessLogsSheet();
     const lastRow = sheet.getLastRow();
     
-    const timestamp = new Date().toISOString();
+    const timestamp = Utilities.formatDate(
+      new Date(),
+      'Asia/Manila',
+      'yyyy-MM-dd hh:mm:ss a'
+    );
     
     sheet.getRange(lastRow + 1, 1, 1, 7).setValues([[
       username || 'Unknown',
