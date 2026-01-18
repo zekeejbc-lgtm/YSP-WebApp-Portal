@@ -1,7 +1,7 @@
-
 import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
 import { registerSW } from "virtual:pwa-register";
+import { HelmetProvider } from "react-helmet-async"; // <--- Imported here
 import App from "./App.tsx";
 import { clearAppBadge } from "./utils/appBadge";
 import "./index.css";
@@ -14,7 +14,12 @@ if (import.meta.env.PROD) {
   console.debug = noop;
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+// Wrapped App with HelmetProvider
+createRoot(document.getElementById("root")!).render(
+  <HelmetProvider>
+    <App />
+  </HelmetProvider>
+);
 
 let updateToastId: string | number | undefined;
 let updateToastActive = false;
@@ -89,5 +94,3 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 clearBadgeOnFocus();
-
-  
