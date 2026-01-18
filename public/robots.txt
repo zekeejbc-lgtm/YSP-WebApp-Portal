@@ -1,0 +1,13 @@
+# robots.txt for Youth Service Philippines - Tagum Chapter
+# https://www.youthservicephilippinestagum.me/
+
+User-agent: *
+Allow: /
+
+# Keep deprecated pages out of search results (scheduled for removal)
+Disallow: /polling
+Disallow: /polling-evaluations
+Disallow: /tabang-ta-bai
+
+# Sitemap location
+Sitemap: https://www.youthservicephilippinestagum.me/sitemap.xml

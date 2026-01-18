@@ -24,27 +24,14 @@ A comprehensive web application for YSP Tagum Chapter featuring community campai
 - Contact section with Google Forms integration
 - Dark/Light mode support
 
-### 2. **Tabang ta Bai Campaigns** 
-A comprehensive donation campaign system featuring:
-- **Campaign Cards** with progress tracking
-- **Multiple Payment Methods**: GCash, Maya, GoTyme QR codes
-- **Donation Form** with receipt upload
-- **Admin Dashboard** for donation management:
-  - Acknowledge → Sends thank you email + shows in donor history
-  - Invalid Receipt → Requests more proof
-  - Reject → Sends refund notification
-- **Donor History** (only shows acknowledged donations)
-- **Social Sharing** to Facebook, Messenger, Instagram
-- Fully responsive design
-
-### 3. **Feedback Center**
+### 2. **Feedback Center**
 - 5-star rating system
 - Category-based feedback (General, Website, Event, Suggestions, Complaint, Other)
 - Admin review and status management
 - Average rating and feedback statistics
 - Email collection for follow-up
 
-### 4. **Admin Panel**
+### 3. **Admin Panel**
 - Secure login system
 - Donation verification and management
 - Feedback review and status updates
@@ -79,14 +66,12 @@ The application is fully responsive and optimized for:
 ### `/App.tsx`
 Main application component with routing logic for all pages.
 
-### `/components/TabangTaBaiPage.tsx`
-Complete campaign management system with donation tracking.
 
 ### `/components/FeedbackPage.tsx`
 Feedback collection and management interface.
 
 ### `/components/DonationPage.tsx`
-General donation page (legacy - being replaced by Tabang ta Bai).
+General donation page.
 
 ### `/components/LoginPanel.tsx`
 Admin authentication panel with glassmorphism design.
@@ -113,7 +98,6 @@ Cross-browser clipboard utility with fallback support.
 
 ✅ **Completed:**
 - Homepage with all sections
-- Tabang ta Bai campaigns system
 - Feedback center
 - Admin panel
 - Dark/Light mode support
@@ -137,7 +121,6 @@ The app includes fallback support for the Clipboard API:
 ```
 ├── App.tsx                          # Main application
 ├── components/
-│   ├── TabangTaBaiPage.tsx         # Campaigns system
 │   ├── FeedbackPage.tsx            # Feedback center
 │   ├── DonationPage.tsx            # Donation page
 │   ├── LoginPanel.tsx              # Admin login
@@ -156,22 +139,9 @@ The app includes fallback support for the Clipboard API:
 2. **Install dependencies** (if applicable)
 3. **Run the application**
 4. **Access admin panel** with demo credentials
-5. **Customize** brand colors, content, and payment details
+5. **Customize** brand colors and content
 
 ## 🔧 Customization Guide
-
-### Update Payment QR Codes
-Edit the `qrCodes` object in `/components/TabangTaBaiPage.tsx`:
-```typescript
-qrCodes: {
-  gcash: 'your-qr-image-url',
-  maya: 'your-qr-image-url',
-  gotyme: 'your-qr-image-url'
-}
-```
-
-### Update Account Numbers
-Update the `copyToClipboard` function calls to use your real account numbers.
 
 ### Change Admin Credentials
 Update the `handleLogin` function in `/App.tsx`:
@@ -180,9 +150,6 @@ if (username === 'your-username' && password === 'your-password') {
   // ...
 }
 ```
-
-### Add Campaigns
-Add new campaign objects to the `campaigns` state in `/components/TabangTaBaiPage.tsx`.
 
 ## 📧 Email Integration
 
@@ -233,3 +200,4 @@ Copyright © 2025 Youth Service Philippines - Tagum Chapter. All rights reserved
 ---
 
 **Note**: This is a demo application. For production use, ensure proper backend integration, security measures, and compliance with data protection regulations.
+

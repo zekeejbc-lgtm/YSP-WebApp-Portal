@@ -1,11 +1,11 @@
 # robots.txt for Youth for Service Philippines (YSP)
-# https://ysp.vercel.app/
+# https://www.youthservicephilippinestagum.me/
 
 User-agent: *
 Allow: /
 
 # Sitemap location
-Sitemap: https://ysp.vercel.app/sitemap.xml
+Sitemap: https://www.youthservicephilippinestagum.me/sitemap.xml
 
 # Crawl delay (optional - 1 second between requests)
 Crawl-delay: 1

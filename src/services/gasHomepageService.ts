@@ -227,8 +227,8 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
     // Transform GAS response to HomepageMainContent
     const content: HomepageMainContent = {
       hero: {
-        mainHeading: result.data.mainHeading || 'Welcome to Youth Service Philippines',
-        subHeading: result.data.subHeading || 'Tagum Chapter',
+        mainHeading: result.data.mainHeading || 'Youth Service Philippines Tagum Portal',
+        subHeading: result.data.subHeading || '',
         tagline: result.data.tagline || 'Shaping the Future to a Greater Society',
         loginButtonText: 'Log In',
         memberButtonText: 'Be a Member!',
@@ -410,8 +410,8 @@ export const clearHomepageCache = (): void => {
 export const getDefaultHomepageContent = (): HomepageMainContent => {
   return {
     hero: {
-      mainHeading: 'Welcome to Youth Service Philippines',
-      subHeading: 'Tagum Chapter',
+      mainHeading: 'Youth Service Philippines Tagum Portal',
+      subHeading: '',
       tagline: 'Shaping the Future to a Greater Society',
       loginButtonText: 'Log In',
       memberButtonText: 'Be a Member!',

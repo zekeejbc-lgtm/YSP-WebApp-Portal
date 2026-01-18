@@ -2897,6 +2897,14 @@ export default function App() {
     );
   }
 
+  const isDefaultHeroHeading =
+    homepageContent.hero.mainHeading === "Welcome to Youth Service Philippines" &&
+    homepageContent.hero.subHeading === "Tagum Chapter";
+  const heroMainHeading = isDefaultHeroHeading
+    ? "Youth Service Philippines Tagum Portal"
+    : homepageContent.hero.mainHeading;
+  const heroSubHeading = isDefaultHeroHeading ? "" : homepageContent.hero.subHeading;
+
   return (
     <div className="min-h-screen transition-colors duration-300" style={{ 
       overflow: 'visible',
@@ -3200,17 +3208,21 @@ export default function App() {
                   letterSpacing: "-0.02em",
                 }}
               >
-                {homepageContent.hero.mainHeading}
-                <br />
-                <span
-                  className="text-2xl sm:text-3xl lg:text-4xl"
-                  style={{
-                    color: "#ee8724",
-                    fontWeight: "600",
-                  }}
-                >
-                  {homepageContent.hero.subHeading}
-                </span>
+                {heroMainHeading}
+                {heroSubHeading.trim().length > 0 ? (
+                  <>
+                    <br />
+                    <span
+                      className="text-2xl sm:text-3xl lg:text-4xl"
+                      style={{
+                        color: "#ee8724",
+                        fontWeight: "600",
+                      }}
+                    >
+                      {heroSubHeading}
+                    </span>
+                  </>
+                ) : null}
               </h1>
 
               <p
