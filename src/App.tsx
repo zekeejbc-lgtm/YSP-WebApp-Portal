@@ -2940,10 +2940,16 @@
 
       {/* ⬇️ PASTE THIS BLOCK HERE ⬇️ */}
         <Helmet>
-          <title>Home | Youth Service Philippines Tagum</title>
+          {/* ✅ UPDATED Title to match "YSP Tagum" search intent */}
+          <title>YSP Tagum Portal | Youth Service Philippines</title> 
+          
           <meta 
             name="description" 
-            content="Official portal of Youth Service Philippines Tagum Chapter. Join us in youth leadership, community service, and nation-building initiatives in Tagum City." 
+            content="Official portal of YSP Tagum (Youth Service Philippines - Tagum Chapter). Join us in youth leadership, community service, and nation-building initiatives." 
+          />
+          <meta 
+            name="keywords" 
+            content="YSP Tagum, YSP Tagum Portal, Youth Service Philippines Tagum, volunteer opportunities Tagum" 
           />
           <link rel="canonical" href="https://www.youthservicephilippinestagum.me/" />
         </Helmet>
