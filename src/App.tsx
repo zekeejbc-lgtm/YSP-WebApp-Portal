@@ -70,6 +70,7 @@
   } from "./services/gasSystemToolsService";
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
+  import { Helmet } from 'react-helmet-async';
   const DonationPage = lazy(() => import("./components/DonationPage"));
   const LoginPanel = lazy(() => import("./components/LoginPanel"));
   const FeedbackPage = lazy(() => import("./components/FeedbackPage"));
@@ -2936,6 +2937,18 @@
         overflow: 'visible',
         background: isDark ? '#0f172a' : '#f8fafc'
       }}>
+
+      {/* ⬇️ PASTE THIS BLOCK HERE ⬇️ */}
+        <Helmet>
+          <title>Home | Youth Service Philippines Tagum</title>
+          <meta 
+            name="description" 
+            content="Official portal of Youth Service Philippines Tagum Chapter. Join us in youth leadership, community service, and nation-building initiatives in Tagum City." 
+          />
+          <link rel="canonical" href="https://www.youthservicephilippinestagum.me/" />
+        </Helmet>
+        {/* ⬆️ END PASTE ⬆️ */}
+        
         {/* Animated Background Blobs */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
           <div className="absolute top-0 left-1/4 w-96 h-96 bg-orange-200/40 dark:bg-orange-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob" />
