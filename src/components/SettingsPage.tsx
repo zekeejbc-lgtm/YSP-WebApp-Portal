@@ -257,7 +257,7 @@ export default function SettingsPage({
       onClose={onClose}
     >
       <div className="space-y-6">
-        <div className="rounded-2xl border border-orange-200/70 dark:border-orange-900/40 bg-white/90 dark:bg-gray-900/70 shadow-lg backdrop-blur p-5 md:p-6">
+        <div className="rounded-2xl border border-orange-200 dark:border-orange-800 bg-white dark:bg-gray-900 shadow-xl p-5 md:p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-start gap-3">
               <div className="mt-1 rounded-full bg-orange-100 text-orange-600 p-2">
@@ -286,12 +286,12 @@ export default function SettingsPage({
               />
             </div>
           </div>
-          <div className="mt-4 rounded-xl border border-gray-200/70 dark:border-gray-800 bg-white/70 dark:bg-gray-900/60 px-4 py-3 text-xs text-gray-600 dark:text-gray-400">
+          <div className="mt-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3 text-xs text-gray-600 dark:text-gray-400">
             {notificationsStatus}
           </div>
         </div>
 
-        <div className="rounded-2xl border border-gray-200/70 dark:border-gray-800 bg-white/90 dark:bg-gray-900/70 shadow-lg backdrop-blur p-5 md:p-6">
+        <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-xl p-5 md:p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-start gap-3">
               <div className="mt-1 rounded-full bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200 p-2">

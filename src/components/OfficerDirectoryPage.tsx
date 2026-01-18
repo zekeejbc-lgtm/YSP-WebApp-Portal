@@ -387,6 +387,21 @@ export default function OfficerDirectoryPage({
               icon: <Phone className="w-4 h-4" />,
             },
             {
+              label: "Emergency Contact Name",
+              value: selectedOfficer.emergencyContactName || "N/A",
+              icon: <UserIcon className="w-4 h-4" />,
+            },
+            {
+              label: "Emergency Contact Relation",
+              value: selectedOfficer.emergencyContactRelation || "N/A",
+              icon: <Users className="w-4 h-4" />,
+            },
+            {
+              label: "Emergency Contact Number",
+              value: selectedOfficer.emergencyContactNumber || "N/A",
+              icon: <Phone className="w-4 h-4" />,
+            },
+            {
               label: "Birthday",
               value: selectedOfficer.birthday || "—",
               icon: <Calendar className="w-4 h-4" />,

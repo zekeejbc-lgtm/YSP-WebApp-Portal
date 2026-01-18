@@ -873,7 +873,7 @@ export default function ManageMembersPage({
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-6">
           <button
             onClick={() => setViewMode(viewMode === "table" ? "tile" : "table")}
-            className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 hover:shadow-md"
+            className="self-start md:self-auto w-fit px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 hover:shadow-md"
             style={{
               background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
               color: "#ffffff",

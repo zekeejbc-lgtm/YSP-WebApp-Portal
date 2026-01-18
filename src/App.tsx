@@ -3060,15 +3060,15 @@ export default function App() {
           <div className="fixed bottom-6 right-6" style={{ zIndex: 45 }}>
             <button
               onClick={handleStartEditing}
-              className="flex items-center gap-2 px-6 py-3 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl shadow-lg"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-white transition-all duration-300 shadow-md"
               style={{
                 background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
                 fontWeight: "600",
-                fontSize: "16px",
+                fontSize: "14px",
               }}
             >
-              <Edit3 className="w-5 h-5" />
-              Edit Homepage
+              <Edit3 className="w-4 h-4" />
+              <span className="hidden sm:inline">Edit</span>
             </button>
           </div>
         )}

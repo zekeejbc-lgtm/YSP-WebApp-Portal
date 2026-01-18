@@ -29,6 +29,11 @@ export interface DirectoryOfficer {
   email: string;
   personalEmail: string;
   contactNumber: string;
+
+  // Emergency Contact
+  emergencyContactName: string;
+  emergencyContactRelation: string;
+  emergencyContactNumber: string;
   
   // Personal Info
   birthday: string;

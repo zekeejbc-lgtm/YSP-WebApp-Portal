@@ -348,6 +348,11 @@ function buildOfficerObject(row, idx) {
     email: getDirectoryValue(row, idx.email),
     personalEmail: getDirectoryValue(row, idx.personalEmail),
     contactNumber: getDirectoryValue(row, idx.contactNumber),
+
+    // Emergency Contact
+    emergencyContactName: getDirectoryValue(row, idx.emergencyContactName),
+    emergencyContactRelation: getDirectoryValue(row, idx.emergencyContactRelation),
+    emergencyContactNumber: getDirectoryValue(row, idx.emergencyContactNumber),
     
     // Personal Info
     birthday: birthdayFormatted,
