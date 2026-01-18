@@ -896,9 +896,12 @@ export default function ManageMembersPage({
               options={[
                 { value: "all", label: "All Committees" },
                 { value: "Executive Board", label: "Executive Board" },
-                { value: "Community Development", label: "Community Development" },
-                { value: "Environmental Conservation", label: "Environmental Conservation" },
-                { value: "Youth Development", label: "Youth Development" },
+                { value: "Membership and Internal Committee", label: "Membership and Internal Affairs Committee" },
+                { value: "External Relations Committee", label: "External Relations Committee" },
+                { value: "Secretariat and Documentation Committee", label: "Secretariat and Documentation Committee" },
+                { value: "Finance and Treasury Committee", label: "Finance and Treasury Committee" },
+                { value: "Program Development Committee", label: "Program Development Committee" },
+                { value: "Communications and Marketing Committee", label: "Communications and Marketing Committee" },
               ]}
               isDark={isDark}
               size="md"
