@@ -466,7 +466,7 @@ export default function ManageMembersPage({
   /**
    * PDF EXPORT HANDLER
    * - Orientation: Landscape (A4)
-   * - Page 1: Header (Red, Logo), Stats Cards, Committee Cards (Specific Colors)
+   * - Page 1: Header, Status Stats, UNASSIGNED STATS (New), Committee Cards
    * - Page 2+: Member Table
    */
   const handleExportPDF = async () => {
@@ -517,7 +517,7 @@ export default function ManageMembersPage({
     doc.text(`Exported: ${new Date().toLocaleString()}`, pageWidth - margin, 38, { align: 'right' });
 
     // --- SUMMARY SECTION (Page 1) ---
-    let yPosition = 60;
+    let yPosition = 55; // Slightly higher start to fit new rows
     
     // Section Title
     doc.setFontSize(14);
@@ -527,9 +527,9 @@ export default function ManageMembersPage({
     doc.setDrawColor(246, 66, 31);
     doc.setLineWidth(1);
     doc.line(margin, yPosition + 3, margin + 50, yPosition + 3);
-    yPosition += 15;
+    yPosition += 12;
 
-    // TOP ROW STATS (Active, Inactive, Total, Exec Board)
+    // --- ROW 1: STATUS STATS (Active, Inactive, Total, Exec Board) ---
     const activeCount = filteredMembers.filter(m => m.status === 'Active').length;
     const inactiveCount = filteredMembers.filter(m => m.status === 'Inactive').length;
     const totalCount = filteredMembers.length;
@@ -543,7 +543,7 @@ export default function ManageMembersPage({
     ];
 
     const boxGap = 8;
-    const boxHeight = 32;
+    const boxHeight = 28; // Slightly shorter to save vertical space
     // Calculate width for 4 boxes across available width
     const boxWidth = (pageWidth - (2 * margin) - (3 * boxGap)) / 4;
 
@@ -555,17 +555,55 @@ export default function ManageMembersPage({
       
       doc.setTextColor(255, 255, 255);
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(22);
-      doc.text(String(status.count), boxX + boxWidth / 2, yPosition + 16, { align: 'center' });
+      doc.setFontSize(18);
+      doc.text(String(status.count), boxX + boxWidth / 2, yPosition + 14, { align: 'center' });
       
-      doc.setFontSize(9);
+      doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      doc.text(status.name, boxX + boxWidth / 2, yPosition + 26, { align: 'center' });
+      doc.text(status.name, boxX + boxWidth / 2, yPosition + 22, { align: 'center' });
     });
 
-    yPosition += boxHeight + 15;
+    yPosition += boxHeight + 10; // Add spacing before next row
 
-    // BOTTOM ROW: COMMITTEES (SPECIFIC COLORS & NAMES)
+    // --- ROW 2: UNASSIGNED MEMBERS & VOLUNTEERS (NEW REQUIREMENT) ---
+    
+    // Calculate counts for members with specific positions AND empty committees
+    const memberNoCommCount = filteredMembers.filter(m => 
+      m.position?.trim() === 'Member' && (!m.committee || m.committee.trim() === '')
+    ).length;
+
+    const volunteerNoCommCount = filteredMembers.filter(m => 
+      m.position?.trim() === 'Volunteer Member' && (!m.committee || m.committee.trim() === '')
+    ).length;
+
+    const generalCounts = [
+        { name: 'MEMBERS (NO COMMITTEE)', color: [100, 116, 139], count: memberNoCommCount }, // Slate Gray
+        { name: 'VOLUNTEERS', color: [139, 92, 246], count: volunteerNoCommCount } // Violet
+    ];
+
+    // We use the same grid width logic but split into 2 large boxes or keeping 4-column alignment? 
+    // Let's split the width into 2 large boxes to distinguish this section
+    const genBoxWidth = (pageWidth - (2 * margin) - boxGap) / 2;
+
+    generalCounts.forEach((item, index) => {
+        const boxX = margin + index * (genBoxWidth + boxGap);
+        // @ts-ignore
+        doc.setFillColor(...item.color);
+        doc.roundedRect(boxX, yPosition, genBoxWidth, boxHeight, 3, 3, 'F');
+
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(18);
+        doc.text(String(item.count), boxX + genBoxWidth / 2, yPosition + 14, { align: 'center' });
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.text(item.name, boxX + genBoxWidth / 2, yPosition + 22, { align: 'center' });
+    });
+
+    yPosition += boxHeight + 10; // Add spacing before next row
+
+    // --- ROW 3: COMMITTEES (SPECIFIC COLORS & NAMES) ---
     const committeeList = [
       "Membership and Internal Affairs Committee",
       "External Relations Committee",
