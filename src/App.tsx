@@ -61,13 +61,16 @@
   } from "./services/gasLoginService";
   // ADDED getMaintenanceModeFromBackend HERE:
   import {
-    logLogin,
-    logLogout,
-    getMaintenanceModeFromBackend,
-    getCacheVersionFromBackend,
-    getLocalCacheVersion,
-    setLocalCacheVersion,
-  } from "./services/gasSystemToolsService";
+  logLogin,
+  logLogout,
+  getMaintenanceModeFromBackend,
+  getCacheVersionFromBackend,
+  getLocalCacheVersion,
+  setLocalCacheVersion,
+  forceClearAllCaches, // 👈 ADD THIS HERE
+} from "./services/gasSystemToolsService";
+  // 👈 ADD THIS IMPORT
+import { CacheRefreshModal } from "./components/SystemToolsPage";
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
@@ -546,51 +549,60 @@
     const [showMembershipApplications, setShowMembershipApplications] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showFounderModal, setShowFounderModal] = useState(false);
-    const [showDeveloperModal, setShowDeveloperModal] = useState(false);
-    const [cacheVersion, setCacheVersion] = useState<number>(() => {
+  const [showDeveloperModal, setShowDeveloperModal] = useState(false);
+
+  const [cacheVersion, setCacheVersion] = useState(() => {
+    try {
+      return getLocalCacheVersion();
+    } catch {
+      return 0;
+    }
+  });
+
+  const appVersion = import.meta.env.VITE_APP_VERSION || "1.0.0";
+  const [showCacheRefreshModal, setShowCacheRefreshModal] = useState(false);
+
+  const handleConfirmHardRefresh = async () => {
+    setShowCacheRefreshModal(false);
+    await forceClearAllCaches();
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncCacheVersion = async () => {
       try {
-        return getLocalCacheVersion();
+        const backendVersion = await getCacheVersionFromBackend();
+        if (!isMounted) return;
+        setLocalCacheVersion(backendVersion);
+        setCacheVersion(backendVersion);
       } catch {
-        return 0;
-      }
-    });
-    const appVersion = import.meta.env.VITE_APP_VERSION || "1.0.0";
-
-    useEffect(() => {
-      let isMounted = true;
-
-      const syncCacheVersion = async () => {
-        try {
-          const backendVersion = await getCacheVersionFromBackend();
-          if (!isMounted) return;
-          setLocalCacheVersion(backendVersion);
-          setCacheVersion(backendVersion);
-        } catch {
-          if (!isMounted) return;
-          setCacheVersion(getLocalCacheVersion());
-        }
-      };
-
-      const handleStorage = (event: StorageEvent) => {
-        if (event.key === "ysp_cache_version") {
-          setCacheVersion(getLocalCacheVersion());
-        }
-      };
-
-      const handleCacheVersionChange = () => {
+        if (!isMounted) return;
         setCacheVersion(getLocalCacheVersion());
-      };
+      }
+    };
 
-      syncCacheVersion();
-      window.addEventListener("storage", handleStorage);
-      window.addEventListener("cache-version-changed", handleCacheVersionChange);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === "ysp_cache_version") {
+        setCacheVersion(getLocalCacheVersion());
+      }
+    };
 
-      return () => {
-        isMounted = false;
-        window.removeEventListener("storage", handleStorage);
-        window.removeEventListener("cache-version-changed", handleCacheVersionChange);
-      };
-    }, []);
+    const handleCacheVersionChange = () => {
+      setCacheVersion(getLocalCacheVersion());
+      setShowCacheRefreshModal(true);
+    };
+
+    syncCacheVersion();
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("cache-version-changed", handleCacheVersionChange);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("cache-version-changed", handleCacheVersionChange);
+    };
+  }, []);
     
     // Upload Toast State for progress bar at bottom-right
     const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
@@ -5082,6 +5094,14 @@
           messages={uploadToastMessages}
           onDismiss={removeUploadToast}
           isDark={isDark}
+        />
+
+{/* 👈 ADD THIS: Global Cache Refresh Modal */}
+        <CacheRefreshModal
+          isOpen={showCacheRefreshModal}
+          isDark={isDark}
+          onConfirm={handleConfirmHardRefresh}
+          onClose={() => setShowCacheRefreshModal(false)}
         />
 
 {/* 🤖 YSP AI Chatbot - Hides when user is logged in (isAdmin is true) */}

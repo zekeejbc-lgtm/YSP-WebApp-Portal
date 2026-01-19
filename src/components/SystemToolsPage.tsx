@@ -164,14 +164,16 @@ function ToolCardSkeleton({ isDark }: { isDark: boolean }) {
   );
 }
 
-interface CacheRefreshModalProps {
+// Add 'export' here
+export interface CacheRefreshModalProps {
   isOpen: boolean;
   isDark: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }
 
-function CacheRefreshModal({ isOpen, isDark, onConfirm, onClose }: CacheRefreshModalProps) {
+// ✅ CORRECTED COMPONENT
+export function CacheRefreshModal({ isOpen, isDark, onConfirm, onClose }: CacheRefreshModalProps) {
   if (!isOpen) return null;
 
   const modalStyles = getModalStyles(isDark, "small");

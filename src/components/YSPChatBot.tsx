@@ -245,9 +245,30 @@ const YSPChatBot: React.FC = () => {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-
+  const [cooldown, setCooldown] = useState(0); // Display number
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cooldownEndRef = useRef<number>(0); // 👈 Tracks real time
+
+  // ⏱️ ROBUST TIMER: Uses Date.now() so it never gets stuck
+  useEffect(() => {
+    if (cooldown === 0) return;
+
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      const remaining = Math.ceil((cooldownEndRef.current - now) / 1000);
+
+      if (remaining <= 0) {
+        setCooldown(0);
+        window.clearInterval(interval);
+      } else {
+        setCooldown(remaining);
+      }
+    }, 500); // Check twice a second for smoothness
+
+    return () => window.clearInterval(interval);
+  }, [cooldown]);
 
   useEffect(() => setMounted(true), []);
 
@@ -295,7 +316,13 @@ const YSPChatBot: React.FC = () => {
 
   // Reusable function to handle sending messages
   const handleSend = async (text: string) => {
-    if (!text.trim() || isLoading) return;
+    // 🛑 Block if cooling down or loading
+    if (!text.trim() || isLoading || cooldown > 0) return;
+
+    // ⏱️ Start 10-second Cooldown
+    const COOLDOWN_SECONDS = 10;
+    cooldownEndRef.current = Date.now() + (COOLDOWN_SECONDS * 1000);
+    setCooldown(COOLDOWN_SECONDS);
 
     const userMsg: Message = { id: Date.now(), text, sender: "user" };
     setMessages((prev) => [...prev, userMsg]);
@@ -483,9 +510,19 @@ const YSPChatBot: React.FC = () => {
 
             {/* ✅ TITLE & TAGLINE */}
             <div style={{ display: "flex", flexDirection: "column", marginLeft: "12px", flex: 1 }}>
-              <span style={{ fontWeight: "bold", fontSize: "16px", lineHeight: "1.2" }}>
-                KaagapAI
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ fontWeight: "bold", fontSize: "16px", lineHeight: "1.2" }}>
+                  KaagapAI
+                </span>
+                {/* 🟢 ONLINE DOT */}
+                <div style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  backgroundColor: "#4ade80", // Bright Green
+                  boxShadow: "0 0 6px #4ade80"
+                }} />
+              </div>
               <span style={{ fontSize: "11px", opacity: 0.9, fontWeight: "400" }}>
                 Katuwang ng Kabataang Tagumeño.
               </span>
@@ -721,7 +758,12 @@ const YSPChatBot: React.FC = () => {
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask YSP something..."
+              disabled={isLoading || cooldown > 0} // 👈 Disable input
+              placeholder={
+                cooldown > 0 
+                  ? `Please wait ${cooldown}s...` 
+                  : "Ask YSP something..."
+              }
               style={{
                 flex: 1,
                 border: "1px solid #e5e7eb",
@@ -730,35 +772,41 @@ const YSPChatBot: React.FC = () => {
                 outline: "none",
                 fontSize: "14px",
                 color: "#1f2937",
-                backgroundColor: "#f9fafb",
-                transition: "border-color 0.2s",
+                // Change background if cooling down
+                backgroundColor: cooldown > 0 ? "#f3f4f6" : "#f9fafb", 
+                transition: "all 0.2s",
+                cursor: cooldown > 0 ? "not-allowed" : "text"
               }}
-              onFocus={(e) => (e.target.style.borderColor = "#ea580c")}
+              onFocus={(e) => {
+                if (cooldown === 0) e.target.style.borderColor = "#ea580c";
+              }}
               onBlur={(e) => (e.target.style.borderColor = "#e5e7eb")}
             />
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || cooldown > 0}
               style={{
                 width: "42px",
                 height: "42px",
                 borderRadius: "50%",
                 border: "none",
-                cursor: isLoading ? "default" : "pointer",
-                backgroundColor: "#ea580c",
+                // 🎨 Change color to Grey if disabled
+                backgroundColor: (isLoading || cooldown > 0) ? "#9ca3af" : "#ea580c",
+                cursor: (isLoading || cooldown > 0) ? "default" : "pointer",
                 color: "#ffffff",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                opacity: isLoading ? 0.7 : 1,
                 flexShrink: 0,
-                boxShadow: "0 2px 6px rgba(234, 88, 12, 0.3)",
-                transition: "transform 0.1s",
+                transition: "all 0.2s",
               }}
-              onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.95)")}
-              onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
             >
-              <Send size={18} />
+              {/* Show Number if cooling down, else show Icon */}
+              {cooldown > 0 ? (
+                <span style={{ fontSize: "12px", fontWeight: "bold" }}>{cooldown}</span>
+              ) : (
+                <Send size={18} />
+              )}
             </button>
           </form>
         </div>
@@ -812,7 +860,7 @@ const YSPChatBot: React.FC = () => {
         `}</style>
       </div>
     );
-  }, [isOpen, isLoading, input, messages]);
+}, [isOpen, isLoading, input, messages, cooldown]); // ✅ Add cooldown here
 
   if (!mounted) return null;
   return createPortal(ui, document.body);
