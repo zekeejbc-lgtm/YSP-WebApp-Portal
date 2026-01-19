@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Send, MessageSquare, X, Minimize2, Loader2, User } from "lucide-react";
+import { searchOfficers } from "../services/gasDirectoryService"; // 👈 ADD THIS
 
 // ✅ YOUR API KEY
 const API_URL =
@@ -12,6 +13,14 @@ interface Message {
   id: number;
   text: string;
   sender: Sender;
+  image?: string;
+}
+
+// 👇 Add this new interface for the Knowledge Base
+interface KBEntry {
+  keywords: string[];
+  answer: string;
+  lookup?: string; // The name to search in the directory
 }
 
 // 💡 SUGGESTIONS: Quick reply chips
@@ -26,8 +35,8 @@ const SUGGESTIONS = [
   "Who is the current Chapter President?",
   "Who are the Executive Board?",
   "What is YSP?",
-  "Who is the developer?",
-  "How to contact developer?"
+  "How to contact developer?",
+  "Report Portal Issues"
 ];
 
 // 🗄️ EXTENSIVE LOCAL KNOWLEDGE BASE
@@ -40,7 +49,8 @@ const LOCAL_KNOWLEDGE_BASE = [
   },
   {
     keywords: ["chairman", "chapter president", "current leader"],
-    answer: "The current Chapter President of YSP Tagum is Mr. Jhonas Untalan."
+    answer: "The current Chapter President of YSP Tagum is Mr. Jhonas Untalan.",
+    lookup: "Jhonas Untalan"
   },
   {
     keywords: ["about ysp", "what is ysp", "history", "when started", "background"],
@@ -56,7 +66,8 @@ const LOCAL_KNOWLEDGE_BASE = [
   },
   {
     keywords: ["developer", "ezequiel", "dev"],
-    answer: "The developer of this Portal is Mr. Ezequiel John B. Crisostomo, the current Membership and Internal Affairs of YSP Tagum Chapter. You may contact him via facebook: https://www.facebook.com/ezequieljohn.bengilcrisostomo"
+    answer: "The developer of this Portal is Mr. Ezequiel John B. Crisostomo, the current Membership and Internal Affairs of YSP Tagum Chapter. You may contact him via facebook: https://www.facebook.com/ezequieljohn.bengilcrisostomo",
+    lookup: "Crisostomo, Ezequiel John B."
   },
   {
     keywords: ["partner", "sponsorship", "collaboration", "proposal"],
@@ -90,54 +101,71 @@ const LOCAL_KNOWLEDGE_BASE = [
   },
   {
     keywords: ["president", "chairman", "head of ysp"],
-    answer: "The Chapter President is Jhonas Untalan."
+    answer: "The Chapter President is Jhonas Untalan.",
+        lookup: "Jhonas Untalan"
   },
   {
     keywords: ["membership officer", "recruitment officer", "miao", "ezequiel", "eznh", "zeke", "internal affairs"],
-    answer: "The Membership and Internal Affairs Officer is Ezequiel John B. Crisostomo."
+    answer: "The Membership and Internal Affairs Officer is Ezequiel John B. Crisostomo.",
+    lookup: "Crisostomo, Ezequiel John B."
+  },
+  {
+    keywords: ["external relations", "partnerships officer", "liaison", "ian", "ghabriel"],
+    answer: "The External Relations Officer is Ian Ghabriel L. Navarro.",
+    lookup: "Navarro, Ian Ghabriel L."
   },
   {
     keywords: ["secretary", "scribe", "documentation"],
-    answer: "The Secretary and Documentation Officer is Yhana Bea Baliwan."
+    answer: "The Secretary and Documentation Officer is Yhana Bea Baliwan.",
+    lookup: "Yhana Bea Baliwan"
   },
   {
     keywords: ["finance", "treasurer", "budget"],
-    answer: "The Finance and Treasury Officer is Crystal Nice P. Tano."
+    answer: "The Finance and Treasury Officer is Crystal Nice P. Tano.",
+    lookup: "Tano, Crystal Nice, P."
   },
   {
     keywords: ["communications", "marketing", "comms"],
-    answer: "The Communications and Marketing Officer is Russel T. Obreque."
+    answer: "The Communications and Marketing Officer is Russel T. Obreque.",
+    lookup: "Obreque, Russel T."
   },
   {
-    keywords: ["program development", "program dev", "events"],
-    answer: "The Program Development Officer is Valerie B. Cabualan."
+    keywords: ["program development", "program dev", "events", "prog dev"],
+    answer: "The Program Development Officer is Valerie B. Cabualan.",
+    lookup: "Cabualan, Valerie B."
   },
 
   // --- COMMITTEES ---
   {
     keywords: ["external relations committee", "partnerships", "liaison"],
-    answer: "The External Relations Committee is handled by Ian Ghabriel L. Navarro."
+    answer: "The External Relations Committee is handled by Ian Ghabriel L. Navarro.",
+    lookup: "Navarro, Ian Ghabriel L."
   },
 
   {
     keywords: ["Membership and Internal Affairs Committee"],
-    answer: "The Membership and Internal Affairs Committee is handled by Ezequiel John B. Crisostomo."
+    answer: "The Membership and Internal Affairs Committee is handled by Ezequiel John B. Crisostomo.",
+    lookup: "Crisostomo, Ezequiel John B."
   },
   {
     keywords: ["Secretariat and Documentation Committee"],
-    answer: "The Secretariat and Documentation Committee is handled by Yhana Bea Baliwan."
+    answer: "The Secretariat and Documentation Committee is handled by Yhana Bea Baliwan.",
+    lookup: "Yhana Bea Baliwan"
   },
   {
     keywords: ["Finance and Treasury Committee"],
-    answer: "The Finance and Treasury Committee is handled by Crystal Nice P. Tano."
+    answer: "The Finance and Treasury Committee is handled by Crystal Nice P. Tano.",
+    lookup: "Tano, Crystal Nice, P."
   },
   {
     keywords: ["Communications and Marketing Committee"],
-    answer: "The Communications and Marketing Committee is handled by Russel T. Obreque."
+    answer: "The Communications and Marketing Committee is handled by Russel T. Obreque.",
+    lookup: "Obreque, Russel T."
   },
   {
     keywords: ["Project Development Committee"],
-    answer: "The Project Development Committee is handled by Valerie B. Cabualan."
+    answer: "The Project Development Committee is handled by Valerie B. Cabualan.",
+    lookup: "Cabualan, Valerie B."
   },
 
   
@@ -237,17 +265,32 @@ const YSPChatBot: React.FC = () => {
     }
   }, [isOpen]);
 
-  // 🔍 Helper: Check Local DB for answers
-  const findLocalAnswer = (query: string): string | null => {
+  // 🔍 Helper: Check Local DB with Smart Matching (Best Match & Word Boundaries)
+  const findLocalAnswer = (query: string): KBEntry | null => {
     const lowerQuery = query.toLowerCase();
+    let bestMatch: KBEntry | null = null;
+    let maxMatchLength = 0;
+
     for (const entry of LOCAL_KNOWLEDGE_BASE) {
-      // Check if ANY keyword exists in the user's query
-      // using .some() lets us match "who is the founder" with ["founder"]
-      if (entry.keywords.some(keyword => lowerQuery.includes(keyword.toLowerCase()))) {
-        return entry.answer;
+      for (const keyword of entry.keywords) {
+        const lowerKeyword = keyword.toLowerCase();
+        
+        // 1. Use Regex for "Whole Word" matching
+        // This prevents "id" from triggering when someone types "president" or "valid"
+        const escapedKeyword = lowerKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b${escapedKeyword}\\b`, 'i');
+
+        if (regex.test(lowerQuery)) {
+          // 2. Score by Length: The longest matched keyword wins
+          // Example: "Membership Officer" (longer) will overwrite "Officer" (shorter)
+          if (lowerKeyword.length > maxMatchLength) {
+            maxMatchLength = lowerKeyword.length;
+            bestMatch = entry;
+          }
+        }
       }
     }
-    return null;
+    return bestMatch;
   };
 
   // Reusable function to handle sending messages
@@ -259,17 +302,35 @@ const YSPChatBot: React.FC = () => {
     setIsLoading(true);
 
     // ⚡️ PRIORITY CHECK: LOCAL KNOWLEDGE BASE
-    // We check this BEFORE fetching to save time and ensure accuracy for specific questions.
     const localMatch = findLocalAnswer(text);
 
     if (localMatch) {
-      // Simulate a small "thinking" delay for better UX (optional)
+      let imageUrl: string | undefined = undefined;
+
+      // 👇 New Logic: Check if we need to fetch an image
+      if (localMatch.lookup) {
+        try {
+           const result = await searchOfficers(localMatch.lookup);
+           if (result.success && result.officers && result.officers.length > 0) {
+             imageUrl = result.officers[0].profilePicture;
+           }
+        } catch (err) {
+           console.error("Error fetching officer image:", err);
+        }
+      }
+
       setTimeout(() => {
-        const botMsg: Message = { id: Date.now() + 1, text: localMatch, sender: "bot" };
+        const botMsg: Message = { 
+            id: Date.now() + 1, 
+            text: localMatch.answer, 
+            sender: "bot",
+            image: imageUrl // 👈 Attach the image
+        };
         setMessages((prev) => [...prev, botMsg]);
         setIsLoading(false);
-      }, 600); 
-      return; // 🛑 EXIT FUNCTION: Do not call the API
+      }, imageUrl ? 1000 : 600); // Wait a bit longer if loading an image
+      
+      return; 
     }
 
     // 🌐 FALLBACK: Call External API if no local match found
@@ -310,6 +371,51 @@ const YSPChatBot: React.FC = () => {
     if (!input.trim()) return;
     handleSend(input.trim());
     setInput(""); 
+  };
+
+// 🔗 Helper: Format text to make URLs and Emails clickable
+  const formatMessage = (text: string, isUser: boolean) => {
+    // Split text by URLs or Emails (including + signs)
+    const regex = /((?:https?:\/\/[^\s]+)|(?:[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}))/g;
+
+    return text.split(regex).map((part, i) => {
+      // Check if it's a URL
+      if (part.match(/^https?:\/\//)) {
+        return (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              color: isUser ? "#ffffff" : "#ea580c", // Orange for Bot, White for User
+              textDecoration: "underline",
+              fontWeight: 600,
+            }}
+          >
+            {part}
+          </a>
+        );
+      }
+      // Check if it's an Email
+      if (part.match(/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/)) {
+        return (
+          <a
+            key={i}
+            href={`mailto:${part}`}
+            style={{
+              color: isUser ? "#ffffff" : "#ea580c", // Orange for Bot, White for User
+              textDecoration: "underline",
+              fontWeight: 600,
+            }}
+          >
+            {part}
+          </a>
+        );
+      }
+      // Return normal text
+      return part;
+    });
   };
 
   const ui = useMemo(() => {
@@ -448,26 +554,48 @@ const YSPChatBot: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Message Bubble */}
-                  <div
-                    style={{
-                      maxWidth: "75%",
-                      padding: "12px 16px",
-                      borderRadius: "18px",
-                      borderBottomRightRadius: isUser ? "4px" : "18px",
-                      borderTopLeftRadius: isUser ? "18px" : "4px",
-                      fontSize: "14px",
-                      lineHeight: "1.5",
-                      backgroundColor: isUser ? "#ea580c" : "#ffffff",
-                      color: isUser ? "#ffffff" : "#1f2937",
-                      border: isUser ? "none" : "1px solid #e5e7eb",
-                      boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                      wordBreak: "break-word",
-                      overflowWrap: "anywhere", 
-                      whiteSpace: "pre-wrap", 
-                    }}
-                  >
-                    {msg.text}
+                  {/* Message Bubble Container (Holds Image + Text) */}
+                  <div style={{ maxWidth: "75%", display: "flex", flexDirection: "column", gap: "4px" }}>
+                    
+                    {/* 📸 IMAGE DISPLAY (Only shows if msg.image exists) */}
+                    {msg.image && (
+                      <div style={{
+                        width: "100%",
+                        height: "150px", // Fixed height for consistency
+                        borderRadius: "12px",
+                        overflow: "hidden",
+                        backgroundColor: "#f3f4f6",
+                        border: "1px solid #e5e7eb",
+                        marginBottom: "4px"
+                      }}>
+                        <img 
+                          src={msg.image} 
+                          alt="Officer" 
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        />
+                      </div>
+                    )}
+
+                    {/* Text Bubble */}
+                    <div
+                      style={{
+                        padding: "12px 16px",
+                        borderRadius: "18px",
+                        borderBottomRightRadius: isUser ? "4px" : "18px",
+                        borderTopLeftRadius: isUser ? "18px" : "4px",
+                        fontSize: "14px",
+                        lineHeight: "1.5",
+                        backgroundColor: isUser ? "#ea580c" : "#ffffff",
+                        color: isUser ? "#ffffff" : "#1f2937",
+                        border: isUser ? "none" : "1px solid #e5e7eb",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                        wordBreak: "break-word",
+                        overflowWrap: "anywhere",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {formatMessage(msg.text, isUser)}
+                    </div>
                   </div>
 
                   {/* 👤 User Avatar */}
