@@ -71,6 +71,7 @@
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
+  import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
   const DonationPage = lazy(() => import("./components/DonationPage"));
   const LoginPanel = lazy(() => import("./components/LoginPanel"));
   const FeedbackPage = lazy(() => import("./components/FeedbackPage"));
@@ -5082,6 +5083,10 @@
           onDismiss={removeUploadToast}
           isDark={isDark}
         />
+
+        {/* 🤖 YSP AI Chatbot - Visible only on Homepage */}
+        <YSPChatBot /> 
+
       </div>
     );
   }
