@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Send, MessageSquare, X, Minimize2, Loader2, Bot, User } from "lucide-react";
+import { Send, MessageSquare, X, Minimize2, Loader2, User } from "lucide-react";
 
 // ✅ YOUR API KEY
 const API_URL =
@@ -87,14 +87,11 @@ const YSPChatBot: React.FC = () => {
   const ui = useMemo(() => {
     return (
       <div
-        className="font-sans" // Removed the Tailwind positioning classes from here
+        className="font-sans"
         style={{
-          // 👇 ADD THESE 3 LINES TO FORCE IT TO FLOAT
           position: "fixed",
           bottom: "20px",
           right: "20px",
-          
-          // Existing styles...
           zIndex: 2147483647,
           pointerEvents: "none",
           display: "flex",
@@ -108,7 +105,6 @@ const YSPChatBot: React.FC = () => {
           style={{
             display: isOpen ? "flex" : "none",
             flexDirection: "column",
-            // Responsive Size: Mobile = Full Width (-32px), Desktop = 380px
             width: "min(380px, calc(100vw - 32px))",
             height: "min(600px, calc(100vh - 120px))",
             backgroundColor: "#ffffff",
@@ -133,18 +129,32 @@ const YSPChatBot: React.FC = () => {
               boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.2)",
-                  borderRadius: "50%",
-                  padding: "6px",
-                  display: "flex",
-                }}
-              >
-                <MessageSquare size={18} color="white" />
-              </div>
-              <span style={{ fontWeight: 700, fontSize: "16px" }}>YSP Assistant</span>
+            <div
+              style={{
+                width: "32px",
+                height: "32px",
+                borderRadius: "50%",
+                overflow: "hidden",
+                border: "2px solid rgba(255,255,255,0.3)",
+                display: "flex",
+                flexShrink: 0,
+              }}
+            >
+              <img 
+                src="/icons/ysp-icon-1024.png" 
+                alt="YSP Logo" 
+                style={{ width: "100%", height: "100%", objectFit: "cover" }} 
+              />
+            </div>
+
+            {/* ✅ TITLE & TAGLINE */}
+            <div style={{ display: "flex", flexDirection: "column", marginLeft: "12px", flex: 1 }}>
+              <span style={{ fontWeight: "bold", fontSize: "16px", lineHeight: "1.2" }}>
+                KaagapAI
+              </span>
+              <span style={{ fontSize: "11px", opacity: 0.9, fontWeight: "400" }}>
+                Katuwang ng Kabataang Tagumeño.
+              </span>
             </div>
 
             <button
@@ -157,6 +167,7 @@ const YSPChatBot: React.FC = () => {
                 color: "#fff",
                 opacity: 0.9,
                 display: "flex",
+                paddingLeft: "8px",
               }}
             >
               <Minimize2 size={20} />
@@ -168,12 +179,12 @@ const YSPChatBot: React.FC = () => {
             style={{
               flex: 1,
               overflowY: "auto",
-              overflowX: "hidden", // Forces no horizontal scroll
+              overflowX: "hidden",
               padding: "16px",
               backgroundColor: "#f9fafb",
               display: "flex",
               flexDirection: "column",
-              gap: "16px", // Space between message groups
+              gap: "16px",
             }}
           >
             {messages.map((msg) => {
@@ -184,25 +195,28 @@ const YSPChatBot: React.FC = () => {
                   style={{
                     display: "flex",
                     justifyContent: isUser ? "flex-end" : "flex-start",
-                    alignItems: "flex-end", // Align avatar to bottom of message
+                    alignItems: "flex-end",
                     gap: "8px",
                   }}
                 >
-                  {/* 🤖 Bot Avatar (Left) */}
+                  {/* 🤖 Bot Avatar */}
                   {!isUser && (
                     <div
                       style={{
                         width: "28px",
                         height: "28px",
                         borderRadius: "50%",
-                        backgroundColor: "#e5e7eb",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
+                        overflow: "hidden",
+                        backgroundColor: "#ffffff",
                         flexShrink: 0,
+                        border: "1px solid #e5e7eb",
                       }}
                     >
-                      <Bot size={16} className="text-gray-600" />
+                      <img 
+                        src="/icons/ysp-icon-1024.png" 
+                        alt="AI" 
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }} 
+                      />
                     </div>
                   )}
 
@@ -220,7 +234,6 @@ const YSPChatBot: React.FC = () => {
                       color: isUser ? "#ffffff" : "#1f2937",
                       border: isUser ? "none" : "1px solid #e5e7eb",
                       boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                      // 👇 FIX: Forces long URLs to break
                       wordBreak: "break-word",
                       overflowWrap: "anywhere", 
                       whiteSpace: "pre-wrap", 
@@ -229,7 +242,7 @@ const YSPChatBot: React.FC = () => {
                     {msg.text}
                   </div>
 
-                  {/* 👤 User Avatar (Right) */}
+                  {/* 👤 User Avatar */}
                   {isUser && (
                     <div
                       style={{
@@ -258,13 +271,16 @@ const YSPChatBot: React.FC = () => {
                     width: "28px",
                     height: "28px",
                     borderRadius: "50%",
-                    backgroundColor: "#e5e7eb",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
+                    overflow: "hidden",
+                    backgroundColor: "#ffffff",
+                    border: "1px solid #e5e7eb",
                   }}
                 >
-                  <Bot size={16} className="text-gray-600" />
+                  <img 
+                    src="/icons/ysp-icon-1024.png" 
+                    alt="AI" 
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }} 
+                  />
                 </div>
                 <div
                   style={{
