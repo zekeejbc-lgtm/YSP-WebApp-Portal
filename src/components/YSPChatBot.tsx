@@ -14,13 +14,199 @@ interface Message {
   sender: Sender;
 }
 
-// 💡 NEW: List of suggested queries
+// 💡 SUGGESTIONS: Quick reply chips
 const SUGGESTIONS = [
-  "How to join YSP?",
-  "What are your projects?",
   "Who is the founder?",
-  "Contact information",
-  "Mission & Vision"
+  "What are the advocacy pillars?",
+  "About YSP",
+  "Mission statement",
+  "Vision Statment",
+  "How to join YSP?",
+  "I forgot my password",
+  "Who is the current Chapter President?",
+  "Who are the Executive Board?",
+  "What is YSP?",
+  "Who is the developer?",
+  "How to contact developer?"
+];
+
+// 🗄️ EXTENSIVE LOCAL KNOWLEDGE BASE
+// The bot checks this FIRST. If a match is found, it skips the API.
+const LOCAL_KNOWLEDGE_BASE = [
+  // --- LEADERSHIP & ABOUT ---
+  {
+    keywords: ["founder", "who created", "wacky", "father of ysp", "head"],
+    answer: "The founder of YSP Tagum Chapter is Juanquine Carlo R. Castro, also known as 'Wacky Racho'."
+  },
+  {
+    keywords: ["chairman", "chapter president", "current leader"],
+    answer: "The current Chapter President of YSP Tagum is Mr. Jhonas Untalan."
+  },
+  {
+    keywords: ["about ysp", "what is ysp", "history", "when started", "background"],
+    answer: "Youth Service Philippines (YSP) is a non-stock, non-profit organization registered with the BIR and SEC. Started in 2016 by 10 high school students in Tagum City, we played a pivotal role in forming the LYDC and have since initiated 200+ projects across Luzon, Visayas, and Mindanao."
+  },
+  {
+    keywords: ["mission", "goal", "purpose"],
+    answer: "Our Mission: YSP empowers young leaders to drive sustainable community development, forging inclusive partnerships for positive transformative change."
+  },
+  {
+    keywords: ["vision", "future", "dream"],
+    answer: "Our Vision: YSP actively fosters civic engagement, collaboration, and capacity building to drive contextualized, community-led development initiatives through bridging leadership, co-creation, and the values of pakikipag-kapwa and damayan."
+  },
+  {
+    keywords: ["developer", "ezequiel", "dev"],
+    answer: "The developer of this Portal is Mr. Ezequiel John B. Crisostomo, the current Membership and Internal Affairs of YSP Tagum Chapter. You may contact him via facebook: https://www.facebook.com/ezequieljohn.bengilcrisostomo"
+  },
+  {
+    keywords: ["partner", "sponsorship", "collaboration", "proposal"],
+    answer: "For partnerships and proposals, please email us at: ysptagumchapter+partnerships@gmail.com"
+  },
+  {
+    keywords: ["advocacy", "pillars", "core values", "focus", "what do you do"],
+    answer: "YSP is guided by 4 Advocacy Pillars: 1) Global Citizenship and Governance, 2) Ecological and Livelihood Sustainability, 3) Learning and Development, and 4) Humanitarian Service."
+  },
+  {
+    keywords: ["global citizenship", "governance", "pillar 1"],
+    answer: "Pillar 1: Global Citizenship and Governance. We promote leadership skills and democratic values, encouraging active civic participation and informed decision-making."
+  },
+  {
+    keywords: ["ecological", "livelihood", "sustainability", "environment", "agriculture", "pillar 2"],
+    answer: "Pillar 2: Ecological and Livelihood Sustainability. We foster sustainable practices (like agriculture) that protect the environment while supporting local economies and stable livelihoods."
+  },
+  {
+    keywords: ["learning", "education", "development", "pillar 3"],
+    answer: "Pillar 3: Learning and Development. We focus on enhancing educational opportunities and personal growth to empower individuals for personal success and lifelong learning."
+  },
+  {
+    keywords: ["humanitarian", "service", "disaster", "relief", "aid", "pillar 4"],
+    answer: "Pillar 4: Humanitarian Service. We are dedicated to providing aid, supporting health programs, and assisting in disaster recovery to alleviate suffering and promote human dignity."
+  },
+
+  // --- CURRENT OFFICERS (2025-2026) ---
+  {
+    keywords: ["officers", "leaders", "team", "board", "council"],
+    answer: "Current YSP Tagum Officers:\n• Chapter President: Jhonas Untalan\n• Membership and Internal Affairs Officer: Ezequiel John B. Crisostomo\n• External Relations Officer: Ian Ghabriel L. Navarro\n• Secretary and Documentation Officer: Yhana Bea Baliwan\n• Finance and Treasury Officer: Crystal Nice P. Tano\n• Communications and Marketing Officer: Russel T. Obreque\n• Program Development Officer: Valerie B. Cabualan"
+  },
+  {
+    keywords: ["president", "chairman", "head of ysp"],
+    answer: "The Chapter President is Jhonas Untalan."
+  },
+  {
+    keywords: ["membership officer", "recruitment officer", "miao", "ezequiel", "eznh", "zeke", "internal affairs"],
+    answer: "The Membership and Internal Affairs Officer is Ezequiel John B. Crisostomo."
+  },
+  {
+    keywords: ["secretary", "scribe", "documentation"],
+    answer: "The Secretary and Documentation Officer is Yhana Bea Baliwan."
+  },
+  {
+    keywords: ["finance", "treasurer", "budget"],
+    answer: "The Finance and Treasury Officer is Crystal Nice P. Tano."
+  },
+  {
+    keywords: ["communications", "marketing", "comms"],
+    answer: "The Communications and Marketing Officer is Russel T. Obreque."
+  },
+  {
+    keywords: ["program development", "program dev", "events"],
+    answer: "The Program Development Officer is Valerie B. Cabualan."
+  },
+
+  // --- COMMITTEES ---
+  {
+    keywords: ["external relations committee", "partnerships", "liaison"],
+    answer: "The External Relations Committee is handled by Ian Ghabriel L. Navarro."
+  },
+
+  {
+    keywords: ["Membership and Internal Affairs Committee"],
+    answer: "The Membership and Internal Affairs Committee is handled by Ezequiel John B. Crisostomo."
+  },
+  {
+    keywords: ["Secretariat and Documentation Committee"],
+    answer: "The Secretariat and Documentation Committee is handled by Yhana Bea Baliwan."
+  },
+  {
+    keywords: ["Finance and Treasury Committee"],
+    answer: "The Finance and Treasury Committee is handled by Crystal Nice P. Tano."
+  },
+  {
+    keywords: ["Communications and Marketing Committee"],
+    answer: "The Communications and Marketing Committee is handled by Russel T. Obreque."
+  },
+  {
+    keywords: ["Project Development Committee"],
+    answer: "The Project Development Committee is handled by Valerie B. Cabualan."
+  },
+
+  
+  
+  // --- MEMBERSHIP ---
+  {
+    keywords: ["how to join", "register", "sign up", "application", "requirements"],
+    answer: "Membership is open for ALL youth in Tagum City. To join, click the 'Be a Member!' button on the home page."
+  },
+  {
+    keywords: ["approval", "how long", "pending", "status"],
+    answer: "Please note that approval for Membership Applications or Project Uploads typically takes weeks of deliberation by the committee."
+  },
+  {
+    keywords: ["benefits", "why join", "advantage"],
+    answer: "As a member, you become part of one of the leading youth organizations nationally, gain access to exclusive conferences, leadership training, and much more."
+  },
+  {
+    keywords: ["renew", "renewal", "expire"],
+    answer: "Yes, membership renewal occurs periodically to ensure active status within the organization."
+  },
+  {
+    keywords: ["fee", "payment", "cost", "how much", "free"],
+    answer: "There is no membership fee to join YSP. We are committed to keeping our organization accessible to all youth."
+  },
+  {
+    keywords: ["id", "identification", "card"],
+    answer: "Once you are an official member, you can generate your digital ID and QR code from the 'My QR' page of this app."
+  },
+
+  // --- APP FEATURES (Based on your file names) ---
+  {
+    keywords: ["qr code", "scan", "attendance"],
+    answer: "For members, you can view your personal QR code in the 'My QR ID' page. This is used for scanning attendance at YSP events."
+  },
+  {
+    keywords: ["download", "offline", "install"],
+    answer: "This is a Progressive Web App (PWA). You can install it on your phone by tapping 'Add to Home Screen' in your browser settings for easier access."
+  },
+  {
+    keywords: ["announcement", "news", "update"],
+    answer: "Check the 'Announcements' tab on the dashboard for the latest news, upcoming events, and official memos."
+  },
+  {
+    keywords: ["dark mode", "theme", "light mode"],
+    answer: "You can toggle between Dark Mode and Light Mode in the Settings page (look for the gear icon)."
+  },
+
+  // --- TROUBLESHOOTING ---
+  {
+    keywords: ["portal issue", "bug", "error", "glitch", "website problem"],
+    answer: "For portal issues, please email: ysptagumchapter+portal@gmail.com"
+  },
+  {
+    keywords: ["forgot password", "reset password", "cant login", "login issue"],
+    answer: "If you forgot your password, please contact the system administrator or use the 'Forgot Password' link on the login screen to request a reset."
+  },
+  {
+    keywords: ["bug", "error", "not working", "glitch"],
+    answer: "If you encounter a bug, please take a screenshot and report it to the technical team or use the 'Feedback' feature in the settings."
+  },
+  {
+    keywords: ["contact", "email", "phone", "support"],
+    answer: "You can contact us via email at YSPTagumChapter@gmail.com or message our official Facebook page."
+  },
+  {
+    keywords: ["slow", "loading"],
+    answer: "The app might be slow due to your internet connection. Try refreshing the page or checking your Wi-Fi/Data signal."
+  }
 ];
 
 const YSPChatBot: React.FC = () => {
@@ -51,15 +237,42 @@ const YSPChatBot: React.FC = () => {
     }
   }, [isOpen]);
 
-  // 💡 NEW: Reusable function to handle sending messages
+  // 🔍 Helper: Check Local DB for answers
+  const findLocalAnswer = (query: string): string | null => {
+    const lowerQuery = query.toLowerCase();
+    for (const entry of LOCAL_KNOWLEDGE_BASE) {
+      // Check if ANY keyword exists in the user's query
+      // using .some() lets us match "who is the founder" with ["founder"]
+      if (entry.keywords.some(keyword => lowerQuery.includes(keyword.toLowerCase()))) {
+        return entry.answer;
+      }
+    }
+    return null;
+  };
+
+  // Reusable function to handle sending messages
   const handleSend = async (text: string) => {
     if (!text.trim() || isLoading) return;
 
     const userMsg: Message = { id: Date.now(), text, sender: "user" };
-
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
 
+    // ⚡️ PRIORITY CHECK: LOCAL KNOWLEDGE BASE
+    // We check this BEFORE fetching to save time and ensure accuracy for specific questions.
+    const localMatch = findLocalAnswer(text);
+
+    if (localMatch) {
+      // Simulate a small "thinking" delay for better UX (optional)
+      setTimeout(() => {
+        const botMsg: Message = { id: Date.now() + 1, text: localMatch, sender: "bot" };
+        setMessages((prev) => [...prev, botMsg]);
+        setIsLoading(false);
+      }, 600); 
+      return; // 🛑 EXIT FUNCTION: Do not call the API
+    }
+
+    // 🌐 FALLBACK: Call External API if no local match found
     try {
       const res = await fetch(API_URL, {
         method: "POST",
@@ -76,7 +289,7 @@ const YSPChatBot: React.FC = () => {
         reply = raw;
       }
 
-      if (!reply.trim()) reply = "Sorry, I didn’t get a valid response.";
+      if (!reply.trim()) reply = "I'm not sure about that. Try asking about the 'Founder', 'Membership', or 'Projects'.";
 
       const botMsg: Message = { id: Date.now() + 1, text: reply, sender: "bot" };
       setMessages((prev) => [...prev, botMsg]);
@@ -84,7 +297,7 @@ const YSPChatBot: React.FC = () => {
       console.error(err);
       setMessages((prev) => [
         ...prev,
-        { id: Date.now() + 2, text: "⚠️ Network Error. Try again.", sender: "bot" },
+        { id: Date.now() + 2, text: "⚠️ Network Error. I couldn't reach the server.", sender: "bot" },
       ]);
     } finally {
       setIsLoading(false);
@@ -96,7 +309,7 @@ const YSPChatBot: React.FC = () => {
     e.preventDefault();
     if (!input.trim()) return;
     handleSend(input.trim());
-    setInput(""); // Clear input only when manually typing
+    setInput(""); 
   };
 
   const ui = useMemo(() => {
@@ -317,7 +530,7 @@ const YSPChatBot: React.FC = () => {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* 💡 NEW: Suggestions Area (Just above the type bar) */}
+          {/* 💡 Suggestions Area (Just above the type bar) */}
           <div
             className="ysp-no-scrollbar"
             style={{
