@@ -5084,9 +5084,9 @@
           isDark={isDark}
         />
 
-        {/* 🤖 YSP AI Chatbot - Visible only on Homepage */}
-        <YSPChatBot /> 
-
+{/* 🤖 YSP AI Chatbot - Hides when user is logged in (isAdmin is true) */}
+        {!isAdmin && <YSPChatBot />}
+        
       </div>
     );
   }
