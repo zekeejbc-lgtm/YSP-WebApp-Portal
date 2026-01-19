@@ -14,6 +14,15 @@ interface Message {
   sender: Sender;
 }
 
+// 💡 NEW: List of suggested queries
+const SUGGESTIONS = [
+  "How to join YSP?",
+  "What are your projects?",
+  "Who is the founder?",
+  "Contact information",
+  "Mission & Vision"
+];
+
 const YSPChatBot: React.FC = () => {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
@@ -42,22 +51,20 @@ const YSPChatBot: React.FC = () => {
     }
   }, [isOpen]);
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
+  // 💡 NEW: Reusable function to handle sending messages
+  const handleSend = async (text: string) => {
+    if (!text.trim() || isLoading) return;
 
-    const userText = input.trim();
-    const userMsg: Message = { id: Date.now(), text: userText, sender: "user" };
+    const userMsg: Message = { id: Date.now(), text, sender: "user" };
 
     setMessages((prev) => [...prev, userMsg]);
-    setInput("");
     setIsLoading(true);
 
     try {
       const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ message: userText }),
+        body: JSON.stringify({ message: text }),
       });
 
       const raw = await res.text();
@@ -82,6 +89,14 @@ const YSPChatBot: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Modified form handler
+  const sendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+    handleSend(input.trim());
+    setInput(""); // Clear input only when manually typing
   };
 
   const ui = useMemo(() => {
@@ -302,6 +317,54 @@ const YSPChatBot: React.FC = () => {
             <div ref={messagesEndRef} />
           </div>
 
+          {/* 💡 NEW: Suggestions Area (Just above the type bar) */}
+          <div
+            className="ysp-no-scrollbar"
+            style={{
+              padding: "0 16px 12px 16px",
+              display: "flex",
+              gap: "8px",
+              overflowX: "auto",
+              backgroundColor: "#f9fafb", // matches message area bg
+            }}
+          >
+            {SUGGESTIONS.map((suggestion, idx) => (
+              <button
+                key={idx}
+                onClick={() => handleSend(suggestion)}
+                disabled={isLoading}
+                style={{
+                  whiteSpace: "nowrap",
+                  padding: "8px 14px",
+                  borderRadius: "20px",
+                  border: "1px solid #e5e7eb",
+                  backgroundColor: "#ffffff",
+                  color: "#4b5563",
+                  fontSize: "12px",
+                  fontWeight: "500",
+                  cursor: isLoading ? "default" : "pointer",
+                  transition: "all 0.2s",
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(e) => {
+                   if (!isLoading) {
+                     e.currentTarget.style.backgroundColor = "#f3f4f6";
+                     e.currentTarget.style.borderColor = "#d1d5db";
+                   }
+                }}
+                onMouseLeave={(e) => {
+                   if (!isLoading) {
+                     e.currentTarget.style.backgroundColor = "#ffffff";
+                     e.currentTarget.style.borderColor = "#e5e7eb";
+                   }
+                }}
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+
           {/* Input Area */}
           <form
             onSubmit={sendMessage}
@@ -390,11 +453,20 @@ const YSPChatBot: React.FC = () => {
           {isOpen ? <X size={28} /> : <MessageSquare size={28} />}
         </button>
 
-        {/* Animations */}
+        {/* Animations & Custom Scrollbar Hiding */}
         <style>{`
           @keyframes scaleIn {
             from { opacity: 0; transform: scale(0.95) translateY(10px); }
             to { opacity: 1; transform: scale(1) translateY(0); }
+          }
+          /* Hide scrollbar for Chrome, Safari and Opera */
+          .ysp-no-scrollbar::-webkit-scrollbar {
+            display: none;
+          }
+          /* Hide scrollbar for IE, Edge and Firefox */
+          .ysp-no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
           }
         `}</style>
       </div>
