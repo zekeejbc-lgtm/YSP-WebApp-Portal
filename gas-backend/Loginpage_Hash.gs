@@ -15,11 +15,9 @@ function onFormSubmit(e) {
     e.response.getItemResponses().forEach(ir => {
       answers[ir.getItem().getTitle()] = ir.getResponse();
     });
-    // Fallback to respondent email if not found in answers
     answers['Email Address'] = answers['Email Address'] || e.response.getRespondentEmail();
   }
 
-  // Treat form submission as a "Create New" event (null for editInfo since this is not an edit)
   processUser(sheet, row, headers, answers, 'CREATE', null, null);
 }
 
@@ -36,22 +34,36 @@ function onEdit(e) {
   const answers = {};
   headers.forEach((h, i) => answers[h] = data[i]);
 
-  // Capture old value and new value from the event
-  // Note: e.oldValue is only available for single cell edits where cell had previous value
   const editInfo = {
     oldValue: e.oldValue !== undefined ? e.oldValue : '(previously empty)',
     newValue: e.value !== undefined ? e.value : data[col - 1],
     columnName: headers[col - 1]
   };
 
-  // Pass 'e' and editInfo as the last arguments
   processUser(sheet, row, headers, answers, col, e, editInfo);
 }
 
 // =================== CORE LOGIC ===================
 
 function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
-  // 1. Column Mapping
+  
+  // === 1. NOTIFICATION ALLOWLIST ===
+  // Added 'EmailVerified' back so manual edits trigger an email
+  const CRITICAL_FIELDS = [
+    'Personal Email Address',
+    'Username',
+    'Password',
+    'ID Code',
+    'Position',       
+    'Role',           
+    'Chapter',        
+    'Committee',      
+    'Membership Type',
+    'EmailVerified',  // <--- ADDED BACK
+    'Status'          
+  ];
+
+  // === 2. Column Mapping ===
   const idx = {
     id: headers.indexOf('ID Code'),
     position: headers.indexOf('Position'),
@@ -67,27 +79,22 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
   const isPositionEdit = (triggerSource === (idx.position + 1));
   const isPasswordEdit = (triggerSource === (idx.pwd + 1));
   
-  // --- 1. ID Generation (Create or Overwrite) ---
+  // --- 3. ID Generation ---
   if (position && (triggerSource === 'CREATE' || isPositionEdit || !currentID)) {
     const result = generateUniqueID(sheet, position, idx.id + 1);
     if (result.fullID && result.fullID !== "Range Full") {
       sheet.getRange(row, idx.id + 1).setValue(result.fullID);
-      // Optional: Write numeric ID if column exists
       if (idx.numeric > -1) sheet.getRange(row, idx.numeric + 1).setValue(result.numericID);
     }
   }
 
-  // --- 2. Password Hashing & Security ---
+  // --- 4. Password Hashing ---
   const rawPassword = answers['Password'] ? answers['Password'].toString() : '';
   let score = 0;
   let rules = [];
   let passwordWasHashed = false;
   
-  // Only process if password exists AND it is NOT already a hash 
-  // (SHA-256 hashes are 64 characters long. Plain text is usually shorter.)
   if (idx.pwd > -1 && rawPassword && rawPassword.length < 60) {
-    
-    // A. Calculate Score on the RAW password first
     rules = [
       {desc: '8+ Characters', test: rawPassword.length >= 8, pts: 25},
       {desc: 'Uppercase Letter', test: /[A-Z]/.test(rawPassword), pts: 25},
@@ -96,31 +103,29 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
     ];
     score = rules.filter(r => r.test).reduce((sum, r) => sum + r.pts, 0);
 
-    // B. Color Code the cell
     const color = score === 100 ? '#33cc33' : score >= 75 ? '#b3ff66' : score >= 50 ? '#ffb84d' : '#ff4d4d';
     sheet.getRange(row, idx.pwd + 1).setBackground(color);
 
-    // C. HASH IT and overwrite the cell
     const hashedPassword = hashString(rawPassword);
     sheet.getRange(row, idx.pwd + 1).setValue(hashedPassword);
     passwordWasHashed = true;
   }
 
-  // --- 3. Email Notification ---
+  // --- 5. Email Notification ---
   const email = answers['Email Address'];
   if (!email) return;
 
-  // Scenario A: Welcome / New ID (Form Submit or Position Change)
+  // Scenario A: Welcome
   if (triggerSource === 'CREATE' || triggerSource === (idx.position + 1)) {
     const finalID = sheet.getRange(row, idx.id + 1).getValue();
     sendYSPEmail(email, answers['Full name'], "WELCOME", {
       id: finalID,
       username: answers['Username'],
-      score: score, // This will be 0 if password wasn't just set/changed, which is fine
+      score: score,
       rules: rules
     });
   }
-  // Scenario B: Password was just changed (send security alert)
+  // Scenario B: Password Change
   else if (isPasswordEdit && passwordWasHashed) {
     sendYSPEmail(email, answers['Full name'], "UPDATE", {
       field: 'Password',
@@ -130,15 +135,18 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
       score: score 
     });
   }
-  // Scenario C: Profile Update (Manual Edit of other columns)
+  // Scenario C: Manual Edit
   else if (typeof triggerSource === 'number' && editInfo) {
     const headerName = editInfo.columnName || headers[triggerSource - 1];
     
-    // Only skip Password edits here (they are handled in Scenario B above)
-    // All other fields (including Status, ID Code, Numeric ID) will send update emails
+    // Filter non-critical fields
+    if (!CRITICAL_FIELDS.includes(headerName)) {
+      return; 
+    }
+
     if (headerName === 'Password') return;
 
-    // Send email for profile updates (even if oldValue was empty)
+    // Send email
     sendYSPEmail(email, answers['Full name'], "UPDATE", {
       field: headerName,
       oldVal: editInfo.oldValue,
@@ -148,7 +156,7 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
     });
   }
 
-  // --- 4. Log Weak Passwords (Only if we just processed a Raw Password) ---
+  // --- 6. Log Weak Passwords ---
   if (rawPassword && rawPassword.length < 60 && score < 100) {
     const logSheet = sheet.getParent().getSheetByName('WeakPasswords') || sheet.getParent().insertSheet('WeakPasswords');
     logSheet.appendRow([new Date(), email, answers['Username'], rawPassword, score + '%']);
@@ -186,17 +194,15 @@ function convertAllPasswordsToHash() {
   }
 
   const lastRow = sheet.getLastRow();
-  // Get all passwords starting from Row 2
   const range = sheet.getRange(2, pwdCol, lastRow - 1, 1);
   const values = range.getValues();
   
   const hashedValues = values.map(row => {
     const val = row[0].toString();
-    // Only hash if it is not empty AND not already a long hash string
     if (val !== "" && val.length < 60) {
       return [hashString(val)];
     }
-    return [val]; // Keep existing value if it's already hashed or empty
+    return [val];
   });
   
   range.setValues(hashedValues);
@@ -227,7 +233,6 @@ function generateUniqueID(sheet, position, colIndex) {
   const role = idMap[position];
   if (!role) return { fullID: null, numericID: null };
 
-  // Case 1: Fixed ID
   if (role.fixed) {
     return { 
       fullID: `${role.prefix}-25${role.fixed}`, 
@@ -235,7 +240,6 @@ function generateUniqueID(sheet, position, colIndex) {
     };
   }
 
-  // Case 2: Sequential ID
   const existingIDs = sheet.getRange(2, colIndex, sheet.getLastRow()).getValues().flat().filter(String);
   const usedNumbers = existingIDs.map(id => {
     const parts = id.split("-25");
@@ -257,13 +261,10 @@ function generateUniqueID(sheet, position, colIndex) {
 // =================== PROFESSIONAL EMAIL ENGINE ===================
 
 function sendYSPEmail(email, name, type, data) {
-  // ⬇️ REPLACE WITH YOUR LOGO URL ⬇️
   const LOGO_URL = "https://i.imgur.com/J4wddTW.png"; 
-
   const WEB_APP_URL = "https://www.youthservicephilippinestagum.me/";
   const FB_PAGE_URL = "https://www.facebook.com/YSPTagumChapter";
   
-  // 1. DYNAMIC CONTENT GENERATOR
   let subjectLine = "";
   let mainContent = "";
 
@@ -298,8 +299,8 @@ function sendYSPEmail(email, name, type, data) {
     
     let changeDetailsHTML = "";
 
+    // === CASE 1: Password (Security Alert) ===
     if (data.field === 'Password') {
-      // --- THE SECURITY ALERT (FOR PASSWORD CHANGE) ---
       changeDetailsHTML = `
         <div style="background-color: #fff5f5; border: 1px solid #fed7d7; border-radius: 8px; padding: 20px; text-align: center;">
            <div style="font-size: 24px; margin-bottom: 10px;">🔐</div>
@@ -314,8 +315,25 @@ function sendYSPEmail(email, name, type, data) {
            </div>
         </div>
       `;
-    } else {
-      // --- THE NORMAL "OLD vs NEW" TABLE (FOR OTHER UPDATES) ---
+    } 
+    // === CASE 2: EmailVerified (Success Message) ===
+    // This catches manual Admin verification
+    else if (data.field === 'EmailVerified' && String(data.newVal).toUpperCase() === 'TRUE') {
+      subjectLine = "Email Verified Successfully"; // Override subject line
+      changeDetailsHTML = `
+        <div style="background-color: #f0fff4; border: 1px solid #c6f6d5; border-radius: 8px; padding: 20px; text-align: center;">
+           <div style="font-size: 24px; margin-bottom: 10px;">✅</div>
+           <div style="font-family: 'Lexend', sans-serif; color: #2f855a; font-weight: 700; font-size: 16px; margin-bottom: 8px;">
+             EMAIL VERIFIED
+           </div>
+           <div style="color: #22543d; font-size: 14px;">
+             Your email address has been manually verified by an administrator.
+           </div>
+        </div>
+      `;
+    }
+    // === CASE 3: Standard Field (Comparison Table) ===
+    else {
       changeDetailsHTML = `
         <div style="margin-bottom: 8px; font-size: 12px; color: #888; text-transform: uppercase; font-weight: 600;">${data.field}</div>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -350,18 +368,17 @@ function sendYSPEmail(email, name, type, data) {
   }
   // NEW: BULK_UPDATE - Multiple fields changed at once
   else if (type === "BULK_UPDATE") {
+    // (Existing Bulk Update Logic remains the same)
     const changesCount = data.changes ? data.changes.length : 0;
     subjectLine = `Profile Update Notification - ${changesCount} Field${changesCount !== 1 ? 's' : ''} Modified`;
     
     let allChangesHTML = "";
     
-    // Loop through all changes and build HTML for each
     if (data.changes && data.changes.length > 0) {
       for (let i = 0; i < data.changes.length; i++) {
         const change = data.changes[i];
         
         if (change.field === 'Password') {
-          // Password gets special security alert styling
           allChangesHTML += `
             <div style="margin-bottom: 20px;">
               <div style="background-color: #fff5f5; border: 1px solid #fed7d7; border-radius: 8px; padding: 16px; text-align: center;">
@@ -376,7 +393,6 @@ function sendYSPEmail(email, name, type, data) {
             </div>
           `;
         } else {
-          // Normal field change with old → new
           allChangesHTML += `
             <div style="margin-bottom: 20px;">
               <div style="margin-bottom: 8px; font-size: 12px; color: #888; text-transform: uppercase; font-weight: 600;">${change.field}</div>
@@ -414,9 +430,7 @@ function sendYSPEmail(email, name, type, data) {
       </div>`;
   }
 
-  // 2. SECURITY SECTION LOGIC (CONDITIONAL)
-  // !!! FIXED: Only show this section if it is a WELCOME email. 
-  // !!! Completely hidden for updates to avoid "0% Score" confusion.
+  // 2. SECURITY SECTION LOGIC
   let securitySection = "";
   
   if (type === "WELCOME") {
@@ -517,12 +531,7 @@ function sendYSPEmail(email, name, type, data) {
   });
 }
 
-/**
- * Creates an installable onEdit trigger that can send emails
- * RUN THIS ONCE to set up the trigger
- */
 function createEditTrigger() {
-  // Delete any existing onEdit triggers first
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(trigger => {
     if (trigger.getHandlerFunction() === 'onEditInstallable') {
@@ -530,7 +539,6 @@ function createEditTrigger() {
     }
   });
   
-  // Create new installable trigger
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   ScriptApp.newTrigger('onEditInstallable')
     .forSpreadsheet(ss)
@@ -540,9 +548,6 @@ function createEditTrigger() {
   Logger.log('✅ Installable onEdit trigger created successfully!');
 }
 
-/**
- * Installable onEdit trigger - has full permissions including email
- */
 function onEditInstallable(e) {
-  onEdit(e);  // Call the existing onEdit function
+  onEdit(e);  
 }

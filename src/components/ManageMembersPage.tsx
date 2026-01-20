@@ -237,17 +237,32 @@ function mapOfficerToMember(officer: DirectoryOfficer): Member {
     committee: officer.committee || "",
     status,
     email: officer.email || "",
+    personalEmail: officer.personalEmail || "",
+    emailVerified: Boolean(officer.emailVerified),
+    verifiedEmail: officer.verifiedEmail || "",
     phone: officer.contactNumber || "",
     dateJoined: officer.dateJoined || "",
+    chapter: officer.chapter || "",
+    membershipType: officer.membershipType || "",
     address: "",
     dateOfBirth: officer.birthday || "",
     age: officer.age || 0,
     gender: officer.gender || "",
+    pronouns: officer.pronouns || "",
     civilStatus: officer.civilStatus || "",
     nationality: officer.nationality || "",
-    emergencyContact: "",
-    emergencyPhone: "",
+    religion: officer.religion || "",
+    emergencyContact: [officer.emergencyContactName, officer.emergencyContactRelation]
+      .filter(Boolean)
+      .join(" - "),
+    emergencyPhone: officer.emergencyContactNumber || "",
+    emergencyContactName: officer.emergencyContactName || "",
+    emergencyContactRelation: officer.emergencyContactRelation || "",
+    emergencyContactNumber: officer.emergencyContactNumber || "",
     profilePicture: officer.profilePicture || "",
+    facebook: officer.facebook || "",
+    instagram: officer.instagram || "",
+    twitter: officer.twitter || "",
   };
 }
 
@@ -308,6 +323,7 @@ interface ManageMembersPageProps {
 // Logo URL for PDF export
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
 const ITEMS_PER_PAGE = 10;
+const MEMBERS_CACHE_KEY = "ysp_manage_members_cache";
 
 export default function ManageMembersPage({ 
   onClose, 
@@ -330,11 +346,13 @@ export default function ManageMembersPage({
   const [showAccountModal, setShowAccountModal] = useState(false);
 
   const [members, setMembers] = useState<Member[]>([]);
+  const [allMembers, setAllMembers] = useState<Member[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasInitializedRef = useRef(false);
   const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
 
   const addUploadToast = useCallback((message: UploadToastMessage) => {
@@ -353,21 +371,91 @@ export default function ManageMembersPage({
 
   // =================== FETCH MEMBERS FROM BACKEND ===================
   
-  const fetchMembers = useCallback(async (query?: string) => {
+  const filterMembersByQuery = useCallback((list: Member[], query: string) => {
+    const normalized = query.toLowerCase().trim();
+    if (!normalized) return [];
+    return list.filter((member) =>
+      [
+        member.name,
+        member.id,
+        member.email,
+        member.position,
+        member.committee,
+        member.role,
+      ]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(normalized))
+    );
+  }, []);
+
+  const fetchAllMembers = useCallback(async (options?: { suppressLoading?: boolean }) => {
+    if (!options?.suppressLoading) {
+      setIsLoading(true);
+    }
+    setError(null);
+
+    try {
+      let page = 1;
+      const collected: DirectoryOfficer[] = [];
+      while (true) {
+        const response = await getAllOfficers(page, 100);
+        if (response.success && response.officers) {
+          collected.push(...response.officers);
+        }
+        const totalPages = response.pagination?.totalPages;
+        const hasMore = response.pagination?.hasMore;
+        if (!hasMore && (!totalPages || page >= totalPages)) {
+          break;
+        }
+        if (!response.officers || response.officers.length === 0) {
+          break;
+        }
+        page += 1;
+      }
+
+      const mappedMembers = collected.map(mapOfficerToMember);
+      setAllMembers(mappedMembers);
+      setMembers(mappedMembers);
+
+      try {
+        localStorage.setItem(
+          MEMBERS_CACHE_KEY,
+          JSON.stringify({ members: mappedMembers, timestamp: Date.now() })
+        );
+      } catch {
+        // Ignore cache write failures
+      }
+    } catch (err: any) {
+      console.error("Fetch members error:", err);
+      if (err instanceof DirectoryAPIError) {
+        if (err.code === DirectoryErrorCodes.NO_API_URL) {
+          setError("Member service not configured. Please contact administrator.");
+        } else if (err.code === DirectoryErrorCodes.TIMEOUT_ERROR) {
+          setError("Request timed out. Please try again.");
+        } else if (err.code === DirectoryErrorCodes.NETWORK_ERROR) {
+          setError("Network error. Please check your connection.");
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError("An unexpected error occurred. Please try again.");
+      }
+      setMembers([]);
+    } finally {
+      if (!options?.suppressLoading) {
+        setIsLoading(false);
+      }
+    }
+  }, []);
+
+  const searchMembersRemote = useCallback(async (query: string) => {
     setIsLoading(true);
     setError(null);
 
     try {
-      let response;
-      if (query && query.trim().length >= 2) {
-        response = await searchOfficers(query);
-      } else {
-        response = await getAllOfficers(1, 100);
-      }
-      
+      const response = await searchOfficers(query);
       if (response.success && response.officers) {
-        const mappedMembers = response.officers.map(mapOfficerToMember);
-        setMembers(mappedMembers);
+        setMembers(response.officers.map(mapOfficerToMember));
       } else {
         setMembers([]);
       }
@@ -393,22 +481,55 @@ export default function ManageMembersPage({
   }, []);
 
   useEffect(() => {
-    fetchMembers();
-  }, [fetchMembers]);
+    let hasCache = false;
+    try {
+      const cached = localStorage.getItem(MEMBERS_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed?.members)) {
+          setMembers(parsed.members);
+          setAllMembers(parsed.members);
+          setIsLoading(false);
+          hasCache = true;
+        }
+      }
+    } catch {
+      // Ignore cache read failures
+    }
+
+    fetchAllMembers({ suppressLoading: hasCache });
+
+    return () => {};
+  }, [fetchAllMembers]);
 
   useEffect(() => {
+    if (!hasInitializedRef.current) {
+      hasInitializedRef.current = true;
+      return;
+    }
+
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     if (searchQuery.trim().length >= 2) {
       searchTimerRef.current = setTimeout(() => {
-        fetchMembers(searchQuery);
-      }, 400);
+        if (allMembers.length > 0) {
+          setIsLoading(false);
+          setMembers(filterMembersByQuery(allMembers, searchQuery));
+        } else {
+          searchMembersRemote(searchQuery);
+        }
+      }, 300);
     } else if (searchQuery.trim().length === 0) {
-      fetchMembers();
+      if (allMembers.length > 0) {
+        setIsLoading(false);
+        setMembers(allMembers);
+      } else {
+        fetchAllMembers();
+      }
     }
     return () => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
-  }, [searchQuery, fetchMembers]);
+  }, [searchQuery, allMembers, filterMembersByQuery, fetchAllMembers, searchMembersRemote]);
 
   const filteredMembers = members.filter((member) => {
     const matchesRole = filterRole === "all" || member.role === filterRole;
@@ -985,6 +1106,11 @@ export default function ManageMembersPage({
                       </div>
                       <div className="text-xs text-muted-foreground mb-1">{member.email}</div>
                       <div className="text-xs text-muted-foreground">{member.id}</div>
+                      {(member.emergencyContact || member.emergencyPhone) && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Emergency: {member.emergencyContact || "N/A"}{member.emergencyPhone ? ` | ${member.emergencyPhone}` : ""}
+                        </div>
+                      )}
                     </div>
                     <span
                       className="px-2 py-1 rounded-full text-xs"
@@ -1125,6 +1251,11 @@ export default function ManageMembersPage({
                             {member.name}
                           </div>
                           <div className="text-xs text-muted-foreground">{member.email}</div>
+                          {(member.emergencyContact || member.emergencyPhone) && (
+                            <div className="text-xs text-muted-foreground">
+                              Emergency: {member.emergencyContact || "N/A"}{member.emergencyPhone ? ` | ${member.emergencyPhone}` : ""}
+                            </div>
+                          )}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">

@@ -275,24 +275,79 @@ export async function checkCacheRefreshNeeded(): Promise<boolean> {
 /**
  * Force clear all caches and reload
  */
-export async function forceClearAllCaches(): Promise<void> {
-  // Clear all localStorage except session data
-  const sessionData = localStorage.getItem('ysp_session');
-  const user = localStorage.getItem('ysp_user');
-  
+export async function forceClearAllCaches(options?: { preserveSession?: boolean }): Promise<void> {
+  const preserveSession = options?.preserveSession !== false;
+  const sessionData = preserveSession ? localStorage.getItem('ysp_session') : null;
+  const user = preserveSession ? localStorage.getItem('ysp_user') : null;
+
   // Clear service worker caches if available
   if ('caches' in window) {
     const cacheNames = await caches.keys();
     await Promise.all(cacheNames.map(name => caches.delete(name)));
   }
-  
-  // Clear localStorage
-  localStorage.clear();
-  
-  // Restore session data
-  if (sessionData) localStorage.setItem('ysp_session', sessionData);
-  if (user) localStorage.setItem('ysp_user', user);
-  
+
+  if (!preserveSession) {
+    try {
+      sessionStorage.clear();
+    } catch {
+      // Ignore session storage clear failures.
+    }
+  }
+
+  try {
+    localStorage.clear();
+  } catch {
+    // Ignore storage clear failures.
+  }
+
+  if (preserveSession) {
+    if (sessionData) localStorage.setItem('ysp_session', sessionData);
+    if (user) localStorage.setItem('ysp_user', user);
+  } else {
+    if ('indexedDB' in window) {
+      try {
+        const indexedDb = indexedDB as IDBFactory & {
+          databases?: () => Promise<Array<{ name?: string }>>;
+        };
+        const databases = indexedDb.databases ? await indexedDb.databases() : [];
+        await Promise.all(
+          databases.map((db) => {
+            if (!db.name) return Promise.resolve();
+            return new Promise<void>((resolve) => {
+              const request = indexedDB.deleteDatabase(db.name as string);
+              request.onsuccess = () => resolve();
+              request.onerror = () => resolve();
+              request.onblocked = () => resolve();
+            });
+          })
+        );
+      } catch {
+        // Ignore indexedDB deletion failures.
+      }
+    }
+
+    if ('serviceWorker' in navigator) {
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((reg) => reg.unregister()));
+      } catch {
+        // Ignore service worker unregister failures.
+      }
+    }
+
+    try {
+      document.cookie
+        .split(';')
+        .map((cookie) => cookie.split('=')[0]?.trim())
+        .filter(Boolean)
+        .forEach((name) => {
+          document.cookie = `${name}=; Max-Age=0; path=/`;
+        });
+    } catch {
+      // Ignore cookie clear failures.
+    }
+  }
+
   // Reload the page
   window.location.reload();
 }

@@ -27,6 +27,8 @@ export interface DirectoryOfficer {
   
   // Contact Info
   email: string;
+  emailVerified?: boolean;
+  verifiedEmail?: string;
   personalEmail: string;
   contactNumber: string;
 

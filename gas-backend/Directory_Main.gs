@@ -11,6 +11,49 @@
 // Uses helper functions from Loginpage_Main.gs:
 // - createSuccessResponse()
 // - createErrorResponse()
+//
+// Reference column mapping (as provided by sheet order):
+// A  Timestamp
+// B  Email Address
+// C  DATA PRIVACY AGREEMENT
+// D  Full name
+// E  Date of Birth
+// F  Age
+// G  Sex/Gender
+// H  Pronouns
+// I  Civil Status
+// J  Contact Number
+// K  Religion
+// L  Nationality
+// M  Personal Email Address
+// N  Username
+// O  Password
+// P  Data Privacy Acknowledgment
+// Q  Declaration of Truthfulness and Responsibility
+// R  Do you understand that by prohibiting the collection of your personal information, your application will not be processed?
+// S  ID Code
+// T  Position
+// U  Role
+// V  ProfilePictureURL
+// W  Address
+// X  Barangay
+// Y  City
+// Z  Province
+// AA Zip Code
+// AB Facebook
+// AC Instagram
+// AD Twitter
+// AE Emergency Contact Name
+// AF Emergency Contact Relation
+// AG Emergency Contact Number
+// AH Chapter
+// AI Committee
+// AJ Date Joined
+// AK Membership Type
+// AL Status
+// AM Numeric ID
+// AN EmailVerified
+// AO VerifiedEmail
 
 // =================== DIRECTORY HANDLERS ===================
 
@@ -41,6 +84,8 @@ function handleSearchOfficers(query) {
     const idx = buildDirectoryColumnIndex(headers);
 
     const queryLower = query.toLowerCase().trim();
+    const normalizedQuery = normalizeDirectoryText(stripDirectoryHonorifics(queryLower));
+    const queryTokens = buildDirectoryTokens(normalizedQuery);
     const matchingOfficers = [];
 
     // Search through all rows (skip header row)
@@ -66,10 +111,10 @@ function handleSearchOfficers(query) {
 
       // Check if query matches any searchable field
       if (
-        fullName.includes(queryLower) ||
+        matchesDirectoryTokens(fullName, normalizedQuery, queryTokens) ||
         idCode.includes(queryLower) ||
-        committee.includes(queryLower) ||
-        position.includes(queryLower) ||
+        matchesDirectoryTokens(committee, normalizedQuery, queryTokens) ||
+        matchesDirectoryTokens(position, normalizedQuery, queryTokens) ||
         email.includes(queryLower)
       ) {
         const officer = buildOfficerObject(row, idx);
@@ -214,6 +259,61 @@ function handleGetAllOfficers(page, limit) {
 
 // =================== HELPER FUNCTIONS ===================
 
+function normalizeDirectoryText(value) {
+  if (!value) return '';
+  return value
+    .toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripDirectoryHonorifics(value) {
+  if (!value) return '';
+  const honorifics = [
+    'mr',
+    'mrs',
+    'ms',
+    'miss',
+    'sir',
+    'maam',
+    'madam',
+    'dr',
+    'engr',
+    'atty',
+    'prof',
+    'jr',
+    'sr',
+    'ii',
+    'iii',
+  ];
+  const normalized = normalizeDirectoryText(value);
+  if (!normalized) return '';
+  const tokens = normalized.split(' ').filter(Boolean);
+  const filtered = tokens.filter((token) => !honorifics.includes(token));
+  return filtered.join(' ');
+}
+
+function buildDirectoryTokens(value) {
+  if (!value) return [];
+  return value
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token && (token.length > 1 || /^\d+$/.test(token)));
+}
+
+function matchesDirectoryTokens(fieldValue, normalizedQuery, queryTokens) {
+  if (!normalizedQuery) return false;
+  const fieldNormalized = normalizeDirectoryText(fieldValue);
+  if (!fieldNormalized) return false;
+  if (fieldNormalized.indexOf(normalizedQuery) !== -1) return true;
+  const fieldTokens = fieldNormalized.split(' ').filter(Boolean);
+  return queryTokens.every((token) =>
+    fieldTokens.some((fieldToken) => fieldToken.indexOf(token) === 0 || fieldToken.indexOf(token) !== -1)
+  );
+}
+
 /**
  * Build column index mapping from headers for Directory
  * Column mapping based on User Profiles sheet structure:
@@ -228,6 +328,8 @@ function buildDirectoryColumnIndex(headers) {
     switch(header) {
       case 'Timestamp': idx.timestamp = i; break;
       case 'Email Address': idx.email = i; break;
+      case 'EmailVerified': idx.emailVerified = i; break;
+      case 'VerifiedEmail': idx.verifiedEmail = i; break;
       case 'Full name': idx.fullName = i; break;
       case 'Username': idx.username = i; break;
       case 'Password': idx.password = i; break;
@@ -328,6 +430,11 @@ function buildOfficerObject(row, idx) {
   const birthdayFormatted = formatDirectoryDate(birthdayRaw);
   const ageValue = idx.age !== undefined ? parseInt(getDirectoryValue(row, idx.age)) : 0;
   const calculatedAge = ageValue || calculateDirectoryAge(birthdayRaw);
+  const emailVerifiedRaw = idx.emailVerified !== undefined ? row[idx.emailVerified] : '';
+  const emailVerified =
+    emailVerifiedRaw === true ||
+    String(emailVerifiedRaw).toLowerCase() === 'true' ||
+    String(emailVerifiedRaw).toLowerCase() === 'yes';
 
   return {
     // Core identification
@@ -346,6 +453,8 @@ function buildOfficerObject(row, idx) {
     
     // Contact Info
     email: getDirectoryValue(row, idx.email),
+    emailVerified: emailVerified,
+    verifiedEmail: getDirectoryValue(row, idx.verifiedEmail),
     personalEmail: getDirectoryValue(row, idx.personalEmail),
     contactNumber: getDirectoryValue(row, idx.contactNumber),
 

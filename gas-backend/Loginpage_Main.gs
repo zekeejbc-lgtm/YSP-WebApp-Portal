@@ -2206,7 +2206,7 @@ function sendOTPVerificationEmail(email, name, otp) {
   const subjectLine = "Email Verification Code - YSP Tagum";
   
   const mainContent = `
-    <p style="margin-bottom: 24px;">You requested to verify your email address on <strong>${dateStr}</strong> at ${timeStr}.</p>
+    <p style="margin-bottom: 24px;">You requested to verify your account on <strong>${dateStr}</strong> at ${timeStr}.</p>
     
     <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
       <div style="background-color: #f8f9fa; padding: 12px 20px; border-bottom: 1px solid #eeeeee;">

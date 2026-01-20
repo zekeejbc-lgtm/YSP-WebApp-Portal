@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bell, Moon, Sun } from "lucide-react";
-import { PageLayout, DESIGN_TOKENS } from "./design-system";
+import { Bell, Moon, Sun, Trash2 } from "lucide-react";
+import { Button, PageLayout, DESIGN_TOKENS } from "./design-system";
 // Use a local toggle to avoid relying on theme variables that are not defined globally.
 import { getStoredUser } from "../services/gasLoginService";
 import { getFcmToken, isFirebaseConfigured } from "../services/firebaseMessaging";
@@ -15,6 +15,7 @@ interface SettingsPageProps {
   onClose: () => void;
   isDark: boolean;
   onToggleDark: () => void;
+  onRequestCacheClear: () => void;
   addUploadToast: (message: UploadToastMessage) => void;
   updateUploadToast: (id: string, updates: Partial<UploadToastMessage>) => void;
   removeUploadToast: (id: string) => void;
@@ -34,6 +35,7 @@ export default function SettingsPage({
   onClose,
   isDark,
   onToggleDark,
+  onRequestCacheClear,
   addUploadToast,
   updateUploadToast,
   removeUploadToast,
@@ -322,6 +324,35 @@ export default function SettingsPage({
                 }}
               />
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-xl p-5 md:p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="mt-1 rounded-full bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-200 p-2">
+                <Trash2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3
+                  className="text-sm font-semibold text-gray-900 dark:text-gray-100"
+                  style={{ fontFamily: DESIGN_TOKENS.typography.fontFamily.headings }}
+                >
+                  Clear Cache
+                </h3>
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  Remove stored app data on this device and do a hard refresh.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between md:justify-end gap-3">
+              <Button variant="secondary" size="sm" onClick={onRequestCacheClear}>
+                Clear Cache
+              </Button>
+            </div>
+          </div>
+          <div className="mt-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3 text-xs text-gray-600 dark:text-gray-400">
+            This clears local storage, cached files, and saved app data for this device.
           </div>
         </div>
       </div>

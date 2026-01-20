@@ -68,6 +68,8 @@
   getLocalCacheVersion,
   setLocalCacheVersion,
   forceClearAllCaches, // 👈 ADD THIS HERE
+  startCacheVersionPolling,
+  stopCacheVersionPolling,
 } from "./services/gasSystemToolsService";
   // 👈 ADD THIS IMPORT
 import { CacheRefreshModal } from "./components/SystemToolsPage";
@@ -536,6 +538,11 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
     const [showFeedbackPage, setShowFeedbackPage] = useState(false);
     const [showMembershipApplicationsPage, setShowMembershipApplicationsPage] = useState(false);
     const [showOfficerDirectory, setShowOfficerDirectory] = useState(false);
+    const [directorySearchRequest, setDirectorySearchRequest] = useState<{
+      query: string;
+      idCode?: string;
+      trigger: number;
+    } | null>(null);
     const [showAttendanceDashboard, setShowAttendanceDashboard] = useState(false);
     const [showAttendanceRecording, setShowAttendanceRecording] = useState(false);
     const [showManageEvents, setShowManageEvents] = useState(false);
@@ -561,10 +568,23 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
 
   const appVersion = import.meta.env.VITE_APP_VERSION || "1.0.0";
   const [showCacheRefreshModal, setShowCacheRefreshModal] = useState(false);
+  const [hardRefreshMode, setHardRefreshMode] = useState<"standard" | "full">("standard");
+
+  const handleRequestCacheClear = () => {
+    setHardRefreshMode("full");
+    setShowCacheRefreshModal(true);
+  };
+
+  const handleDismissHardRefresh = () => {
+    setShowCacheRefreshModal(false);
+    setHardRefreshMode("standard");
+  };
 
   const handleConfirmHardRefresh = async () => {
     setShowCacheRefreshModal(false);
-    await forceClearAllCaches();
+    const preserveSession = hardRefreshMode !== "full";
+    setHardRefreshMode("standard");
+    await forceClearAllCaches({ preserveSession });
   };
 
   useEffect(() => {
@@ -590,15 +610,18 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
 
     const handleCacheVersionChange = () => {
       setCacheVersion(getLocalCacheVersion());
+      setHardRefreshMode("standard");
       setShowCacheRefreshModal(true);
     };
 
     syncCacheVersion();
+    startCacheVersionPolling();
     window.addEventListener("storage", handleStorage);
     window.addEventListener("cache-version-changed", handleCacheVersionChange);
 
     return () => {
       isMounted = false;
+      stopCacheVersionPolling();
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener("cache-version-changed", handleCacheVersionChange);
     };
@@ -626,6 +649,15 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
     const [openDropdown, setOpenDropdown] = useState<string | null>(null);
     const [openMobileGroup, setOpenMobileGroup] = useState<string | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+    const handleOfficerDirectorySearch = useCallback(
+      (request: { query: string; idCode?: string }) => {
+        setDirectorySearchRequest({ ...request, trigger: Date.now() });
+        setShowOfficerDirectory(true);
+        setActivePage("officer-directory");
+      },
+      []
+    );
 
     // Homepage Content Loading States
     const [isLoadingHomepage, setIsLoadingHomepage] = useState(true);
@@ -2378,6 +2410,16 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       );
     }, [isAdmin, isDark, isLoadingProjects, openProjectModal, projects, selectedProjectIds, startEditProject, toggleProjectSelection]);
 
+    const chatbot = (
+      <YSPChatBot
+        userRole={userRole}
+        orgChartUrl={orgChartUrl}
+        onOfficerDirectorySearch={handleOfficerDirectorySearch}
+        onRequestCacheClear={handleRequestCacheClear}
+        currentPage={activePage}
+      />
+    );
+
     // Show Full PWA Maintenance Screen (for non-admin users)
     if (isFullMaintenance && !isAdmin) {
       return (
@@ -2398,6 +2440,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
               isAdmin={isAdmin}
             />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2424,6 +2467,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
                 isAdmin={isAdmin}
               />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2449,6 +2493,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
               username={userName || (userRole === 'guest' ? 'Guest' : 'admin')}
             />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2475,6 +2520,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
                 isAdmin={isAdmin}
               />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2502,6 +2548,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
               username={userName || 'admin'}
             />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2528,6 +2575,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
                 isAdmin={isAdmin}
               />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2548,8 +2596,10 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <OfficerDirectoryPage
               onClose={() => setShowOfficerDirectory(false)}
               isDark={isDark}
+              searchRequest={directorySearchRequest}
             />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2576,6 +2626,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
                 isAdmin={isAdmin}
               />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2607,6 +2658,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             onDismiss={removeUploadToast}
             isDark={isDark}
           />
+          {chatbot}
         </>
       );
     }
@@ -2622,6 +2674,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2631,6 +2684,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading attendance..." />}>
             <AttendanceRecordingPage onClose={() => setShowAttendanceRecording(false)} isDark={isDark} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2645,6 +2699,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2654,6 +2709,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading events..." />}>
             <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} username={userName || 'admin'} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2668,6 +2724,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2677,6 +2734,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading QR..." />}>
             <MyQRIDPage onClose={() => setShowMyQRID(false)} isDark={isDark} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2691,6 +2749,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2700,6 +2759,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading attendance..." />}>
             <AttendanceTransparencyPage onClose={() => setShowAttendanceTransparency(false)} isDark={isDark} userName={userName} memberId={userIdCode} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2714,6 +2774,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2735,6 +2796,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             onDismiss={removeUploadToast}
             isDark={isDark}
           />
+          {chatbot}
         </>
       );
     }
@@ -2749,6 +2811,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2758,6 +2821,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading announcements..." />}>
             <AnnouncementsPage onClose={() => setShowAnnouncements(false)} isDark={isDark} userRole={userRole} username={userName || 'admin'} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2772,6 +2836,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2781,6 +2846,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading access logs..." />}>
             <AccessLogsPage onClose={() => setShowAccessLogs(false)} isDark={isDark} username={userName || 'admin'} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2795,6 +2861,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2811,6 +2878,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             />
           </Suspense>
           <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
+          {chatbot}
         </>
       );
     }
@@ -2825,6 +2893,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2834,6 +2903,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading members..." />}>
             <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userName} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2848,6 +2918,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2857,6 +2928,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
             <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userName || 'admin'} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -2883,6 +2955,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
                 isAdmin={isAdmin}
               />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2904,12 +2977,20 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
               onClose={() => setShowSettings(false)}
               isDark={isDark}
               onToggleDark={toggleDark}
+              onRequestCacheClear={handleRequestCacheClear}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
               removeUploadToast={removeUploadToast}
             />
           </Suspense>
           <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
+          <CacheRefreshModal
+            isOpen={showCacheRefreshModal}
+            isDark={isDark}
+            onConfirm={handleConfirmHardRefresh}
+            onClose={handleDismissHardRefresh}
+          />
+          {chatbot}
         </>
       );
     }
@@ -2924,6 +3005,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             <Suspense fallback={null}>
               <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
             </Suspense>
+            {chatbot}
           </>
         );
       }
@@ -2933,6 +3015,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading donations..." />}>
             <DonationPage onClose={() => setShowDonationPage(false)} donations={donations} onDonationsUpdate={setDonations} isAdmin={isAdmin} />
           </Suspense>
+          {chatbot}
         </>
       );
     }
@@ -3115,58 +3198,67 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
         <div className={`relative z-10 transition-all duration-300 ${isAdmin ? 'md:pl-[60px]' : ''}`}>
           {/* Edit Homepage Controls - Fixed Position */}
           {(userRole === 'admin' || userRole === 'auditor') && !isEditingHomepage && (
-            <div className="fixed bottom-6 right-6" style={{ zIndex: 45 }}>
+            <div
+              className="fixed"
+              style={{
+                zIndex: 45,
+                bottom: "24px",
+                left: isAdmin ? "76px" : "24px",
+              }}
+            >
               <button
                 onClick={handleStartEditing}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg text-white transition-all duration-300 shadow-md"
+                className="flex items-center justify-center px-3 py-2 rounded-lg text-white transition-all duration-300 shadow-md"
                 style={{
                   background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
                   fontWeight: "600",
                   fontSize: "14px",
                 }}
+                aria-label="Edit homepage"
               >
                 <Edit3 className="w-4 h-4" />
-                <span className="hidden sm:inline">Edit</span>
               </button>
             </div>
           )}
 
           {/* Save/Cancel Controls - Fixed Position */}
           {isEditingHomepage && (
-            <div className="fixed bottom-6 right-6 flex gap-3" style={{ zIndex: 45 }}>
+            <div
+              className="fixed flex flex-col gap-3"
+              style={{
+                zIndex: 45,
+                bottom: "24px",
+                left: isAdmin ? "76px" : "24px",
+              }}
+            >
               <button
                 onClick={handleCancelEditing}
                 disabled={isSavingHomepage}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                className="flex items-center justify-center px-3 py-2 rounded-lg text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
                 style={{
                   background: "linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)",
                   fontWeight: "600",
-                  fontSize: "16px",
+                  fontSize: "14px",
                 }}
+                aria-label="Cancel homepage edits"
               >
                 <X className="w-5 h-5" />
-                Cancel
               </button>
               <button
                 onClick={handleSaveEditing}
                 disabled={isSavingHomepage}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                className="flex items-center justify-center px-3 py-2 rounded-lg text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
                 style={{
                   background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
                   fontWeight: "600",
-                  fontSize: "16px",
+                  fontSize: "14px",
                 }}
+                aria-label="Save homepage edits"
               >
                 {isSavingHomepage ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Saving...
-                  </>
+                  <Loader2 className="w-5 h-5 animate-spin" />
                 ) : (
-                  <>
-                    <Save className="w-5 h-5" />
-                    Save Changes
-                  </>
+                  <Save className="w-5 h-5" />
                 )}
               </button>
             </div>
@@ -5101,12 +5193,13 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           isOpen={showCacheRefreshModal}
           isDark={isDark}
           onConfirm={handleConfirmHardRefresh}
-          onClose={() => setShowCacheRefreshModal(false)}
+          onClose={handleDismissHardRefresh}
         />
 
-{/* 🤖 YSP AI Chatbot - Hides when user is logged in (isAdmin is true) */}
-        {!isAdmin && <YSPChatBot />}
+{/* YSP AI Chatbot */}
+        {chatbot}
         
       </div>
     );
   }
+

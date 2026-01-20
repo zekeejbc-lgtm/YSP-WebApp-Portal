@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Send, MessageSquare, X, Minimize2, Loader2, User } from "lucide-react";
-import { searchOfficers } from "../services/gasDirectoryService"; // 👈 ADD THIS
-
+import { getAllOfficers, searchOfficers, type DirectoryOfficer } from "../services/gasDirectoryService";
+import { fetchEvents, formatEventDate } from "../services/gasEventsService";
+import { fetchAllProjects } from "../services/projectsService";
 // ✅ YOUR API KEY
 const API_URL =
   "https://script.google.com/macros/s/AKfycbxBc_bEYUCdt71zuUZouXmhvhOilUBSgI0PymwzUqI9URanSF6U7UEKN_ziHQ_s9gLRcQ/exec";
@@ -16,6 +17,14 @@ interface Message {
   image?: string;
 }
 
+interface YSPChatBotProps {
+  userRole?: string;
+  orgChartUrl?: string;
+  onOfficerDirectorySearch?: (request: { query: string; idCode?: string }) => void;
+  onRequestCacheClear?: () => void;
+  currentPage?: string;
+}
+
 // 👇 Add this new interface for the Knowledge Base
 interface KBEntry {
   keywords: string[];
@@ -24,7 +33,7 @@ interface KBEntry {
 }
 
 // 💡 SUGGESTIONS: Quick reply chips
-const SUGGESTIONS = [
+const BASE_SUGGESTIONS = [
   "Who is the founder?",
   "What are the advocacy pillars?",
   "About YSP",
@@ -36,8 +45,14 @@ const SUGGESTIONS = [
   "Who are the Executive Board?",
   "What is YSP?",
   "How to contact developer?",
-  "Report Portal Issues"
+  "Report Portal Issues",
+  "Events in December",
+  "Show projects implemented",
+  "@system clear cache",
+  "@system hard refresh",
 ];
+
+const SUGGESTIONS = BASE_SUGGESTIONS;
 
 // 🗄️ EXTENSIVE LOCAL KNOWLEDGE BASE
 // The bot checks this FIRST. If a match is found, it skips the API.
@@ -130,7 +145,7 @@ const LOCAL_KNOWLEDGE_BASE = [
     lookup: "Obreque, Russel T."
   },
   {
-    keywords: ["program development", "program dev", "events", "prog dev"],
+    keywords: ["program development", "program dev", "prog dev"],
     answer: "The Program Development Officer is Valerie B. Cabualan.",
     lookup: "Cabualan, Valerie B."
   },
@@ -237,7 +252,465 @@ const LOCAL_KNOWLEDGE_BASE = [
   }
 ];
 
-const YSPChatBot: React.FC = () => {
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+const MONTH_ALIASES: Record<string, number> = {
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11,
+};
+
+const ORG_QUERY_BLOCKLIST = ["ysp", "chapter", "organization", "portal", "developer", "founder"];
+const GENERIC_DIRECTORY_TARGETS = [
+  "officer",
+  "officers",
+  "member",
+  "members",
+  "executive board",
+  "board",
+  "committee",
+  "team",
+];
+
+const CLARIFYING_FALLBACK =
+  "I want to make sure I understand. Can you clarify your question or share more details?";
+
+function buildErrorMessage(code?: string | number): string {
+  const errorCode = code ? String(code) : "500";
+  return `Error code: ${errorCode}. Please ask the developer for fixing this problem. I am currently experiencing fluctuations, please chuchu.`;
+}
+
+function isExecutiveBoardQuery(query: string): boolean {
+  return (
+    /\bexecutive board\b/.test(query) ||
+    /\bexecutive committee\b/.test(query) ||
+    /\borg chart\b/.test(query) ||
+    /\borganizational chart\b/.test(query) ||
+    /\borganization chart\b/.test(query)
+  );
+}
+
+function isProjectsQuery(query: string): boolean {
+  const hasProjects = /\bprojects\b/.test(query);
+  const hasProjectImplemented =
+    /\bproject\b/.test(query) &&
+    /\bimplemented|implementation|accomplished|completed|done\b/.test(query);
+  return hasProjects || hasProjectImplemented;
+}
+
+function parseRelativeMonth(query: string): { monthIndex: number; year: number; label: string } | null {
+  const now = new Date();
+  if (/\bthis month\b/.test(query)) {
+    return {
+      monthIndex: now.getMonth(),
+      year: now.getFullYear(),
+      label: "this month",
+    };
+  }
+  if (/\bnext month\b/.test(query)) {
+    const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return {
+      monthIndex: next.getMonth(),
+      year: next.getFullYear(),
+      label: "next month",
+    };
+  }
+  if (/\blast month\b/.test(query)) {
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return {
+      monthIndex: prev.getMonth(),
+      year: prev.getFullYear(),
+      label: "last month",
+    };
+  }
+  return null;
+}
+
+function extractMonthQuery(query: string): { monthIndex: number; year?: number } | null {
+  const monthRegex = new RegExp(`\\b(${Object.keys(MONTH_ALIASES).join("|")})\\b`, "i");
+  const match = query.match(monthRegex);
+  if (!match) return null;
+  const monthIndex = MONTH_ALIASES[match[1].toLowerCase()];
+  if (monthIndex === undefined) return null;
+  const yearMatch = query.match(/\b(20\d{2}|19\d{2})\b/);
+  const year = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
+  return { monthIndex, year };
+}
+
+function parseEventQuery(
+  query: string
+): { monthIndex?: number; year?: number; label: string; needsClarification?: boolean } | null {
+  const hasEventKeyword = /\b(event|events|activity|activities|schedule|scheduled|calendar)\b/.test(query);
+  if (!hasEventKeyword) return null;
+
+  const relative = parseRelativeMonth(query);
+  if (relative) {
+    return {
+      monthIndex: relative.monthIndex,
+      year: relative.year,
+      label: relative.label,
+    };
+  }
+
+  const monthMatch = extractMonthQuery(query);
+  if (monthMatch) {
+    const monthLabel = MONTH_NAMES[monthMatch.monthIndex];
+    const label = monthMatch.year ? `${monthLabel} ${monthMatch.year}` : monthLabel;
+    return { monthIndex: monthMatch.monthIndex, year: monthMatch.year, label };
+  }
+
+  return { label: "a specific month", needsClarification: true };
+}
+
+function isDirectoryIntent(query: string): boolean {
+  if (ORG_QUERY_BLOCKLIST.some((term) => query.includes(term))) {
+    return false;
+  }
+  return /\b(info|information|contact|details|profile|directory|email|phone|id code|birthdate|birthday|age|gender|sex|status|position|committee|role|nationality|religion)\b/.test(query);
+}
+
+function extractDirectoryTarget(text: string): string | null {
+  const patterns = [
+    /\b(?:info|information)\s+(?:about|of)?\s*(.+)/i,
+    /\b(?:contact|details|profile)\s+(?:for|of)?\s*(.+)/i,
+    /\bwhen\s+is\s+(.+?)\s+birth(?:day|date)\b/i,
+    /\bdirectory\s+(?:lookup|for|of)?\s*(.+)/i,
+    /\bsearch\s+(?:for\s+)?(?:officer|member|person)?\s*(.+)/i,
+    /\bfind\s+(?:officer|member|person)?\s*(.+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const candidate = match[1].trim();
+      if (candidate) return candidate;
+    }
+  }
+
+  return null;
+}
+
+function isGenericDirectoryTarget(target: string): boolean {
+  const normalized = target.toLowerCase();
+  return GENERIC_DIRECTORY_TARGETS.some(
+    (term) => normalized === term || normalized === `the ${term}`
+  );
+}
+
+function normalizeDirectoryTarget(target: string): string {
+  return target
+    .replace(/\b(surname|last name|lastname|first name|firstname|middle name|middlename)\b/gi, " ")
+    .replace(/\b(mr|mrs|ms|miss|sir|maam|madam|dr|engr|atty|prof)\b\.?/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractRequestedDirectoryField(query: string): string | null {
+  const fieldMap: Array<{ key: string; pattern: RegExp }> = [
+    { key: "email", pattern: /\b(email|email address)\b/ },
+    { key: "contactNumber", pattern: /\b(contact|contact number|phone|mobile|tel)\b/ },
+    { key: "birthday", pattern: /\b(birthdate|birthday|date of birth)\b/ },
+    { key: "age", pattern: /\b(age)\b/ },
+    { key: "committee", pattern: /\b(committee)\b/ },
+    { key: "position", pattern: /\b(position|title)\b/ },
+    { key: "role", pattern: /\b(role)\b/ },
+    { key: "status", pattern: /\b(status)\b/ },
+    { key: "idCode", pattern: /\b(id code|id)\b/ },
+    { key: "gender", pattern: /\b(gender|sex)\b/ },
+    { key: "nationality", pattern: /\b(nationality)\b/ },
+    { key: "religion", pattern: /\b(religion)\b/ },
+  ];
+
+  for (const entry of fieldMap) {
+    if (entry.pattern.test(query)) return entry.key;
+  }
+  return null;
+}
+
+function getDirectoryFieldValue(
+  officer: DirectoryOfficer,
+  fieldKey: string
+): { label: string; value?: string | number } {
+  const label = fieldKey.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+  const formatBirthday = (raw?: string) => {
+    if (!raw) return undefined;
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return raw;
+    const formatted = date.toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+    return `${raw} (${formatted})`;
+  };
+  const valueMap: Record<string, string | number | undefined> = {
+    email: officer.email,
+    contactNumber: officer.contactNumber,
+    birthday: formatBirthday(officer.birthday),
+    age: officer.age,
+    committee: officer.committee,
+    position: officer.position,
+    role: officer.role,
+    status: officer.status,
+    idCode: officer.idCode,
+    gender: officer.gender,
+    nationality: officer.nationality,
+    religion: officer.religion,
+    chapter: officer.chapter,
+  };
+  return { label, value: valueMap[fieldKey] };
+}
+
+function parseGenderFilter(query: string): "female" | "male" | null {
+  if (/\b(female|females|women|woman|girls)\b/.test(query)) return "female";
+  if (/\b(male|males|men|man|boys)\b/.test(query)) return "male";
+  return null;
+}
+
+function isCountQuery(query: string): boolean {
+  return /\b(how many|count|number of|total)\b/.test(query);
+}
+
+function parseBirthdayMonthQuery(query: string): { monthIndex: number; label: string } | null {
+  const relative = parseRelativeMonth(query);
+  if (relative) {
+    return { monthIndex: relative.monthIndex, label: relative.label };
+  }
+  const monthMatch = extractMonthQuery(query);
+  if (!monthMatch) return null;
+  const monthLabel = MONTH_NAMES[monthMatch.monthIndex];
+  const label = monthMatch.year ? `${monthLabel} ${monthMatch.year}` : monthLabel;
+  return { monthIndex: monthMatch.monthIndex, label };
+}
+
+function isUnverifiedEmailQuery(query: string): boolean {
+  return (
+    /\b(unverified|not verified|unverified email|email not verified|email unverified)\b/.test(query) ||
+    /\b(not|does not|doesn't|dont|do not)\b.*\b(email|emails)\b.*\b(verified|verify)\b/.test(query)
+  );
+}
+
+function parseDirectoryAnalyticsQuery(query: string): {
+  type: "gender" | "birthdays" | "unverifiedEmail";
+  gender?: "female" | "male";
+  monthIndex?: number;
+  label?: string;
+} | null {
+  const gender = parseGenderFilter(query);
+  if (gender && (/\b(officer|officers|members|people)\b/.test(query) || isCountQuery(query))) {
+    return { type: "gender", gender };
+  }
+
+  if (/\b(birthday|birthdays|born)\b/.test(query)) {
+    const month = parseBirthdayMonthQuery(query);
+    if (month) {
+      return { type: "birthdays", monthIndex: month.monthIndex, label: month.label };
+    }
+  }
+
+  if (isUnverifiedEmailQuery(query)) {
+    return { type: "unverifiedEmail" };
+  }
+
+  return null;
+}
+
+function parseDirectoryRoleScope(query: string): "members" | "officers" | "all" {
+  if (/\bmember|members\b/.test(query)) return "members";
+  if (/\bofficer|officers\b/.test(query)) return "officers";
+  return "all";
+}
+
+function extractScopeFilters(query: string, officers: DirectoryOfficer[]): {
+  committee?: string;
+  role?: string;
+  position?: string;
+  isExecutiveBoard?: boolean;
+} {
+  const normalizedQuery = normalizeDirectoryTarget(query).toLowerCase();
+  const committeeSet = new Set<string>();
+  const roleSet = new Set<string>();
+  const positionSet = new Set<string>();
+
+  officers.forEach((officer) => {
+    if (officer.committee) committeeSet.add(officer.committee.toLowerCase());
+    if (officer.role) roleSet.add(officer.role.toLowerCase());
+    if (officer.position) positionSet.add(officer.position.toLowerCase());
+  });
+
+  const committeeMatch = Array.from(committeeSet).find((committee) =>
+    normalizedQuery.includes(committee)
+  );
+  const roleMatch = Array.from(roleSet).find((role) => normalizedQuery.includes(role));
+  const positionMatch = Array.from(positionSet).find((position) =>
+    normalizedQuery.includes(position)
+  );
+  const isExecutiveBoard = /\bexecutive board\b/.test(normalizedQuery);
+
+  return {
+    committee: committeeMatch,
+    role: roleMatch,
+    position: positionMatch,
+    isExecutiveBoard,
+  };
+}
+
+function stripMembersCommandPrefix(text: string): string {
+  return text.replace(/^@members\b[:\s]*/i, "").trim();
+}
+
+function extractPossessiveTarget(text: string): string | null {
+  const match = text.match(/([A-Za-z][A-Za-z\s.'-]+?)(?:'s|s')\b/i);
+  if (match && match[1]) return match[1].trim();
+  const plainMatch = text.match(/\b([A-Za-z][A-Za-z\s.-]+?)s\b\s+birth(?:day|date)\b/i);
+  if (plainMatch && plainMatch[1]) return plainMatch[1].trim();
+  return null;
+}
+
+function extractMembersCommandTarget(text: string): string | null {
+  const whoMatch = text.match(/\bwho(?:'s| is)\s+(.+)/i);
+  if (whoMatch && whoMatch[1]) {
+    return whoMatch[1].trim();
+  }
+
+  const birthdayMatch = text.match(/\bwhen\s+is\s+(.+?)\s+birth(?:day|date)\b/i);
+  if (birthdayMatch && birthdayMatch[1]) {
+    return birthdayMatch[1].trim();
+  }
+
+  const possessive = extractPossessiveTarget(text);
+  if (possessive) return possessive;
+
+  const infoMatch =
+    extractDirectoryTarget(text) ||
+    (text.match(/\b(?:find|search for|search)\s+(.+)/i)?.[1] || "").trim();
+  return infoMatch || null;
+}
+
+function extractMembersTargets(text: string): string[] {
+  const target = extractMembersCommandTarget(text);
+  if (!target) return [];
+  return target
+    .split(/\s+and\s+|,/i)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatOfficerDetails(officer: DirectoryOfficer): string {
+  const lines: string[] = [];
+  const addLine = (label: string, value?: string | number) => {
+    if (value === undefined || value === null) return;
+    const cleaned = String(value).trim();
+    if (!cleaned) return;
+    lines.push(`${label}: ${cleaned}`);
+  };
+
+  addLine("Name", officer.fullName);
+  addLine("ID Code", officer.idCode);
+  addLine("Position", officer.position);
+  addLine("Committee", officer.committee);
+  addLine("Role", officer.role);
+  addLine("Status", officer.status);
+  addLine("Chapter", officer.chapter);
+  addLine("Date Joined", officer.dateJoined);
+  addLine("Membership Type", officer.membershipType);
+  addLine("Email", officer.email);
+  if (officer.personalEmail && officer.personalEmail !== officer.email) {
+    addLine("Personal Email", officer.personalEmail);
+  }
+  addLine("Contact", officer.contactNumber);
+  addLine("Birthday", officer.birthday);
+  addLine("Age", officer.age);
+  addLine("Gender", officer.gender);
+  addLine("Pronouns", officer.pronouns);
+  addLine("Civil Status", officer.civilStatus);
+  addLine("Nationality", officer.nationality);
+  addLine("Religion", officer.religion);
+  addLine("Emergency Contact Name", officer.emergencyContactName);
+  addLine("Emergency Contact Relation", officer.emergencyContactRelation);
+  addLine("Emergency Contact Number", officer.emergencyContactNumber);
+  addLine("Facebook", officer.facebook);
+  addLine("Instagram", officer.instagram);
+  addLine("Twitter", officer.twitter);
+
+  return lines.length > 0 ? lines.join("\n") : "No additional details available.";
+}
+
+function formatOfficerSummary(officer: DirectoryOfficer): string {
+  const lines: string[] = [];
+  const addLine = (label: string, value?: string | number) => {
+    const cleaned = value !== undefined && value !== null ? String(value).trim() : "";
+    lines.push(`${label}: ${cleaned || "N/A"}`);
+  };
+
+  addLine("Full Name", officer.fullName);
+  addLine("Age", officer.age ? `${officer.age}` : "");
+  addLine("Contacts", officer.contactNumber);
+  addLine("Email", officer.email);
+  addLine("ID Code", officer.idCode);
+  addLine("Position", officer.position);
+  addLine("Chapter", officer.chapter);
+  addLine("Committee", officer.committee);
+  addLine("Profile Picture", officer.profilePicture ? "Shown above" : "Not available");
+
+  return lines.join("\n");
+}
+
+function isOfficerEmailVerified(officer: DirectoryOfficer): boolean {
+  if (officer.emailVerified) {
+    if (officer.verifiedEmail && officer.email) {
+      return officer.verifiedEmail.toLowerCase() === officer.email.toLowerCase();
+    }
+    return true;
+  }
+  return false;
+}
+
+function isFullDirectoryReply(text: string): boolean {
+  return /\b(yes|y|yeah|yep|sure|ok|okay|full|show full|open|go ahead|please)\b/i.test(text.trim());
+}
+
+const YSPChatBot: React.FC<YSPChatBotProps> = ({
+  userRole = "guest",
+  orgChartUrl = "",
+  onOfficerDirectorySearch,
+  onRequestCacheClear,
+  currentPage = "",
+}) => {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
@@ -246,9 +719,20 @@ const YSPChatBot: React.FC = () => {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0); // Display number
+  const [pendingProjectSummary, setPendingProjectSummary] = useState<Project[] | null>(null);
+  const [isProjectDetailsPending, setIsProjectDetailsPending] = useState(false);
+  const [pendingDirectoryLookup, setPendingDirectoryLookup] = useState<{
+    query: string;
+    idCode?: string;
+  } | null>(null);
+  const [isDirectoryDetailsPending, setIsDirectoryDetailsPending] = useState(false);
+  const [lastDirectoryOfficer, setLastDirectoryOfficer] = useState<DirectoryOfficer | null>(null);
+  const [membersCommandActive, setMembersCommandActive] = useState(false);
+  const [fullImageUrl, setFullImageUrl] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const directoryAnalyticsCacheRef = useRef<{ timestamp: number; officers: DirectoryOfficer[] } | null>(null);
   const cooldownEndRef = useRef<number>(0); // 👈 Tracks real time
 
   // ⏱️ ROBUST TIMER: Uses Date.now() so it never gets stuck
@@ -314,12 +798,154 @@ const YSPChatBot: React.FC = () => {
     return bestMatch;
   };
 
+  const parseProjectSelection = (text: string, projects: Project[]) => {
+    const trimmed = text.trim().toLowerCase();
+    if (!trimmed) return null;
+
+    if (trimmed === "all" || trimmed === "show all" || trimmed === "all projects") {
+      return projects;
+    }
+
+    const ordinalWordMap: Record<string, number> = {
+      first: 1,
+      second: 2,
+      third: 3,
+      fourth: 4,
+      fifth: 5,
+      sixth: 6,
+      seventh: 7,
+      eighth: 8,
+      ninth: 9,
+      tenth: 10,
+      eleventh: 11,
+      twelfth: 12,
+    };
+
+    const ordinalWord = Object.keys(ordinalWordMap).find((word) => trimmed.includes(word));
+    if (ordinalWord) {
+      const ordinalIndex = ordinalWordMap[ordinalWord] - 1;
+      if (ordinalIndex >= 0 && ordinalIndex < projects.length) {
+        return [projects[ordinalIndex]];
+      }
+    }
+
+    const ordinalMatch = trimmed.match(/\b(\d+)(st|nd|rd|th)\b/);
+    if (ordinalMatch) {
+      const ordinalIndex = parseInt(ordinalMatch[1], 10) - 1;
+      if (ordinalIndex >= 0 && ordinalIndex < projects.length) {
+        return [projects[ordinalIndex]];
+      }
+    }
+
+    const indexMatch = trimmed.match(/\b(\d+)\b/);
+    if (indexMatch) {
+      const index = parseInt(indexMatch[1], 10) - 1;
+      if (index >= 0 && index < projects.length) {
+        return [projects[index]];
+      }
+    }
+
+    const matchedByTitle = projects.filter((project) =>
+      project.title.toLowerCase().includes(trimmed)
+    );
+    if (matchedByTitle.length > 0) {
+      return matchedByTitle;
+    }
+
+    return null;
+  };
+
+  const getCachedOfficersFromStorage = (): DirectoryOfficer[] | null => {
+    const storages = [sessionStorage, localStorage];
+    let bestTimestamp = 0;
+    let bestOfficers: DirectoryOfficer[] | null = null;
+
+    for (const storage of storages) {
+      try {
+        for (let i = 0; i < storage.length; i++) {
+          const key = storage.key(i);
+          if (!key || !key.startsWith("ysp_directory_cache_all_")) continue;
+          const raw = storage.getItem(key);
+          if (!raw) continue;
+          const parsed = JSON.parse(raw) as { data?: { officers?: DirectoryOfficer[] }; timestamp?: number };
+          const officers = parsed.data?.officers;
+          const timestamp = parsed.timestamp || 0;
+          if (officers && timestamp > bestTimestamp) {
+            bestTimestamp = timestamp;
+            bestOfficers = officers;
+          }
+        }
+      } catch {
+        // Ignore storage read errors
+      }
+    }
+
+    return bestOfficers;
+  };
+
+  const getCachedSearchResults = (query: string): DirectoryOfficer[] | null => {
+    const key = `ysp_directory_cache_search_${query.toLowerCase().trim()}`;
+    const storages = [sessionStorage, localStorage];
+
+    for (const storage of storages) {
+      try {
+        const raw = storage.getItem(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw) as { data?: { officers?: DirectoryOfficer[] } };
+        if (parsed.data?.officers) {
+          return parsed.data.officers;
+        }
+      } catch {
+        // Ignore cache errors
+      }
+    }
+
+    return null;
+  };
+
+  const searchDirectoryWithCache = async (query: string) => {
+    const cached = getCachedSearchResults(query);
+    if (cached) {
+      return { success: true, officers: cached, total: cached.length };
+    }
+    return searchOfficers(query);
+  };
+
+  const loadAllOfficersForAnalytics = async (): Promise<DirectoryOfficer[]> => {
+    const cache = directoryAnalyticsCacheRef.current;
+    const cacheMs = 2 * 60 * 1000;
+    if (cache && Date.now() - cache.timestamp < cacheMs) {
+      return cache.officers;
+    }
+
+    const cachedOfficers = getCachedOfficersFromStorage();
+    if (cachedOfficers && cachedOfficers.length > 0) {
+      directoryAnalyticsCacheRef.current = { timestamp: Date.now(), officers: cachedOfficers };
+      return cachedOfficers;
+    }
+
+    const officers: DirectoryOfficer[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await getAllOfficers(page, 100);
+      if (!response.success || !response.officers) {
+        throw new Error(response.error || "Failed to fetch officer list.");
+      }
+      officers.push(...response.officers);
+      hasMore = Boolean(response.pagination?.hasMore);
+      page += 1;
+    }
+
+    directoryAnalyticsCacheRef.current = { timestamp: Date.now(), officers };
+    return officers;
+  };
+
   // Reusable function to handle sending messages
   const handleSend = async (text: string) => {
-    // 🛑 Block if cooling down or loading
     if (!text.trim() || isLoading || cooldown > 0) return;
 
-    // ⏱️ Start 10-second Cooldown
     const COOLDOWN_SECONDS = 10;
     cooldownEndRef.current = Date.now() + (COOLDOWN_SECONDS * 1000);
     setCooldown(COOLDOWN_SECONDS);
@@ -328,39 +954,955 @@ const YSPChatBot: React.FC = () => {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
 
-    // ⚡️ PRIORITY CHECK: LOCAL KNOWLEDGE BASE
-    const localMatch = findLocalAnswer(text);
+    let workingText = text.trim();
+    let normalized = workingText.toLowerCase();
+    const role = userRole.toLowerCase();
+    const isPrivileged = role === "auditor" || role === "admin";
+    const pageKey = currentPage.toLowerCase();
+    const isMembersCommandAllowed =
+      pageKey === "officer-directory" || pageKey === "manage-members";
 
+    if (/^@clear\b/i.test(workingText) || /^@clear chat history\b/i.test(workingText)) {
+      setMessages([{ id: Date.now(), text: "Hello! I'm the YSP Assistant. How can I help you?", sender: "bot" }]);
+      setIsLoading(false);
+      setMembersCommandActive(false);
+      setPendingProjectSummary(null);
+      setIsProjectDetailsPending(false);
+      setPendingDirectoryLookup(null);
+      setIsDirectoryDetailsPending(false);
+      setLastDirectoryOfficer(null);
+      setInput("");
+      return;
+    }
+
+    if (/^\/@members\b/i.test(workingText)) {
+      const remainder = workingText.replace(/^\/@members\b[:\s]*/i, "").trim();
+      if (/^(off|disable|stop|exit)$/i.test(remainder)) {
+        setMembersCommandActive(false);
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: "Members mode is now off.", sender: "bot" },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      setMembersCommandActive(true);
+      if (!remainder) {
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: "Members mode is now on. Ask your next question.", sender: "bot" },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+      workingText = `@members ${remainder}`;
+      normalized = workingText.toLowerCase();
+    }
+
+    if (/^\/?@system\b/i.test(workingText)) {
+      const commandText = workingText.replace(/^\/?@system\b[:\s]*/i, "").trim();
+      const normalizedCommand = commandText.replace(/\s+/g, " ").toLowerCase();
+
+      if (!normalizedCommand) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Try: @system clear cache or @system hard refresh.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (normalizedCommand === "clear cache" || normalizedCommand === "hard refresh") {
+        if (onRequestCacheClear) {
+          onRequestCacheClear();
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: "Opening the hard refresh panel. Confirm to clear local app data and reload.",
+              sender: "bot",
+            },
+          ]);
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: "Hard refresh is not available from this view.",
+              sender: "bot",
+            },
+          ]);
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          text: "Unknown @system command. Try: @system clear cache or @system hard refresh.",
+          sender: "bot",
+        },
+      ]);
+      setIsLoading(false);
+      return;
+    }
+
+    if (membersCommandActive && !/^@members\b/i.test(workingText)) {
+      if (!isMembersCommandAllowed) {
+        setMembersCommandActive(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Members mode is only available in Officer Directory or Manage Members.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+      workingText = `@members ${workingText}`;
+      normalized = workingText.toLowerCase();
+    }
+
+    if (/^@members\b/i.test(workingText)) {
+      if (!isMembersCommandAllowed) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "The @members command only works in Officer Directory or Manage Members.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!isPrivileged) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "No access. Only auditors and admins can use @members.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      const commandText = stripMembersCommandPrefix(workingText);
+      if (!commandText) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Try: @members who is [name] or @members how many are females.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      const analyticsQuery = parseDirectoryAnalyticsQuery(commandText.toLowerCase());
+      if (analyticsQuery) {
+        try {
+          const officers = await loadAllOfficersForAnalytics();
+          const scope = parseDirectoryRoleScope(commandText.toLowerCase());
+          const formatScopeLabel = (value: string) =>
+            value.replace(/\b\w/g, (char) => char.toUpperCase());
+          let scopeLabel = scope === "officers" ? "officer" : "member";
+          const filters = extractScopeFilters(commandText.toLowerCase(), officers);
+          if (filters.isExecutiveBoard) {
+            scopeLabel = "executive board member";
+          } else if (filters.committee) {
+            scopeLabel = `${filters.committee} member`;
+          } else if (filters.role) {
+            scopeLabel = filters.role;
+          } else if (filters.position) {
+            scopeLabel = filters.position;
+          }
+          scopeLabel = formatScopeLabel(scopeLabel);
+          const scopedOfficers = officers.filter((officer) => {
+            const roleValue = (officer.role || "").toLowerCase();
+            if (scope === "members") return roleValue === "member";
+            if (scope === "officers") return roleValue !== "member";
+            return true;
+          });
+          const filteredOfficers = scopedOfficers.filter((officer) => {
+            if (filters.isExecutiveBoard) {
+              const committeeValue = (officer.committee || "").toLowerCase();
+              const positionValue = (officer.position || "").toLowerCase();
+              if (!committeeValue.includes("executive board") && !positionValue.includes("executive board")) {
+                return false;
+              }
+            }
+            if (filters.committee) {
+              const committeeValue = (officer.committee || "").toLowerCase();
+              if (committeeValue !== filters.committee) return false;
+            }
+            if (filters.role) {
+              const roleValue = (officer.role || "").toLowerCase();
+              if (roleValue !== filters.role) return false;
+            }
+            if (filters.position) {
+              const positionValue = (officer.position || "").toLowerCase();
+              if (positionValue !== filters.position) return false;
+            }
+            return true;
+          });
+
+          if (analyticsQuery.type === "gender" && analyticsQuery.gender) {
+            const genderKey = analyticsQuery.gender;
+            const matches = filteredOfficers.filter((officer) => {
+              const genderValue = (officer.gender || "").toLowerCase();
+              if (!genderValue) return false;
+              if (genderKey === "female") {
+                return genderValue.includes("female") || genderValue === "f";
+              }
+              return genderValue.includes("male") || genderValue === "m";
+            });
+            const count = matches.length;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                text: `I found ${count} ${genderKey} ${scopeLabel}${count === 1 ? "" : "s"}.`,
+                sender: "bot",
+              },
+            ]);
+          } else if (analyticsQuery.type === "birthdays" && analyticsQuery.monthIndex !== undefined) {
+            const monthIndex = analyticsQuery.monthIndex;
+            const label = analyticsQuery.label || "that month";
+            const matches = filteredOfficers.filter((officer) => {
+              if (!officer.birthday) return false;
+              const date = new Date(officer.birthday);
+              if (Number.isNaN(date.getTime())) return false;
+              return date.getMonth() === monthIndex;
+            });
+            const count = matches.length;
+            if (isCountQuery(commandText.toLowerCase())) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: Date.now() + 1,
+                  text: `There ${count === 1 ? "is" : "are"} ${count} ${scopeLabel}${count === 1 ? "" : "s"} with birthdays in ${label}.`,
+                  sender: "bot",
+                },
+              ]);
+            } else {
+              const list = matches.slice(0, 10).map((officer) => `- ${officer.fullName}`).join("\n");
+              const more = count > 10 ? `\n- ...and ${count - 10} more` : "";
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: Date.now() + 1,
+                  text: count
+                    ? `Birthdays in ${label} (${count}):\n${list}${more}`
+                    : `No ${scopeLabel} birthdays found in ${label}.`,
+                  sender: "bot",
+                },
+              ]);
+            }
+          } else if (analyticsQuery.type === "unverifiedEmail") {
+            const matches = filteredOfficers.filter((officer) => !isOfficerEmailVerified(officer));
+            const count = matches.length;
+            if (isCountQuery(commandText.toLowerCase())) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: Date.now() + 1,
+                  text: `There ${count === 1 ? "is" : "are"} ${count} ${scopeLabel}${count === 1 ? "" : "s"} with unverified emails.`,
+                  sender: "bot",
+                },
+              ]);
+            } else {
+              const list = matches.slice(0, 10).map((officer) => `- ${officer.fullName}`).join("\n");
+              const more = count > 10 ? `\n- ...and ${count - 10} more` : "";
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: Date.now() + 1,
+                  text: count
+                    ? `Unverified emails (${count}):\n${list}${more}`
+                    : `All ${scopeLabel} emails appear verified.`,
+                  sender: "bot",
+                },
+              ]);
+            }
+          }
+        } catch (err) {
+          console.error("Directory analytics error:", err);
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
+          ]);
+        } finally {
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      const fieldRequest = extractRequestedDirectoryField(commandText.toLowerCase());
+      const targets = extractMembersTargets(commandText);
+
+      if (!targets.length && fieldRequest && lastDirectoryOfficer) {
+        const { label, value } = getDirectoryFieldValue(lastDirectoryOfficer, fieldRequest);
+        const responseText = value
+          ? `${label} for ${lastDirectoryOfficer.fullName}: ${value}`
+          : `I could not find ${label.toLowerCase()} for ${lastDirectoryOfficer.fullName}.`;
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: responseText, sender: "bot" },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!targets.length && lastDirectoryOfficer) {
+        const detailText = formatOfficerSummary(lastDirectoryOfficer);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: `${detailText}\n\nWould you like the full profile? Reply "yes" and I will open the Officer Directory.`,
+            sender: "bot",
+            image: lastDirectoryOfficer.profilePicture || undefined,
+          },
+        ]);
+        setPendingDirectoryLookup({
+          query: lastDirectoryOfficer.fullName,
+          idCode: lastDirectoryOfficer.idCode || undefined,
+        });
+        setIsDirectoryDetailsPending(true);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!targets.length) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Please include a name, e.g. @members who is [name].",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      const normalizedTargets = targets.map((t) => normalizeDirectoryTarget(t)).filter(Boolean);
+
+      try {
+        if (normalizedTargets.length > 1 && fieldRequest) {
+          const lines: string[] = [];
+          for (const target of normalizedTargets) {
+            const result = await searchDirectoryWithCache(target);
+            if (result.success && result.officers && result.officers.length === 1) {
+              const officer = result.officers[0];
+              const { label, value } = getDirectoryFieldValue(officer, fieldRequest);
+              lines.push(
+                value
+                  ? `${officer.fullName} - ${label}: ${value}`
+                  : `${officer.fullName} - ${label}: N/A`
+              );
+              setLastDirectoryOfficer(officer);
+            } else if (result.success && result.officers && result.officers.length > 1) {
+              lines.push(`${target} - Multiple matches found`);
+            } else {
+              lines.push(`${target} - Not found`);
+            }
+          }
+
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now() + 1, text: lines.join("\n"), sender: "bot" },
+          ]);
+          setIsLoading(false);
+          return;
+        }
+
+        if (normalizedTargets.length > 1 && !fieldRequest) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: "I can look up one member at a time. Please ask about a single name.",
+              sender: "bot",
+            },
+          ]);
+          setIsLoading(false);
+          return;
+        }
+
+        const target = normalizedTargets[0];
+        const result = await searchDirectoryWithCache(target);
+        if (result.success && result.officers && result.officers.length > 1) {
+          const list = result.officers
+            .slice(0, 5)
+            .map((officer) => {
+              const roleLabel = officer.position || officer.committee || officer.role;
+              return `- ${officer.fullName}${roleLabel ? " - " + roleLabel : ""}`;
+            })
+            .join("\n");
+          const more = result.officers.length > 5 ? "\n- ...and more" : "";
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: `I found multiple matches. Which one do you mean?\n${list}${more}`,
+              sender: "bot",
+            },
+          ]);
+        } else if (result.success && result.officers && result.officers.length === 1) {
+          const officer = result.officers[0];
+          setLastDirectoryOfficer(officer);
+          if (fieldRequest) {
+            const { label, value } = getDirectoryFieldValue(officer, fieldRequest);
+            const responseText = value
+              ? `${label} for ${officer.fullName}: ${value}`
+              : `I could not find ${label.toLowerCase()} for ${officer.fullName}.`;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                text: responseText,
+                sender: "bot",
+                image: officer.profilePicture || undefined,
+              },
+            ]);
+            setIsLoading(false);
+            return;
+          }
+
+          const detailText = formatOfficerSummary(officer);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: `${detailText}\n\nWould you like the full profile? Reply "yes" and I will open the Officer Directory.`,
+              sender: "bot",
+              image: officer.profilePicture || undefined,
+            },
+          ]);
+          setPendingDirectoryLookup({
+            query: officer.fullName || target,
+            idCode: officer.idCode || undefined,
+          });
+          setIsDirectoryDetailsPending(true);
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: "I could not find that person. Please check the name and try again.",
+              sender: "bot",
+            },
+          ]);
+        }
+      } catch (err) {
+        console.error("Directory lookup error:", err);
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    if (isDirectoryDetailsPending && pendingDirectoryLookup) {
+      const followUpField = extractRequestedDirectoryField(normalized);
+      if (followUpField && lastDirectoryOfficer) {
+        const { label, value } = getDirectoryFieldValue(lastDirectoryOfficer, followUpField);
+        const responseText = value
+          ? `${label} for ${lastDirectoryOfficer.fullName}: ${value}`
+          : `I could not find ${label.toLowerCase()} for ${lastDirectoryOfficer.fullName}.`;
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: responseText, sender: "bot" },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (isFullDirectoryReply(text)) {
+        if (onOfficerDirectorySearch) {
+          onOfficerDirectorySearch(pendingDirectoryLookup);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: `Opening the Officer Directory for ${pendingDirectoryLookup.query}.`,
+              sender: "bot",
+            },
+          ]);
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: "I can share the summary here, but I cannot open the directory from this view.",
+              sender: "bot",
+            },
+          ]);
+        }
+      } else if (/^(no|n|not now|later)$/i.test(text.trim())) {
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: "Okay! Let me know if you want the full profile.", sender: "bot" },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Reply 'yes' to open the full profile in the Officer Directory, or 'no' to keep the summary.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(false);
+      setIsDirectoryDetailsPending(false);
+      setPendingDirectoryLookup(null);
+      return;
+    }
+
+    if (isProjectDetailsPending && pendingProjectSummary) {
+      const selected = parseProjectSelection(text, pendingProjectSummary);
+      if (!selected) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Please reply with a project number, the project title, or say 'all'.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      const baseId = Date.now() + 1;
+      const projectMessages: Message[] = selected.map((project, index) => {
+        const parts = [project.title, project.description].filter(Boolean);
+        if (project.link) {
+          const linkLabel = project.linkText || "Learn more";
+          parts.push(`${linkLabel}: ${project.link}`);
+        }
+        return {
+          id: baseId + index,
+          text: parts.join("\n"),
+          sender: "bot",
+          image: project.imageUrl || undefined,
+        };
+      });
+
+      setMessages((prev) => [...prev, ...projectMessages]);
+      setIsLoading(false);
+      setIsProjectDetailsPending(false);
+      setPendingProjectSummary(null);
+      return;
+    }
+
+    const analyticsQuery = parseDirectoryAnalyticsQuery(normalized);
+    if (analyticsQuery) {
+      if (!isPrivileged) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "No access. Only auditors and admins can view directory analytics.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const officers = await loadAllOfficersForAnalytics();
+
+        if (analyticsQuery.type === "gender" && analyticsQuery.gender) {
+          const genderKey = analyticsQuery.gender;
+          const matches = officers.filter((officer) => {
+            const genderValue = (officer.gender || "").toLowerCase();
+            if (!genderValue) return false;
+            if (genderKey === "female") {
+              return genderValue.includes("female") || genderValue === "f";
+            }
+            return genderValue.includes("male") || genderValue === "m";
+          });
+          const count = matches.length;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: `I found ${count} ${genderKey} officer${count === 1 ? "" : "s"}.`,
+              sender: "bot",
+            },
+          ]);
+        } else if (analyticsQuery.type === "birthdays" && analyticsQuery.monthIndex !== undefined) {
+          const monthIndex = analyticsQuery.monthIndex;
+          const label = analyticsQuery.label || "that month";
+          const matches = officers.filter((officer) => {
+            if (!officer.birthday) return false;
+            const date = new Date(officer.birthday);
+            if (Number.isNaN(date.getTime())) return false;
+            return date.getMonth() === monthIndex;
+          });
+          const count = matches.length;
+          if (isCountQuery(normalized)) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                text: `There ${count === 1 ? "is" : "are"} ${count} officer${count === 1 ? "" : "s"} with birthdays in ${label}.`,
+                sender: "bot",
+              },
+            ]);
+          } else {
+            const list = matches.slice(0, 10).map((officer) => `- ${officer.fullName}`).join("\n");
+            const more = count > 10 ? `\n- ...and ${count - 10} more` : "";
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                text: count
+                  ? `Birthdays in ${label} (${count}):\n${list}${more}`
+                  : `No officer birthdays found in ${label}.`,
+                sender: "bot",
+              },
+            ]);
+          }
+        } else if (analyticsQuery.type === "unverifiedEmail") {
+          const matches = officers.filter((officer) => !isOfficerEmailVerified(officer));
+          const count = matches.length;
+          if (isCountQuery(normalized)) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                text: `There ${count === 1 ? "is" : "are"} ${count} officer${count === 1 ? "" : "s"} with unverified emails.`,
+                sender: "bot",
+              },
+            ]);
+          } else {
+            const list = matches.slice(0, 10).map((officer) => `- ${officer.fullName}`).join("\n");
+            const more = count > 10 ? `\n- ...and ${count - 10} more` : "";
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                text: count
+                  ? `Unverified emails (${count}):\n${list}${more}`
+                  : "All officer emails appear verified.",
+                sender: "bot",
+              },
+            ]);
+          }
+        }
+      } catch (err) {
+        console.error("Directory analytics error:", err);
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    if (isExecutiveBoardQuery(normalized)) {
+      const responseText = orgChartUrl
+        ? "Here is the organizational chart for the Executive Board."
+        : "The organizational chart is not available yet. Please check back later.";
+      const botMsg: Message = {
+        id: Date.now() + 1,
+        text: responseText,
+        sender: "bot",
+        image: orgChartUrl || undefined,
+      };
+      setMessages((prev) => [...prev, botMsg]);
+      setIsLoading(false);
+      return;
+    }
+
+    if (isDirectoryIntent(normalized)) {
+      const rawTarget =
+        extractDirectoryTarget(workingText) || extractPossessiveTarget(workingText) || "";
+      const target = normalizeDirectoryTarget(rawTarget);
+      const fieldRequest = extractRequestedDirectoryField(normalized);
+      if ((!target || isGenericDirectoryTarget(target)) && fieldRequest && lastDirectoryOfficer) {
+        const { label, value } = getDirectoryFieldValue(lastDirectoryOfficer, fieldRequest);
+        const responseText = value
+          ? `${label} for ${lastDirectoryOfficer.fullName}: ${value}`
+          : `I could not find ${label.toLowerCase()} for ${lastDirectoryOfficer.fullName}.`;
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: responseText, sender: "bot" },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+      if (!target || isGenericDirectoryTarget(target)) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Which person's info do you need? Please include a full name.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!isPrivileged) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "No access. Only auditors and admins can view personal info.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const result = await searchDirectoryWithCache(target);
+        if (result.success && result.officers && result.officers.length > 1) {
+          const list = result.officers
+            .slice(0, 5)
+            .map((officer) => {
+              const roleLabel = officer.position || officer.committee || officer.role;
+              return `- ${officer.fullName}${roleLabel ? " - " + roleLabel : ""}`;
+            })
+            .join("\n");
+          const more = result.officers.length > 5 ? "\n- ...and more" : "";
+          const botMsg: Message = {
+            id: Date.now() + 1,
+            text: `I found multiple matches. Which one do you mean?\n${list}${more}`,
+            sender: "bot",
+          };
+          setMessages((prev) => [...prev, botMsg]);
+        } else if (result.success && result.officers && result.officers.length === 1) {
+          const officer = result.officers[0];
+          setLastDirectoryOfficer(officer);
+          if (fieldRequest) {
+            const { label, value } = getDirectoryFieldValue(officer, fieldRequest);
+            const responseText = value
+              ? `${label} for ${officer.fullName}: ${value}`
+              : `I could not find ${label.toLowerCase()} for ${officer.fullName}.`;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                text: responseText,
+                sender: "bot",
+                image: officer.profilePicture || undefined,
+              },
+            ]);
+            setIsLoading(false);
+            return;
+          }
+
+          const detailText = formatOfficerSummary(officer);
+          const botMsg: Message = {
+            id: Date.now() + 1,
+            text: `${detailText}\n\nWould you like the full profile? Reply "yes" and I will open the Officer Directory.`,
+            sender: "bot",
+            image: officer.profilePicture || undefined,
+          };
+          setMessages((prev) => [...prev, botMsg]);
+          setPendingDirectoryLookup({
+            query: officer.fullName || target,
+            idCode: officer.idCode || undefined,
+          });
+          setIsDirectoryDetailsPending(true);
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: "I could not find that person. Please check the name and try again.",
+              sender: "bot",
+            },
+          ]);
+        }
+      } catch (err) {
+        console.error("Directory lookup error:", err);
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    const eventQuery = parseEventQuery(normalized);
+    if (eventQuery) {
+      if (eventQuery.needsClarification) {
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: "Which month should I check for events?", sender: "bot" },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const events = await fetchEvents();
+        const filteredEvents = events.filter((event) => {
+          const startDate = new Date(event.StartDate);
+          const endDate = event.EndDate ? new Date(event.EndDate) : startDate;
+
+          const startMatches =
+            !Number.isNaN(startDate.getTime()) &&
+            startDate.getMonth() === eventQuery.monthIndex &&
+            (eventQuery.year ? startDate.getFullYear() === eventQuery.year : true);
+
+          const endMatches =
+            !Number.isNaN(endDate.getTime()) &&
+            endDate.getMonth() === eventQuery.monthIndex &&
+            (eventQuery.year ? endDate.getFullYear() === eventQuery.year : true);
+
+          return startMatches || endMatches;
+        });
+
+        const sortedEvents = [...filteredEvents].sort((a, b) => {
+          const aDate = new Date(a.StartDate).getTime();
+          const bDate = new Date(b.StartDate).getTime();
+          return aDate - bDate;
+        });
+
+        if (sortedEvents.length === 0) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: `No events found for ${eventQuery.label}.`,
+              sender: "bot",
+            },
+          ]);
+        } else {
+          const lines = sortedEvents.map((event) => {
+            const dateLabel = formatEventDate(event.StartDate);
+            const timeLabel = event.StartTime ? ` ${event.StartTime}` : "";
+            const locationLabel = event.LocationName ? ` @ ${event.LocationName}` : "";
+            const statusLabel = event.Status ? ` (${event.Status})` : "";
+            return `- ${event.Title} - ${dateLabel}${timeLabel}${locationLabel}${statusLabel}`;
+          });
+          const header = `Events in ${eventQuery.label} (${sortedEvents.length}):`;
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now() + 1, text: `${header}\n${lines.join("\n")}`, sender: "bot" },
+          ]);
+        }
+      } catch (err) {
+        console.error("Events lookup error:", err);
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    if (isProjectsQuery(normalized)) {
+      try {
+        const result = await fetchAllProjects();
+        if (result.error) {
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
+          ]);
+        } else {
+          const projects = result.projects || [];
+          const activeProjects = projects.filter((project) => project.status === "Active");
+          const list = activeProjects.length > 0 ? activeProjects : projects;
+
+          if (list.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              { id: Date.now() + 1, text: "No projects found yet.", sender: "bot" },
+            ]);
+          } else {
+            const listText = list
+              .map((project, index) => `${index + 1}. ${project.title}`)
+              .join("\n");
+            const summary: Message = {
+              id: Date.now() + 1,
+              text: `I found ${list.length} projects. Here is a quick summary:\n${listText}\n\nReply with a project number, the title, or say 'all' to see full details and photos.`,
+              sender: "bot",
+            };
+            setMessages((prev) => [...prev, summary]);
+            setPendingProjectSummary(list);
+            setIsProjectDetailsPending(true);
+          }
+        }
+      } catch (err) {
+        console.error("Projects lookup error:", err);
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    const localMatch = findLocalAnswer(text);
     if (localMatch) {
       let imageUrl: string | undefined = undefined;
 
-      // 👇 New Logic: Check if we need to fetch an image
       if (localMatch.lookup) {
         try {
-           const result = await searchOfficers(localMatch.lookup);
-           if (result.success && result.officers && result.officers.length > 0) {
-             imageUrl = result.officers[0].profilePicture;
-           }
+          const result = await searchOfficers(localMatch.lookup);
+          if (result.success && result.officers && result.officers.length > 0) {
+            imageUrl = result.officers[0].profilePicture;
+          }
         } catch (err) {
-           console.error("Error fetching officer image:", err);
+          console.error("Error fetching officer image:", err);
         }
       }
 
       setTimeout(() => {
-        const botMsg: Message = { 
-            id: Date.now() + 1, 
-            text: localMatch.answer, 
-            sender: "bot",
-            image: imageUrl // 👈 Attach the image
+        const botMsg: Message = {
+          id: Date.now() + 1,
+          text: localMatch.answer,
+          sender: "bot",
+          image: imageUrl,
         };
         setMessages((prev) => [...prev, botMsg]);
         setIsLoading(false);
-      }, imageUrl ? 1000 : 600); // Wait a bit longer if loading an image
-      
-      return; 
+      }, imageUrl ? 1000 : 600);
+
+      return;
     }
 
-    // 🌐 FALLBACK: Call External API if no local match found
     try {
       const res = await fetch(API_URL, {
         method: "POST",
@@ -377,15 +1919,15 @@ const YSPChatBot: React.FC = () => {
         reply = raw;
       }
 
-      if (!reply.trim()) reply = "I'm not sure about that. Try asking about the 'Founder', 'Membership', or 'Projects'.";
+      if (!reply.trim()) reply = CLARIFYING_FALLBACK;
 
       const botMsg: Message = { id: Date.now() + 1, text: reply, sender: "bot" };
       setMessages((prev) => [...prev, botMsg]);
     } catch (err) {
-      console.error(err);
+      console.error("Chatbot API error:", err);
       setMessages((prev) => [
         ...prev,
-        { id: Date.now() + 2, text: "⚠️ Network Error. I couldn't reach the server.", sender: "bot" },
+        { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
       ]);
     } finally {
       setIsLoading(false);
@@ -444,6 +1986,26 @@ const YSPChatBot: React.FC = () => {
       return part;
     });
   };
+
+  const suggestionList = useMemo(() => {
+    const list = [...BASE_SUGGESTIONS];
+    const pageKey = currentPage.toLowerCase();
+    const isMembersPage = pageKey === "officer-directory" || pageKey === "manage-members";
+    const role = userRole.toLowerCase();
+    const isPrivileged = role === "auditor" || role === "admin";
+
+    if (isMembersPage && isPrivileged) {
+      list.unshift(
+        "@clear chat history",
+        "@members who is [name]",
+        "@members how many members are females",
+        "@members birthdays in March",
+        "/@members"
+      );
+    }
+
+    return list;
+  }, [currentPage, userRole]);
 
   const ui = useMemo(() => {
     return (
@@ -607,8 +2169,9 @@ const YSPChatBot: React.FC = () => {
                       }}>
                         <img 
                           src={msg.image} 
-                          alt="Officer" 
-                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          alt="Attachment" 
+                          style={{ width: "100%", height: "100%", objectFit: "cover", cursor: "pointer" }}
+                          onClick={() => setFullImageUrl(msg.image || null)}
                         />
                       </div>
                     )}
@@ -696,20 +2259,33 @@ const YSPChatBot: React.FC = () => {
           </div>
 
           {/* 💡 Suggestions Area (Just above the type bar) */}
-          <div
-            className="ysp-no-scrollbar"
-            style={{
-              padding: "0 16px 12px 16px",
-              display: "flex",
-              gap: "8px",
-              overflowX: "auto",
-              backgroundColor: "#f9fafb", // matches message area bg
-            }}
-          >
-            {SUGGESTIONS.map((suggestion, idx) => (
+          {input.trim().length > 0 && (
+            <div
+              className="ysp-no-scrollbar"
+              style={{
+                padding: "0 16px 12px 16px",
+                display: "flex",
+                gap: "8px",
+                overflowX: "auto",
+                backgroundColor: "#f9fafb", // matches message area bg
+              }}
+            >
+            {suggestionList
+              .filter((suggestion) => {
+                const trimmed = input.trim().toLowerCase();
+                if (!trimmed) return false;
+                const isCommand = suggestion.startsWith("@") || suggestion.startsWith("/@");
+                const isCommandInput = trimmed.startsWith("@") || trimmed.startsWith("/@");
+                if (isCommand && !isCommandInput) return false;
+                return suggestion.toLowerCase().includes(trimmed);
+              })
+              .map((suggestion, idx) => (
               <button
                 key={idx}
-                onClick={() => handleSend(suggestion)}
+                onClick={() => {
+                  setInput(suggestion);
+                  inputRef.current?.focus();
+                }}
                 disabled={isLoading}
                 style={{
                   whiteSpace: "nowrap",
@@ -741,7 +2317,8 @@ const YSPChatBot: React.FC = () => {
                 {suggestion}
               </button>
             ))}
-          </div>
+            </div>
+          )}
 
           {/* Input Area */}
           <form
@@ -842,6 +2419,79 @@ const YSPChatBot: React.FC = () => {
           {isOpen ? <X size={28} /> : <MessageSquare size={28} />}
         </button>
 
+        {fullImageUrl && (
+          <div
+            onClick={() => setFullImageUrl(null)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background:
+                "radial-gradient(circle at 20% 20%, rgba(249, 115, 22, 0.16), transparent 45%), rgba(15, 23, 42, 0.8)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 2147483647,
+              padding: "24px",
+              pointerEvents: "auto",
+            }}
+          >
+            <div
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                position: "relative",
+                maxWidth: "min(980px, 92vw)",
+                maxHeight: "min(90vh, 760px)",
+                width: "100%",
+                height: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "16px",
+                background: "linear-gradient(135deg, #0f172a 0%, #111827 100%)",
+                borderRadius: "18px",
+                boxShadow: "0 25px 60px rgba(15, 23, 42, 0.45)",
+                border: "1px solid rgba(148, 163, 184, 0.12)",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setFullImageUrl(null)}
+                style={{
+                  position: "absolute",
+                  top: "12px",
+                  right: "12px",
+                  width: "38px",
+                  height: "38px",
+                  borderRadius: "12px",
+                  border: "1px solid rgba(248, 250, 252, 0.2)",
+                  backgroundColor: "rgba(15, 23, 42, 0.75)",
+                  color: "#ffffff",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                aria-label="Close image preview"
+              >
+                <X size={18} />
+              </button>
+              <img
+                src={fullImageUrl}
+                alt="Preview"
+                style={{
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  objectFit: "contain",
+                  borderRadius: "14px",
+                  boxShadow: "0 18px 40px rgba(15, 23, 42, 0.35)",
+                  backgroundColor: "#0b1120",
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Animations & Custom Scrollbar Hiding */}
         <style>{`
           @keyframes scaleIn {
@@ -860,10 +2510,13 @@ const YSPChatBot: React.FC = () => {
         `}</style>
       </div>
     );
-}, [isOpen, isLoading, input, messages, cooldown]); // ✅ Add cooldown here
+}, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList]); // ✅ Add cooldown here
 
   if (!mounted) return null;
   return createPortal(ui, document.body);
 };
 
 export default YSPChatBot;
+
+
+
