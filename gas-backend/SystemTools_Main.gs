@@ -488,13 +488,64 @@ function setSystemSetting(key, value, updatedBy) {
 
 // =================== CACHE VERSION MANAGEMENT ===================
 
+const CACHE_VERSION_PROPERTY_KEY = 'cache_version';
+
+function getUserRole_(username) {
+  if (!username) return null;
+
+  try {
+    const ss = SpreadsheetApp.openById(SYSTEM_DATA_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName('User Profiles');
+    if (!sheet) return null;
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0] || [];
+    const usernameIndex = headers.indexOf('Username');
+    const roleIndex = headers.indexOf('Role');
+    if (usernameIndex === -1 || roleIndex === -1) return null;
+
+    const usernameLower = String(username).toLowerCase().trim();
+    for (let i = 1; i < data.length; i++) {
+      const rowUsername = (data[i][usernameIndex] || '').toString().toLowerCase().trim();
+      if (rowUsername === usernameLower) {
+        return (data[i][roleIndex] || '').toString().toLowerCase().trim();
+      }
+    }
+
+    return null;
+  } catch (error) {
+    Logger.log('Error getting user role: ' + error.toString());
+    return null;
+  }
+}
+
+function getScriptCacheVersion_() {
+  const props = PropertiesService.getScriptProperties();
+  const value = props.getProperty(CACHE_VERSION_PROPERTY_KEY);
+  return value ? parseInt(value, 10) : null;
+}
+
+function setScriptCacheVersion_(version) {
+  PropertiesService.getScriptProperties().setProperty(
+    CACHE_VERSION_PROPERTY_KEY,
+    String(version)
+  );
+}
+
 /**
  * Get current cache version
  */
 function getCacheVersion() {
   try {
-    const version = getSystemSetting('cache_version');
-    return version ? parseInt(version, 10) : 1;
+    const propVersion = getScriptCacheVersion_();
+    if (propVersion !== null && !isNaN(propVersion)) {
+      return propVersion;
+    }
+
+    const sheetVersionRaw = getSystemSetting('cache_version');
+    const sheetVersion = sheetVersionRaw ? parseInt(sheetVersionRaw, 10) : 1;
+    setScriptCacheVersion_(sheetVersion);
+    return sheetVersion;
   } catch (error) {
     Logger.log('Error getting cache version: ' + error.toString());
     return 1;
@@ -506,11 +557,21 @@ function getCacheVersion() {
  */
 function handleBumpCacheVersion(username) {
   try {
+    if (!username) {
+      return createErrorResponse('Username is required', 400);
+    }
+
+    const role = getUserRole_(username);
+    if (role !== 'auditor') {
+      return createErrorResponse('Only auditors can bump the cache', 403);
+    }
+
     const currentVersion = getCacheVersion();
     const newVersion = currentVersion + 1;
     
+    setScriptCacheVersion_(newVersion);
     const success = setSystemSetting('cache_version', newVersion.toString(), username);
-    
+
     if (success) {
       Logger.log('Cache version bumped from ' + currentVersion + ' to ' + newVersion + ' by ' + username);
       return createSuccessResponse({

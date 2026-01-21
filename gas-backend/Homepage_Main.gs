@@ -80,10 +80,12 @@
       ABOUT_CONTENT: 5,       // Column E
       MISSION_TITLE: 6,       // Column F
       MISSION_CONTENT: 7,     // Column G
-      VISION_TITLE: 8,        // Column H
+      VISION  _TITLE: 8,        // Column H
       VISION_CONTENT: 9,      // Column I
       ADVOCACY_TITLE: 10,     // Column J
       ADVOCACY_CONTENT: 11,   // Column K
+      THEME_SONG_TITLE: 12,   // Column L
+      THEME_SONG_URL: 13,     // Column M
     }
   };
 
@@ -581,6 +583,8 @@
       visionContent: getCellValue(sheet, dataRow, cols.VISION_CONTENT),
       advocacyPillarsTitle: getCellValue(sheet, dataRow, cols.ADVOCACY_TITLE),
       advocacyPillarsContent: getCellValue(sheet, dataRow, cols.ADVOCACY_CONTENT),
+      themeSongTitle: getCellValue(sheet, dataRow, cols.THEME_SONG_TITLE),
+      themeSongUrl: getCellValue(sheet, dataRow, cols.THEME_SONG_URL),
     };
   }
 
@@ -627,6 +631,12 @@
       if (data.advocacyPillarsContent !== undefined) {
         sheet.getRange(dataRow, cols.ADVOCACY_CONTENT).setValue(data.advocacyPillarsContent);
       }
+      if (data.themeSongTitle !== undefined) {
+        sheet.getRange(dataRow, cols.THEME_SONG_TITLE).setValue(data.themeSongTitle);
+      }
+      if (data.themeSongUrl !== undefined) {
+        sheet.getRange(dataRow, cols.THEME_SONG_URL).setValue(data.themeSongUrl);
+      }
 
       // Force spreadsheet to save
       SpreadsheetApp.flush();
@@ -669,7 +679,9 @@
       'Section Title_Our Vision',
       'Content_Our Vision',
       'Section Title_Our Advocacy Pillars',
-      'Content_Our Advocacy Pillars'
+      'Content_Our Advocacy Pillars',
+      'Theme Song Title',
+      'Theme Song URL'
     ];
 
     // Set headers in row 1
@@ -687,7 +699,9 @@
       'Our Vision',
       'A community where every young person is actively engaged in building strong communities.',
       'Our Advocacy Pillars',
-      'Education • Environment • Health & Wellness • Community Development • Leadership & Civic Engagement'
+      'Education • Environment • Health & Wellness • Community Development • Leadership & Civic Engagement',
+      '',
+      ''
     ];
     
     sheet.getRange(2, 1, 1, defaultValues.length).setValues([defaultValues]);

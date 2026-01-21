@@ -32,7 +32,10 @@
     Loader2,
     RefreshCw,
     AlertCircle,
+    Pause,
+    Play,
     Settings,
+    Music,
   } from "lucide-react";
   import {
     fetchHomepageContent,
@@ -56,6 +59,7 @@
     clearSession,
     getStoredUser,
     hasActiveSession,
+    verifySession,
     LoginErrorCodes,
     type LoginUser,
   } from "./services/gasLoginService";
@@ -246,6 +250,73 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       return 'Learn More!';
     } catch {
       return 'Learn More!';
+    }
+  }
+
+  function formatTime(value: number): string {
+    if (!Number.isFinite(value) || value < 0) return '0:00';
+    const minutes = Math.floor(value / 60);
+    const seconds = Math.floor(value % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  function getYouTubeVideoId(url: string): string | null {
+    if (!url) return null;
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname.replace(/^www\./, '');
+
+      if (host === 'youtu.be') {
+        const id = parsed.pathname.replace('/', '');
+        return id || null;
+      }
+
+      if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
+        if (parsed.pathname === '/watch') {
+          return parsed.searchParams.get('v');
+        }
+        if (parsed.pathname.startsWith('/embed/')) {
+          return parsed.pathname.split('/embed/')[1] || null;
+        }
+        if (parsed.pathname.startsWith('/shorts/')) {
+          return parsed.pathname.split('/shorts/')[1] || null;
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  function normalizeThemeSongUrl(rawUrl: string): string {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return '';
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+    try {
+      const parsed = new URL(withScheme);
+      const host = parsed.hostname.replace(/^www\./, '');
+      const path = parsed.pathname;
+
+      if (host === 'drive.google.com' || host === 'docs.google.com') {
+        let fileId = '';
+        const fileMatch = path.match(/\/file\/d\/([^/]+)/);
+        if (fileMatch && fileMatch[1]) {
+          fileId = fileMatch[1];
+        }
+
+        if (!fileId && parsed.searchParams.has('id')) {
+          fileId = parsed.searchParams.get('id') || '';
+        }
+
+        if (fileId) {
+          return `https://drive.google.com/uc?export=download&id=${fileId}`;
+        }
+      }
+
+      return withScheme;
+    } catch {
+      return trimmed;
     }
   }
 
@@ -505,6 +576,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
     const hasRestoredScrollRef = useRef(false);
     const [isDark, setIsDark] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [isMusicPlayerExpanded, setIsMusicPlayerExpanded] = useState(false);
     const [modalProject, setModalProject] =
       useState<Project | null>(null);
 
@@ -663,6 +735,12 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
     const [isLoadingHomepage, setIsLoadingHomepage] = useState(true);
     const [homepageError, setHomepageError] = useState<string | null>(null);
     const [isSavingHomepage, setIsSavingHomepage] = useState(false);
+    const themeSongAudioRef = useRef<HTMLAudioElement | null>(null);
+    const youtubePlayerRef = useRef<any>(null); // Ref for YouTube Player
+    const [themeSongTime, setThemeSongTime] = useState(0);
+    const [themeSongDuration, setThemeSongDuration] = useState(0);
+    const [isThemeSongPlaying, setIsThemeSongPlaying] = useState(false);
+    const [isLoadingThemeSong, setIsLoadingThemeSong] = useState(false);
 
     // Delete Confirmation Modal State
     const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
@@ -698,6 +776,10 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       const defaults = getDefaultHomepageContent();
       return {
         ...defaults,
+        themeSong: {
+          title: '',
+          url: '',
+        },
         projects: {
           title: "Projects Implemented",
         },
@@ -760,6 +842,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             mission: content.mission,
             vision: content.vision,
             advocacyPillars: content.advocacyPillars,
+            themeSong: content.themeSong,
           }));
           console.log('[App] Homepage content loaded from GAS');
           updateUploadToast(toastId, {
@@ -790,6 +873,51 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
 
       loadHomepageContent();
     }, []);
+
+    useEffect(() => {
+      const audio = themeSongAudioRef.current;
+      if (!audio) return;
+
+      const normalizedUrl = normalizeThemeSongUrl(homepageContent.themeSong.url);
+      const isYouTube = Boolean(getYouTubeVideoId(normalizedUrl));
+
+      audio.pause();
+      audio.currentTime = 0;
+      setThemeSongTime(0);
+      setThemeSongDuration(0);
+      setIsThemeSongPlaying(false);
+
+      if (!normalizedUrl || isYouTube) return;
+
+      const handleLoaded = () => {
+        const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+        setThemeSongDuration(duration);
+      };
+      const handleTimeUpdate = () => {
+        setThemeSongTime(audio.currentTime || 0);
+      };
+      const handleEnded = () => {
+        setIsThemeSongPlaying(false);
+      };
+
+      audio.addEventListener('loadedmetadata', handleLoaded);
+      audio.addEventListener('timeupdate', handleTimeUpdate);
+      audio.addEventListener('ended', handleEnded);
+
+      return () => {
+        audio.removeEventListener('loadedmetadata', handleLoaded);
+        audio.removeEventListener('timeupdate', handleTimeUpdate);
+        audio.removeEventListener('ended', handleEnded);
+      };
+    }, [homepageContent.themeSong.url]);
+
+    useEffect(() => {
+      if (!isAdmin) return;
+      const audio = themeSongAudioRef.current;
+      if (!audio) return;
+      audio.pause();
+      setIsThemeSongPlaying(false);
+    }, [isAdmin]);
 
     // Fetch projects from backend on mount
     useEffect(() => {
@@ -890,6 +1018,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           mission: content.mission,
           vision: content.vision,
           advocacyPillars: content.advocacyPillars,
+          themeSong: content.themeSong,
         }));
         updateUploadToast(toastId, {
           status: 'success',
@@ -992,7 +1121,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
     const [isUploadingProjectImage, setIsUploadingProjectImage] = useState(false);
 
     // YSP Logo URLs
-    const primaryLogoUrl = "/icons/pwa-192x192.png";
+    const primaryLogoUrl = "https://i.imgur.com/J4wddTW.png";
     const fallbackLogoUrl =
       "https://ui-avatars.com/api/?name=YSP&size=80&background=f6421f&color=fff";
 
@@ -1773,7 +1902,38 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       );
     }, []);
 
-    const handleLogin = async (username: string, password: string) => {
+    const recordRecentUsername = (identifier: string) => {
+      const cleaned = identifier.trim();
+      if (!cleaned) return;
+      try {
+        const listKey = "ysp_recent_usernames";
+        const lastKey = "ysp_last_username";
+        const stored = localStorage.getItem(listKey);
+        const parsed = stored ? JSON.parse(stored) : [];
+        const existing = Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+        const next = [cleaned, ...existing.filter((item) => item !== cleaned)].slice(0, 5);
+        localStorage.setItem(listKey, JSON.stringify(next));
+        localStorage.setItem(lastKey, cleaned);
+      } catch {
+        // Ignore storage failures.
+      }
+    };
+
+    const recordRememberedUsername = (identifier: string, remember: boolean) => {
+      try {
+        if (remember) {
+          localStorage.setItem("ysp_remember_username", "true");
+          localStorage.setItem("ysp_remembered_username", identifier.trim());
+        } else {
+          localStorage.removeItem("ysp_remember_username");
+          localStorage.removeItem("ysp_remembered_username");
+        }
+      } catch {
+        // Ignore storage failures.
+      }
+    };
+
+    const handleLogin = async (username: string, password: string, rememberMe: boolean) => {
       // Real authentication via GAS backend
       try {
         const response = await authenticateUser(username, password);
@@ -1788,6 +1948,9 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             });
             return;
           }
+
+          recordRecentUsername(username);
+          recordRememberedUsername(username, rememberMe);
 
           // Handle SUSPENDED accounts - minimal access warning
           if (user.role === 'suspended') {
@@ -1876,6 +2039,44 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       }
     };
 
+    const handleContinueSession = async () => {
+      const storedUser = getStoredUser();
+      if (!storedUser || !hasActiveSession()) {
+        toast.error('Session not available', {
+          description: 'Please log in with your username and password.',
+        });
+        return;
+      }
+
+      try {
+        const valid = await verifySession();
+        if (!valid) {
+          clearSession();
+          toast.error('Session expired', {
+            description: 'Please log in again.',
+          });
+          return;
+        }
+
+        setIsAdmin(true);
+        setUserRole(storedUser.role);
+        setUserName(storedUser.name);
+        setUserIdCode(storedUser.id || '');
+        setUserPosition(storedUser.position || '');
+        setUserProfilePicture(storedUser.profilePic || '');
+        setShowLoginPanel(false);
+        toast.success('Welcome back!', {
+          description: storedUser.name ? `Signed in as ${storedUser.name}` : 'Signed in.',
+        });
+      } catch (error) {
+        console.error('[App] Session verification failed:', error);
+        clearSession();
+        toast.error('Session check failed', {
+          description: 'Please log in again.',
+        });
+      }
+    };
+
     const handleLogout = () => {
       // Log logout before clearing session (need username)
       if (userName) {
@@ -1923,6 +2124,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           mission: editedContent.mission,
           vision: editedContent.vision,
           advocacyPillars: editedContent.advocacyPillars,
+          themeSong: editedContent.themeSong,
         };
 
         // 2. Prepare Other Content (Contact, Socials, Partners)
@@ -1987,6 +2189,123 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       } finally {
         setIsSavingHomepage(false);
       }
+    };
+
+    // --- YouTube Player Logic ---
+    const youtubeVideoId = useMemo(() => {
+        if (!homepageContent?.themeSong?.url) return null;
+        const normalized = normalizeThemeSongUrl(homepageContent.themeSong.url);
+        return getYouTubeVideoId(normalized);
+    }, [homepageContent?.themeSong?.url]);
+
+    useEffect(() => {
+        if (!youtubeVideoId) return;
+
+        const onPlayerReady = (event: any) => {
+             setThemeSongDuration(event.target.getDuration());
+        };
+
+        const onPlayerStateChange = (event: any) => {
+             if (event.data === 1) {
+                 setIsThemeSongPlaying(true);
+                 setIsLoadingThemeSong(false);
+             } else if (event.data === 2 || event.data === 0) {
+                 setIsThemeSongPlaying(false);
+                 setIsLoadingThemeSong(false);
+             } else if (event.data === 3) {
+                 setIsLoadingThemeSong(true);
+             }
+        };
+
+        if (!(window as any).YT) {
+            const tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            const firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+        }
+
+        (window as any).onYouTubeIframeAPIReady = () => createPlayer();
+
+        const createPlayer = () => {
+             if (youtubePlayerRef.current) {
+                 if (youtubePlayerRef.current.getVideoData && youtubePlayerRef.current.getVideoData().video_id !== youtubeVideoId) {
+                      youtubePlayerRef.current.loadVideoById(youtubeVideoId);
+                 }
+                 return;
+             }
+             youtubePlayerRef.current = new (window as any).YT.Player('youtube-player-hidden', {
+                 height: '0',
+                 width: '0',
+                 videoId: youtubeVideoId,
+                 playerVars: { 'playsinline': 1, 'controls': 0, 'disablekb': 1 },
+                 events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange }
+             });
+        };
+
+        if ((window as any).YT && (window as any).YT.Player) createPlayer();
+    }, [youtubeVideoId]);
+
+    useEffect(() => {
+        if (!youtubeVideoId) return;
+        
+        let lastTime = -1;
+        const interval = setInterval(() => {
+            if (youtubePlayerRef.current && youtubePlayerRef.current.getCurrentTime) {
+                const time = youtubePlayerRef.current.getCurrentTime();
+                setThemeSongTime(time);
+                
+                // Safety check: if time is advancing, we are definitely playing
+                if (time > lastTime && lastTime !== -1) {
+                     setIsLoadingThemeSong(false);
+                     setIsThemeSongPlaying(true);
+                }
+                lastTime = time;
+            }
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [youtubeVideoId]);
+    // ----------------------------
+
+    const handleThemeSongToggle = async () => {
+      if (youtubeVideoId) {
+          if (isThemeSongPlaying) {
+              youtubePlayerRef.current?.pauseVideo();
+              setIsLoadingThemeSong(false);
+          } else {
+              setIsLoadingThemeSong(true);
+              youtubePlayerRef.current?.playVideo();
+          }
+          return;
+      }
+
+      const audio = themeSongAudioRef.current;
+      if (!audio) return;
+      if (audio.paused) {
+        try {
+          setIsLoadingThemeSong(true);
+          await audio.play();
+          setIsThemeSongPlaying(true);
+        } catch {
+          setIsThemeSongPlaying(false);
+        } finally {
+          setIsLoadingThemeSong(false);
+        }
+      } else {
+        audio.pause();
+        setIsThemeSongPlaying(false);
+      }
+    };
+
+    const handleThemeSongSeek = (value: number) => {
+      setThemeSongTime(value);
+      if (youtubeVideoId) {
+          youtubePlayerRef.current?.seekTo(value, true);
+          return;
+      }
+
+      const audio = themeSongAudioRef.current;
+      if (!audio) return;
+      audio.currentTime = value;
     };
 
     // Close dropdown when clicking outside
@@ -3027,6 +3346,12 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       ? "Youth Service Philippines Tagum Portal"
       : homepageContent.hero.mainHeading;
     const heroSubHeading = isDefaultHeroHeading ? "" : homepageContent.hero.subHeading;
+    const normalizedThemeSongUrl = normalizeThemeSongUrl(homepageContent.themeSong.url);
+    const themeSongYoutubeId = getYouTubeVideoId(normalizedThemeSongUrl);
+    const isYouTubeThemeSong = Boolean(themeSongYoutubeId);
+    const themeSongUrl = normalizedThemeSongUrl;
+    const hasAudioThemeSong = Boolean(themeSongUrl);
+    const themeSongTitle = homepageContent.themeSong.title.trim() || "Theme Song";
 
     return (
       <div className="min-h-screen transition-colors duration-300" style={{ 
@@ -3072,6 +3397,108 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           }}
         />
         <PwaInstallPrompt enabled={!isAdmin && activePage === "home"} delayMs={800} />
+
+        {!isAdmin && normalizedThemeSongUrl && (
+          <div
+            style={{
+              position: "fixed",
+              bottom: "20px",
+              left: "20px",
+              zIndex: 2147483647,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+            }}
+          >
+            <audio ref={themeSongAudioRef} src={themeSongUrl} preload="metadata" />
+            <div id="youtube-player-hidden" style={{ display: 'none' }} />
+            
+            {/* Collapsed State - Floating Button */}
+            {!isMusicPlayerExpanded && (
+              <button
+                onClick={() => setIsMusicPlayerExpanded(true)}
+                className="w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95"
+                style={{
+                  background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                  color: "white",
+                  boxShadow: "0 4px 14px rgba(246, 66, 31, 0.4)",
+                }}
+                aria-label="Open music player"
+              >
+                <Music size={20} />
+              </button>
+            )}
+
+            {/* Expanded State - Compact Pill */}
+            {isMusicPlayerExpanded && (
+              <div
+                className="animate-in slide-in-from-left-5 fade-in duration-300 h-10 md:h-12 flex items-center gap-2 md:gap-3 pl-1 pr-2 md:pl-2 md:pr-4 min-w-[200px] md:min-w-[260px]"
+                style={{
+                  background: isDark ? "rgba(15, 23, 42, 0.95)" : "rgba(255, 255, 255, 0.95)",
+                  border: isDark ? "1px solid rgba(148, 163, 184, 0.2)" : "1px solid rgba(148, 163, 184, 0.35)",
+                  borderRadius: "9999px",
+                  boxShadow: "0 10px 40px -10px rgba(0,0,0,0.2)",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
+                }}
+              >
+                {/* Play/Pause Button */}
+                <button
+                  type="button"
+                  onClick={handleThemeSongToggle}
+                  disabled={!hasAudioThemeSong || isLoadingThemeSong}
+                  className="w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{
+                    background: hasAudioThemeSong
+                      ? "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)"
+                      : "linear-gradient(135deg, rgba(148, 163, 184, 0.5) 0%, rgba(148, 163, 184, 0.3) 100%)",
+                    color: "white",
+                    boxShadow: hasAudioThemeSong ? "0 4px 10px rgba(246, 66, 31, 0.3)" : "none",
+                    cursor: hasAudioThemeSong && !isLoadingThemeSong ? "pointer" : "not-allowed",
+                  }}
+                >
+                  {isLoadingThemeSong ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : isThemeSongPlaying ? (
+                    <Pause size={14} fill="currentColor" />
+                  ) : (
+                    <Play size={14} fill="currentColor" className="ml-0.5" />
+                  )}
+                </button>
+
+                {/* Track Info & Controls */}
+                <div className="flex-1 min-w-0 flex flex-col justify-center">
+                   <div className="text-xs md:text-sm font-bold text-gray-800 dark:text-gray-100 truncate max-w-[100px] md:max-w-[140px]">
+                      {themeSongTitle || "Theme Song"}
+                   </div>
+                   
+                   <div className="flex items-center w-full mt-0.5">
+                       <input
+                         type="range"
+                         min={0}
+                         max={themeSongDuration || 0}
+                         step={1}
+                         value={Math.min(themeSongTime, themeSongDuration || 0)}
+                         onChange={(e) => handleThemeSongSeek(Number(e.target.value))}
+                         className="flex-1 h-0.5 md:h-1 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer"
+                         aria-label="Seek theme song"
+                         disabled={(!themeSongDuration && !youtubeVideoId) || !hasAudioThemeSong}
+                       />
+                   </div>
+                </div>
+
+                {/* Close Button */}
+                <button 
+                  onClick={() => setIsMusicPlayerExpanded(false)}
+                  className="p-1.5 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  aria-label="Minimize"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Top Bar - Floating Header - Only on Homepage */}
         {!showOfficerDirectory && !showAttendanceDashboard && !showAttendanceRecording && 
@@ -3342,6 +3769,37 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
                     }
                     rows={2}
                     className="w-full px-4 py-3 rounded-xl border-2 border-orange-300 dark:border-orange-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none"
+                  />
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2 text-left">Theme Song Title</label>
+                  <input
+                    type="text"
+                    value={editedContent.themeSong.title}
+                    onChange={(e) =>
+                      setEditedContent({
+                        ...editedContent,
+                        themeSong: { ...editedContent.themeSong, title: e.target.value },
+                      })
+                    }
+                    className="w-full px-4 py-3 rounded-xl border-2 border-orange-300 dark:border-orange-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+
+                <div className="mb-6">
+                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2 text-left">Theme Song Audio URL</label>
+                  <input
+                    type="url"
+                    value={editedContent.themeSong.url}
+                    onChange={(e) =>
+                      setEditedContent({
+                        ...editedContent,
+                        themeSong: { ...editedContent.themeSong, url: e.target.value },
+                      })
+                    }
+                    placeholder="https://example.com/theme-song.mp3"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-orange-300 dark:border-orange-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                   />
                 </div>
               </>
@@ -5175,6 +5633,9 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
             isOpen={showLoginPanel}
             onClose={() => setShowLoginPanel(false)}
             onLogin={handleLogin}
+            onContinueSession={handleContinueSession}
+            canContinueSession={hasActiveSession() && !!getStoredUser()}
+            continueUserName={getStoredUser()?.name || ''}
             isDark={isDark}
           />
         </Suspense>

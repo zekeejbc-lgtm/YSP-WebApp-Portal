@@ -6,17 +6,30 @@ import ForgotPasswordModal from './ForgotPasswordModal';
 interface LoginPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  onLogin: (username: string, password: string) => Promise<void>;
+  onLogin: (username: string, password: string, rememberMe: boolean) => Promise<void>;
+  onContinueSession: () => Promise<void>;
+  canContinueSession: boolean;
+  continueUserName: string;
   isDark: boolean;
 }
 
-export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPanelProps) {
+export default function LoginPanel({
+  isOpen,
+  onClose,
+  onLogin,
+  onContinueSession,
+  canContinueSession,
+  continueUserName,
+  isDark,
+}: LoginPanelProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<{ username?: string; password?: string }>({});
   const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [recentUsernames, setRecentUsernames] = useState<string[]>([]);
+  const [rememberMe, setRememberMe] = useState(false);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -39,8 +52,43 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
       setErrors({});
       setIsLoading(false);
       setShowForgotPassword(false);
+      setRememberMe(false);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const rememberedFlag = localStorage.getItem('ysp_remember_username') === 'true';
+      const rememberedUsername = localStorage.getItem('ysp_remembered_username') || '';
+      const stored = localStorage.getItem('ysp_recent_usernames');
+      const parsed = stored ? JSON.parse(stored) : [];
+      const list = Array.isArray(parsed)
+        ? parsed.filter((item) => typeof item === 'string' && item.trim().length > 0)
+        : [];
+      setRecentUsernames(list.slice(0, 5));
+      if (rememberedFlag && rememberedUsername.trim()) {
+        setUsername(rememberedUsername);
+        setRememberMe(true);
+      } else if (list.length > 0) {
+        setUsername(list[0]);
+        setRememberMe(false);
+      }
+    } catch {
+      setRecentUsernames([]);
+    }
+  }, [isOpen]);
+
+  const handleClearSavedUsernames = () => {
+    try {
+      localStorage.removeItem('ysp_recent_usernames');
+      localStorage.removeItem('ysp_last_username');
+    } catch {
+      // Ignore storage failures.
+    }
+    setRecentUsernames([]);
+    setUsername('');
+  };
 
   const validateForm = () => {
     const newErrors: { username?: string; password?: string } = {};
@@ -68,7 +116,7 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
     
     try {
       // Call the login handler (now async with real backend)
-      await onLogin(username, password);
+      await onLogin(username, password, rememberMe);
     } catch {
       // Error handling is done in App.tsx
     } finally {
@@ -252,6 +300,45 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
           {/* Form - Compact spacing */}
           <div>
             <form onSubmit={handleSubmit} className="px-6 pb-6 sm:px-8 sm:pb-8 space-y-4">
+              {canContinueSession && (
+                <div
+                  className="rounded-xl border px-4 py-3 flex items-center justify-between gap-3"
+                  style={{
+                    borderColor: 'rgba(246, 66, 31, 0.2)',
+                    background: 'rgba(246, 66, 31, 0.06)',
+                  }}
+                >
+                  <div>
+                    <div className="text-xs text-gray-500" style={{ fontWeight: '600' }}>
+                      Continue as
+                    </div>
+                    <div className="text-sm text-gray-800" style={{ fontWeight: '600' }}>
+                      {continueUserName || 'Saved account'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIsLoading(true);
+                      try {
+                        await onContinueSession();
+                      } finally {
+                        setIsLoading(false);
+                      }
+                    }}
+                    className="px-3 py-2 rounded-lg text-white text-xs sm:text-sm transition-all duration-300 hover:shadow-lg active:scale-95"
+                    style={{
+                      background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                      fontWeight: '600',
+                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                      opacity: isLoading ? 0.7 : 1,
+                    }}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? 'Checking...' : 'Continue'}
+                  </button>
+                </div>
+              )}
               {/* Username Field with Glass Effect */}
               <div className="space-y-2">
                 <label 
@@ -262,6 +349,39 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
                   <User className="w-4 h-4" style={{ color: '#ee8724' }} />
                   Username
                 </label>
+                {recentUsernames.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {recentUsernames.map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setUsername(item)}
+                        className="px-2.5 py-1 rounded-lg border text-xs sm:text-sm transition-all duration-200 hover:shadow-sm"
+                        style={{
+                          borderColor: 'rgba(246, 66, 31, 0.2)',
+                          background: 'rgba(246, 66, 31, 0.06)',
+                          color: '#ee8724',
+                          fontWeight: '600',
+                        }}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={handleClearSavedUsernames}
+                      className="px-2.5 py-1 rounded-lg border text-xs sm:text-sm transition-all duration-200 hover:shadow-sm"
+                      style={{
+                        borderColor: 'rgba(0, 0, 0, 0.1)',
+                        background: 'rgba(0, 0, 0, 0.04)',
+                        color: '#6b7280',
+                        fontWeight: '600',
+                      }}
+                    >
+                      Clear saved
+                    </button>
+                  </div>
+                )}
                 <div className="relative group">
                   <input
                     id="username"
@@ -407,6 +527,17 @@ export default function LoginPanel({ isOpen, onClose, onLogin, isDark }: LoginPa
                   <span className="inline-block transition-transform group-hover:translate-x-1">→</span>
                 </button>
               </div>
+
+              {/* Remember Me */}
+              <label className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                Remember username on this device
+              </label>
 
               {/* Login Button with Enhanced Gradient */}
               <button

@@ -18,6 +18,8 @@
  * I: Content_Our Vision
  * J: Section Title_Our Advocacy Pillars
  * K: Content_Our Advocacy Pillars
+ * L: Theme Song Title
+ * M: Theme Song URL
  */
 
 /// <reference types="vite/client" />
@@ -51,12 +53,18 @@ export interface HomepageAdvocacyPillarsContent {
   content: string;
 }
 
+export interface HomepageThemeSongContent {
+  title: string;
+  url: string;
+}
+
 export interface HomepageMainContent {
   hero: HomepageHeroContent;
   about: HomepageAboutContent;
   mission: HomepageMissionContent;
   vision: HomepageVisionContent;
   advocacyPillars: HomepageAdvocacyPillarsContent;
+  themeSong: HomepageThemeSongContent;
 }
 
 // GAS API Response Type
@@ -74,6 +82,8 @@ interface GASResponse {
     visionContent: string;
     advocacyPillarsTitle: string;
     advocacyPillarsContent: string;
+    themeSongTitle: string;
+    themeSongUrl: string;
   };
   error?: string;
   timestamp?: string;
@@ -90,11 +100,25 @@ const GAS_CONFIG = {
   
   // Cache duration (in milliseconds) - 5 minutes
   CACHE_DURATION: 5 * 60 * 1000,
+  STORAGE_KEY: 'ysp_homepage_cache',
+  STORAGE_TS_KEY: 'ysp_homepage_cache_ts',
 };
 
 // Cache for homepage content
 let cachedContent: HomepageMainContent | null = null;
 let cacheTimestamp: number = 0;
+
+// Initialize from LocalStorage if available
+try {
+  const storedContent = localStorage.getItem(GAS_CONFIG.STORAGE_KEY);
+  const storedTs = localStorage.getItem(GAS_CONFIG.STORAGE_TS_KEY);
+  if (storedContent && storedTs) {
+    cachedContent = JSON.parse(storedContent);
+    cacheTimestamp = parseInt(storedTs, 10);
+  }
+} catch (e) {
+  console.warn('[GAS Homepage] Failed to load cache from storage', e);
+}
 
 /**
  * Error codes for debugging
@@ -249,11 +273,23 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
         title: result.data.advocacyPillarsTitle || 'Our Advocacy Pillars',
         content: result.data.advocacyPillarsContent || '',
       },
+      themeSong: {
+        title: result.data.themeSongTitle || '',
+        url: result.data.themeSongUrl || '',
+      },
     };
 
     // Update cache
     cachedContent = content;
     cacheTimestamp = Date.now();
+
+    // Persist to LocalStorage
+    try {
+      localStorage.setItem(GAS_CONFIG.STORAGE_KEY, JSON.stringify(content));
+      localStorage.setItem(GAS_CONFIG.STORAGE_TS_KEY, cacheTimestamp.toString());
+    } catch (e) {
+      console.warn('[GAS Homepage] Failed to persist cache', e);
+    }
     
     console.log('[GAS Homepage] Content fetched successfully');
     return content;
@@ -343,6 +379,8 @@ export const updateHomepageContent = async (content: HomepageMainContent): Promi
         visionContent: content.vision.content,
         advocacyPillarsTitle: content.advocacyPillars.title,
         advocacyPillarsContent: content.advocacyPillars.content,
+        themeSongTitle: content.themeSong.title,
+        themeSongUrl: content.themeSong.url,
       },
     };
 
@@ -431,6 +469,10 @@ export const getDefaultHomepageContent = (): HomepageMainContent => {
     advocacyPillars: {
       title: 'Our Advocacy Pillars',
       content: 'Education • Environment • Health & Wellness • Community Development • Leadership & Civic Engagement',
+    },
+    themeSong: {
+      title: '',
+      url: '',
     },
   };
 };
