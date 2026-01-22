@@ -32,10 +32,7 @@
     Loader2,
     RefreshCw,
     AlertCircle,
-    Pause,
-    Play,
     Settings,
-    Music,
   } from "lucide-react";
   import {
     fetchHomepageContent,
@@ -80,7 +77,8 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
-  import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
+  import MusicPlayer from "./components/MusicPlayer";
+import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
   const DonationPage = lazy(() => import("./components/DonationPage"));
   const LoginPanel = lazy(() => import("./components/LoginPanel"));
   const FeedbackPage = lazy(() => import("./components/FeedbackPage"));
@@ -576,7 +574,6 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
     const hasRestoredScrollRef = useRef(false);
     const [isDark, setIsDark] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const [isMusicPlayerExpanded, setIsMusicPlayerExpanded] = useState(false);
     const [modalProject, setModalProject] =
       useState<Project | null>(null);
 
@@ -735,12 +732,6 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
     const [isLoadingHomepage, setIsLoadingHomepage] = useState(true);
     const [homepageError, setHomepageError] = useState<string | null>(null);
     const [isSavingHomepage, setIsSavingHomepage] = useState(false);
-    const themeSongAudioRef = useRef<HTMLAudioElement | null>(null);
-    const youtubePlayerRef = useRef<any>(null); // Ref for YouTube Player
-    const [themeSongTime, setThemeSongTime] = useState(0);
-    const [themeSongDuration, setThemeSongDuration] = useState(0);
-    const [isThemeSongPlaying, setIsThemeSongPlaying] = useState(false);
-    const [isLoadingThemeSong, setIsLoadingThemeSong] = useState(false);
 
     // Delete Confirmation Modal State
     const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
@@ -774,7 +765,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
     }>(() => {
       // Initialize with default content (will be replaced by API data)
       const defaults = getDefaultHomepageContent();
-      return {
+      const defaultState = {
         ...defaults,
         themeSong: {
           title: '',
@@ -798,6 +789,16 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           partnerButtonLink: "https://forms.gle/YourGoogleFormLink",
         },
       };
+
+      try {
+        const stored = localStorage.getItem('YSP_HOMEPAGE_CONTENT');
+        if (stored) {
+          return { ...defaultState, ...JSON.parse(stored) };
+        }
+      } catch (e) {
+        console.warn('Failed to load homepage content from storage', e);
+      }
+      return defaultState;
     });
 
     // Restore session on mount
@@ -835,15 +836,23 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
           updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
           const content = await fetchHomepageContent();
           updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
-          setHomepageContent(prev => ({
-            ...prev,
-            hero: content.hero,
-            about: content.about,
-            mission: content.mission,
-            vision: content.vision,
-            advocacyPillars: content.advocacyPillars,
-            themeSong: content.themeSong,
-          }));
+          setHomepageContent(prev => {
+            const updated = {
+              ...prev,
+              hero: content.hero,
+              about: content.about,
+              mission: content.mission,
+              vision: content.vision,
+              advocacyPillars: content.advocacyPillars,
+              themeSong: content.themeSong,
+            };
+            try {
+              localStorage.setItem('YSP_HOMEPAGE_CONTENT', JSON.stringify(updated));
+            } catch (e) {
+              console.error('Failed to save homepage content to storage', e);
+            }
+            return updated;
+          });
           console.log('[App] Homepage content loaded from GAS');
           updateUploadToast(toastId, {
             status: 'success',
@@ -873,51 +882,6 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
 
       loadHomepageContent();
     }, []);
-
-    useEffect(() => {
-      const audio = themeSongAudioRef.current;
-      if (!audio) return;
-
-      const normalizedUrl = normalizeThemeSongUrl(homepageContent.themeSong.url);
-      const isYouTube = Boolean(getYouTubeVideoId(normalizedUrl));
-
-      audio.pause();
-      audio.currentTime = 0;
-      setThemeSongTime(0);
-      setThemeSongDuration(0);
-      setIsThemeSongPlaying(false);
-
-      if (!normalizedUrl || isYouTube) return;
-
-      const handleLoaded = () => {
-        const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
-        setThemeSongDuration(duration);
-      };
-      const handleTimeUpdate = () => {
-        setThemeSongTime(audio.currentTime || 0);
-      };
-      const handleEnded = () => {
-        setIsThemeSongPlaying(false);
-      };
-
-      audio.addEventListener('loadedmetadata', handleLoaded);
-      audio.addEventListener('timeupdate', handleTimeUpdate);
-      audio.addEventListener('ended', handleEnded);
-
-      return () => {
-        audio.removeEventListener('loadedmetadata', handleLoaded);
-        audio.removeEventListener('timeupdate', handleTimeUpdate);
-        audio.removeEventListener('ended', handleEnded);
-      };
-    }, [homepageContent.themeSong.url]);
-
-    useEffect(() => {
-      if (!isAdmin) return;
-      const audio = themeSongAudioRef.current;
-      if (!audio) return;
-      audio.pause();
-      setIsThemeSongPlaying(false);
-    }, [isAdmin]);
 
     // Fetch projects from backend on mount
     useEffect(() => {
@@ -2191,123 +2155,6 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       }
     };
 
-    // --- YouTube Player Logic ---
-    const youtubeVideoId = useMemo(() => {
-        if (!homepageContent?.themeSong?.url) return null;
-        const normalized = normalizeThemeSongUrl(homepageContent.themeSong.url);
-        return getYouTubeVideoId(normalized);
-    }, [homepageContent?.themeSong?.url]);
-
-    useEffect(() => {
-        if (!youtubeVideoId) return;
-
-        const onPlayerReady = (event: any) => {
-             setThemeSongDuration(event.target.getDuration());
-        };
-
-        const onPlayerStateChange = (event: any) => {
-             if (event.data === 1) {
-                 setIsThemeSongPlaying(true);
-                 setIsLoadingThemeSong(false);
-             } else if (event.data === 2 || event.data === 0) {
-                 setIsThemeSongPlaying(false);
-                 setIsLoadingThemeSong(false);
-             } else if (event.data === 3) {
-                 setIsLoadingThemeSong(true);
-             }
-        };
-
-        if (!(window as any).YT) {
-            const tag = document.createElement('script');
-            tag.src = "https://www.youtube.com/iframe_api";
-            const firstScriptTag = document.getElementsByTagName('script')[0];
-            firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
-        }
-
-        (window as any).onYouTubeIframeAPIReady = () => createPlayer();
-
-        const createPlayer = () => {
-             if (youtubePlayerRef.current) {
-                 if (youtubePlayerRef.current.getVideoData && youtubePlayerRef.current.getVideoData().video_id !== youtubeVideoId) {
-                      youtubePlayerRef.current.loadVideoById(youtubeVideoId);
-                 }
-                 return;
-             }
-             youtubePlayerRef.current = new (window as any).YT.Player('youtube-player-hidden', {
-                 height: '0',
-                 width: '0',
-                 videoId: youtubeVideoId,
-                 playerVars: { 'playsinline': 1, 'controls': 0, 'disablekb': 1 },
-                 events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange }
-             });
-        };
-
-        if ((window as any).YT && (window as any).YT.Player) createPlayer();
-    }, [youtubeVideoId]);
-
-    useEffect(() => {
-        if (!youtubeVideoId) return;
-        
-        let lastTime = -1;
-        const interval = setInterval(() => {
-            if (youtubePlayerRef.current && youtubePlayerRef.current.getCurrentTime) {
-                const time = youtubePlayerRef.current.getCurrentTime();
-                setThemeSongTime(time);
-                
-                // Safety check: if time is advancing, we are definitely playing
-                if (time > lastTime && lastTime !== -1) {
-                     setIsLoadingThemeSong(false);
-                     setIsThemeSongPlaying(true);
-                }
-                lastTime = time;
-            }
-        }, 1000);
-        return () => clearInterval(interval);
-    }, [youtubeVideoId]);
-    // ----------------------------
-
-    const handleThemeSongToggle = async () => {
-      if (youtubeVideoId) {
-          if (isThemeSongPlaying) {
-              youtubePlayerRef.current?.pauseVideo();
-              setIsLoadingThemeSong(false);
-          } else {
-              setIsLoadingThemeSong(true);
-              youtubePlayerRef.current?.playVideo();
-          }
-          return;
-      }
-
-      const audio = themeSongAudioRef.current;
-      if (!audio) return;
-      if (audio.paused) {
-        try {
-          setIsLoadingThemeSong(true);
-          await audio.play();
-          setIsThemeSongPlaying(true);
-        } catch {
-          setIsThemeSongPlaying(false);
-        } finally {
-          setIsLoadingThemeSong(false);
-        }
-      } else {
-        audio.pause();
-        setIsThemeSongPlaying(false);
-      }
-    };
-
-    const handleThemeSongSeek = (value: number) => {
-      setThemeSongTime(value);
-      if (youtubeVideoId) {
-          youtubePlayerRef.current?.seekTo(value, true);
-          return;
-      }
-
-      const audio = themeSongAudioRef.current;
-      if (!audio) return;
-      audio.currentTime = value;
-    };
-
     // Close dropdown when clicking outside
     useEffect(() => {
       const handleClickOutside = () => {
@@ -3347,11 +3194,8 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
       : homepageContent.hero.mainHeading;
     const heroSubHeading = isDefaultHeroHeading ? "" : homepageContent.hero.subHeading;
     const normalizedThemeSongUrl = normalizeThemeSongUrl(homepageContent.themeSong.url);
-    const themeSongYoutubeId = getYouTubeVideoId(normalizedThemeSongUrl);
-    const isYouTubeThemeSong = Boolean(themeSongYoutubeId);
+    const themeSongTitle = homepageContent.themeSong.title;
     const themeSongUrl = normalizedThemeSongUrl;
-    const hasAudioThemeSong = Boolean(themeSongUrl);
-    const themeSongTitle = homepageContent.themeSong.title.trim() || "Theme Song";
 
     return (
       <div className="min-h-screen transition-colors duration-300" style={{ 
@@ -3398,107 +3242,13 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
         />
         <PwaInstallPrompt enabled={!isAdmin && activePage === "home"} delayMs={800} />
 
-        {!isAdmin && normalizedThemeSongUrl && (
-          <div
-            style={{
-              position: "fixed",
-              bottom: "20px",
-              left: "20px",
-              zIndex: 2147483647,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-            }}
-          >
-            <audio ref={themeSongAudioRef} src={themeSongUrl} preload="metadata" />
-            <div id="youtube-player-hidden" style={{ display: 'none' }} />
-            
-            {/* Collapsed State - Floating Button */}
-            {!isMusicPlayerExpanded && (
-              <button
-                onClick={() => setIsMusicPlayerExpanded(true)}
-                className="w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95"
-                style={{
-                  background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                  color: "white",
-                  boxShadow: "0 4px 14px rgba(246, 66, 31, 0.4)",
-                }}
-                aria-label="Open music player"
-              >
-                <Music size={20} />
-              </button>
-            )}
-
-            {/* Expanded State - Compact Pill */}
-            {isMusicPlayerExpanded && (
-              <div
-                className="animate-in slide-in-from-left-5 fade-in duration-300 h-10 md:h-12 flex items-center gap-2 md:gap-3 pl-1 pr-2 md:pl-2 md:pr-4 min-w-[200px] md:min-w-[260px]"
-                style={{
-                  background: isDark ? "rgba(15, 23, 42, 0.95)" : "rgba(255, 255, 255, 0.95)",
-                  border: isDark ? "1px solid rgba(148, 163, 184, 0.2)" : "1px solid rgba(148, 163, 184, 0.35)",
-                  borderRadius: "9999px",
-                  boxShadow: "0 10px 40px -10px rgba(0,0,0,0.2)",
-                  backdropFilter: "blur(12px)",
-                  WebkitBackdropFilter: "blur(12px)",
-                }}
-              >
-                {/* Play/Pause Button */}
-                <button
-                  type="button"
-                  onClick={handleThemeSongToggle}
-                  disabled={!hasAudioThemeSong || isLoadingThemeSong}
-                  className="w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{
-                    background: hasAudioThemeSong
-                      ? "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)"
-                      : "linear-gradient(135deg, rgba(148, 163, 184, 0.5) 0%, rgba(148, 163, 184, 0.3) 100%)",
-                    color: "white",
-                    boxShadow: hasAudioThemeSong ? "0 4px 10px rgba(246, 66, 31, 0.3)" : "none",
-                    cursor: hasAudioThemeSong && !isLoadingThemeSong ? "pointer" : "not-allowed",
-                  }}
-                >
-                  {isLoadingThemeSong ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : isThemeSongPlaying ? (
-                    <Pause size={14} fill="currentColor" />
-                  ) : (
-                    <Play size={14} fill="currentColor" className="ml-0.5" />
-                  )}
-                </button>
-
-                {/* Track Info & Controls */}
-                <div className="flex-1 min-w-0 flex flex-col justify-center">
-                   <div className="text-xs md:text-sm font-bold text-gray-800 dark:text-gray-100 truncate max-w-[100px] md:max-w-[140px]">
-                      {themeSongTitle || "Theme Song"}
-                   </div>
-                   
-                   <div className="flex items-center w-full mt-0.5">
-                       <input
-                         type="range"
-                         min={0}
-                         max={themeSongDuration || 0}
-                         step={1}
-                         value={Math.min(themeSongTime, themeSongDuration || 0)}
-                         onChange={(e) => handleThemeSongSeek(Number(e.target.value))}
-                         className="flex-1 h-0.5 md:h-1 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer"
-                         aria-label="Seek theme song"
-                         disabled={(!themeSongDuration && !youtubeVideoId) || !hasAudioThemeSong}
-                       />
-                   </div>
-                </div>
-
-                {/* Close Button */}
-                <button 
-                  onClick={() => setIsMusicPlayerExpanded(false)}
-                  className="p-1.5 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                  aria-label="Minimize"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+        {/* Music Player */}
+        <MusicPlayer
+          themeSongUrl={themeSongUrl}
+          themeSongTitle={themeSongTitle}
+          isVisible={Boolean(themeSongUrl) && (!isAdmin || (userRole !== "Admin" && userRole !== "Auditor"))}
+          isDark={isDark}
+        />
 
         {/* Top Bar - Floating Header - Only on Homepage */}
         {!showOfficerDirectory && !showAttendanceDashboard && !showAttendanceRecording && 
