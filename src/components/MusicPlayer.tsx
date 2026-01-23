@@ -42,7 +42,8 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
         }
 
         if (fileId) {
-          return `https://drive.google.com/uc?export=download&id=${fileId}`;
+          // Add confirm=t to bypass virus scan warning for medium files
+          return `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
         }
       }
 
@@ -83,7 +84,19 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
   const normalizedUrl = normalizeThemeSongUrl(themeSongUrl);
   const youtubeId = getYouTubeVideoId(normalizedUrl);
   const isYouTube = Boolean(youtubeId);
-  const hasAudio = Boolean(normalizedUrl);
+  // Always true if we have a local fallback, or if a URL is provided
+  const hasAudio = true; 
+
+  const [audioSrc, setAudioSrc] = useState<string>('');
+
+  useEffect(() => {
+    // If it's a Google Drive link, use the local fallback because Drive blocking is unreliable for streaming
+    if (normalizedUrl.includes('drive.google.com') && !isYouTube) {
+        setAudioSrc('/assets/music/theme-song.mp3');
+    } else {
+        setAudioSrc(normalizedUrl || '/assets/music/theme-song.mp3');
+    }
+  }, [themeSongUrl, normalizedUrl, isYouTube]);
 
   // --- Logic ---
 
@@ -217,12 +230,17 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
     const onEnded = () => setIsPlaying(false);
     const onLoadStart = () => setIsLoading(true);
     const onCanPlay = () => setIsLoading(false);
+    const onError = () => {
+        setIsLoading(false);
+        setIsPlaying(false);
+    };
 
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('loadstart', onLoadStart);
     audio.addEventListener('canplay', onCanPlay);
+    audio.addEventListener('error', onError);
 
     return () => {
       audio.removeEventListener('play', onPlay);
@@ -230,8 +248,9 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
       audio.removeEventListener('ended', onEnded);
       audio.removeEventListener('loadstart', onLoadStart);
       audio.removeEventListener('canplay', onCanPlay);
+      audio.removeEventListener('error', onError);
     };
-  }, [isYouTube, normalizedUrl]);
+  }, [isYouTube, audioSrc]);
 
   if (!isVisible || !hasAudio) return null;
 
@@ -251,7 +270,9 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
     >
         {/* Hidden Players */}
         {!isYouTube && (
-            <audio ref={audioRef} src={normalizedUrl} preload="metadata" />
+            <audio ref={audioRef} preload="auto">
+                <source src={audioSrc} type="audio/mpeg" />
+            </audio>
         )}
         {isYouTube && (
             <div id="music-player-youtube-container" style={{ display: 'none' }} />
