@@ -2015,7 +2015,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
           position: "fixed",
           bottom: "20px",
           right: "20px",
-          zIndex: 2147483647,
+          zIndex: 9999990,
           pointerEvents: "none",
           display: "flex",
           flexDirection: "column",
@@ -2431,7 +2431,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              zIndex: 2147483647,
+              zIndex: 9999990,
               padding: "24px",
               pointerEvents: "auto",
             }}

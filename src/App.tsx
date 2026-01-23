@@ -2653,10 +2653,13 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading feedback..." />}>
             <FeedbackPage
               onClose={() => setShowFeedbackPage(false)}
-              isAdmin={isAdmin}
+              isAdmin={userRole === 'admin' || userRole === 'auditor'}
               isDark={isDark}
               userRole={userRole}
-              username={userName || (userRole === 'guest' ? 'Guest' : 'admin')}
+              username={userName || 'guest'}
+              addUploadToast={addUploadToast}
+              updateUploadToast={updateUploadToast}
+              removeUploadToast={removeUploadToast}
             />
           </Suspense>
           {chatbot}
@@ -3246,7 +3249,7 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
         <MusicPlayer
           themeSongUrl={themeSongUrl}
           themeSongTitle={themeSongTitle}
-          isVisible={Boolean(themeSongUrl) && (!isAdmin || (userRole !== "Admin" && userRole !== "Auditor"))}
+          isVisible={Boolean(themeSongUrl) && !isAdmin}
           isDark={isDark}
         />
 

@@ -1,31 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, Send, Star, MessageSquare, ThumbsUp, AlertCircle, Upload, X, Eye, User, Clock, CheckCircle, XCircle, Mail, Image as ImageIcon, Trash2, Search, RefreshCw, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import CustomDropdown from './CustomDropdown';
 import Breadcrumb from './design-system/Breadcrumb';
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
-
-// Complete Backend Schema
-interface Feedback {
-  id: string; // Feedback ID (unique)
-  timestamp: string; // Timestamp
-  author: string; // Author name
-  authorId: string; // Author ID Code
-  feedback: string; // Feedback text
-  replyTimestamp?: string; // Reply Timestamp
-  replier?: string; // Replier name
-  replierId?: string; // Replier ID (hidden)
-  reply?: string; // Reply text
-  anonymous: boolean; // Anonymous toggle
-  category: 'Complaint' | 'Suggestion' | 'Bug' | 'Compliment' | 'Inquiry' | 'Confession' | 'Other';
-  imageUrl?: string; // Image URL
-  status: 'Pending' | 'Reviewed' | 'Resolved' | 'Dropped';
-  visibility: 'Public' | 'Private';
-  notes?: string; // Internal notes (hidden from user)
-  email?: string; // Email (optional)
-  rating: number; // 1-5 stars
-}
+import { getFeedbacks, createFeedback, updateFeedback, Feedback } from '../services/gasFeedbackService';
 
 interface FeedbackPageProps {
   onClose: () => void;
@@ -76,56 +56,33 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
   const [hoveredRating, setHoveredRating] = useState(0);
   const [uploadedImages, setUploadedImages] = useState<Array<{ file: File; preview: string }>>([]);
   
-  // Mock feedbacks with complete schema (persistent data)
-  const [feedbacks, setFeedbacks] = useState<Feedback[]>([
-    {
-      id: 'FB-001',
-      timestamp: '2025-01-28T10:30:00',
-      author: 'Juan Dela Cruz',
-      authorId: 'YSP-2024-001',
-      feedback: 'Great website! Very informative and easy to navigate. Love the new design!',
-      replyTimestamp: '2025-01-28T14:20:00',
-      replier: 'Admin Team',
-      replierId: 'ADMIN-001',
-      reply: 'Thank you for your positive feedback! We\'re glad you enjoy the new design.',
-      anonymous: false,
-      category: 'Compliment',
-      imageUrl: undefined,
-      status: 'Resolved',
-      visibility: 'Public',
-      email: 'juan@example.com',
-      rating: 5,
-      notes: 'User seems satisfied'
-    },
-    {
-      id: 'FB-002',
-      timestamp: '2025-01-27T15:45:00',
-      author: 'Anonymous',
-      authorId: 'Guest',
-      feedback: 'Would love to see more volunteer opportunities posted regularly.',
-      anonymous: true,
-      category: 'Suggestion',
-      status: 'Reviewed',
-      visibility: 'Public',
-      rating: 4
-    },
-    {
-      id: 'FB-003',
-      timestamp: '2025-01-26T09:15:00',
-      author: 'Maria Santos',
-      authorId: 'YSP-2024-015',
-      feedback: 'The donation process could be simplified. Having issues with payment.',
-      anonymous: false,
-      category: 'Complaint',
-      status: 'Pending',
-      visibility: 'Private',
-      email: 'maria@example.com',
-      rating: 3
-    }
-  ]);
+  // Real feedbacks from backend
+  const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
 
   // Guest's temporary feedbacks (stored in sessionStorage, cleared on refresh)
   const [guestFeedbacks, setGuestFeedbacks] = useState<Feedback[]>([]);
+
+  const fetchFeedbacks = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await getFeedbacks();
+      // Sort by timestamp descending (newest first)
+      const sortedData = data.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setFeedbacks(sortedData);
+    } catch (error) {
+      console.error("Failed to fetch feedbacks:", error);
+      toast.error("Failed to load feedbacks", {
+        description: "Please check your internet connection and try again."
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    fetchFeedbacks();
+  }, [fetchFeedbacks]);
 
   // Load guest feedbacks from sessionStorage on mount
   useEffect(() => {
@@ -200,7 +157,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     setUploadedImages(uploadedImages.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!formData.anonymous && !formData.author.trim()) {
@@ -220,23 +177,84 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
     setIsLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      const feedbackId = `FB-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+    // Generate ID: YSPTFB-YYYY-XXXX
+    const manilaDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Manila"}));
+    const manilaYear = manilaDate.getFullYear();
+    const uniqueCode = Math.random().toString(36).substr(2, 4).toUpperCase();
+    const feedbackId = `YSPTFB-${manilaYear}-${uniqueCode}`;
+    
+    const toastId = `submit-${Date.now()}`;
+    addUploadToast({
+      id: toastId,
+      title: 'Submitting Feedback',
+      message: 'Preparing data...',
+      status: 'loading',
+      progress: 10
+    });
+
+    try {
+      // Handle Image Uploads
+      let finalImageUrl = undefined;
+      
+      if (uploadedImages.length > 0) {
+        updateUploadToast(toastId, {
+          message: 'Uploading images to Drive...',
+          progress: 30
+        });
+
+        const uploadedUrls: string[] = [];
+        for (let i = 0; i < uploadedImages.length; i++) {
+          updateUploadToast(toastId, {
+             message: `Uploading image ${i + 1} of ${uploadedImages.length}...`,
+             progress: 30 + Math.round((i / uploadedImages.length) * 40)
+          });
+          
+          const result = await uploadFeedbackImage(uploadedImages[i].file);
+          if (result.success && result.imageUrl) {
+            uploadedUrls.push(result.imageUrl);
+          } else {
+            console.error(`Failed to upload image ${i+1}:`, result.error);
+            // We continue even if one image fails, but log it
+          }
+        }
+        
+        if (uploadedUrls.length > 0) {
+          finalImageUrl = uploadedUrls.join(',');
+        }
+      }
+
+      updateUploadToast(toastId, {
+        message: 'Saving feedback to database...',
+        progress: 80
+      });
+
+      // Determine Author ID
+      const currentAuthorId = userRole === 'guest' ? 'Guest' : (username || 'YSP-Member');
+
       const newFeedback: Feedback = {
         id: feedbackId,
         timestamp: new Date().toISOString(),
         author: formData.anonymous ? 'Anonymous' : formData.author,
-        authorId: userRole === 'guest' ? 'Guest' : 'YSP-2024-XXX',
+        authorId: currentAuthorId,
         feedback: formData.feedback,
         anonymous: formData.anonymous,
         category: formData.category,
-        imageUrl: uploadedImages.length > 0 ? uploadedImages[0].preview : undefined,
+        imageUrl: finalImageUrl,
         status: 'Pending',
         visibility: formData.preferPrivate ? 'Private' : 'Public',
         email: formData.email || undefined,
         rating: formData.rating
       };
+
+      // Call Backend
+      await createFeedback(newFeedback);
+
+      updateUploadToast(toastId, {
+        status: 'success',
+        message: 'Feedback submitted successfully!',
+        progress: 100
+      });
+      setTimeout(() => removeUploadToast(toastId), 3000);
 
       // For guests: add to temporary storage
       if (userRole === 'guest') {
@@ -244,14 +262,16 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
         setNewFeedbackId(feedbackId);
         setShowFeedbackIdModal(true);
       } else {
-        // For logged-in users: add to main feedbacks
+        // For logged-in users: add to main feedbacks locally (optimistic)
         setFeedbacks([newFeedback, ...feedbacks]);
         toast.success('Feedback submitted!', {
           description: 'Thank you for your valuable feedback. We\'ll review it shortly!'
         });
       }
+      
       const logUser = username || (formData.anonymous ? 'Anonymous' : formData.author || 'Guest');
-      logCreate(logUser, "Feedback", newFeedback.id);
+      // We don't await this log call to speed up UI
+      logCreate(logUser, "Feedback", newFeedback.id).catch(console.error);
 
       // Reset form
       setFormData({
@@ -265,8 +285,23 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       });
       setUploadedImages([]);
       setShowSubmitModal(false);
+
+    } catch (error) {
+      console.error("Submission failed:", error);
+      
+      updateUploadToast(toastId, {
+        status: 'error',
+        message: 'Submission failed. Please try again.',
+        progress: 100
+      });
+      setTimeout(() => removeUploadToast(toastId), 5000);
+
+      toast.error("Submission failed", {
+        description: error instanceof Error ? error.message : "There was an error submitting your feedback."
+      });
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   const handleRefreshMyFeedbacks = () => {
@@ -285,21 +320,15 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
         duration: 10000,
       });
     } else {
-      // For logged-in users or empty guest list
-      setIsLoading(true);
-      setTimeout(() => {
-        setIsLoading(false);
-        toast.success('Feedbacks refreshed');
-      }, 1000);
+      // For logged-in users, refresh from backend
+      fetchFeedbacks();
+      toast.success('Refreshing feedbacks...');
     }
   };
 
   const handleRefreshPublicFeedbacks = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      toast.success('Public feedbacks refreshed');
-    }, 1000);
+    fetchFeedbacks();
+    toast.success('Refreshing public feedbacks...');
   };
 
   const copyToClipboard = (text: string) => {
@@ -337,7 +366,10 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     } else if (isAdmin || userRole === 'auditor') {
       baseFeedbacks = feedbacks;
     } else {
-      baseFeedbacks = feedbacks.filter(f => f.authorId === 'YSP-2024-XXX'); // Mock: would be actual user ID
+      // For regular logged in users, match by username/authorId
+      // Note: We use the same identifier logic as creation
+      const currentAuthorId = username || 'YSP-Member';
+      baseFeedbacks = feedbacks.filter(f => f.authorId === currentAuthorId); 
     }
 
     // Apply search filter
@@ -365,31 +397,53 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     setShowDetailModal(true);
   };
 
-  const handleUpdateFeedback = () => {
-    if (!editingFeedback) return;
-    const wasDropped = selectedFeedback?.status === 'Dropped';
-    const isDropped = editingFeedback.status === 'Dropped';
-
-    const updatedFeedbacks = feedbacks.map(f => 
-      f.id === editingFeedback.id ? {
+  const handleUpdateFeedback = async () => {
+    if (!editingFeedback || !selectedFeedback) return;
+    
+    setIsLoading(true);
+    try {
+      const updatedData: Feedback = {
         ...editingFeedback,
         reply: adminReply || undefined,
-        replyTimestamp: adminReply ? new Date().toISOString() : undefined,
-        replier: adminReply ? 'Admin Team' : undefined,
-        replierId: adminReply ? 'ADMIN-001' : undefined
-      } : f
-    );
+        replyTimestamp: adminReply ? new Date().toISOString() : editingFeedback.replyTimestamp,
+        replier: adminReply ? (username || 'Admin Team') : editingFeedback.replier,
+        replierId: adminReply ? 'ADMIN-ACTION' : editingFeedback.replierId
+      };
 
-    setFeedbacks(updatedFeedbacks);
-    toast.success('Feedback updated!', {
-      description: 'Changes have been saved successfully.'
-    });
-    if (!wasDropped && isDropped) {
-      logDelete(username || 'admin', "Feedback", editingFeedback.id);
-    } else {
-      logEdit(username || 'admin', "Feedback", editingFeedback.id);
+      await updateFeedback(updatedData);
+
+      const wasDropped = selectedFeedback.status === 'Dropped';
+      const isDropped = updatedData.status === 'Dropped';
+
+      // Update local state
+      const updatedFeedbacks = feedbacks.map(f => 
+        f.id === updatedData.id ? updatedData : f
+      );
+
+      setFeedbacks(updatedFeedbacks);
+      
+      // Also update guest feedbacks if it exists there (edge case where admin edits a guest feedback that is still in guest's session)
+      // This won't update other users' sessions, obviously.
+      
+      toast.success('Feedback updated!', {
+        description: 'Changes have been saved successfully.'
+      });
+      
+      if (!wasDropped && isDropped) {
+        logDelete(username || 'admin', "Feedback", updatedData.id).catch(console.error);
+      } else {
+        logEdit(username || 'admin', "Feedback", updatedData.id).catch(console.error);
+      }
+      setShowDetailModal(false);
+      setSelectedFeedback(null);
+    } catch (error) {
+      console.error("Update failed:", error);
+      toast.error("Update failed", {
+        description: "Failed to save changes. Please try again."
+      });
+    } finally {
+      setIsLoading(false);
     }
-    setShowDetailModal(false);
   };
 
   return (

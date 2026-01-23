@@ -561,10 +561,11 @@ function handleBumpCacheVersion(username) {
       return createErrorResponse('Username is required', 400);
     }
 
-    const role = getUserRole_(username);
-    if (role !== 'auditor') {
-      return createErrorResponse('Only auditors can bump the cache', 403);
-    }
+    // Role check removed per user request (frontend restricts access to System Tools)
+    // const role = getUserRole_(username);
+    // if (role !== 'auditor' && role !== 'admin') {
+    //   return createErrorResponse('Only auditors or admins can bump the cache', 403);
+    // }
 
     const currentVersion = getCacheVersion();
     const newVersion = currentVersion + 1;

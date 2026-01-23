@@ -261,7 +261,7 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
         position: "fixed",
         bottom: "24px",
         left: "24px",
-        zIndex: 2147483647, // Max Z-Index
+        zIndex: 30, // Z-Index 30 to be behind Sidebar (40-50) but above content
         display: "flex",
         flexDirection: "column",
         alignItems: "flex-start", // Align to left since we are at bottom-left
