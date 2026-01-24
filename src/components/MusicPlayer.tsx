@@ -1,227 +1,84 @@
-import React, { useState, useEffect, useRef } from "react";
+/**
+ * =============================================================================
+ * MUSIC PLAYER COMPONENT
+ * =============================================================================
+ * A simplified music player that:
+ * - Always plays from LOCAL audio file (/assets/music/theme-song.mp3)
+ * - Detects the song TITLE from the backend (themeSongTitle prop)
+ * - Uses backend URL/title presence to determine if music should be enabled
+ * 
+ * This approach ensures reliable playback without external URL issues
+ * (CORS, Google Drive blocking, YouTube embedding issues, etc.)
+ * =============================================================================
+ */
+
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Music, Pause, Play, X, Loader2 } from "lucide-react";
 
 interface MusicPlayerProps {
+  /** 
+   * URL from backend - used ONLY to check if music is enabled 
+   * (actual playback uses local file)
+   */
   themeSongUrl: string;
+  /** Song title from backend - displayed in the player UI */
   themeSongTitle: string;
+  /** Whether the player should be visible */
   isVisible: boolean;
+  /** Dark mode flag */
   isDark?: boolean;
 }
 
-export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, isDark = false }: MusicPlayerProps) {
+// Local audio file path - this is always what gets played
+const LOCAL_AUDIO_PATH = '/assets/music/theme-song.mp3';
+
+export default function MusicPlayer({ 
+  themeSongUrl, 
+  themeSongTitle, 
+  isVisible, 
+  isDark = false 
+}: MusicPlayerProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const youtubePlayerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // --- Helper Functions ---
+  // Check if a theme song is configured in backend
+  // Any non-empty URL or title from backend means music feature is enabled
+  const hasThemeSongConfigured = Boolean(themeSongUrl?.trim() || themeSongTitle?.trim());
 
-  function normalizeThemeSongUrl(rawUrl: string): string {
-    const trimmed = rawUrl?.trim();
-    if (!trimmed) return '';
-    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  // Display title: use backend title if available, fallback to default
+  const displayTitle = themeSongTitle?.trim() || "Theme Song";
 
-    try {
-      const parsed = new URL(withScheme);
-      const host = parsed.hostname.replace(/^www\./, '');
-      const path = parsed.pathname;
-
-      if (host === 'drive.google.com' || host === 'docs.google.com') {
-        let fileId = '';
-        const fileMatch = path.match(/\/file\/d\/([^/]+)/);
-        if (fileMatch && fileMatch[1]) {
-          fileId = fileMatch[1];
-        }
-
-        if (!fileId && parsed.searchParams.has('id')) {
-          fileId = parsed.searchParams.get('id') || '';
-        }
-
-        if (fileId) {
-          // Add confirm=t to bypass virus scan warning for medium files
-          return `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
-        }
-      }
-
-      return withScheme;
-    } catch {
-      return trimmed;
-    }
-  }
-
-  function getYouTubeVideoId(url: string): string | null {
-    if (!url) return null;
-    try {
-      const parsed = new URL(url);
-      const host = parsed.hostname.replace(/^www\./, '');
-
-      if (host === 'youtu.be') {
-        const id = parsed.pathname.replace('/', '');
-        return id || null;
-      }
-
-      if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
-        if (parsed.pathname === '/watch') {
-          return parsed.searchParams.get('v');
-        }
-        if (parsed.pathname.startsWith('/embed/')) {
-          return parsed.pathname.split('/embed/')[1] || null;
-        }
-        if (parsed.pathname.startsWith('/shorts/')) {
-          return parsed.pathname.split('/shorts/')[1] || null;
-        }
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  }
-
-  const normalizedUrl = normalizeThemeSongUrl(themeSongUrl);
-  const youtubeId = getYouTubeVideoId(normalizedUrl);
-  const isYouTube = Boolean(youtubeId);
-  // Always true if we have a local fallback, or if a URL is provided
-  const hasAudio = true; 
-
-  const [audioSrc, setAudioSrc] = useState<string>('');
-
-  useEffect(() => {
-    // If it's a Google Drive link, use the local fallback because Drive blocking is unreliable for streaming
-    if (normalizedUrl.includes('drive.google.com') && !isYouTube) {
-        setAudioSrc('/assets/music/theme-song.mp3');
-    } else {
-        setAudioSrc(normalizedUrl || '/assets/music/theme-song.mp3');
-    }
-  }, [themeSongUrl, normalizedUrl, isYouTube]);
-
-  // --- Logic ---
-
-  // Handle Play/Pause Toggle
+  // --- Play/Pause Handler ---
   const handleTogglePlay = async () => {
     if (isLoading) return;
+    
+    const audio = audioRef.current;
+    if (!audio) return;
 
-    if (isYouTube) {
-      if (!youtubePlayerRef.current) return;
-      
-      const playerState = youtubePlayerRef.current.getPlayerState();
-      // 1 = Playing, 2 = Paused, 5 = Cued, -1 = Unstarted, 0 = Ended
-      if (playerState === 1) {
-        youtubePlayerRef.current.pauseVideo();
-        setIsPlaying(false);
-      } else {
-        youtubePlayerRef.current.playVideo();
+    if (audio.paused) {
+      setIsLoading(true);
+      try {
+        await audio.play();
         setIsPlaying(true);
+      } catch (err) {
+        console.error("Audio play failed:", err);
+        setIsPlaying(false);
+      } finally {
+        setIsLoading(false);
       }
     } else {
-      const audio = audioRef.current;
-      if (!audio) return;
-
-      if (audio.paused) {
-        setIsLoading(true);
-        try {
-          await audio.play();
-          setIsPlaying(true);
-        } catch (err) {
-          console.error("Audio play failed", err);
-          setIsPlaying(false);
-        } finally {
-          setIsLoading(false);
-        }
-      } else {
-        audio.pause();
-        setIsPlaying(false);
-      }
+      audio.pause();
+      setIsPlaying(false);
     }
   };
 
-  // Stop everything when source changes or unmounts
+  // --- Audio Event Listeners ---
   useEffect(() => {
-    setIsPlaying(false);
-    
-    // Stop HTML Audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-
-    // Stop YouTube
-    if (youtubePlayerRef.current && youtubePlayerRef.current.stopVideo) {
-      youtubePlayerRef.current.stopVideo();
-    }
-  }, [normalizedUrl]);
-
-  // Initialize YouTube Player
-  useEffect(() => {
-    if (!isYouTube || !youtubeId) return;
-
-    const initPlayer = () => {
-      // If player already exists, load new video
-      if (youtubePlayerRef.current) {
-        if (youtubePlayerRef.current.loadVideoById) {
-            youtubePlayerRef.current.loadVideoById(youtubeId);
-        }
-        return;
-      }
-
-      // Initialize YT Player
-      const onPlayerStateChange = (event: any) => {
-        // YT.PlayerState: -1 (unstarted), 0 (ended), 1 (playing), 2 (paused), 3 (buffering), 5 (video cued)
-        if (event.data === 1) {
-            setIsPlaying(true);
-            setIsLoading(false);
-        } else if (event.data === 2 || event.data === 0) {
-            setIsPlaying(false);
-        } else if (event.data === 3) {
-            setIsLoading(true);
-        }
-      };
-
-      const onPlayerReady = () => {
-         setIsLoading(false);
-      };
-
-      // Ensure container exists
-      if (!document.getElementById('music-player-youtube-container')) return;
-
-      youtubePlayerRef.current = new (window as any).YT.Player('music-player-youtube-container', {
-        height: '0',
-        width: '0',
-        videoId: youtubeId,
-        playerVars: { 
-          'playsinline': 1, 
-          'controls': 0, 
-          'disablekb': 1,
-          'fs': 0,
-        },
-        events: { 
-          'onReady': onPlayerReady,
-          'onStateChange': onPlayerStateChange 
-        }
-      });
-    };
-
-    if (!(window as any).YT) {
-      // Load API if not present
-      const tag = document.createElement('script');
-      tag.src = "https://www.youtube.com/iframe_api";
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
-      
-      (window as any).onYouTubeIframeAPIReady = () => {
-        initPlayer();
-      };
-    } else {
-      initPlayer();
-    }
-  }, [isYouTube, youtubeId]);
-
-  // Initialize HTML Audio Listeners
-  useEffect(() => {
-    if (isYouTube) return;
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -231,8 +88,9 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
     const onLoadStart = () => setIsLoading(true);
     const onCanPlay = () => setIsLoading(false);
     const onError = () => {
-        setIsLoading(false);
-        setIsPlaying(false);
+      setIsLoading(false);
+      setIsPlaying(false);
+      console.error("Audio load error - check if theme-song.mp3 exists in /public/assets/music/");
     };
 
     audio.addEventListener('play', onPlay);
@@ -250,9 +108,20 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
       audio.removeEventListener('canplay', onCanPlay);
       audio.removeEventListener('error', onError);
     };
-  }, [isYouTube, audioSrc]);
+  }, []);
 
-  if (!isVisible || !hasAudio) return null;
+  // --- Cleanup on unmount ---
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+    };
+  }, []);
+
+  // Don't render if not visible or no theme song configured in backend
+  if (!isVisible || !hasThemeSongConfigured) return null;
 
   return createPortal(
     <div
@@ -261,24 +130,19 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
         position: "fixed",
         bottom: "24px",
         left: "24px",
-        zIndex: 30, // Z-Index 30 to be behind Sidebar (40-50) but above content
+        zIndex: 30, // Behind Sidebar (40-50) but above content
         display: "flex",
         flexDirection: "column",
-        alignItems: "flex-start", // Align to left since we are at bottom-left
+        alignItems: "flex-start",
         pointerEvents: "none", // Allow clicks to pass through around it
       }}
     >
-        {/* Hidden Players */}
-        {!isYouTube && (
-            <audio ref={audioRef} preload="auto">
-                <source src={audioSrc} type="audio/mpeg" />
-            </audio>
-        )}
-        {isYouTube && (
-            <div id="music-player-youtube-container" style={{ display: 'none' }} />
-        )}
+      {/* Hidden Audio Element - Always uses local file */}
+      <audio ref={audioRef} preload="auto">
+        <source src={LOCAL_AUDIO_PATH} type="audio/mpeg" />
+      </audio>
 
-      {/* Collapsed State */}
+      {/* Collapsed State - Music Icon Button */}
       {!isExpanded && (
         <button
           onClick={() => setIsExpanded(true)}
@@ -296,7 +160,7 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
         </button>
       )}
 
-      {/* Expanded State */}
+      {/* Expanded State - Full Player */}
       {isExpanded && (
         <div
           className="animate-in zoom-in fade-in slide-in-from-bottom-2 duration-200 h-14 flex items-center gap-3 pl-3 pr-5 min-w-[200px]"
@@ -332,30 +196,37 @@ export default function MusicPlayer({ themeSongUrl, themeSongTitle, isVisible, i
             )}
           </button>
 
-          {/* Track Info */}
+          {/* Track Info - Title from Backend */}
           <div className="flex-1 min-w-0 flex flex-col justify-center">
-            <div className="text-xs font-bold truncate max-w-[140px]" style={{ color: isDark ? "#f3f4f6" : "#1f2937" }}>
-              {themeSongTitle || "Theme Song"}
+            <div 
+              className="text-xs font-bold truncate max-w-[140px]" 
+              style={{ color: isDark ? "#f3f4f6" : "#1f2937" }}
+              title={displayTitle}
+            >
+              {displayTitle}
             </div>
-            <div className="text-[10px] truncate max-w-[140px]" style={{ color: isDark ? "#9ca3af" : "#6b7280" }}>
+            <div 
+              className="text-[10px] truncate max-w-[140px]" 
+              style={{ color: isDark ? "#9ca3af" : "#6b7280" }}
+            >
               {isPlaying ? "Playing..." : "Paused"}
             </div>
           </div>
 
-          {/* Close Button */}
+          {/* Close/Minimize Button */}
           <button 
             onClick={() => setIsExpanded(false)}
             className="p-1.5 rounded-full transition-colors ml-1"
             style={{
-                color: isDark ? "#9ca3af" : "#9ca3af", 
+              color: isDark ? "#9ca3af" : "#9ca3af", 
             }}
             onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.05)";
-                e.currentTarget.style.color = isDark ? "#f3f4f6" : "#1f2937";
+              e.currentTarget.style.backgroundColor = isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.05)";
+              e.currentTarget.style.color = isDark ? "#f3f4f6" : "#1f2937";
             }}
             onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "transparent";
-                e.currentTarget.style.color = isDark ? "#9ca3af" : "#9ca3af";
+              e.currentTarget.style.backgroundColor = "transparent";
+              e.currentTarget.style.color = isDark ? "#9ca3af" : "#9ca3af";
             }}
             aria-label="Minimize"
           >
