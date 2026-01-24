@@ -254,8 +254,17 @@ export function CacheRefreshModal({ isOpen, isDark, onConfirm, onClose }: CacheR
               color: isDark ? "#e5e7eb" : "#374151",
             }}
           >
-            Cache version has been updated. Please do a hard refresh to clear cached data and load
+            Cache version has been updated. Please do a hard refresh to clear all cached data and load
             the latest changes.
+          </p>
+          <p
+            className="mt-3 text-xs md:text-sm font-medium"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
+              color: DESIGN_TOKENS.colors.brand.orange,
+            }}
+          >
+            ⚠️ You will be logged out and need to log in again.
           </p>
           <p
             className="mt-2 text-xs md:text-sm"
@@ -495,7 +504,8 @@ export default function SystemToolsPage({
 
   const handleConfirmHardRefresh = async () => {
     setShowCacheRefreshModal(false);
-    await forceClearAllCaches();
+    // Full clear - remove ALL storage including session, forcing users to log in again
+    await forceClearAllCaches({ preserveSession: false });
   };
 
   const handleDismissHardRefresh = () => {

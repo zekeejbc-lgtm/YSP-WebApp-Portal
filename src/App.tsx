@@ -679,7 +679,8 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
 
     const handleCacheVersionChange = () => {
       setCacheVersion(getLocalCacheVersion());
-      setHardRefreshMode("standard");
+      // When cache is bumped by admin, force FULL refresh (clear all storage, log out users)
+      setHardRefreshMode("full");
       setShowCacheRefreshModal(true);
     };
 
@@ -746,6 +747,10 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
 
     // Homepage Edit Mode
     const [isEditingHomepage, setIsEditingHomepage] = useState(false);
+    
+    // Profile Edit Mode
+    const [isEditingProfile, setIsEditingProfile] = useState(false);
+    const [triggerProfileEditMode, setTriggerProfileEditMode] = useState(false);
     
     // Homepage Content - Fetched from GAS Backend
     const [homepageContent, setHomepageContent] = useState<HomepageMainContent & {
@@ -2576,6 +2581,15 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
       );
     }, [isAdmin, isDark, isLoadingProjects, openProjectModal, projects, selectedProjectIds, startEditProject, toggleProjectSelection]);
 
+    // Handler for chatbot to trigger profile edit mode
+    const handleTriggerProfileEditMode = () => {
+      if (showMyProfile) {
+        setTriggerProfileEditMode(true);
+        // Reset the trigger after a short delay
+        setTimeout(() => setTriggerProfileEditMode(false), 100);
+      }
+    };
+
     const chatbot = (
       <YSPChatBot
         userRole={userRole}
@@ -2583,6 +2597,8 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
+        hidden={isEditingProfile || isEditingHomepage}
+        onTriggerEditMode={handleTriggerProfileEditMode}
       />
     );
 
@@ -2952,12 +2968,17 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading profile..." />}>
             <MyProfilePage 
-              onClose={() => setShowMyProfile(false)} 
+              onClose={() => {
+                setShowMyProfile(false);
+                setIsEditingProfile(false);
+              }} 
               isDark={isDark}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
               removeUploadToast={removeUploadToast}
               onProfilePictureChange={(newUrl) => setUserProfilePicture(newUrl)}
+              onEditingChange={setIsEditingProfile}
+              startInEditMode={triggerProfileEditMode}
             />
           </Suspense>
           <UploadToastContainer

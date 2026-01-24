@@ -4,6 +4,7 @@ import { Send, MessageSquare, X, Minimize2, Loader2, User } from "lucide-react";
 import { getAllOfficers, searchOfficers, type DirectoryOfficer } from "../services/gasDirectoryService";
 import { fetchEvents, formatEventDate } from "../services/gasEventsService";
 import { fetchAllProjects } from "../services/projectsService";
+import { getStoredUser, fetchUserProfile, type UserProfile } from "../services/gasLoginService";
 // ✅ YOUR API KEY
 const API_URL =
   "https://script.google.com/macros/s/AKfycbxBc_bEYUCdt71zuUZouXmhvhOilUBSgI0PymwzUqI9URanSF6U7UEKN_ziHQ_s9gLRcQ/exec";
@@ -23,6 +24,8 @@ interface YSPChatBotProps {
   onOfficerDirectorySearch?: (request: { query: string; idCode?: string }) => void;
   onRequestCacheClear?: () => void;
   currentPage?: string;
+  hidden?: boolean;
+  onTriggerEditMode?: () => void;
 }
 
 // 👇 Add this new interface for the Knowledge Base
@@ -51,6 +54,188 @@ const BASE_SUGGESTIONS = [
   "@system clear cache",
   "@system hard refresh",
 ];
+
+// 📋 PROFILE KNOWLEDGE BASE: Answers for @profile command
+const PROFILE_KNOWLEDGE_BASE = [
+  {
+    keywords: ["edit profile", "edit my profile"],
+    answer: "✏️ **Edit Profile Mode**\n\nTo edit your profile, click the orange Edit button located above this chat bubble (bottom-right of screen).\n\nOnce in edit mode, you can modify:\n• Personal details (contact, birthday, gender)\n• Address information\n• Social media links\n• Emergency contacts\n\nClick 'Save Changes' when done!"
+  },
+  {
+    keywords: ["my info", "my information", "my details", "show my", "what is my", "tell me my"],
+    answer: "📋 **Your Profile Info**\n\nYour profile information is displayed on this page! Scroll to view:\n\n• **Personal Information** - Name, email, contact, birthday\n• **Identity** - ID code, civil status, religion, nationality\n• **Address** - Full address details\n• **YSP Information** - Chapter, committee, position, date joined\n• **Social Media** - Facebook, Instagram, Twitter\n• **Emergency Contact** - Contact person details\n• **Account** - Password settings\n\nTo edit any field, click the Edit button (bottom-right)."
+  },
+  {
+    keywords: ["settings", "account settings", "preferences"],
+    answer: "⚙️ **Profile Settings**\n\nOn this page you can manage:\n\n• **Change Password** - Scroll to Account section, click 'Change Password'\n• **Verify Email** - Add personal email and click 'Verify' button\n• **Update Contact Info** - Edit mode → change contact number\n• **Privacy** - Your profile is only visible to YSP members\n\nFor other app settings, use the sidebar menu."
+  },
+  {
+    keywords: ["edit", "update", "change", "modify"],
+    answer: "To edit your profile:\n1. Click the orange Edit button (above the chat, bottom-right)\n2. Make your changes in the editable fields\n3. Click 'Save Changes' when done\n\nYou can update: contact number, birthday, gender, pronouns, civil status, religion, address, and social media links."
+  },
+  {
+    keywords: ["picture", "photo", "avatar", "image"],
+    answer: "To change your profile picture:\n1. Click the Edit button to enter edit mode\n2. Click the camera icon on your profile photo\n3. Select an image (max 5MB, PNG/JPG/WebP)\n4. Click 'Save Changes' to upload\n\nThe image will be saved to the server when you save."
+  },
+  {
+    keywords: ["password", "change password", "reset password"],
+    answer: "To change your password:\n1. Scroll down to the 'Account' section\n2. Click 'Change Password' button\n3. Enter your current password for verification\n4. Enter and confirm your new password\n5. Click 'Change Password' to save\n\nPassword must be at least 8 characters."
+  },
+  {
+    keywords: ["email", "verify", "verification", "otp"],
+    answer: "To verify your personal email:\n1. Enter your personal email in the field\n2. Click the 'Verify' button next to it\n3. Check your inbox for the OTP code\n4. Enter the 6-digit code in the modal\n5. Once verified, you'll see a green checkmark\n\nVerification helps secure your account."
+  },
+  {
+    keywords: ["save", "saving", "submit"],
+    answer: "To save profile changes:\n1. Make sure you're in edit mode (orange buttons visible)\n2. Complete all your changes\n3. Click 'Save Changes' button (above chat bubble)\n4. Wait for the progress toast to complete\n\nNote: You must be in edit mode to save. Click 'Cancel' to discard changes."
+  },
+  {
+    keywords: ["what", "which", "editable", "can i change", "allowed"],
+    answer: "Editable profile fields:\n✏️ Personal: Contact number, Birthday, Gender, Pronouns\n✏️ Identity: Civil status, Religion\n✏️ Address: Full address, Barangay, City, Province, Zip code\n✏️ Social: Facebook, Instagram, Twitter\n✏️ Emergency: Contact name, relation, number\n\n🔒 Cannot edit: Full name, Username, ID Code, Chapter, Position, Role, Date joined"
+  },
+  {
+    keywords: ["emergency", "contact", "emergency contact"],
+    answer: "Emergency contact information:\n• Located in the 'Emergency Contact' section\n• Add a contact name, their relation to you, and phone number\n• This info is important for safety during YSP events\n• Make sure to keep this updated!"
+  },
+  {
+    keywords: ["social", "facebook", "instagram", "twitter"],
+    answer: "Social media links:\n• Found in the 'Social Media' section\n• Add your Facebook, Instagram, or Twitter profiles\n• Use full URLs (e.g., https://facebook.com/yourname)\n• These help other members connect with you"
+  },
+  {
+    keywords: ["id", "code", "id code", "member id"],
+    answer: "Your ID Code is a unique identifier assigned to you when you joined YSP. It cannot be changed as it's used for attendance tracking, records, and official documentation."
+  },
+  {
+    keywords: ["status", "member status", "active", "inactive"],
+    answer: "Member status is managed by administrators and reflects your current standing in YSP:\n• Active: Full participating member\n• Inactive: Temporarily not participating\n• Alumni: Former active member\n\nContact an admin if your status needs updating."
+  },
+  {
+    keywords: ["name", "full name", "change name"],
+    answer: "Your full name cannot be edited directly in the profile. If you need to update your name (e.g., due to legal name change), please contact an administrator or the developer."
+  },
+  {
+    keywords: ["chapter", "committee", "position", "role"],
+    answer: "Your YSP organizational details (chapter, committee, position, role) are managed by administrators. These reflect your official standing in the organization. Contact an admin if updates are needed."
+  },
+];
+
+// Helper function to find profile answer
+function findProfileAnswer(query: string): string | null {
+  const lowerQuery = query.toLowerCase();
+  for (const entry of PROFILE_KNOWLEDGE_BASE) {
+    for (const keyword of entry.keywords) {
+      if (lowerQuery.includes(keyword.toLowerCase())) {
+        return entry.answer;
+      }
+    }
+  }
+  return null;
+}
+
+// 🆕 Helper function to generate a personalized introduction from real profile data
+function generatePersonalIntroduction(profile: UserProfile): string {
+  const name = profile.fullName || "Member";
+  const position = profile.position || "";
+  const committee = profile.committee || "";
+  const chapter = profile.chapter || "YSP";
+  const age = profile.age || 0;
+  const gender = profile.gender || "";
+  const pronouns = profile.pronouns || "";
+  const city = profile.city || "";
+  const province = profile.province || "";
+  const dateJoined = profile.dateJoined || "";
+  const status = profile.status || "";
+  const membershipType = profile.membershipType || "";
+  const civilStatus = profile.civilStatus || "";
+  const nationality = profile.nationality || "";
+  const religion = profile.religion || "";
+  
+  // Build location string
+  let location = "";
+  if (city && province) {
+    location = `${city}, ${province}`;
+  } else if (city || province) {
+    location = city || province;
+  }
+  
+  // Build greeting based on gender/pronouns
+  let greeting = "👋 Allow me to introduce you!\n\n";
+  
+  // Main introduction
+  let intro = `🌟 ${name}\n\n`;
+  
+  // Position and organization line
+  if (position && committee) {
+    intro += `You are the ${position} of the ${committee} in ${chapter}.\n\n`;
+  } else if (position) {
+    intro += `You serve as ${position} in ${chapter}.\n\n`;
+  } else if (committee) {
+    intro += `You're a proud member of the ${committee} in ${chapter}.\n\n`;
+  } else {
+    intro += `You're a valued member of ${chapter}.\n\n`;
+  }
+  
+  // Personal details section
+  let personalDetails = "About You:\n";
+  const details: string[] = [];
+  
+  if (age > 0) {
+    details.push(`• ${age} years old`);
+  }
+  if (gender) {
+    details.push(`• ${gender}${pronouns ? ` (${pronouns})` : ""}`);
+  }
+  if (civilStatus) {
+    details.push(`• ${civilStatus}`);
+  }
+  if (nationality) {
+    details.push(`• ${nationality}`);
+  }
+  if (religion) {
+    details.push(`• ${religion}`);
+  }
+  if (location) {
+    details.push(`• From ${location}`);
+  }
+  
+  if (details.length > 0) {
+    personalDetails += details.join("\n") + "\n\n";
+  } else {
+    personalDetails = "";
+  }
+  
+  // YSP Journey section
+  let yspJourney = "Your YSP Journey:\n";
+  const journeyDetails: string[] = [];
+  
+  if (dateJoined) {
+    journeyDetails.push(`• Joined on ${dateJoined}`);
+  }
+  if (membershipType) {
+    journeyDetails.push(`• ${membershipType} Member`);
+  }
+  if (status) {
+    journeyDetails.push(`• Status: ${status}`);
+  }
+  
+  if (journeyDetails.length > 0) {
+    yspJourney += journeyDetails.join("\n") + "\n\n";
+  } else {
+    yspJourney = "";
+  }
+  
+  // Inspirational closing
+  const closings = [
+    "Keep making a difference in your community! 🔥",
+    "You're an integral part of the YSP family! 💛",
+    "Thank you for your service to the youth! ⭐",
+    "Together, we build a better nation! 🇵🇭",
+    "Your dedication inspires others! ✨",
+  ];
+  const randomClosing = closings[Math.floor(Math.random() * closings.length)];
+  
+  return greeting + intro + personalDetails + yspJourney + randomClosing;
+}
 
 const SUGGESTIONS = BASE_SUGGESTIONS;
 
@@ -710,6 +895,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
   onOfficerDirectorySearch,
   onRequestCacheClear,
   currentPage = "",
+  hidden = false,
+  onTriggerEditMode,
 }) => {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
@@ -972,6 +1159,127 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       setIsDirectoryDetailsPending(false);
       setLastDirectoryOfficer(null);
       setInput("");
+      return;
+    }
+
+    // 📋 @profile command: Answer profile-related questions
+    if (/^\/?@profile\b/i.test(workingText)) {
+      const questionText = workingText.replace(/^\/?@profile\b[:\s]*/i, "").trim();
+      
+      if (!questionText) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "📋 **Profile Help**\n\nAsk me anything about your profile! Try:\n• @profile who am I\n• @profile introduce me\n• @profile edit profile\n• @profile my info\n• @profile settings\n• @profile change picture\n• @profile change password\n• @profile verify email\n• @profile what can I edit",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      // Check if user wants to edit profile - trigger edit mode
+      if (/^(edit\s*profile|edit\s*my\s*profile)$/i.test(questionText)) {
+        if (onTriggerEditMode) {
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now() + 1, text: "✏️ **Edit Mode Activated**\n\nI've enabled edit mode for your profile. Make your changes and click 'Save Changes' when done!\n\n*Tip: I'll be hidden while you edit to give you more space.*", sender: "bot" },
+          ]);
+          // Small delay to let the message appear, then trigger edit mode
+          setTimeout(() => {
+            onTriggerEditMode();
+            setIsOpen(false); // Close chat
+          }, 800);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // 🆕 "Who am I?" / "Introduce me" command - fetches real profile data
+      if (/^(who\s*am\s*i|introduce\s*me|tell\s*me\s*about\s*myself|my\s*introduction)$/i.test(questionText)) {
+        const storedUser = getStoredUser();
+        if (!storedUser?.username) {
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now() + 1, text: "❌ **Not Logged In**\n\nI can't introduce you because you're not logged in. Please log in first to see your personalized introduction!", sender: "bot" },
+          ]);
+          setIsLoading(false);
+          return;
+        }
+
+        // Show loading message
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: "🔄 Fetching your profile from the backend...", sender: "bot" },
+        ]);
+
+        try {
+          const response = await fetchUserProfile(storedUser.username);
+          
+          if (response.success && response.profile) {
+            const p = response.profile;
+            
+            // Build a personalized introduction using real data
+            const introduction = generatePersonalIntroduction(p);
+            
+            // Remove loading message and add introduction
+            setMessages((prev) => {
+              const filtered = prev.filter(m => !m.text.includes("Fetching your profile"));
+              return [
+                ...filtered,
+                { 
+                  id: Date.now() + 1, 
+                  text: introduction, 
+                  sender: "bot",
+                  image: p.profilePictureURL || undefined
+                },
+              ];
+            });
+          } else {
+            setMessages((prev) => {
+              const filtered = prev.filter(m => !m.text.includes("Fetching your profile"));
+              return [
+                ...filtered,
+                { id: Date.now() + 1, text: "❌ **Could not load profile**\n\nI wasn't able to fetch your profile data. Please try again later.", sender: "bot" },
+              ];
+            });
+          }
+        } catch (error) {
+          console.error("Error fetching profile for introduction:", error);
+          setMessages((prev) => {
+            const filtered = prev.filter(m => !m.text.includes("Fetching your profile"));
+            return [
+              ...filtered,
+              { id: Date.now() + 1, text: "❌ **Error**\n\nSomething went wrong while fetching your profile. Please try again.", sender: "bot" },
+            ];
+          });
+        }
+        
+        setIsLoading(false);
+        return;
+      }
+
+      const profileAnswer = findProfileAnswer(questionText);
+      if (profileAnswer) {
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now() + 1, text: profileAnswer, sender: "bot" },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      // Default response for unrecognized profile questions
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          text: "I couldn't find a specific answer for that profile question. Try asking about:\n• Editing profile\n• Changing profile picture\n• Password changes\n• Email verification\n• Editable fields\n• Emergency contacts\n• Social media links",
+          sender: "bot",
+        },
+      ]);
+      setIsLoading(false);
       return;
     }
 
@@ -1991,8 +2299,24 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     const list = [...BASE_SUGGESTIONS];
     const pageKey = currentPage.toLowerCase();
     const isMembersPage = pageKey === "officer-directory" || pageKey === "manage-members";
+    const isProfilePage = pageKey === "my-profile" || pageKey === "profile";
     const role = userRole.toLowerCase();
     const isPrivileged = role === "auditor" || role === "admin";
+
+    // Add profile suggestions when on profile page
+    if (isProfilePage) {
+      list.unshift(
+        "@profile who am I",
+        "@profile introduce me",
+        "@profile edit profile",
+        "@profile my info",
+        "@profile settings",
+        "@profile change picture",
+        "@profile change password",
+        "@profile verify email",
+        "@profile what can I edit"
+      );
+    }
 
     if (isMembersPage && isPrivileged) {
       list.unshift(
@@ -2513,6 +2837,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
 }, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList]); // ✅ Add cooldown here
 
   if (!mounted) return null;
+  if (hidden) return null; // Hide chatbot when in edit mode
   return createPortal(ui, document.body);
 };
 

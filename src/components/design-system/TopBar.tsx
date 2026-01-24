@@ -84,7 +84,7 @@ export default function TopBar({
         ...glassStyle,
       }}
     >
-      <div className="max-w-7xl mx-auto px-4 md:px-6 h-full flex items-center gap-4">
+      <div className="max-w-7xl mx-auto px-4 md:px-3 lg:px-6 h-full flex items-center gap-4 md:gap-2 lg:gap-4">
         {/* Mobile Menu Button */}
         <button
           onClick={onToggleMenu}
@@ -101,19 +101,19 @@ export default function TopBar({
         <a
           href="#home"
           onClick={onHomeClick}
-          className="flex items-center gap-2 md:gap-3 flex-shrink-0"
+          className="flex items-center gap-3 md:gap-1.5 lg:gap-3 flex-shrink-0"
         >
           <img
             src={logoUrl}
             alt="YSP Logo"
-            className="w-10 h-10 object-contain shrink-0"
+            className="w-10 h-10 md:w-8 md:h-8 lg:w-10 lg:h-10 object-contain shrink-0"
             onError={(e) => {
               (e.target as HTMLImageElement).src = fallbackLogoUrl;
             }}
           />
           <div className="flex flex-col leading-tight">
             <span
-              className="text-[10px] xs:text-xs sm:text-sm md:text-base whitespace-nowrap"
+              className="text-sm md:text-xs lg:text-base whitespace-nowrap"
               style={{
                 fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
                 fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
@@ -124,7 +124,7 @@ export default function TopBar({
               Youth Service Philippines
             </span>
             <span
-              className="text-[9px] xs:text-[10px] sm:text-xs whitespace-nowrap"
+              className="text-xs md:text-[10px] lg:text-xs whitespace-nowrap"
               style={{
                 fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
                 fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
@@ -138,23 +138,23 @@ export default function TopBar({
           </div>
         </a>
 
-        {/* Desktop Navigation - ExpandableTabs */}
-        <nav className="hidden md:flex items-center gap-4 ml-auto">
-          <ExpandableTabs
-            tabs={navigationTabs}
-            activeColor="text-[#f6421f]"
-            className="bg-white/50 dark:bg-black/50"
-            activeTab={activePage}
-          />
-        </nav>
+        {/* Right side container - Nav + Actions grouped together */}
+        <div className="flex items-center gap-2 md:gap-1 lg:gap-4 ml-auto">
+          {/* Desktop Navigation - ExpandableTabs */}
+          <nav className="hidden md:flex items-center">
+            <ExpandableTabs
+              tabs={navigationTabs}
+              activeColor="text-[#f6421f]"
+              className="bg-white/50 dark:bg-black/50"
+              activeTab={activePage}
+            />
+          </nav>
 
-        {/* Right side actions */}
-        <div className="flex items-center gap-2 ml-auto md:ml-4">
           {/* Login Button */}
           {onLoginClick && (
             <button
               onClick={onLoginClick}
-              className="hidden md:flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
+              className="hidden md:flex items-center justify-center gap-2 md:gap-1 lg:gap-2 px-5 md:px-3 lg:px-5 py-2.5 md:py-1.5 lg:py-2.5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
               style={{
                 background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
                 fontWeight: "600",

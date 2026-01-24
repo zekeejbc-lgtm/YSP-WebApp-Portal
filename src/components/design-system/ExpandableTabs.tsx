@@ -88,7 +88,7 @@ export function ExpandableTabs({
     <div
       ref={outsideClickRef}
       className={cn(
-        "flex flex-wrap items-center gap-2 rounded-2xl border bg-background p-1 shadow-sm backdrop-blur-md",
+        "flex flex-wrap items-center gap-2 md:gap-1 lg:gap-2 rounded-2xl border bg-background p-1 md:p-0.5 lg:p-1 shadow-sm backdrop-blur-md",
         className
       )}
     >
@@ -112,13 +112,13 @@ export function ExpandableTabs({
             onClick={() => handleSelect(index, tab.onClick)}
             transition={transition}
             className={cn(
-              "relative flex items-center rounded-xl px-4 py-2 text-sm font-medium transition-colors duration-300",
+              "relative flex items-center rounded-xl px-4 md:px-2 lg:px-4 py-2 md:py-1.5 lg:py-2 text-sm md:text-xs lg:text-sm font-medium transition-colors duration-300",
               isHighlighted
                 ? cn("bg-muted", activeColor)
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
-            <Icon size={20} />
+            <Icon size={20} className="md:w-[18px] md:h-[18px] lg:w-5 lg:h-5" />
             <AnimatePresence initial={false}>
               {isHighlighted && (
                 <motion.span

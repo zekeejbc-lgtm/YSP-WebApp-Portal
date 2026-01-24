@@ -16,7 +16,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { User as UserIcon, Save, Edit, Camera, Loader2, Lock, Mail, CheckCircle2, AlertCircle } from "lucide-react";
+import { User as UserIcon, Save, Edit, Camera, Loader2, Lock, Mail, CheckCircle2, AlertCircle, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { SkeletonProfilePage } from "./SkeletonCard";
@@ -43,6 +43,8 @@ interface MyProfilePageProps {
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
   removeUploadToast?: (id: string) => void;
   onProfilePictureChange?: (newUrl: string) => void;
+  onEditingChange?: (isEditing: boolean) => void;
+  startInEditMode?: boolean;
 }
 
 export default function MyProfilePage({ 
@@ -52,8 +54,10 @@ export default function MyProfilePage({
   updateUploadToast,
   removeUploadToast,
   onProfilePictureChange,
+  onEditingChange,
+  startInEditMode = false,
 }: MyProfilePageProps) {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(startInEditMode);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null); // Local preview before save
@@ -113,6 +117,18 @@ export default function MyProfilePage({
     role: "",
     status: "",
   });
+
+  // Notify parent when editing state changes
+  useEffect(() => {
+    onEditingChange?.(isEditing);
+  }, [isEditing, onEditingChange]);
+
+  // React to external trigger to start edit mode
+  useEffect(() => {
+    if (startInEditMode && !isEditing) {
+      setIsEditing(true);
+    }
+  }, [startInEditMode]);
 
   // Fetch profile data on mount
   useEffect(() => {
@@ -656,7 +672,7 @@ export default function MyProfilePage({
         <>
       {/* Profile Header Card */}
       <div
-        className="border rounded-lg text-center mb-6"
+        className="border rounded-lg text-center mb-6 relative"
         style={{
           borderRadius: `${DESIGN_TOKENS.radius.card}px`,
           padding: `${DESIGN_TOKENS.spacing.scale["2xl"]}px`,
@@ -666,6 +682,43 @@ export default function MyProfilePage({
           ...glassStyle,
         }}
       >
+        {/* Edit/Save/Cancel Buttons - Top Right */}
+        <div className="absolute top-2 right-2 sm:top-3 sm:right-3 md:top-4 md:right-4 flex gap-1 sm:gap-2">
+          {isEditing ? (
+            <>
+              <Button 
+                variant="secondary" 
+                onClick={handleCancel} 
+                disabled={isSaving}
+                className="!p-1.5 sm:!p-2 md:!px-4 md:!py-2 !min-w-0"
+                icon={<X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+              >
+                <span className="hidden md:inline text-sm">Cancel</span>
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleSave}
+                disabled={isSaving}
+                icon={isSaving ? <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" /> : <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+                className="!p-1.5 sm:!p-2 md:!px-4 md:!py-2 !min-w-0"
+              >
+                <span className="hidden md:inline text-sm">{isSaving ? 'Saving...' : 'Save'}</span>
+              </Button>
+            </>
+          ) : (
+            !isLoading && (
+              <Button
+                variant="primary"
+                onClick={() => setIsEditing(true)}
+                icon={<Edit className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+                className="!p-1.5 sm:!p-2 md:!px-4 md:!py-2 !min-w-0"
+              >
+                <span className="hidden md:inline text-sm">Edit</span>
+              </Button>
+            )
+          )}
+        </div>
+
         {/* Profile Picture */}
         <div className="relative inline-block">
           <div
@@ -1410,50 +1463,6 @@ export default function MyProfilePage({
           </div>
         </div>
       </div>
-
-      {/* Floating Action Buttons - Bottom Right */}
-      {isEditing ? (
-        <div 
-          className="fixed bottom-6 right-6 flex gap-3 z-50"
-          style={{
-            filter: 'drop-shadow(0 4px 12px rgba(0, 0, 0, 0.15))',
-          }}
-        >
-          <Button 
-            variant="secondary" 
-            onClick={handleCancel} 
-            disabled={isSaving}
-            className="!px-6"
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            onClick={handleSave}
-            disabled={isSaving}
-            icon={isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-            className="!px-6"
-          >
-            {isSaving ? 'Saving...' : 'Save Changes'}
-          </Button>
-        </div>
-      ) : (
-        !isLoading && (
-          <div
-            className="fixed bottom-6 right-6 z-50"
-            style={{ filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.15))' }}
-          >
-            <Button
-              variant="primary"
-              onClick={() => setIsEditing(true)}
-              icon={<Edit className="w-6 h-6" />}
-              className="rounded-lg !p-0 w-16 h-16 flex items-center justify-center shadow-lg"
-              style={{ borderRadius: '0.75rem', fontSize: '1.1rem' }}
-              aria-label="Edit Profile"
-            />
-          </div>
-        )
-      )}
         </>
       )}
 

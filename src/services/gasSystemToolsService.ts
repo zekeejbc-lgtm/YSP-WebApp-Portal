@@ -511,8 +511,9 @@ let cachePollingInterval: number | null = null;
 /**
  * Start polling for cache version changes
  * If version changes, prompts user to refresh
+ * Default: 10 seconds for near real-time detection across all devices
  */
-export function startCacheVersionPolling(intervalMs = 60000): void {
+export function startCacheVersionPolling(intervalMs = 10000): void {
   if (cachePollingInterval) return;
   
   cachePollingInterval = window.setInterval(async () => {
