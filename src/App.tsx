@@ -1332,7 +1332,7 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
     ]), []);
 
     // Role Hierarchy Helper - Check if user has access based on role hierarchy
-    // auditor (highest) > admin > head > member > suspended > banned (no access)
+    // auditor (highest) > admin > head > member/guest > suspended > banned (no access)
     const hasRoleAccess = useCallback((requiredRoles: string[] | undefined): boolean => {
       if (!requiredRoles || requiredRoles.length === 0) return true; // Public access
       
@@ -1340,6 +1340,7 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
       const roleHierarchy: Record<string, number> = {
         banned: 0,      // No access
         suspended: 1,   // Minimal access
+        guest: 2,       // Guest access (same as member)
         member: 2,      // Standard access
         head: 3,        // Leadership access
         admin: 4,       // Management access
