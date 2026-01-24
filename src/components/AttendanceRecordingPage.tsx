@@ -900,19 +900,95 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const hasPrefetchedMembersRef = useRef(false);
   const currentUser = getStoredUser();
   const isScannerPriorityUser = currentUser?.role === "head" || currentUser?.role === "admin" || currentUser?.role === "auditor";
-  const MEMBERS_CACHE_KEY = "ysp_attendance_members_cache_v1";
-  const MEMBERS_CACHE_TS_KEY = "ysp_attendance_members_cache_ts_v1";
-  const MEMBERS_CACHE_TTL_MS = 5 * 60 * 1000;
+  const MEMBERS_CACHE_KEY = "ysp_attendance_members_cache_v2";
+  const MEMBERS_CACHE_TS_KEY = "ysp_attendance_members_cache_ts_v2";
+  const PENDING_ATTENDANCE_KEY = "ysp_pending_attendance_queue_v1";
   const navEntries = performance.getEntriesByType("navigation");
   const isReload = navEntries.length > 0 && (navEntries[0] as PerformanceNavigationTiming).type === "reload";
 
+  // Pending attendance queue for offline support
+  interface PendingAttendanceRecord {
+    id: string;
+    eventId: string;
+    eventName: string;
+    memberId: string;
+    memberName: string;
+    memberData: MemberForAttendance;
+    status: 'Present' | 'Late' | 'Absent' | 'Excused';
+    timeType: 'in' | 'out';
+    timestamp: string;
+    fullDate: string;
+    location?: { lat: number; lng: number };
+    recordedBy: string;
+    createdAt: number;
+    synced: boolean;
+    syncError?: string;
+  }
+
+  const [pendingAttendanceQueue, setPendingAttendanceQueue] = useState<PendingAttendanceRecord[]>([]);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Load pending queue from localStorage on mount
+  const loadPendingQueue = useCallback((): PendingAttendanceRecord[] => {
+    try {
+      const raw = localStorage.getItem(PENDING_ATTENDANCE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((r: PendingAttendanceRecord) => !r.synced);
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // Save pending queue to localStorage
+  const savePendingQueue = useCallback((queue: PendingAttendanceRecord[]) => {
+    try {
+      localStorage.setItem(PENDING_ATTENDANCE_KEY, JSON.stringify(queue));
+    } catch {
+      console.error('Failed to save pending attendance queue');
+    }
+  }, []);
+
+  // Add record to pending queue
+  const addToPendingQueue = useCallback((record: Omit<PendingAttendanceRecord, 'id' | 'createdAt' | 'synced'>) => {
+    const newRecord: PendingAttendanceRecord = {
+      ...record,
+      id: `pending_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: Date.now(),
+      synced: false,
+    };
+    setPendingAttendanceQueue(prev => {
+      const updated = [...prev, newRecord];
+      savePendingQueue(updated);
+      return updated;
+    });
+    return newRecord;
+  }, [savePendingQueue]);
+
+  // Mark record as synced
+  const markAsSynced = useCallback((id: string) => {
+    setPendingAttendanceQueue(prev => {
+      const updated = prev.filter(r => r.id !== id);
+      savePendingQueue(updated);
+      return updated;
+    });
+  }, [savePendingQueue]);
+
+  // Mark record as failed
+  const markAsFailed = useCallback((id: string, error: string) => {
+    setPendingAttendanceQueue(prev => {
+      const updated = prev.map(r => r.id === id ? { ...r, syncError: error } : r);
+      savePendingQueue(updated);
+      return updated;
+    });
+  }, [savePendingQueue]);
+
+  // Member cache is now permanent (no TTL expiry)
   const loadMembersFromCache = (): MemberForAttendance[] | null => {
     try {
-      const cachedAtRaw = localStorage.getItem(MEMBERS_CACHE_TS_KEY);
-      const cachedAt = cachedAtRaw ? Number(cachedAtRaw) : 0;
-      if (!cachedAt || Date.now() - cachedAt > MEMBERS_CACHE_TTL_MS) {
-        return null;
-      }
+      // No TTL check - cache is permanent until manually cleared
       const raw = localStorage.getItem(MEMBERS_CACHE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
@@ -925,7 +1001,12 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
   const saveMembersToCache = (membersToCache: MemberForAttendance[]) => {
     try {
-      localStorage.setItem(MEMBERS_CACHE_KEY, JSON.stringify(membersToCache));
+      // Merge with existing cache to preserve all members
+      const existing = loadMembersFromCache() || [];
+      const existingIds = new Set(existing.map(m => m.id));
+      const newMembers = membersToCache.filter(m => !existingIds.has(m.id));
+      const merged = [...existing, ...newMembers];
+      localStorage.setItem(MEMBERS_CACHE_KEY, JSON.stringify(merged));
       localStorage.setItem(MEMBERS_CACHE_TS_KEY, String(Date.now()));
     } catch {
       // Ignore cache write failures (e.g., storage full or disabled).
@@ -1270,6 +1351,97 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   const [isRecordingAttendance, setIsRecordingAttendance] = useState(false);
 
+  // Online/Offline detection and pending queue sync
+  useEffect(() => {
+    // Load pending queue on mount
+    const queue = loadPendingQueue();
+    setPendingAttendanceQueue(queue);
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      toast.success("Back online!", {
+        description: pendingAttendanceQueue.length > 0 
+          ? `Syncing ${pendingAttendanceQueue.length} pending record(s)...` 
+          : "Network connection restored.",
+      });
+      // Trigger sync
+      syncPendingRecords();
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      toast.warning("You're offline", {
+        description: "Attendance will be saved locally and synced when online.",
+        duration: 5000,
+      });
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [loadPendingQueue]);
+
+  // Sync pending records when coming online
+  const syncPendingRecords = useCallback(async () => {
+    const queue = loadPendingQueue();
+    if (queue.length === 0 || isSyncing) return;
+
+    setIsSyncing(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const record of queue) {
+      try {
+        if (record.timeType === 'in') {
+          await recordTimeIn({
+            eventId: record.eventId,
+            memberId: record.memberId,
+            memberName: record.memberName,
+            status: record.status as 'Present' | 'Late',
+            location: record.location,
+            recordedBy: record.recordedBy,
+          });
+        } else {
+          await recordTimeOut({
+            eventId: record.eventId,
+            memberId: record.memberId,
+            location: record.location,
+            recordedBy: record.recordedBy,
+          });
+        }
+        markAsSynced(record.id);
+        successCount++;
+      } catch (error) {
+        console.error(`Failed to sync record ${record.id}:`, error);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        // Don't mark as failed for network errors - will retry
+        if (error instanceof AttendanceAPIError && error.code !== AttendanceErrorCodes.NETWORK_ERROR) {
+          markAsFailed(record.id, errorMsg);
+          failCount++;
+        }
+      }
+    }
+
+    setIsSyncing(false);
+
+    if (successCount > 0) {
+      toast.success(`Synced ${successCount} attendance record(s)`, {
+        description: failCount > 0 ? `${failCount} record(s) had errors.` : undefined,
+      });
+    }
+  }, [loadPendingQueue, markAsSynced, markAsFailed, isSyncing]);
+
+  // Try to sync when online status changes
+  useEffect(() => {
+    if (isOnline && pendingAttendanceQueue.length > 0) {
+      syncPendingRecords();
+    }
+  }, [isOnline, syncPendingRecords, pendingAttendanceQueue.length]);
+
   // Load members from backend
   const loadMembers = useCallback(async (search?: string, limit: number = 100, showLoading: boolean = true, useCache: boolean = true) => {
     if (showLoading) {
@@ -1285,6 +1457,13 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         if (cachedMembers && cachedMembers.length > 0) {
           cachedMembers.forEach(cacheMember);
           setMembers(cachedMembers);
+          // If online, also fetch fresh data in background to update cache
+          if (isOnline) {
+            getMembersForAttendance(search, limit).then(fetchedMembers => {
+              fetchedMembers.forEach(cacheMember);
+              saveMembersToCache(fetchedMembers);
+            }).catch(() => {/* ignore background fetch errors */});
+          }
           return;
         }
       }
@@ -1296,6 +1475,16 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       }
     } catch (error) {
       console.error("Failed to load members:", error);
+      // If offline, try to use cached members even if stale
+      if (!isOnline) {
+        const cachedMembers = loadMembersFromCache();
+        if (cachedMembers && cachedMembers.length > 0) {
+          cachedMembers.forEach(cacheMember);
+          setMembers(cachedMembers);
+          toast.info("Using cached members (offline)", { duration: 3000 });
+          return;
+        }
+      }
       toast.error("Failed to load members", {
         description: error instanceof Error ? error.message : "Unknown error",
       });
@@ -1304,7 +1493,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         setIsLoadingMembers(false);
       }
     }
-  }, []);
+  }, [isOnline]);
 
   // Load members when entering recording step
   useEffect(() => {
@@ -1544,7 +1733,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     member.id.toLowerCase().includes(memberSearchInput.toLowerCase())
   );
 
-  // Process QR code scan result
+  // Process QR code scan result - with offline support
   const processQRScan = async (scannedData: string) => {
     if (!selectedEvent) {
       isProcessingScanRef.current = false;
@@ -1571,25 +1760,45 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       // Parse QR data - expected format: "ID_CODE" or "MEM-XXX" or member ID
       const memberId = rawMemberId;
       
-      // Find member in our loaded list, or search for them
+      // Find member in our loaded list or cache first
       let member = memberCacheRef.current.get(normalizedMemberId) ||
-        members.find(m => m.id === memberId || m.id.includes(memberId));
+        memberCacheRef.current.get(memberId) ||
+        members.find(m => m.id === memberId || m.id.includes(memberId) || normalizeMemberId(m.id) === normalizedMemberId);
       
+      // Also check localStorage cache
       if (!member) {
-        // Try to fetch member from backend
-        const fetchedMembers = await getMembersForAttendance(memberId, 1);
-        if (fetchedMembers.length > 0) {
-          member = fetchedMembers[0];
-          cacheMember(member);
-          setMembers(prev => prev.some(m => m.id === member?.id) ? prev : [...prev, member!]);
+        const cachedMembers = loadMembersFromCache();
+        if (cachedMembers) {
+          member = cachedMembers.find(m => m.id === memberId || m.id.includes(memberId) || normalizeMemberId(m.id) === normalizedMemberId);
+          if (member) {
+            cacheMember(member);
+          }
+        }
+      }
+      
+      // Only fetch from backend if online and not found in cache
+      if (!member && isOnline) {
+        try {
+          const fetchedMembers = await getMembersForAttendance(memberId, 1);
+          if (fetchedMembers.length > 0) {
+            member = fetchedMembers[0];
+            cacheMember(member);
+            saveMembersToCache([member]);
+            setMembers(prev => prev.some(m => m.id === member?.id) ? prev : [...prev, member!]);
+          }
+        } catch {
+          // Continue with cached data if fetch fails
         }
       }
 
       if (!member) {
         toast.error("Member not found", {
-          description: `No member found with ID: ${memberId}`,
+          description: isOnline 
+            ? `No member found with ID: ${memberId}` 
+            : `Member not in offline cache. ID: ${memberId}`,
         });
         setIsRecordingAttendance(false);
+        isProcessingScanRef.current = false;
         return;
       }
 
@@ -1607,7 +1816,49 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         day: 'numeric'
       });
 
-      // Record attendance based on timeType
+      // Helper to show success modal (used for both online and offline)
+      const showSuccessModal = (isOffline: boolean = false) => {
+        setPendingRecord({
+          memberData: member,
+          member: member!.name,
+          event: selectedEvent.name,
+          timeType: timeType === "in" ? "Time In" : "Time Out",
+          status: "Present",
+          timestamp: timestamp,
+          date: fullDate,
+          isOffline: isOffline,
+        });
+        scanPauseRef.current = true;
+        setShowVerificationModal(true);
+      };
+
+      // Helper to queue offline record
+      const queueOfflineRecord = () => {
+        addToPendingQueue({
+          eventId: selectedEvent.id,
+          eventName: selectedEvent.name,
+          memberId: member!.id,
+          memberName: member!.name,
+          memberData: member!,
+          status: 'Present',
+          timeType: timeType,
+          timestamp: timestamp,
+          fullDate: fullDate,
+          location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+          recordedBy: getCurrentUserName(),
+        });
+        showSuccessModal(true);
+      };
+
+      // If offline, queue the record and show optimistic UI
+      if (!isOnline) {
+        queueOfflineRecord();
+        setIsRecordingAttendance(false);
+        isProcessingScanRef.current = false;
+        return;
+      }
+
+      // Online flow - try to record to backend
       if (timeType === "in") {
         try {
           const response = await recordTimeIn({
@@ -1633,31 +1884,39 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
           scanPauseRef.current = true;
           setShowVerificationModal(true);
         } catch (error) {
-          if (error instanceof AttendanceAPIError && error.code === AttendanceErrorCodes.EXISTING_RECORD) {
-            // Show overwrite warning
-            const existingRecord = error.existingRecord;
-            setPreviousRecord({
-              memberData: member,
-              member: member.name,
-              event: selectedEvent.name,
-              timeType: "Time In",
-              status: existingRecord?.status || "Present",
-              timestamp: existingRecord?.timeIn || "",
-              date: fullDate,
-            });
-            setPendingRecord({
-              memberData: member,
-              member: member.name,
-              event: selectedEvent.name,
-              timeType: "Time In",
-              status: "Present",
-              timestamp: timestamp,
-              date: fullDate,
-            });
-            scanPauseRef.current = true;
-            setShowOverwriteWarning(true);
+          if (error instanceof AttendanceAPIError) {
+            if (error.code === AttendanceErrorCodes.EXISTING_RECORD) {
+              // Show overwrite warning
+              const existingRecord = error.existingRecord;
+              setPreviousRecord({
+                memberData: member,
+                member: member.name,
+                event: selectedEvent.name,
+                timeType: "Time In",
+                status: existingRecord?.status || "Present",
+                timestamp: existingRecord?.timeIn || "",
+                date: fullDate,
+              });
+              setPendingRecord({
+                memberData: member,
+                member: member.name,
+                event: selectedEvent.name,
+                timeType: "Time In",
+                status: "Present",
+                timestamp: timestamp,
+                date: fullDate,
+              });
+              scanPauseRef.current = true;
+              setShowOverwriteWarning(true);
+            } else if (error.code === AttendanceErrorCodes.NETWORK_ERROR || error.code === AttendanceErrorCodes.TIMEOUT) {
+              // Network error - queue for offline sync
+              queueOfflineRecord();
+            } else {
+              throw error;
+            }
           } else {
-            throw error;
+            // Unknown error - try to queue offline
+            queueOfflineRecord();
           }
         }
       } else {
@@ -1694,11 +1953,15 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
               toast.error("Already Timed Out", {
                 description: `${member.name} has already timed out for this event today.`,
               });
+            } else if (error.code === AttendanceErrorCodes.NETWORK_ERROR || error.code === AttendanceErrorCodes.TIMEOUT) {
+              // Network error - queue for offline sync
+              queueOfflineRecord();
             } else {
               throw error;
             }
           } else {
-            throw error;
+            // Unknown error - try to queue offline
+            queueOfflineRecord();
           }
         }
       }
@@ -2574,6 +2837,37 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       {/* STEP 3: Recording Interface - QR Scanner */}
       {currentStep === "recording" && selectedMode === "qr" && (
         <div className="max-w-4xl mx-auto">
+          {/* Offline/Pending Status Bar */}
+          {(!isOnline || pendingAttendanceQueue.length > 0) && (
+            <div 
+              className={`mb-4 p-3 rounded-lg flex items-center justify-between ${
+                !isOnline 
+                  ? 'bg-amber-500/20 border border-amber-500/30' 
+                  : 'bg-blue-500/20 border border-blue-500/30'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-amber-500' : 'bg-blue-500'} animate-pulse`} />
+                <span className={`text-sm font-medium ${!isOnline ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                  {!isOnline ? 'Offline Mode' : `${pendingAttendanceQueue.length} pending sync`}
+                </span>
+              </div>
+              {isOnline && pendingAttendanceQueue.length > 0 && (
+                <button
+                  onClick={syncPendingRecords}
+                  disabled={isSyncing}
+                  className="text-xs px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 flex items-center gap-1"
+                >
+                  {isSyncing ? (
+                    <><Loader2 className="w-3 h-3 animate-spin" /> Syncing...</>
+                  ) : (
+                    <><RefreshCw className="w-3 h-3" /> Sync Now</>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+          
           {/* QR Scanner Controls */}
           <div
             className="border rounded-lg mb-4 md:mb-6"
@@ -2769,21 +3063,53 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
       {/* STEP 3: Recording Interface - Manual Entry */}
       {currentStep === "recording" && selectedMode === "manual" && (
-        <div 
-          className="rounded-xl p-4 md:p-6 max-w-3xl mx-auto border"
-          style={{
-            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-            backdropFilter: 'blur(20px)',
-            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          }}
-        >
-          {/* Event Info (Locked) */}
-          <div className="mb-4 md:mb-6 p-3 md:p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <p className="text-xs md:text-sm text-blue-800 dark:text-blue-300">
-              <strong>Event:</strong> {selectedEvent?.name}
-            </p>
-            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-              Location: {selectedEvent?.locationName || "Not specified"}
+        <div className="max-w-3xl mx-auto">
+          {/* Offline/Pending Status Bar */}
+          {(!isOnline || pendingAttendanceQueue.length > 0) && (
+            <div 
+              className={`mb-4 p-3 rounded-lg flex items-center justify-between ${
+                !isOnline 
+                  ? 'bg-amber-500/20 border border-amber-500/30' 
+                  : 'bg-blue-500/20 border border-blue-500/30'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-amber-500' : 'bg-blue-500'} animate-pulse`} />
+                <span className={`text-sm font-medium ${!isOnline ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                  {!isOnline ? 'Offline Mode' : `${pendingAttendanceQueue.length} pending sync`}
+                </span>
+              </div>
+              {isOnline && pendingAttendanceQueue.length > 0 && (
+                <button
+                  onClick={syncPendingRecords}
+                  disabled={isSyncing}
+                  className="text-xs px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 flex items-center gap-1"
+                >
+                  {isSyncing ? (
+                    <><Loader2 className="w-3 h-3 animate-spin" /> Syncing...</>
+                  ) : (
+                    <><RefreshCw className="w-3 h-3" /> Sync Now</>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+          
+          <div 
+            className="rounded-xl p-4 md:p-6 border"
+            style={{
+              background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+              backdropFilter: 'blur(20px)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            }}
+          >
+            {/* Event Info (Locked) */}
+            <div className="mb-4 md:mb-6 p-3 md:p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <p className="text-xs md:text-sm text-blue-800 dark:text-blue-300">
+                <strong>Event:</strong> {selectedEvent?.name}
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                Location: {selectedEvent?.locationName || "Not specified"}
             </p>
           </div>
 
@@ -3038,6 +3364,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
           >
             {isRecordingAttendance ? "Recording..." : "Record Attendance"}
           </Button>
+          </div>
         </div>
       )}
 
@@ -3675,13 +4002,27 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             style={{
               background: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
               backdropFilter: 'blur(20px)',
-              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-              boxShadow: isDark 
-                ? '0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1)' 
-                : '0 20px 60px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+              borderColor: pendingRecord.isOffline 
+                ? 'rgba(251, 191, 36, 0.5)' 
+                : isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              boxShadow: pendingRecord.isOffline
+                ? '0 20px 60px rgba(251, 191, 36, 0.2), 0 0 0 2px rgba(251, 191, 36, 0.3)'
+                : isDark 
+                  ? '0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1)' 
+                  : '0 20px 60px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.05)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Offline Banner */}
+            {pendingRecord.isOffline && (
+              <div className="bg-amber-500/20 border-b border-amber-500/30 px-4 py-2.5 flex items-center justify-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                <span className="text-amber-600 dark:text-amber-400 text-sm font-medium">
+                  Saved Offline • Will sync when online
+                </span>
+              </div>
+            )}
+            
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-5 md:p-7">
               {/* Success Icon Header */}
@@ -3689,11 +4030,19 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 <div 
                   className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-full mb-3"
                   style={{
-                    background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
-                    boxShadow: '0 8px 16px rgba(246, 66, 31, 0.3)',
+                    background: pendingRecord.isOffline 
+                      ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                      : 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                    boxShadow: pendingRecord.isOffline 
+                      ? '0 8px 16px rgba(245, 158, 11, 0.3)'
+                      : '0 8px 16px rgba(246, 66, 31, 0.3)',
                   }}
                 >
-                  <CheckCircle className="w-9 h-9 md:w-11 md:h-11 text-white" />
+                  {pendingRecord.isOffline ? (
+                    <Clock className="w-9 h-9 md:w-11 md:h-11 text-white" />
+                  ) : (
+                    <CheckCircle className="w-9 h-9 md:w-11 md:h-11 text-white" />
+                  )}
                 </div>
                 <h3
                   className="mb-1"
@@ -3701,12 +4050,16 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                     fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
                     fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
                     fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                    color: DESIGN_TOKENS.colors.brand.red,
+                    color: pendingRecord.isOffline ? '#f59e0b' : DESIGN_TOKENS.colors.brand.red,
                   }}
                 >
-                  Verify Attendance
+                  {pendingRecord.isOffline ? 'Queued for Sync' : 'Verify Attendance'}
                 </h3>
-                <p className="text-sm text-muted-foreground">Please verify the member information before recording</p>
+                <p className="text-sm text-muted-foreground">
+                  {pendingRecord.isOffline 
+                    ? 'This record will be synced when you have internet connection'
+                    : 'Please verify the member information before recording'}
+                </p>
               </div>
               
               {/* Member Profile Card */}
