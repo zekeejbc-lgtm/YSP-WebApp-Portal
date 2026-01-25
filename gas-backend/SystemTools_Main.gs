@@ -82,6 +82,14 @@ function doPost(e) {
       case 'getAccessLogsStats':
         return handleGetAccessLogsStats();
       
+      // Clear Access Logs
+      case 'clearAllAccessLogs':
+        return handleClearAllAccessLogs(requestData.username);
+      case 'clearAccessLogsByDateRange':
+        return handleClearAccessLogsByDateRange(requestData.startDate, requestData.endDate, requestData.username);
+      case 'clearSpecificAccessLogs':
+        return handleClearSpecificAccessLogs(requestData.logIds, requestData.username);
+      
       // Debug
       case 'testConnection':
         return handleTestConnection();
@@ -1405,6 +1413,283 @@ function handleGetAccessLogsStats() {
     Logger.log('Error getting access logs stats: ' + error.toString());
     return createErrorResponse('Failed to get access logs stats: ' + error.message, 500);
   }
+}
+
+// =================== CLEAR ACCESS LOGS FUNCTIONS ===================
+
+/**
+ * Clear ALL access logs from the Access Logs sheet
+ * Keeps the header row intact
+ */
+function handleClearAllAccessLogs(username) {
+  try {
+    const sheet = initializeAccessLogsSheet();
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow <= 1) {
+      return createSuccessResponse({
+        message: 'No logs to clear',
+        deletedCount: 0,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Delete all data rows except header
+    const deletedCount = lastRow - 1;
+    sheet.deleteRows(2, deletedCount);
+    
+    // Log this action
+    handleLogAccess(username || 'System', 'Cleared all access logs (' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
+    
+    Logger.log('All access logs cleared by: ' + username + ', count: ' + deletedCount);
+    
+    return createSuccessResponse({
+      message: 'All access logs cleared successfully',
+      deletedCount: deletedCount,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    Logger.log('Error clearing all access logs: ' + error.toString());
+    return createErrorResponse('Failed to clear access logs: ' + error.message, 500);
+  }
+}
+
+/**
+ * Clear access logs within a specific date range
+ * @param {string} startDate - Start date in ISO format (YYYY-MM-DD)
+ * @param {string} endDate - End date in ISO format (YYYY-MM-DD)
+ * @param {string} username - User performing the action
+ */
+function handleClearAccessLogsByDateRange(startDate, endDate, username) {
+  try {
+    if (!startDate || !endDate) {
+      return createErrorResponse('Start date and end date are required', 400);
+    }
+    
+    const sheet = initializeAccessLogsSheet();
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) {
+      return createSuccessResponse({
+        message: 'No logs to clear',
+        deletedCount: 0,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Parse date range
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    
+    // Find rows to delete (collect indices in reverse order to avoid shifting issues)
+    const rowsToDelete = [];
+    for (let i = data.length - 1; i >= 1; i--) {
+      const row = data[i];
+      const timestampStr = row[4]; // Timestamp column
+      
+      if (!timestampStr) continue;
+      
+      const logDate = new Date(timestampStr);
+      if (logDate >= start && logDate <= end) {
+        rowsToDelete.push(i + 1); // Sheet rows are 1-indexed
+      }
+    }
+    
+    // Delete rows from bottom to top to maintain correct indices
+    for (const rowIndex of rowsToDelete) {
+      sheet.deleteRow(rowIndex);
+    }
+    
+    const deletedCount = rowsToDelete.length;
+    
+    // Log this action
+    handleLogAccess(username || 'System', 'Cleared access logs by date range (' + startDate + ' to ' + endDate + ', ' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
+    
+    Logger.log('Access logs cleared by date range by: ' + username + ', count: ' + deletedCount);
+    
+    return createSuccessResponse({
+      message: 'Access logs cleared successfully for date range',
+      deletedCount: deletedCount,
+      dateRange: { start: startDate, end: endDate },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    Logger.log('Error clearing access logs by date range: ' + error.toString());
+    return createErrorResponse('Failed to clear access logs: ' + error.message, 500);
+  }
+}
+
+/**
+ * Clear specific access logs by their IDs (row indices)
+ * @param {Array<string>} logIds - Array of log IDs to delete
+ * @param {string} username - User performing the action
+ */
+function handleClearSpecificAccessLogs(logIds, username) {
+  try {
+    if (!logIds || !Array.isArray(logIds) || logIds.length === 0) {
+      return createErrorResponse('Log IDs array is required', 400);
+    }
+    
+    const sheet = initializeAccessLogsSheet();
+    
+    // Convert IDs to row numbers and sort descending (to delete from bottom up)
+    const rowNumbers = logIds
+      .map(id => parseInt(id, 10))
+      .filter(num => !isNaN(num) && num > 0)
+      .map(id => id + 1) // Row number = ID + 1 (since ID is 0-based index from header)
+      .sort((a, b) => b - a); // Sort descending
+    
+    // Remove duplicates
+    const uniqueRows = [...new Set(rowNumbers)];
+    
+    // Delete rows from bottom to top
+    let deletedCount = 0;
+    for (const rowIndex of uniqueRows) {
+      if (rowIndex > 1 && rowIndex <= sheet.getLastRow()) {
+        sheet.deleteRow(rowIndex);
+        deletedCount++;
+      }
+    }
+    
+    // Log this action
+    handleLogAccess(username || 'System', 'Cleared specific access logs (' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
+    
+    Logger.log('Specific access logs cleared by: ' + username + ', count: ' + deletedCount);
+    
+    return createSuccessResponse({
+      message: 'Selected access logs cleared successfully',
+      deletedCount: deletedCount,
+      requestedIds: logIds.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    Logger.log('Error clearing specific access logs: ' + error.toString());
+    return createErrorResponse('Failed to clear access logs: ' + error.message, 500);
+  }
+}
+
+/**
+ * Scheduled function to clear access logs automatically
+ * Runs every Monday at 12:00 AM (midnight) Manila time
+ * Clears logs older than 7 days to maintain a week's worth of data
+ */
+function scheduledWeeklyClearAccessLogs() {
+  try {
+    const sheet = initializeAccessLogsSheet();
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) {
+      Logger.log('Scheduled clear: No logs to clear');
+      return;
+    }
+    
+    // Calculate date 7 days ago
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    oneWeekAgo.setHours(0, 0, 0, 0);
+    
+    // Find rows to delete (collect indices in reverse order)
+    const rowsToDelete = [];
+    for (let i = data.length - 1; i >= 1; i--) {
+      const row = data[i];
+      const timestampStr = row[4]; // Timestamp column
+      
+      if (!timestampStr) continue;
+      
+      const logDate = new Date(timestampStr);
+      if (logDate < oneWeekAgo) {
+        rowsToDelete.push(i + 1); // Sheet rows are 1-indexed
+      }
+    }
+    
+    // Delete rows from bottom to top
+    for (const rowIndex of rowsToDelete) {
+      sheet.deleteRow(rowIndex);
+    }
+    
+    const deletedCount = rowsToDelete.length;
+    
+    // Log the scheduled action
+    if (deletedCount > 0) {
+      handleLogAccess('System Scheduler', 'Scheduled weekly clear: removed ' + deletedCount + ' logs older than 7 days', 'delete', 'success', 'System', 'Scheduled Task');
+    }
+    
+    Logger.log('Scheduled weekly clear completed: ' + deletedCount + ' logs removed');
+  } catch (error) {
+    Logger.log('Error in scheduled weekly clear: ' + error.toString());
+  }
+}
+
+/**
+ * Create/update the weekly trigger for automatic access log clearing
+ * Call this function once to set up the scheduled trigger
+ * Runs every Monday at 12:00 AM (midnight) Manila time
+ */
+function setupWeeklyAccessLogClearTrigger() {
+  // Delete existing triggers for this function to avoid duplicates
+  const triggers = ScriptApp.getProjectTriggers();
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === 'scheduledWeeklyClearAccessLogs') {
+      ScriptApp.deleteTrigger(trigger);
+      Logger.log('Deleted existing weekly clear trigger');
+    }
+  }
+  
+  // Create new weekly trigger for Monday at 12:00 AM
+  ScriptApp.newTrigger('scheduledWeeklyClearAccessLogs')
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.MONDAY)
+    .atHour(0) // 12:00 AM (midnight)
+    .nearMinute(0)
+    .inTimezone('Asia/Manila')
+    .create();
+  
+  Logger.log('Weekly access log clear trigger created: Every Monday at 12:00 AM Manila time');
+  
+  return 'Weekly trigger set up successfully. Access logs older than 7 days will be cleared every Monday at 12:00 AM.';
+}
+
+/**
+ * Remove the weekly trigger for automatic access log clearing
+ * Call this function to disable automatic clearing
+ */
+function removeWeeklyAccessLogClearTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  let removed = 0;
+  
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === 'scheduledWeeklyClearAccessLogs') {
+      ScriptApp.deleteTrigger(trigger);
+      removed++;
+    }
+  }
+  
+  Logger.log('Removed ' + removed + ' weekly clear trigger(s)');
+  return 'Removed ' + removed + ' weekly clear trigger(s). Automatic clearing is now disabled.';
+}
+
+/**
+ * Check if the weekly trigger is set up
+ */
+function checkWeeklyAccessLogClearTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === 'scheduledWeeklyClearAccessLogs') {
+      return {
+        active: true,
+        nextRun: 'Every Monday at 12:00 AM Manila time',
+        handlerFunction: trigger.getHandlerFunction()
+      };
+    }
+  }
+  
+  return {
+    active: false,
+    message: 'No weekly clear trigger found. Run setupWeeklyAccessLogClearTrigger() to enable.'
+  };
 }
 
 // =================== TESTING FUNCTIONS ===================

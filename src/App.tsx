@@ -753,6 +753,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     // Profile Edit Mode
     const [isEditingProfile, setIsEditingProfile] = useState(false);
     const [triggerProfileEditMode, setTriggerProfileEditMode] = useState(false);
+
+    // Access Logs Modal State (to hide chatbot when modals are open)
+    const [accessLogsModalOpen, setAccessLogsModalOpen] = useState(false);
     
     // Homepage Content - Fetched from GAS Backend
     const [homepageContent, setHomepageContent] = useState<HomepageMainContent & {
@@ -2600,7 +2603,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage}
+        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
       />
@@ -3039,8 +3042,17 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading access logs..." />}>
-            <AccessLogsPage onClose={() => setShowAccessLogs(false)} isDark={isDark} username={userName || 'admin'} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
+            <AccessLogsPage 
+              onClose={() => setShowAccessLogs(false)} 
+              isDark={isDark} 
+              username={userName || 'admin'} 
+              addUploadToast={addUploadToast} 
+              updateUploadToast={updateUploadToast} 
+              removeUploadToast={removeUploadToast}
+              onModalStateChange={setAccessLogsModalOpen}
+            />
           </Suspense>
+          <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
           {chatbot}
         </>
       );

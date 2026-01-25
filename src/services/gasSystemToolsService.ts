@@ -727,3 +727,59 @@ export function logDelete(username: string, itemType: string, itemName?: string)
     status: 'success',
   });
 }
+
+// =================== CLEAR ACCESS LOGS FUNCTIONS ===================
+
+export interface ClearLogsResult {
+  message: string;
+  deletedCount: number;
+  timestamp: string;
+  dateRange?: { start: string; end: string };
+  requestedIds?: number;
+}
+
+/**
+ * Clear ALL access logs
+ * @param username - User performing the action (for audit trail)
+ */
+export async function clearAllAccessLogs(username: string): Promise<ClearLogsResult> {
+  const result = await callSystemToolsAPI<ClearLogsResult>('clearAllAccessLogs', {
+    username,
+  });
+  return result;
+}
+
+/**
+ * Clear access logs within a specific date range
+ * @param startDate - Start date in ISO format (YYYY-MM-DD)
+ * @param endDate - End date in ISO format (YYYY-MM-DD)
+ * @param username - User performing the action (for audit trail)
+ */
+export async function clearAccessLogsByDateRange(
+  startDate: string,
+  endDate: string,
+  username: string
+): Promise<ClearLogsResult> {
+  const result = await callSystemToolsAPI<ClearLogsResult>('clearAccessLogsByDateRange', {
+    startDate,
+    endDate,
+    username,
+  });
+  return result;
+}
+
+/**
+ * Clear specific access logs by their IDs
+ * @param logIds - Array of log IDs to delete
+ * @param username - User performing the action (for audit trail)
+ */
+export async function clearSpecificAccessLogs(
+  logIds: string[],
+  username: string
+): Promise<ClearLogsResult> {
+  const result = await callSystemToolsAPI<ClearLogsResult>('clearSpecificAccessLogs', {
+    logIds,
+    username,
+  });
+  return result;
+}

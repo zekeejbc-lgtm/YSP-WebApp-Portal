@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import SmartEventSearch from "./SmartEventSearch";
+import { useIsMobile } from "./ui/use-mobile";
 import {
   PieChart,
   Pie,
@@ -18,7 +19,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown } from "lucide-react";
+import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown, ExternalLink, Smartphone } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance } from "../services/gasAttendanceService";
 import jsPDF from "jspdf";
@@ -79,6 +80,98 @@ function formatTimeValue(timeValue: any): string {
   }
   
   return timeStr || '-';
+}
+
+// Helper function to check if someone has no logout time (present but didn't logout)
+function hasNoLogout(timeIn: any, timeOut: any, status: string): boolean {
+  const isPresent = status === 'Present' || status === 'CheckedIn' || status === 'CheckedOut' || status === 'Late';
+  if (!isPresent) return false;
+  
+  const timeInStr = String(timeIn || '').trim();
+  const timeOutStr = String(timeOut || '').trim();
+  
+  // Has time in but no time out
+  const hasTimeIn = timeInStr && timeInStr !== '-' && timeInStr !== 'N/A' && timeInStr !== 'undefined' && timeInStr !== 'null';
+  const hasTimeOut = timeOutStr && timeOutStr !== '-' && timeOutStr !== 'N/A' && timeOutStr !== 'undefined' && timeOutStr !== 'null';
+  
+  return hasTimeIn && !hasTimeOut;
+}
+
+// Helper function to calculate attendance duration between time in and time out
+function calculateAttendanceDuration(timeIn: any, timeOut: any): string {
+  if (!timeIn || !timeOut) return '-';
+  
+  const timeInStr = String(timeIn).trim();
+  const timeOutStr = String(timeOut).trim();
+  
+  if (!timeInStr || timeInStr === '-' || timeInStr === 'N/A' ||
+      !timeOutStr || timeOutStr === '-' || timeOutStr === 'N/A') {
+    return '-';
+  }
+  
+  // Try to parse times
+  let inDate: Date | null = null;
+  let outDate: Date | null = null;
+  
+  // Parse time in
+  if (timeInStr.includes('T')) {
+    inDate = new Date(timeInStr);
+  } else {
+    // Parse formatted time like "2:30 PM"
+    const inMatch = timeInStr.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i);
+    if (inMatch) {
+      let hours = parseInt(inMatch[1]);
+      const minutes = parseInt(inMatch[2]);
+      const period = inMatch[3]?.toUpperCase();
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+      inDate = new Date();
+      inDate.setHours(hours, minutes, 0, 0);
+    }
+  }
+  
+  // Parse time out
+  if (timeOutStr.includes('T')) {
+    outDate = new Date(timeOutStr);
+  } else {
+    // Parse formatted time like "5:45 PM"
+    const outMatch = timeOutStr.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i);
+    if (outMatch) {
+      let hours = parseInt(outMatch[1]);
+      const minutes = parseInt(outMatch[2]);
+      const period = outMatch[3]?.toUpperCase();
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+      outDate = new Date();
+      outDate.setHours(hours, minutes, 0, 0);
+    }
+  }
+  
+  if (!inDate || !outDate || isNaN(inDate.getTime()) || isNaN(outDate.getTime())) {
+    return '-';
+  }
+  
+  // Calculate difference in milliseconds
+  let diffMs = outDate.getTime() - inDate.getTime();
+  
+  // Handle overnight (if out time is earlier than in time, assume next day)
+  if (diffMs < 0) {
+    diffMs += 24 * 60 * 60 * 1000; // Add 24 hours
+  }
+  
+  // Convert to hours, minutes, seconds
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  
+  // Format output
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 && hours === 0) parts.push(`${seconds}s`); // Only show seconds if less than an hour
+  
+  return parts.length > 0 ? parts.join(' ') : '< 1m';
 }
 
 // Helper function to format date values from backend
@@ -282,6 +375,9 @@ export default function AttendanceDashboardPage({
   removeUploadToast,
   onDashboardContextUpdate,
 }: AttendanceDashboardPageProps) {
+  // Mobile detection for PDF preview fallback
+  const isMobile = useIsMobile();
+  
   // Smart search event selection (unified - replaces mode-based selection)
   const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
   
@@ -865,18 +961,24 @@ export default function AttendanceDashboardPage({
         doc.addPage();
         yPosition = 20;
 
-        const createTableData = (records: typeof filteredRecords, startIndex: number = 1) => {
+        const createPreviewTableData = (records: typeof filteredRecords, startIndex: number = 1) => {
           return records.map((record, index) => {
             const member = allMembers.find(m => m.id === record.memberId);
-            return [
-              String(startIndex + index),
-              record.memberName || member?.name || 'Unknown',
-              member?.committee || '-',
-              member?.position || '-',
-              record.status,
-              formatTimeValue(record.timeIn),
-              formatTimeValue(record.timeOut),
-            ];
+            const noLogout = hasNoLogout(record.timeIn, record.timeOut, record.status);
+            const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
+            return {
+              data: [
+                String(startIndex + index),
+                record.memberName || member?.name || 'Unknown',
+                member?.committee || '-',
+                member?.position || '-',
+                record.status,
+                formatTimeValue(record.timeIn),
+                noLogout ? 'NO LOGOUT ⚠️' : formatTimeValue(record.timeOut),
+                duration,
+              ],
+              noLogout,
+            };
           });
         };
 
@@ -906,12 +1008,13 @@ export default function AttendanceDashboardPage({
           doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
           yPosition += 8;
 
-          const tableData = createTableData(config.records);
+          const tableData = createPreviewTableData(config.records);
+          const noLogoutRows = new Set(tableData.map((row, idx) => row.noLogout ? idx : -1).filter(idx => idx >= 0));
 
           autoTable(doc, {
             startY: yPosition,
-            head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out']],
-            body: tableData.length > 0 ? tableData : [['-', 'No records', '-', '-', '-', '-', '-']],
+            head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Duration']],
+            body: tableData.length > 0 ? tableData.map(row => row.data) : [['-', 'No records', '-', '-', '-', '-', '-', '-']],
             theme: 'grid',
             headStyles: {
               fillColor: config.color,
@@ -922,14 +1025,25 @@ export default function AttendanceDashboardPage({
             bodyStyles: { fontSize: 7, textColor: [50, 50, 50] },
             columnStyles: {
               0: { cellWidth: 8, halign: 'center' },
-              1: { cellWidth: 35 },
-              2: { cellWidth: 35 },
-              3: { cellWidth: 22 },
-              4: { cellWidth: 18, halign: 'center' },
-              5: { cellWidth: 20, halign: 'center' },
-              6: { cellWidth: 20, halign: 'center' },
+              1: { cellWidth: 30 },
+              2: { cellWidth: 30 },
+              3: { cellWidth: 20 },
+              4: { cellWidth: 16, halign: 'center' },
+              5: { cellWidth: 18, halign: 'center' },
+              6: { cellWidth: 22, halign: 'center' },
+              7: { cellWidth: 16, halign: 'center' },
             },
             margin: { left: margin, right: margin },
+            didParseCell: (data: any) => {
+              // Highlight rows with no logout in yellow/orange
+              if (data.section === 'body' && noLogoutRows.has(data.row.index)) {
+                data.cell.styles.fillColor = [255, 243, 205]; // Light yellow/amber background
+                data.cell.styles.textColor = [180, 83, 9]; // Amber text for visibility
+                if (data.column.index === 6) { // Time Out column
+                  data.cell.styles.fontStyle = 'bold';
+                }
+              }
+            },
           });
 
           yPosition = (doc as any).lastAutoTable.finalY + 15;
@@ -1003,6 +1117,35 @@ export default function AttendanceDashboardPage({
       toast.error('Failed to generate PDF preview');
     } finally {
       setIsGeneratingPreview(false);
+    }
+  };
+
+  // Open PDF in new tab (for mobile devices that can't display iframe)
+  const handleOpenPdfInNewTab = () => {
+    if (pdfPreviewUrl) {
+      // Create a temporary anchor element to force open
+      const link = document.createElement('a');
+      link.href = pdfPreviewUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      
+      // Some mobile browsers need the click to happen on the document
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
+  // Download PDF directly (alternative for mobile)
+  const handleDownloadPdfPreview = () => {
+    if (pdfPreviewUrl) {
+      const link = document.createElement('a');
+      link.href = pdfPreviewUrl;
+      link.download = `Attendance_Preview_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('PDF downloaded successfully');
     }
   };
 
@@ -1407,21 +1550,27 @@ export default function AttendanceDashboardPage({
       await new Promise(resolve => setTimeout(resolve, 100));
       if (cancelled) return;
 
-      // Helper function to create table data for a set of records
+      // Helper function to create table data for a set of records (with no-logout marking)
       const createTableData = (records: typeof filteredRecords, startIndex: number = 1) => {
         return records.map((record, index) => {
           const member = allMembers.find(m => m.id === record.memberId);
-          return [
-            String(startIndex + index),
-            record.memberName || member?.name || 'Unknown',
-            member?.committee || '-',
-            member?.position || '-',
-            record.status,
-            formatTimeValue(record.timeIn),
-            formatTimeValue(record.timeOut),
-            record.recordedByTimeIn || '-',
-            record.recordedByTimeOut || '-',
-          ];
+          const noLogout = hasNoLogout(record.timeIn, record.timeOut, record.status);
+          const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
+          return {
+            data: [
+              String(startIndex + index),
+              record.memberName || member?.name || 'Unknown',
+              member?.committee || '-',
+              member?.position || '-',
+              record.status,
+              formatTimeValue(record.timeIn),
+              noLogout ? 'NO LOGOUT ⚠️' : formatTimeValue(record.timeOut),
+              duration,
+              record.recordedByTimeIn || '-',
+              record.recordedByTimeOut || '-',
+            ],
+            noLogout,
+          };
         });
       };
 
@@ -1507,12 +1656,13 @@ export default function AttendanceDashboardPage({
         yPosition += 8;
 
         const tableData = createTableData(config.records);
+        const noLogoutRows = new Set(tableData.map((row, idx) => row.noLogout ? idx : -1).filter(idx => idx >= 0));
 
-        // Create table with autoTable
+        // Create table with autoTable - now includes Duration column and no-logout highlighting
         autoTable(doc, {
           startY: yPosition,
-          head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Rec. By (In)', 'Rec. By (Out)']],
-          body: tableData.length > 0 ? tableData : [['-', 'No records', '-', '-', '-', '-', '-', '-', '-']],
+          head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Duration', 'Rec. By (In)', 'Rec. By (Out)']],
+          body: tableData.length > 0 ? tableData.map(row => row.data) : [['-', 'No records', '-', '-', '-', '-', '-', '-', '-', '-']],
           theme: 'grid',
           headStyles: {
             fillColor: config.color,
@@ -1532,20 +1682,31 @@ export default function AttendanceDashboardPage({
           },
           columnStyles: {
             0: { cellWidth: 7, halign: 'center', fontStyle: 'bold' },
-            1: { cellWidth: 28 },
-            2: { cellWidth: 28 },
-            3: { cellWidth: 18 },
-            4: { cellWidth: 14, halign: 'center' },
-            5: { cellWidth: 16, halign: 'center' },
-            6: { cellWidth: 16, halign: 'center' },
-            7: { cellWidth: 22 },
-            8: { cellWidth: 22 },
+            1: { cellWidth: 25 },
+            2: { cellWidth: 25 },
+            3: { cellWidth: 16 },
+            4: { cellWidth: 12, halign: 'center' },
+            5: { cellWidth: 14, halign: 'center' },
+            6: { cellWidth: 18, halign: 'center' },
+            7: { cellWidth: 14, halign: 'center' },
+            8: { cellWidth: 20 },
+            9: { cellWidth: 20 },
           },
           styles: {
             lineColor: [220, 220, 220],
             lineWidth: 0.1,
           },
           margin: { left: margin, right: margin },
+          didParseCell: (data: any) => {
+            // Highlight rows with no logout in yellow/orange
+            if (data.section === 'body' && noLogoutRows.has(data.row.index)) {
+              data.cell.styles.fillColor = [255, 243, 205]; // Light yellow/amber background
+              data.cell.styles.textColor = [180, 83, 9]; // Amber text for visibility
+              if (data.column.index === 6) { // Time Out column
+                data.cell.styles.fontStyle = 'bold';
+              }
+            }
+          },
         });
 
         // Get the final Y position after the table
@@ -1587,12 +1748,13 @@ export default function AttendanceDashboardPage({
           '-',
           '-',
           '-',
+          '-',
         ]);
 
         // Create table
         autoTable(doc, {
           startY: yPosition,
-          head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Rec. By (In)', 'Rec. By (Out)']],
+          head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Duration', 'Rec. By (In)', 'Rec. By (Out)']],
           body: notRecordedTableData,
           theme: 'grid',
           headStyles: {
@@ -1613,14 +1775,15 @@ export default function AttendanceDashboardPage({
           },
           columnStyles: {
             0: { cellWidth: 7, halign: 'center', fontStyle: 'bold' },
-            1: { cellWidth: 28 },
-            2: { cellWidth: 28 },
-            3: { cellWidth: 18 },
-            4: { cellWidth: 14, halign: 'center' },
-            5: { cellWidth: 16, halign: 'center' },
-            6: { cellWidth: 16, halign: 'center' },
-            7: { cellWidth: 22 },
-            8: { cellWidth: 22 },
+            1: { cellWidth: 25 },
+            2: { cellWidth: 25 },
+            3: { cellWidth: 16 },
+            4: { cellWidth: 12, halign: 'center' },
+            5: { cellWidth: 14, halign: 'center' },
+            6: { cellWidth: 18, halign: 'center' },
+            7: { cellWidth: 14, halign: 'center' },
+            8: { cellWidth: 20 },
+            9: { cellWidth: 20 },
           },
           styles: {
             lineColor: [220, 220, 220],
@@ -1960,7 +2123,7 @@ export default function AttendanceDashboardPage({
         ['Total:', totalRecords],
         [''],
         ['ATTENDEE LIST'],
-        ['#', 'Full Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Recorded By (In)', 'Recorded By (Out)', 'Notes'],
+        ['#', 'Full Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Duration', 'No Logout?', 'Recorded By (In)', 'Recorded By (Out)', 'Notes'],
       ];
 
       // Step 3: Process records (70%)
@@ -1973,6 +2136,8 @@ export default function AttendanceDashboardPage({
       // Add attendee data
       filteredRecords.forEach((record, index) => {
         const member = allMembers.find(m => m.id === record.memberId);
+        const noLogout = hasNoLogout(record.timeIn, record.timeOut, record.status);
+        const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
         headerData.push([
           index + 1,
           record.memberName || member?.name || 'Unknown',
@@ -1980,7 +2145,9 @@ export default function AttendanceDashboardPage({
           member?.position || '-',
           record.status,
           formatTimeValue(record.timeIn),
-          formatTimeValue(record.timeOut),
+          noLogout ? 'NO LOGOUT' : formatTimeValue(record.timeOut),
+          duration,
+          noLogout ? 'YES ⚠️' : 'No',
           record.recordedByTimeIn || '-',
           record.recordedByTimeOut || '-',
           record.notes || '-',
@@ -2004,7 +2171,9 @@ export default function AttendanceDashboardPage({
         { wch: 20 },  // Position
         { wch: 12 },  // Status
         { wch: 12 },  // Time In
-        { wch: 12 },  // Time Out
+        { wch: 14 },  // Time Out
+        { wch: 12 },  // Duration
+        { wch: 12 },  // No Logout?
         { wch: 20 },  // Recorded By (In)
         { wch: 20 },  // Recorded By (Out)
         { wch: 25 },  // Notes
@@ -2879,12 +3048,51 @@ export default function AttendanceDashboardPage({
                         </div>
                       </div>
                     ) : pdfPreviewUrl ? (
-                      <iframe
-                        src={pdfPreviewUrl}
-                        className="w-full h-full"
-                        style={{ minHeight: 450 }}
-                        title="PDF Preview"
-                      />
+                      <>
+                        {/* Mobile: Show buttons instead of iframe (mobile browsers can't display PDF in iframe) */}
+                        {isMobile ? (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 text-center p-8">
+                            <div className="w-20 h-20 rounded-full bg-[#f6421f]/10 flex items-center justify-center">
+                              <FileText className="w-10 h-10 text-[#f6421f]" />
+                            </div>
+                            <div>
+                              <p className="font-semibold text-lg">PDF Ready</p>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                Mobile browsers can't preview PDFs inline.<br />
+                                Use the buttons below to view or download.
+                              </p>
+                            </div>
+                            <div className="flex flex-col gap-3 w-full max-w-xs">
+                              <button
+                                onClick={handleOpenPdfInNewTab}
+                                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors font-medium"
+                              >
+                                <ExternalLink className="w-5 h-5" />
+                                Open PDF in New Tab
+                              </button>
+                              <button
+                                onClick={handleDownloadPdfPreview}
+                                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border-2 border-[#f6421f] text-[#f6421f] hover:bg-[#f6421f]/10 transition-colors font-medium"
+                              >
+                                <Download className="w-5 h-5" />
+                                Download PDF
+                              </button>
+                            </div>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Smartphone className="w-3 h-3" />
+                              Mobile device detected
+                            </p>
+                          </div>
+                        ) : (
+                          /* Desktop: Show iframe preview */
+                          <iframe
+                            src={pdfPreviewUrl}
+                            className="w-full h-full"
+                            style={{ minHeight: 450 }}
+                            title="PDF Preview"
+                          />
+                        )}
+                      </>
                     ) : (
                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-8">
                         <FileText className="w-16 h-16 text-muted-foreground/50" />

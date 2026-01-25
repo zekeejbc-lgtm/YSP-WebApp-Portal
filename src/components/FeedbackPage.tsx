@@ -1,11 +1,31 @@
-import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Send, Star, MessageSquare, ThumbsUp, AlertCircle, Upload, X, Eye, User, Clock, CheckCircle, XCircle, Mail, Image as ImageIcon, Trash2, Search, RefreshCw, Copy } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { ArrowLeft, Send, Star, MessageSquare, ThumbsUp, AlertCircle, Upload, X, Eye, User, Clock, CheckCircle, XCircle, Mail, Image as ImageIcon, Trash2, Search, RefreshCw, Copy, BarChart3, PieChart as PieChartIcon, Download, FileText, FileSpreadsheet, Settings, ChevronDown, TrendingUp, MessageCircle, Filter, Table2 as TableIcon, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import CustomDropdown from './CustomDropdown';
 import Breadcrumb from './design-system/Breadcrumb';
+import { DESIGN_TOKENS } from './design-system';
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 import { getFeedbacks, createFeedback, updateFeedback, Feedback } from '../services/gasFeedbackService';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
+
+// Organization details for export
+const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
+const ORG_NAME = "Youth Service Philippines";
+const ORG_CHAPTER = "Tagum Chapter";
+
+// Upload toast message interface
+interface UploadToastMessage {
+  id: string;
+  title: string;
+  message: string;
+  status: 'loading' | 'success' | 'error' | 'info';
+  progress?: number;
+  onCancel?: () => void;
+}
 
 interface FeedbackPageProps {
   onClose: () => void;
@@ -13,6 +33,9 @@ interface FeedbackPageProps {
   isDark: boolean;
   userRole?: string;
   username?: string;
+  addUploadToast?: (message: UploadToastMessage) => void;
+  updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
+  removeUploadToast?: (id: string) => void;
 }
 
 // Skeleton Loading Component
@@ -32,7 +55,7 @@ const SkeletonCard = () => (
   </div>
 );
 
-export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'guest', username = 'guest' }: FeedbackPageProps) {
+export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'guest', username = 'guest', addUploadToast, updateUploadToast, removeUploadToast }: FeedbackPageProps) {
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState<Feedback | null>(null);
@@ -42,6 +65,27 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
   const [newFeedbackId, setNewFeedbackId] = useState('');
   const [adminReply, setAdminReply] = useState('');
   const [editingFeedback, setEditingFeedback] = useState<Feedback | null>(null);
+  
+  // Admin/Auditor dashboard states
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [chartType, setChartType] = useState<'pie' | 'donut' | 'bar'>('pie');
+  const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [statusFilter, setStatusFilter] = useState<string>('All');
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const [exportModalTab, setExportModalTab] = useState<'preview' | 'settings'>('preview');
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'spreadsheet'>('pdf');
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [exportOptions, setExportOptions] = useState({
+    includeStatistics: true,
+    includeCharts: true,
+    showAuthorCodes: true,
+    showAuthorNames: false,
+    showAuthorEmails: false,
+    selectedStatuses: ['Pending', 'Reviewed', 'Resolved', 'Dropped'] as string[],
+    selectedCategories: [] as string[],
+  });
   
   // Form states with complete schema
   const [formData, setFormData] = useState({
@@ -105,7 +149,26 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     }
   }, [guestFeedbacks, userRole]);
 
-  const categories: Feedback['category'][] = ['Complaint', 'Suggestion', 'Bug', 'Compliment', 'Inquiry', 'Confession', 'Other'];
+  const categories: Feedback['category'][] = ['Complaint', 'Suggestion', 'Bug', 'Compliment', 'Inquiry', 'Confession', 'Feature Request', 'General Question', 'Privacy Concern', 'Report Issue', 'Appreciation', 'Testimonial', 'Other'];
+
+  // Expanded category colors
+  const getCategoryColor = (category: Feedback['category']) => {
+    switch (category) {
+      case 'Complaint': return { bg: 'rgba(239, 68, 68, 0.2)', border: 'rgba(239, 68, 68, 0.4)', text: '#ef4444' };
+      case 'Suggestion': return { bg: 'rgba(59, 130, 246, 0.2)', border: 'rgba(59, 130, 246, 0.4)', text: '#3b82f6' };
+      case 'Bug': return { bg: 'rgba(168, 85, 247, 0.2)', border: 'rgba(168, 85, 247, 0.4)', text: '#a855f7' };
+      case 'Compliment': return { bg: 'rgba(34, 197, 94, 0.2)', border: 'rgba(34, 197, 94, 0.4)', text: '#22c55e' };
+      case 'Inquiry': return { bg: 'rgba(251, 191, 36, 0.2)', border: 'rgba(251, 191, 36, 0.4)', text: '#fbbf24' };
+      case 'Confession': return { bg: 'rgba(236, 72, 153, 0.2)', border: 'rgba(236, 72, 153, 0.4)', text: '#ec4899' };
+      case 'Feature Request': return { bg: 'rgba(6, 182, 212, 0.2)', border: 'rgba(6, 182, 212, 0.4)', text: '#06b6d4' };
+      case 'General Question': return { bg: 'rgba(99, 102, 241, 0.2)', border: 'rgba(99, 102, 241, 0.4)', text: '#6366f1' };
+      case 'Privacy Concern': return { bg: 'rgba(239, 68, 68, 0.2)', border: 'rgba(239, 68, 68, 0.4)', text: '#dc2626' };
+      case 'Report Issue': return { bg: 'rgba(249, 115, 22, 0.2)', border: 'rgba(249, 115, 22, 0.4)', text: '#f97316' };
+      case 'Appreciation': return { bg: 'rgba(16, 185, 129, 0.2)', border: 'rgba(16, 185, 129, 0.4)', text: '#10b981' };
+      case 'Testimonial': return { bg: 'rgba(139, 92, 246, 0.2)', border: 'rgba(139, 92, 246, 0.4)', text: '#8b5cf6' };
+      default: return { bg: 'rgba(107, 114, 128, 0.2)', border: 'rgba(107, 114, 128, 0.4)', text: '#6b7280' };
+    }
+  };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -184,30 +247,36 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     const feedbackId = `YSPTFB-${manilaYear}-${uniqueCode}`;
     
     const toastId = `submit-${Date.now()}`;
-    addUploadToast({
-      id: toastId,
-      title: 'Submitting Feedback',
-      message: 'Preparing data...',
-      status: 'loading',
-      progress: 10
-    });
+    if (addUploadToast) {
+      addUploadToast({
+        id: toastId,
+        title: 'Submitting Feedback',
+        message: 'Preparing data...',
+        status: 'loading',
+        progress: 10
+      });
+    }
 
     try {
       // Handle Image Uploads
       let finalImageUrl = undefined;
       
       if (uploadedImages.length > 0) {
-        updateUploadToast(toastId, {
-          message: 'Uploading images to Drive...',
-          progress: 30
-        });
+        if (updateUploadToast) {
+          updateUploadToast(toastId, {
+            message: 'Uploading images to Drive...',
+            progress: 30
+          });
+        }
 
         const uploadedUrls: string[] = [];
         for (let i = 0; i < uploadedImages.length; i++) {
-          updateUploadToast(toastId, {
-             message: `Uploading image ${i + 1} of ${uploadedImages.length}...`,
+          if (updateUploadToast) {
+            updateUploadToast(toastId, {
+               message: `Uploading image ${i + 1} of ${uploadedImages.length}...`,
              progress: 30 + Math.round((i / uploadedImages.length) * 40)
-          });
+            });
+          }
           
           const result = await uploadFeedbackImage(uploadedImages[i].file);
           if (result.success && result.imageUrl) {
@@ -223,10 +292,12 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
         }
       }
 
-      updateUploadToast(toastId, {
-        message: 'Saving feedback to database...',
-        progress: 80
-      });
+      if (updateUploadToast) {
+        updateUploadToast(toastId, {
+          message: 'Saving feedback to database...',
+          progress: 80
+        });
+      }
 
       // Determine Author ID
       const currentAuthorId = userRole === 'guest' ? 'Guest' : (username || 'YSP-Member');
@@ -249,12 +320,16 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       // Call Backend
       await createFeedback(newFeedback);
 
-      updateUploadToast(toastId, {
-        status: 'success',
-        message: 'Feedback submitted successfully!',
-        progress: 100
-      });
-      setTimeout(() => removeUploadToast(toastId), 3000);
+      if (updateUploadToast) {
+        updateUploadToast(toastId, {
+          status: 'success',
+          message: 'Feedback submitted successfully!',
+          progress: 100
+        });
+      }
+      if (removeUploadToast) {
+        setTimeout(() => removeUploadToast(toastId), 3000);
+      }
 
       // For guests: add to temporary storage
       if (userRole === 'guest') {
@@ -289,12 +364,16 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     } catch (error) {
       console.error("Submission failed:", error);
       
-      updateUploadToast(toastId, {
-        status: 'error',
-        message: 'Submission failed. Please try again.',
-        progress: 100
-      });
-      setTimeout(() => removeUploadToast(toastId), 5000);
+      if (updateUploadToast) {
+        updateUploadToast(toastId, {
+          status: 'error',
+          message: 'Submission failed. Please try again.',
+          progress: 100
+        });
+      }
+      if (removeUploadToast) {
+        setTimeout(() => removeUploadToast(toastId), 5000);
+      }
 
       toast.error("Submission failed", {
         description: error instanceof Error ? error.message : "There was an error submitting your feedback."
@@ -345,18 +424,6 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     }
   };
 
-  const getCategoryColor = (category: Feedback['category']) => {
-    switch (category) {
-      case 'Complaint': return { bg: 'rgba(239, 68, 68, 0.2)', border: 'rgba(239, 68, 68, 0.4)', text: '#ef4444' };
-      case 'Suggestion': return { bg: 'rgba(59, 130, 246, 0.2)', border: 'rgba(59, 130, 246, 0.4)', text: '#3b82f6' };
-      case 'Bug': return { bg: 'rgba(168, 85, 247, 0.2)', border: 'rgba(168, 85, 247, 0.4)', text: '#a855f7' };
-      case 'Compliment': return { bg: 'rgba(34, 197, 94, 0.2)', border: 'rgba(34, 197, 94, 0.4)', text: '#22c55e' };
-      case 'Inquiry': return { bg: 'rgba(251, 191, 36, 0.2)', border: 'rgba(251, 191, 36, 0.4)', text: '#fbbf24' };
-      case 'Confession': return { bg: 'rgba(236, 72, 153, 0.2)', border: 'rgba(236, 72, 153, 0.4)', text: '#ec4899' };
-      default: return { bg: 'rgba(107, 114, 128, 0.2)', border: 'rgba(107, 114, 128, 0.4)', text: '#6b7280' };
-    }
-  };
-
   // Filter feedbacks based on user role and search query
   const getMyFeedbacks = () => {
     let baseFeedbacks: Feedback[];
@@ -389,6 +456,605 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
   const myFeedbacks = getMyFeedbacks();
   const publicFeedbacks = feedbacks.filter(f => f.visibility === 'Public');
+
+  // ============================================
+  // DASHBOARD STATISTICS & CALCULATIONS
+  // ============================================
+  
+  // Get filtered feedbacks for dashboard
+  const getDashboardFeedbacks = useMemo(() => {
+    let filtered = feedbacks;
+    
+    // Apply category filter
+    if (categoryFilter !== 'All') {
+      filtered = filtered.filter(f => f.category === categoryFilter);
+    }
+    
+    // Apply status filter  
+    if (statusFilter !== 'All') {
+      filtered = filtered.filter(f => f.status === statusFilter);
+    }
+    
+    // Apply search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(f =>
+        f.id.toLowerCase().includes(query) ||
+        f.author.toLowerCase().includes(query) ||
+        f.feedback.toLowerCase().includes(query) ||
+        f.category.toLowerCase().includes(query) ||
+        f.status.toLowerCase().includes(query) ||
+        f.email?.toLowerCase().includes(query)
+      );
+    }
+    
+    return filtered;
+  }, [feedbacks, categoryFilter, statusFilter, searchQuery]);
+
+  // Calculate statistics
+  const statistics = useMemo(() => {
+    const total = feedbacks.length;
+    const pending = feedbacks.filter(f => f.status === 'Pending').length;
+    const reviewed = feedbacks.filter(f => f.status === 'Reviewed').length;
+    const resolved = feedbacks.filter(f => f.status === 'Resolved').length;
+    const dropped = feedbacks.filter(f => f.status === 'Dropped').length;
+    const notReplied = feedbacks.filter(f => !f.reply || f.reply.trim() === '').length;
+    
+    // Calculate average rating
+    const ratedFeedbacks = feedbacks.filter(f => f.rating > 0);
+    const avgRating = ratedFeedbacks.length > 0 
+      ? ratedFeedbacks.reduce((sum, f) => sum + f.rating, 0) / ratedFeedbacks.length 
+      : 0;
+    
+    // Category breakdown
+    const categoryBreakdown = categories.reduce((acc, cat) => {
+      acc[cat] = feedbacks.filter(f => f.category === cat).length;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    return {
+      total,
+      pending,
+      reviewed,
+      resolved,
+      dropped,
+      notReplied,
+      avgRating,
+      categoryBreakdown,
+      publicCount: feedbacks.filter(f => f.visibility === 'Public').length,
+      privateCount: feedbacks.filter(f => f.visibility === 'Private').length,
+      anonymousCount: feedbacks.filter(f => f.anonymous).length,
+    };
+  }, [feedbacks]);
+
+  // Chart data for status distribution
+  const statusChartData = useMemo(() => [
+    { name: 'Pending', value: statistics.pending, color: '#fbbf24' },
+    { name: 'Reviewed', value: statistics.reviewed, color: '#3b82f6' },
+    { name: 'Resolved', value: statistics.resolved, color: '#22c55e' },
+    { name: 'Dropped', value: statistics.dropped, color: '#ef4444' },
+  ].filter(d => d.value > 0), [statistics]);
+
+  // Chart data for category distribution  
+  const categoryChartData = useMemo(() => 
+    Object.entries(statistics.categoryBreakdown)
+      .filter(([_, count]) => count > 0)
+      .map(([category, count]) => ({
+        name: category,
+        value: count,
+        color: getCategoryColor(category as Feedback['category']).text,
+      }))
+  , [statistics.categoryBreakdown]);
+
+  // Helper function to load image for PDF
+  const loadImage = (url: string): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
+  };
+
+  // Generate PDF Preview
+  const generatePDFPreview = async () => {
+    setIsGeneratingPreview(true);
+    
+    if (pdfPreviewUrl) {
+      URL.revokeObjectURL(pdfPreviewUrl);
+      setPdfPreviewUrl(null);
+    }
+
+    try {
+      const doc = await generatePDFDocument();
+      const pdfBlob = doc.output('blob');
+      const url = URL.createObjectURL(pdfBlob);
+      setPdfPreviewUrl(url);
+    } catch (error) {
+      console.error('PDF Preview Generation Error:', error);
+      toast.error('Failed to generate PDF preview');
+    } finally {
+      setIsGeneratingPreview(false);
+    }
+  };
+
+  // Generate PDF Document
+  const generatePDFDocument = async () => {
+    const doc = new jsPDF('portrait', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    const generatedTimestamp = new Date().toLocaleString();
+    const orgMotto = "Shaping the Future to a Greater Society";
+
+    // Helper function to draw page footer
+    const drawFooter = (pageNum: number, totalPages: number) => {
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.5);
+      doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+      
+      doc.setFontSize(7);
+      doc.setTextColor(100, 100, 100);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Youth Service Philippines - Tagum Chapter', margin, pageHeight - 10);
+      doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
+      
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'italic');
+      doc.text(`"${orgMotto}"`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+    };
+
+    // Load logo
+    let logoLoaded = false;
+    try {
+      const logoImg = await loadImage(ORG_LOGO_URL);
+      doc.setFillColor(246, 66, 31);
+      doc.rect(0, 0, pageWidth, 45, 'F');
+      
+      const logoSize = 30;
+      const logoX = margin;
+      const logoY = 7.5;
+      
+      doc.setFillColor(255, 255, 255);
+      doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 2, 'F');
+      doc.addImage(logoImg, 'PNG', logoX, logoY, logoSize, logoSize);
+      logoLoaded = true;
+    } catch {
+      doc.setFillColor(246, 66, 31);
+      doc.rect(0, 0, pageWidth, 45, 'F');
+    }
+
+    // Organization name
+    doc.setTextColor(255, 255, 255);
+    const orgNameX = logoLoaded ? margin + 35 : margin;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text(ORG_NAME, orgNameX, 18);
+    doc.setFontSize(12);
+    doc.text(ORG_CHAPTER, orgNameX, 26);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('FEEDBACK REPORT', orgNameX, 35);
+    doc.setFontSize(8);
+    doc.text(`Generated: ${generatedTimestamp}`, pageWidth - margin, 35, { align: 'right' });
+
+    let yPosition = 52;
+
+    // Divider
+    doc.setDrawColor(246, 66, 31);
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPosition, pageWidth - margin, yPosition);
+    yPosition += 8;
+
+    // STATISTICS SECTION
+    if (exportOptions.includeStatistics) {
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text('FEEDBACK STATISTICS', margin, yPosition);
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.3);
+      doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
+      yPosition += 10;
+
+      // Total box
+      const totalBoxWidth = pageWidth - 2 * margin;
+      doc.setFillColor(246, 66, 31);
+      doc.roundedRect(margin, yPosition, totalBoxWidth, 22, 3, 3, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('TOTAL FEEDBACKS', margin + 10, yPosition + 10);
+      doc.setFontSize(20);
+      doc.text(`${statistics.total}`, totalBoxWidth - 10, yPosition + 14, { align: 'right' });
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${statistics.notReplied} not replied`, totalBoxWidth - 10, yPosition + 19, { align: 'right' });
+      yPosition += 28;
+
+      // Status boxes
+      const statusBoxWidth = (pageWidth - 2 * margin - 9) / 4;
+      const statusBoxHeight = 20;
+      const statuses = [
+        { name: 'PENDING', color: [251, 191, 36], count: statistics.pending },
+        { name: 'REVIEWED', color: [59, 130, 246], count: statistics.reviewed },
+        { name: 'RESOLVED', color: [34, 197, 94], count: statistics.resolved },
+        { name: 'DROPPED', color: [239, 68, 68], count: statistics.dropped },
+      ];
+
+      statuses.forEach((status, index) => {
+        const boxX = margin + index * (statusBoxWidth + 3);
+        doc.setFillColor(status.color[0], status.color[1], status.color[2]);
+        doc.roundedRect(boxX, yPosition, statusBoxWidth, statusBoxHeight, 2, 2, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
+        doc.text(String(status.count), boxX + statusBoxWidth / 2, yPosition + 9, { align: 'center' });
+        
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'normal');
+        doc.text(status.name, boxX + statusBoxWidth / 2, yPosition + 15, { align: 'center' });
+      });
+      yPosition += statusBoxHeight + 10;
+
+      // Not Replied highlight
+      doc.setFillColor(239, 68, 68);
+      doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 16, 2, 2, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text('NOT REPLIED', margin + 10, yPosition + 10);
+      doc.setFontSize(16);
+      doc.text(`${statistics.notReplied}`, pageWidth - margin - 10, yPosition + 11, { align: 'right' });
+      yPosition += 24;
+    }
+
+    // FEEDBACK TABLE
+    doc.addPage();
+    yPosition = 20;
+
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 41, 59);
+    doc.text(`FEEDBACK LIST (${getDashboardFeedbacks.length})`, margin, yPosition);
+    yPosition += 8;
+
+    // Prepare table data with feedback message and image links
+    const tableData = getDashboardFeedbacks.map((fb, index) => {
+      // Determine what to show for author
+      let authorDisplay = fb.id; // Always show code by default
+      
+      if (exportOptions.showAuthorNames && !fb.anonymous) {
+        authorDisplay = fb.author;
+      } else if (exportOptions.showAuthorEmails && fb.email && !fb.anonymous) {
+        authorDisplay = fb.email;
+      } else if (fb.anonymous) {
+        authorDisplay = 'Anonymous';
+      } else if (!exportOptions.showAuthorCodes) {
+        authorDisplay = 'Hidden';
+      }
+
+      // Truncate feedback message for table display
+      const feedbackText = fb.feedback ? 
+        (fb.feedback.length > 100 ? fb.feedback.substring(0, 100) + '...' : fb.feedback) : '-';
+      
+      // Format image URLs
+      const imageLinks = fb.imageUrl ? 
+        fb.imageUrl.split(',').map((url: string, i: number) => `[Image ${i + 1}]`).join(' ') : '-';
+
+      return [
+        String(index + 1),
+        fb.id,
+        authorDisplay,
+        fb.category,
+        feedbackText,
+        imageLinks,
+        fb.status,
+        fb.rating > 0 ? `${fb.rating}/5` : '-',
+        new Date(fb.timestamp).toLocaleDateString(),
+      ];
+    });
+
+    autoTable(doc, {
+      startY: yPosition,
+      head: [['#', 'Feedback ID', 'Author', 'Category', 'Message', 'Images', 'Status', 'Rating', 'Date']],
+      body: tableData.length > 0 ? tableData : [['-', '-', 'No feedbacks', '-', '-', '-', '-', '-', '-']],
+      theme: 'grid',
+      headStyles: {
+        fillColor: [246, 66, 31],
+        textColor: 255,
+        fontStyle: 'bold',
+        fontSize: 6,
+      },
+      bodyStyles: { fontSize: 6, textColor: [50, 50, 50] },
+      columnStyles: {
+        0: { cellWidth: 8, halign: 'center' },
+        1: { cellWidth: 28 },
+        2: { cellWidth: 25 },
+        3: { cellWidth: 20 },
+        4: { cellWidth: 50 },
+        5: { cellWidth: 18 },
+        6: { cellWidth: 15, halign: 'center' },
+        7: { cellWidth: 12, halign: 'center' },
+        8: { cellWidth: 18, halign: 'center' },
+      },
+      margin: { left: margin, right: margin },
+    });
+
+    // Add detailed feedback list with full messages and image URLs on new pages
+    doc.addPage();
+    yPosition = 20;
+    
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 41, 59);
+    doc.text('DETAILED FEEDBACK MESSAGES', margin, yPosition);
+    yPosition += 10;
+
+    getDashboardFeedbacks.forEach((fb, index) => {
+      // Check if we need a new page
+      if (yPosition > 260) {
+        doc.addPage();
+        yPosition = 20;
+      }
+
+      // Feedback header
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(246, 66, 31);
+      doc.text(`${index + 1}. ${fb.id} | ${fb.category} | ${fb.status}`, margin, yPosition);
+      yPosition += 5;
+
+      // Author info
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 100, 100);
+      const authorInfo = fb.anonymous ? 'Anonymous' : (exportOptions.showAuthorNames ? fb.author : fb.id);
+      doc.text(`From: ${authorInfo} | Date: ${new Date(fb.timestamp).toLocaleDateString()} | Rating: ${fb.rating}/5`, margin, yPosition);
+      yPosition += 6;
+
+      // Full feedback message
+      doc.setTextColor(30, 41, 59);
+      const feedbackLines = doc.splitTextToSize(fb.feedback || 'No message', pageWidth - margin * 2);
+      feedbackLines.forEach((line: string) => {
+        if (yPosition > 270) {
+          doc.addPage();
+          yPosition = 20;
+        }
+        doc.text(line, margin, yPosition);
+        yPosition += 4;
+      });
+
+      // Image URLs if present
+      if (fb.imageUrl) {
+        yPosition += 2;
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(59, 130, 246);
+        const imageUrls = fb.imageUrl.split(',');
+        imageUrls.forEach((url: string, i: number) => {
+          if (yPosition > 270) {
+            doc.addPage();
+            yPosition = 20;
+          }
+          doc.text(`Image ${i + 1}: ${url.trim()}`, margin, yPosition);
+          yPosition += 4;
+        });
+      }
+
+      // Admin reply if exists
+      if (fb.reply) {
+        yPosition += 2;
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(34, 197, 94);
+        doc.text('Admin Reply:', margin, yPosition);
+        yPosition += 4;
+        doc.setFont('helvetica', 'normal');
+        const replyLines = doc.splitTextToSize(fb.reply, pageWidth - margin * 2);
+        replyLines.forEach((line: string) => {
+          if (yPosition > 270) {
+            doc.addPage();
+            yPosition = 20;
+          }
+          doc.text(line, margin, yPosition);
+          yPosition += 4;
+        });
+      }
+
+      yPosition += 8; // Space between feedbacks
+    });
+
+    // Update footers
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      drawFooter(i, totalPages);
+    }
+
+    return doc;
+  };
+
+  // Export PDF with progress toast
+  const handleExportPDF = async () => {
+    const toastId = `pdf-export-${Date.now()}`;
+    
+    if (addUploadToast) {
+      addUploadToast({
+        id: toastId,
+        title: 'Exporting PDF',
+        message: 'Preparing document...',
+        status: 'loading',
+        progress: 10,
+      });
+    }
+
+    try {
+      if (updateUploadToast) {
+        updateUploadToast(toastId, { message: 'Generating PDF...', progress: 50 });
+      }
+
+      const doc = await generatePDFDocument();
+      
+      if (updateUploadToast) {
+        updateUploadToast(toastId, { message: 'Saving file...', progress: 90 });
+      }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `Feedback_Report_${dateStr}.pdf`;
+      doc.save(filename);
+
+      if (updateUploadToast && removeUploadToast) {
+        updateUploadToast(toastId, {
+          status: 'success',
+          message: `File saved as "${filename}"`,
+          progress: 100,
+        });
+        setTimeout(() => removeUploadToast(toastId), 3000);
+      }
+    } catch (error) {
+      console.error('PDF Export Error:', error);
+      if (updateUploadToast && removeUploadToast) {
+        updateUploadToast(toastId, {
+          status: 'error',
+          message: 'Failed to export PDF',
+          progress: 100,
+        });
+        setTimeout(() => removeUploadToast(toastId), 5000);
+      }
+    }
+  };
+
+  // Export Spreadsheet with progress toast
+  const handleExportSpreadsheet = async () => {
+    const toastId = `spreadsheet-export-${Date.now()}`;
+    
+    if (addUploadToast) {
+      addUploadToast({
+        id: toastId,
+        title: 'Exporting Spreadsheet',
+        message: 'Preparing workbook...',
+        status: 'loading',
+        progress: 10,
+      });
+    }
+
+    try {
+      if (updateUploadToast) {
+        updateUploadToast(toastId, { message: 'Processing data...', progress: 40 });
+      }
+
+      const workbook = XLSX.utils.book_new();
+
+      // Header information
+      const headerData: (string | number)[][] = [
+        [`${ORG_NAME} - ${ORG_CHAPTER}`],
+        ['Feedback Report'],
+        [''],
+        ['STATISTICS'],
+        ['Total Feedbacks:', statistics.total],
+        ['Pending:', statistics.pending],
+        ['Reviewed:', statistics.reviewed],
+        ['Resolved:', statistics.resolved],
+        ['Dropped:', statistics.dropped],
+        ['Not Replied:', statistics.notReplied],
+        ['Average Rating:', statistics.avgRating.toFixed(2)],
+        [''],
+        ['Generated:', new Date().toLocaleString()],
+        [''],
+        ['FEEDBACK LIST'],
+        ['#', 'Code/Author', 'Category', 'Status', 'Rating', 'Replied', 'Date', 'Feedback Preview'],
+      ];
+
+      // Add feedback data
+      getDashboardFeedbacks.forEach((fb, index) => {
+        let authorDisplay = fb.id;
+        if (exportOptions.showAuthorNames && !fb.anonymous) {
+          authorDisplay = fb.author;
+        } else if (exportOptions.showAuthorEmails && fb.email && !fb.anonymous) {
+          authorDisplay = fb.email;
+        } else if (fb.anonymous) {
+          authorDisplay = 'Anonymous';
+        }
+
+        headerData.push([
+          index + 1,
+          authorDisplay,
+          fb.category,
+          fb.status,
+          fb.rating > 0 ? fb.rating : '-',
+          fb.reply ? 'Yes' : 'No',
+          new Date(fb.timestamp).toLocaleDateString(),
+          fb.feedback.substring(0, 100) + (fb.feedback.length > 100 ? '...' : ''),
+        ]);
+      });
+
+      if (updateUploadToast) {
+        updateUploadToast(toastId, { message: 'Creating spreadsheet...', progress: 70 });
+      }
+
+      const worksheet = XLSX.utils.aoa_to_sheet(headerData);
+
+      worksheet['!cols'] = [
+        { wch: 5 },
+        { wch: 30 },
+        { wch: 18 },
+        { wch: 12 },
+        { wch: 8 },
+        { wch: 10 },
+        { wch: 12 },
+        { wch: 50 },
+      ];
+
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Feedback Report');
+
+      if (updateUploadToast) {
+        updateUploadToast(toastId, { message: 'Saving file...', progress: 90 });
+      }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `Feedback_Report_${dateStr}.xlsx`;
+      XLSX.writeFile(workbook, filename);
+
+      if (updateUploadToast && removeUploadToast) {
+        updateUploadToast(toastId, {
+          status: 'success',
+          message: `File saved as "${filename}"`,
+          progress: 100,
+        });
+        setTimeout(() => removeUploadToast(toastId), 3000);
+      }
+    } catch (error) {
+      console.error('Spreadsheet Export Error:', error);
+      if (updateUploadToast && removeUploadToast) {
+        updateUploadToast(toastId, {
+          status: 'error',
+          message: 'Failed to export spreadsheet',
+          progress: 100,
+        });
+        setTimeout(() => removeUploadToast(toastId), 5000);
+      }
+    }
+  };
+
+  // Handle export modal close
+  const handleCloseExportModal = () => {
+    setShowExportModal(false);
+    if (pdfPreviewUrl) {
+      URL.revokeObjectURL(pdfPreviewUrl);
+      setPdfPreviewUrl(null);
+    }
+  };
+
+  // Open export with preview
+  const handleExportWithPreview = (format: 'pdf' | 'spreadsheet') => {
+    setExportFormat(format);
+    setExportModalTab('preview');
+    setShowExportModal(true);
+    
+    if (format === 'pdf') {
+      generatePDFPreview();
+    }
+  };
 
   const openDetailModal = (feedback: Feedback) => {
     setSelectedFeedback(feedback);
@@ -500,14 +1166,14 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                 lineHeight: '1.2'
               }}
             >
-              Feedback Center
+              {showDashboard ? 'Feedback Dashboard' : 'Feedback Center'}
             </h1>
             <p className={`text-xs hidden sm:block ${isDark ? 'text-gray-400' : 'text-gray-600'}`} style={{ fontWeight: '500', lineHeight: '1.2' }}>
-              Your voice shapes our community
+              {showDashboard ? 'Analytics & Export' : 'Your voice shapes our community'}
             </p>
           </div>
 
-          {/* Spacer for balance */}
+          {/* Empty div to balance the header layout */}
           <div className="w-20 sm:w-24 flex-shrink-0" />
         </div>
       </header>
@@ -521,64 +1187,538 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
           items={[
             { label: "Home", onClick: onClose },
             { label: "Communication Center", onClick: undefined },
-            { label: "Feedback", onClick: undefined },
+            { label: showDashboard ? "Feedback Dashboard" : "Feedback", onClick: undefined },
           ]}
           isDark={isDark}
         />
       </div>
 
-      {/* Main Content - Three Card Layout */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 relative z-10">
-        {/* Top Horizontal Card - Submit Feedback Action */}
-        <div 
-          className="rounded-2xl p-6 mb-6 text-center"
-          style={{
-            background: isDark 
-              ? 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%)'
-              : 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.98) 100%)',
-            border: isDark ? '2px solid rgba(238, 135, 36, 0.2)' : '2px solid rgba(238, 135, 36, 0.3)',
-            boxShadow: isDark ? '0 8px 24px rgba(0, 0, 0, 0.4)' : '0 8px 24px rgba(0, 0, 0, 0.1)',
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-          }}
-        >
-          <ThumbsUp className={`w-14 h-14 mx-auto mb-4 ${isDark ? 'text-orange-400' : 'text-orange-600'}`} />
-          <h2 
-            style={{
-              fontFamily: 'var(--font-headings)',
-              fontSize: 'clamp(1.5rem, 3vw, 2rem)',
-              fontWeight: 'var(--font-weight-bold)',
-              letterSpacing: '-0.02em',
-              color: isDark ? '#fff' : '#1e293b',
-              marginBottom: '0.75rem'
-            }}
-          >
-            Share Your Voice
-          </h2>
-          <p className={`max-w-2xl mx-auto mb-8 ${isDark ? 'text-gray-300' : 'text-gray-700'}`} style={{ fontWeight: '500', fontSize: '0.9375rem', lineHeight: '1.6' }}>
-            Help us improve by sharing your thoughts, suggestions, and experiences.
-          </p>
+      {/* ADMIN DASHBOARD VIEW */}
+      {showDashboard && (isAdmin || userRole === 'auditor') ? (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 relative z-10">
+          {/* Back Button */}
           <button
-            onClick={() => setShowSubmitModal(true)}
-            className="px-10 py-4 rounded-xl text-white transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95 inline-flex items-center gap-2.5"
+            onClick={() => setShowDashboard(false)}
+            className="mb-4 flex items-center gap-1.5 px-3 py-2 rounded-lg transition-all duration-300 hover:scale-105 active:scale-95 text-sm"
             style={{
-              background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
-              fontWeight: '700',
-              fontSize: '1.0625rem',
-              boxShadow: '0 8px 20px rgba(246, 66, 31, 0.4)'
+              background: isDark ? 'rgba(238, 135, 36, 0.15)' : 'rgba(238, 135, 36, 0.1)',
+              border: '1.5px solid rgba(238, 135, 36, 0.3)',
+              color: '#ee8724',
+              fontWeight: '600',
             }}
           >
-            <Send className="w-5 h-5" />
-            <span>Submit Feedback</span>
+            <ArrowLeft className="w-4 h-4" />
+            <span className="hidden sm:inline">Back</span>
           </button>
-        </div>
 
-        {/* Two Vertical Cards - My Feedbacks & Public Feedbacks */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Card - My Feedbacks (or All Feedbacks for Admin/Auditor) */}
-          <div 
-            className="rounded-2xl p-6 flex flex-col"
+          {/* Search and Filter Controls */}
+          <div
+            className="rounded-xl p-6 mb-6 border"
             style={{
+              background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+              backdropFilter: 'blur(20px)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            }}
+          >
+            <div className="grid md:grid-cols-3 gap-4">
+              {/* Search */}
+              <div>
+                <label className="block mb-2 text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                  Smart Search
+                </label>
+                <div className="relative">
+                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`} />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search ID, author, content..."
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border-2 transition-all duration-300 focus:outline-none"
+                    style={{
+                      background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.9)',
+                      borderColor: isDark ? 'rgba(238, 135, 36, 0.3)' : 'rgba(238, 135, 36, 0.4)',
+                      color: isDark ? '#fff' : '#1e293b'
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Category Filter */}
+              <div>
+                <label className="block mb-2 text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                  Category
+                </label>
+                <CustomDropdown
+                  value={categoryFilter}
+                  onChange={setCategoryFilter}
+                  options={['All', ...categories]}
+                  isDark={isDark}
+                  size="md"
+                />
+              </div>
+
+              {/* Status Filter */}
+              <div>
+                <label className="block mb-2 text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                  Status
+                </label>
+                <CustomDropdown
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  options={['All', 'Pending', 'Reviewed', 'Resolved', 'Dropped']}
+                  isDark={isDark}
+                  size="md"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Stats Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
+            {/* Total */}
+            <div
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
+              style={{
+                background: isDark ? 'rgba(246, 66, 31, 0.15)' : 'rgba(246, 66, 31, 0.1)',
+                borderColor: '#f6421f',
+              }}
+            >
+              <p className="text-sm text-muted-foreground mb-1">Total</p>
+              <p className="text-2xl font-bold" style={{ color: '#f6421f' }}>{statistics.total}</p>
+            </div>
+            {/* Pending */}
+            <div
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
+              style={{
+                background: isDark ? 'rgba(251, 191, 36, 0.15)' : 'rgba(251, 191, 36, 0.1)',
+                borderColor: '#fbbf24',
+              }}
+            >
+              <p className="text-sm text-muted-foreground mb-1">Pending</p>
+              <p className="text-2xl font-bold" style={{ color: '#fbbf24' }}>{statistics.pending}</p>
+            </div>
+            {/* Reviewed */}
+            <div
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
+              style={{
+                background: isDark ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)',
+                borderColor: '#3b82f6',
+              }}
+            >
+              <p className="text-sm text-muted-foreground mb-1">Reviewed</p>
+              <p className="text-2xl font-bold" style={{ color: '#3b82f6' }}>{statistics.reviewed}</p>
+            </div>
+            {/* Resolved */}
+            <div
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
+              style={{
+                background: isDark ? 'rgba(34, 197, 94, 0.15)' : 'rgba(34, 197, 94, 0.1)',
+                borderColor: '#22c55e',
+              }}
+            >
+              <p className="text-sm text-muted-foreground mb-1">Resolved</p>
+              <p className="text-2xl font-bold" style={{ color: '#22c55e' }}>{statistics.resolved}</p>
+            </div>
+            {/* Dropped */}
+            <div
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
+              style={{
+                background: isDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.1)',
+                borderColor: '#ef4444',
+              }}
+            >
+              <p className="text-sm text-muted-foreground mb-1">Dropped</p>
+              <p className="text-2xl font-bold" style={{ color: '#ef4444' }}>{statistics.dropped}</p>
+            </div>
+            {/* Not Replied */}
+            <div
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
+              style={{
+                background: isDark ? 'rgba(239, 68, 68, 0.25)' : 'rgba(239, 68, 68, 0.15)',
+                borderColor: '#dc2626',
+                borderWidth: 2,
+              }}
+            >
+              <p className="text-sm text-muted-foreground mb-1 flex items-center gap-1">
+                <MessageCircle className="w-3 h-3" />
+                Not Replied
+              </p>
+              <p className="text-2xl font-bold" style={{ color: '#dc2626' }}>{statistics.notReplied}</p>
+            </div>
+          </div>
+
+          {/* Chart Section */}
+          <div
+            className="rounded-xl p-6 mb-6 border"
+            style={{
+              background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+              backdropFilter: 'blur(20px)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            }}
+          >
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${DESIGN_TOKENS.colors.brand.orange}15` }}>
+                  <TrendingUp className="w-5 h-5" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                </div>
+                <div>
+                  <h3 style={{ fontFamily: 'var(--font-headings)', fontWeight: 'bold', fontSize: '1.1rem' }}>
+                    Feedback Analytics
+                  </h3>
+                  <p className="text-sm text-muted-foreground">{getDashboardFeedbacks.length} feedbacks shown</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {/* Chart Type Selector */}
+                <div className="flex gap-1 p-1 rounded-lg" style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+                  {(['pie', 'donut', 'bar'] as const).map((type) => (
+                    <button
+                      key={type}
+                      onClick={() => setChartType(type)}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${chartType === type ? 'bg-[#f6421f] text-white' : ''}`}
+                    >
+                      {type.charAt(0).toUpperCase() + type.slice(1)}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Export Dropdown */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowExportDropdown(!showExportDropdown)}
+                    className="px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors flex items-center gap-2"
+                    style={{ fontWeight: 600 }}
+                  >
+                    <Download className="w-4 h-4" />
+                    Export
+                    <ChevronDown className={`w-4 h-4 transition-transform ${showExportDropdown ? 'rotate-180' : ''}`} />
+                  </button>
+                  
+                  {/* Export Dropdown Menu */}
+                  {showExportDropdown && (
+                    <div
+                      className="absolute right-0 top-full mt-2 w-56 rounded-xl border shadow-xl overflow-hidden"
+                      style={{
+                        background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                        backdropFilter: 'blur(20px)',
+                        borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                        zIndex: 100,
+                      }}
+                    >
+                      <button
+                        onClick={() => {
+                          setShowExportDropdown(false);
+                          handleExportWithPreview('pdf');
+                        }}
+                        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left"
+                      >
+                        <FileText className="w-5 h-5 text-[#f6421f]" />
+                        <div>
+                          <div className="font-medium">Export as PDF</div>
+                          <div className="text-xs text-muted-foreground">With preview & charts</div>
+                        </div>
+                      </button>
+                      <div style={{ borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}` }} />
+                      <button
+                        onClick={() => {
+                          setShowExportDropdown(false);
+                          handleExportWithPreview('spreadsheet');
+                        }}
+                        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left"
+                      >
+                        <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                        <div>
+                          <div className="font-medium">Export as Spreadsheet</div>
+                          <div className="text-xs text-muted-foreground">Excel-compatible format</div>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Backdrop to close dropdown */}
+                  {showExportDropdown && (
+                    <div 
+                      className="fixed inset-0" 
+                      style={{ zIndex: 50 }}
+                      onClick={() => setShowExportDropdown(false)}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Charts Grid */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Status Distribution */}
+              <div className="rounded-xl p-4" style={{ background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)' }}>
+                <h4 className="font-semibold mb-4">Status Distribution</h4>
+                {statusChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    {chartType === 'bar' ? (
+                      <BarChart data={statusChartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="value">
+                          {statusChartData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    ) : (
+                      <PieChart>
+                        <Pie
+                          data={statusChartData}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                          innerRadius={chartType === 'donut' ? 50 : 0}
+                          outerRadius={80}
+                          dataKey="value"
+                        >
+                          {statusChartData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    )}
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-[250px] flex items-center justify-center text-muted-foreground">
+                    No data available
+                  </div>
+                )}
+              </div>
+
+              {/* Category Distribution */}
+              <div className="rounded-xl p-4" style={{ background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)' }}>
+                <h4 className="font-semibold mb-4">Category Distribution</h4>
+                {categoryChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={categoryChartData} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis type="number" />
+                      <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Bar dataKey="value">
+                        {categoryChartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-[250px] flex items-center justify-center text-muted-foreground">
+                    No data available
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Feedback List Table */}
+          <div
+            className="rounded-xl p-6 border"
+            style={{
+              background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+              backdropFilter: 'blur(20px)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 style={{ fontFamily: 'var(--font-headings)', fontWeight: 'bold', fontSize: '1.1rem' }}>
+                Feedback List ({getDashboardFeedbacks.length})
+              </h3>
+              <button
+                onClick={() => fetchFeedbacks()}
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                    <th className="text-left py-3 px-2 font-semibold">ID</th>
+                    <th className="text-left py-3 px-2 font-semibold">Author</th>
+                    <th className="text-left py-3 px-2 font-semibold">Category</th>
+                    <th className="text-left py-3 px-2 font-semibold">Status</th>
+                    <th className="text-left py-3 px-2 font-semibold">Rating</th>
+                    <th className="text-left py-3 px-2 font-semibold">Replied</th>
+                    <th className="text-left py-3 px-2 font-semibold">Date</th>
+                    <th className="text-left py-3 px-2 font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {getDashboardFeedbacks.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-8 text-muted-foreground">
+                        No feedbacks found matching your filters
+                      </td>
+                    </tr>
+                  ) : (
+                    getDashboardFeedbacks.slice(0, 20).map((fb) => (
+                      <tr
+                        key={fb.id}
+                        className="border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors"
+                        style={{ borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}
+                        onClick={() => openDetailModal(fb)}
+                      >
+                        <td className="py-3 px-2 font-mono text-xs">{fb.id}</td>
+                        <td className="py-3 px-2">
+                          {fb.anonymous ? (
+                            <span className="text-muted-foreground italic">Anonymous</span>
+                          ) : (
+                            fb.author
+                          )}
+                        </td>
+                        <td className="py-3 px-2">
+                          <span
+                            className="px-2 py-0.5 rounded text-xs font-medium"
+                            style={{
+                              background: getCategoryColor(fb.category).bg,
+                              color: getCategoryColor(fb.category).text,
+                            }}
+                          >
+                            {fb.category}
+                          </span>
+                        </td>
+                        <td className="py-3 px-2">
+                          <span
+                            className="px-2 py-0.5 rounded text-xs font-medium"
+                            style={{
+                              background: getStatusColor(fb.status).bg,
+                              color: getStatusColor(fb.status).text,
+                            }}
+                          >
+                            {fb.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-2">
+                          <div className="flex gap-0.5">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                              <Star
+                                key={star}
+                                className="w-3 h-3"
+                                fill={fb.rating >= star ? '#ee8724' : 'transparent'}
+                                stroke={fb.rating >= star ? '#ee8724' : '#6b7280'}
+                              />
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-3 px-2">
+                          {fb.reply ? (
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                          ) : (
+                            <XCircle className="w-4 h-4 text-red-400" />
+                          )}
+                        </td>
+                        <td className="py-3 px-2 text-muted-foreground text-xs">
+                          {new Date(fb.timestamp).toLocaleDateString()}
+                        </td>
+                        <td className="py-3 px-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDetailModal(fb);
+                            }}
+                            className="px-2 py-1 rounded text-xs font-medium bg-orange-100 text-orange-600 hover:bg-orange-200 transition-colors"
+                          >
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+              {getDashboardFeedbacks.length > 20 && (
+                <p className="text-center text-sm text-muted-foreground mt-4">
+                  Showing first 20 of {getDashboardFeedbacks.length} feedbacks. Use filters to narrow down results.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* REGULAR FEEDBACK VIEW */
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 relative z-10">
+          {/* Top Horizontal Card - Submit Feedback Action */}
+          <div 
+            className="rounded-2xl p-6 mb-6 text-center"
+            style={{
+              background: isDark 
+                ? 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%)'
+                : 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.98) 100%)',
+              border: isDark ? '2px solid rgba(238, 135, 36, 0.2)' : '2px solid rgba(238, 135, 36, 0.3)',
+              boxShadow: isDark ? '0 8px 24px rgba(0, 0, 0, 0.4)' : '0 8px 24px rgba(0, 0, 0, 0.1)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+            }}
+          >
+            <ThumbsUp className={`w-14 h-14 mx-auto mb-4 ${isDark ? 'text-orange-400' : 'text-orange-600'}`} />
+            <h2 
+              style={{
+                fontFamily: 'var(--font-headings)',
+                fontSize: 'clamp(1.5rem, 3vw, 2rem)',
+                fontWeight: 'var(--font-weight-bold)',
+                letterSpacing: '-0.02em',
+                color: isDark ? '#fff' : '#1e293b',
+                marginBottom: '0.75rem'
+              }}
+            >
+              Share Your Voice
+            </h2>
+            <p className={`max-w-2xl mx-auto mb-6 ${isDark ? 'text-gray-300' : 'text-gray-700'}`} style={{ fontWeight: '500', fontSize: '0.875rem', lineHeight: '1.6' }}>
+              Help us improve by sharing your thoughts, suggestions, and experiences.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => setShowSubmitModal(true)}
+                className="px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg text-white transition-all duration-300 hover:shadow-xl hover:scale-105 active:scale-95 inline-flex items-center gap-2 text-sm sm:text-base"
+                style={{
+                  background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                  fontWeight: '600',
+                  boxShadow: '0 4px 15px rgba(246, 66, 31, 0.35)'
+                }}
+              >
+                <Send className="w-4 h-4" />
+                <span className="hidden xs:inline">Submit Feedback</span>
+                <span className="xs:hidden">Submit</span>
+              </button>
+
+              {/* Dashboard Button for Admin/Auditor */}
+              {(isAdmin || userRole === 'auditor') && (
+                <button
+                  onClick={() => setShowDashboard(true)}
+                  className="px-4 sm:px-5 py-2.5 sm:py-3 rounded-lg transition-all duration-300 hover:shadow-lg hover:scale-105 active:scale-95 inline-flex items-center gap-2 text-sm sm:text-base"
+                  style={{
+                    background: isDark ? 'rgba(238, 135, 36, 0.15)' : 'rgba(238, 135, 36, 0.1)',
+                    border: '1.5px solid rgba(238, 135, 36, 0.4)',
+                    color: '#ee8724',
+                    fontWeight: '600',
+                  }}
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  <span className="hidden sm:inline">Dashboard</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Two Vertical Cards - My Feedbacks & Public Feedbacks */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Left Card - My Feedbacks (or All Feedbacks for Admin/Auditor) */}
+            <div 
+              className="rounded-2xl p-6 flex flex-col"
+              style={{
               background: isDark 
                 ? 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%)'
                 : 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.98) 100%)',
@@ -843,6 +1983,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
           </div>
         </div>
       </div>
+      )}
 
       {/* Submit Feedback Modal */}
       {showSubmitModal && (
@@ -1387,15 +2528,23 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                   </div>
                 </div>
 
-                {/* Image */}
+                {/* Image(s) */}
                 {selectedFeedback.imageUrl && (
                   <div>
-                    <p className={`text-sm mb-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`} style={{ fontWeight: '600' }}>Attachment</p>
-                    <ImageWithFallback
-                      src={selectedFeedback.imageUrl}
-                      alt="Feedback attachment"
-                      className="w-full rounded-xl max-h-64 object-cover"
-                    />
+                    <p className={`text-sm mb-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`} style={{ fontWeight: '600' }}>
+                      Attachment{selectedFeedback.imageUrl.includes(',') ? 's' : ''}
+                    </p>
+                    <div className={`grid gap-3 ${selectedFeedback.imageUrl.split(',').length > 1 ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-1'}`}>
+                      {selectedFeedback.imageUrl.split(',').map((url, idx) => (
+                        <ImageWithFallback
+                          key={idx}
+                          src={url.trim()}
+                          alt={`Feedback attachment ${idx + 1}`}
+                          className="w-full rounded-xl max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                          onClick={() => window.open(url.trim(), '_blank')}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -1527,6 +2676,370 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
             </div>
           </div>
         </>
+      )}
+
+      {/* Export Modal */}
+      {showExportModal && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          style={{ zIndex: 9999 }}
+          onClick={handleCloseExportModal}
+        >
+          <div
+            className="rounded-xl w-full border flex flex-col overflow-hidden shadow-2xl"
+            style={{
+              maxWidth: exportModalTab === 'preview' && exportFormat === 'pdf' ? 900 : 600,
+              maxHeight: '90vh',
+              background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+              backdropFilter: 'blur(20px)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              transition: 'max-width 0.3s ease',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header with Tab Navigation */}
+            <div 
+              className="shrink-0"
+              style={{
+                background: DESIGN_TOKENS.colors.brand.orange,
+              }}
+            >
+              <div className="px-5 py-4 flex items-center justify-between">
+                <h3 className="text-white font-semibold text-lg flex items-center gap-2">
+                  {exportFormat === 'pdf' ? <FileText className="w-5 h-5" /> : <Download className="w-5 h-5" />}
+                  Export Feedback Data
+                </h3>
+                <button
+                  onClick={handleCloseExportModal}
+                  className="p-1.5 rounded-lg hover:bg-white/20 transition-colors text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              {/* Tab Buttons */}
+              <div className="px-5 pb-2 flex gap-2">
+                <button
+                  onClick={() => setExportModalTab('preview')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    exportModalTab === 'preview'
+                      ? 'bg-white text-[#f6421f] shadow-lg'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                  }`}
+                >
+                  <Eye className="w-4 h-4" />
+                  Preview
+                </button>
+                <button
+                  onClick={() => setExportModalTab('settings')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    exportModalTab === 'settings'
+                      ? 'bg-white text-[#f6421f] shadow-lg'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                  }`}
+                >
+                  <Settings className="w-4 h-4" />
+                  Settings
+                </button>
+              </div>
+
+              {/* Subtitle under tabs */}
+              <div className="px-5 pb-3">
+                <p className="text-white/80 text-sm">
+                  {getDashboardFeedbacks.length} feedbacks to export
+                </p>
+              </div>
+            </div>
+
+            {/* Tab Content */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {/* Tab 1: Preview */}
+              {exportModalTab === 'preview' && (
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  {/* Preview Toolbar */}
+                  <div 
+                    className="px-4 py-2 border-b flex items-center justify-between shrink-0"
+                    style={{ 
+                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                      background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
+                    }}
+                  >
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="text-muted-foreground">
+                        {exportFormat === 'pdf' ? 'PDF Preview' : 'Spreadsheet Export'}
+                      </span>
+                    </div>
+                    {exportFormat === 'pdf' && (
+                      <button
+                        onClick={() => generatePDFPreview()}
+                        disabled={isGeneratingPreview}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${isGeneratingPreview ? 'animate-spin' : ''}`} />
+                        Refresh
+                      </button>
+                    )}
+                  </div>
+                  
+                  {/* Preview Content */}
+                  <div className="flex-1 bg-gray-200 dark:bg-gray-900 overflow-hidden relative">
+                    {exportFormat === 'pdf' ? (
+                      isGeneratingPreview ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
+                          <RefreshCw className="w-10 h-10 animate-spin text-[#f6421f]" />
+                          <div className="text-center">
+                            <p className="font-medium">Generating Preview...</p>
+                            <p className="text-sm text-muted-foreground">This may take a moment</p>
+                          </div>
+                        </div>
+                      ) : pdfPreviewUrl ? (
+                        <iframe
+                          src={pdfPreviewUrl}
+                          className="w-full h-full"
+                          style={{ minHeight: 450 }}
+                          title="PDF Preview"
+                        />
+                      ) : (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-8">
+                          <FileText className="w-16 h-16 text-muted-foreground/50" />
+                          <div>
+                            <p className="font-medium">No Preview Available</p>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              Click Refresh or configure settings first
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => generatePDFPreview()}
+                            className="mt-2 px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors text-sm"
+                          >
+                            Generate Preview
+                          </button>
+                        </div>
+                      )
+                    ) : (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-8">
+                        <FileSpreadsheet className="w-16 h-16 text-green-500/50" />
+                        <div>
+                          <p className="font-medium">Spreadsheet Export</p>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Configure your export settings then click Export
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setExportModalTab('settings')}
+                          className="mt-2 px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors text-sm"
+                        >
+                          Go to Settings
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 2: Settings */}
+              {exportModalTab === 'settings' && (
+                <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                  {/* Export Format */}
+                  <div>
+                    <h4 className="font-semibold mb-3">Export Format</h4>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => setExportFormat('pdf')}
+                        className={`flex-1 p-4 rounded-xl border-2 transition-all ${
+                          exportFormat === 'pdf'
+                            ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
+                            : 'border-gray-200 dark:border-gray-700'
+                        }`}
+                      >
+                        <FileText className={`w-8 h-8 mx-auto mb-2 ${exportFormat === 'pdf' ? 'text-orange-500' : 'text-gray-400'}`} />
+                        <p className="text-center font-medium">PDF</p>
+                        <p className="text-xs text-center text-muted-foreground">Print-ready document</p>
+                      </button>
+                      <button
+                        onClick={() => setExportFormat('spreadsheet')}
+                        className={`flex-1 p-4 rounded-xl border-2 transition-all ${
+                          exportFormat === 'spreadsheet'
+                            ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
+                            : 'border-gray-200 dark:border-gray-700'
+                        }`}
+                      >
+                        <FileSpreadsheet className={`w-8 h-8 mx-auto mb-2 ${exportFormat === 'spreadsheet' ? 'text-orange-500' : 'text-gray-400'}`} />
+                        <p className="text-center font-medium">Spreadsheet</p>
+                        <p className="text-xs text-center text-muted-foreground">Excel-compatible format</p>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Content Options */}
+                  <div>
+                    <h4 className="font-semibold mb-3">Content Options</h4>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        style={{
+                          background: exportOptions.includeStatistics 
+                            ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                            : 'transparent',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={exportOptions.includeStatistics}
+                          onChange={(e) => setExportOptions({ ...exportOptions, includeStatistics: e.target.checked })}
+                          className="w-4 h-4 rounded accent-[#f6421f]"
+                        />
+                        <div className="flex-1">
+                          <span className="font-medium">Include Statistics Summary</span>
+                          <p className="text-xs text-muted-foreground">Total, pending, reviewed counts and average rating</p>
+                        </div>
+                      </label>
+                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        style={{
+                          background: exportOptions.includeCharts 
+                            ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                            : 'transparent',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={exportOptions.includeCharts}
+                          onChange={(e) => setExportOptions({ ...exportOptions, includeCharts: e.target.checked })}
+                          className="w-4 h-4 rounded accent-[#f6421f]"
+                        />
+                        <div className="flex-1">
+                          <span className="font-medium">Include Charts</span>
+                          <p className="text-xs text-muted-foreground">Visual representation of data (PDF only)</p>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Privacy Options */}
+                  <div>
+                    <h4 className="font-semibold mb-3">Privacy Options</h4>
+                    <div 
+                      className="p-3 rounded-lg border mb-3 flex items-start gap-2"
+                      style={{
+                        background: isDark ? 'rgba(239, 68, 68, 0.1)' : 'rgba(239, 68, 68, 0.05)',
+                        borderColor: 'rgba(239, 68, 68, 0.3)'
+                      }}
+                    >
+                      <Shield className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-red-600 dark:text-red-400">Privacy Notice</p>
+                        <p className="text-xs text-muted-foreground">
+                          Anonymous feedback will always remain anonymous regardless of settings.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        style={{
+                          background: exportOptions.showAuthorCodes 
+                            ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                            : 'transparent',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={exportOptions.showAuthorCodes}
+                          onChange={(e) => setExportOptions({ ...exportOptions, showAuthorCodes: e.target.checked })}
+                          className="w-4 h-4 rounded accent-[#f6421f]"
+                        />
+                        <div className="flex-1">
+                          <span className="font-medium">Show Author Codes</span>
+                          <p className="text-xs text-muted-foreground">Display member codes (e.g., YSP-001)</p>
+                        </div>
+                      </label>
+                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        style={{
+                          background: exportOptions.showAuthorNames 
+                            ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                            : 'transparent',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={exportOptions.showAuthorNames}
+                          onChange={(e) => setExportOptions({ ...exportOptions, showAuthorNames: e.target.checked })}
+                          className="w-4 h-4 rounded accent-[#f6421f]"
+                        />
+                        <div className="flex-1">
+                          <span className="font-medium">Show Author Names</span>
+                          <p className="text-xs text-muted-foreground">Display full names (non-anonymous only)</p>
+                        </div>
+                      </label>
+                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        style={{
+                          background: exportOptions.showAuthorEmails 
+                            ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                            : 'transparent',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={exportOptions.showAuthorEmails}
+                          onChange={(e) => setExportOptions({ ...exportOptions, showAuthorEmails: e.target.checked })}
+                          className="w-4 h-4 rounded accent-[#f6421f]"
+                        />
+                        <div className="flex-1">
+                          <span className="font-medium">Show Author Emails</span>
+                          <p className="text-xs text-muted-foreground">Display email addresses (non-anonymous only)</p>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Preview Hint for PDF */}
+                  {exportFormat === 'pdf' && (
+                    <div 
+                      className="p-3 rounded-lg border flex items-center gap-3"
+                      style={{
+                        background: isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)',
+                        borderColor: isDark ? 'rgba(246,66,31,0.3)' : 'rgba(246,66,31,0.2)',
+                      }}
+                    >
+                      <Eye className="w-5 h-5 text-[#f6421f] shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">Preview Available</p>
+                        <p className="text-xs text-muted-foreground">Switch to the Preview tab to see exactly how your PDF will look before exporting.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div 
+              className="px-5 py-4 border-t shrink-0 flex items-center justify-end gap-3"
+              style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
+            >
+              <button
+                onClick={handleCloseExportModal}
+                className="px-4 py-2 rounded-lg border hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                style={{ borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  handleCloseExportModal();
+                  if (exportFormat === 'pdf') {
+                    handleExportPDF();
+                  } else {
+                    handleExportSpreadsheet();
+                  }
+                }}
+                className="px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors flex items-center gap-2"
+                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+              >
+                <Download className="w-4 h-4" />
+                Export {exportFormat === 'pdf' ? 'PDF' : 'Spreadsheet'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

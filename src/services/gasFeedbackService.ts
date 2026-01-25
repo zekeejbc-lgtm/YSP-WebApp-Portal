@@ -11,7 +11,7 @@ export interface Feedback {
   replierId?: string; // Replier ID (hidden)
   reply?: string; // Reply text
   anonymous: boolean; // Anonymous toggle
-  category: 'Complaint' | 'Suggestion' | 'Bug' | 'Compliment' | 'Inquiry' | 'Confession' | 'Other';
+  category: 'Complaint' | 'Suggestion' | 'Bug' | 'Compliment' | 'Inquiry' | 'Confession' | 'Feature Request' | 'General Question' | 'Privacy Concern' | 'Report Issue' | 'Appreciation' | 'Testimonial' | 'Other';
   imageUrl?: string; // Image URL
   status: 'Pending' | 'Reviewed' | 'Resolved' | 'Dropped';
   visibility: 'Public' | 'Private';

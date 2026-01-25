@@ -120,6 +120,76 @@ function formatTime(timeValue: unknown): string {
 }
 
 /**
+ * Check if someone has no logout time (present but didn't logout)
+ */
+function hasNoLogout(timeIn: string, timeOut: string): boolean {
+  const hasTimeIn = timeIn && timeIn !== 'N/A' && timeIn !== '-';
+  const hasTimeOut = timeOut && timeOut !== 'N/A' && timeOut !== '-';
+  return hasTimeIn && !hasTimeOut;
+}
+
+/**
+ * Calculate attendance duration between time in and time out
+ */
+function calculateDuration(timeIn: string, timeOut: string): string {
+  if (!timeIn || !timeOut || timeIn === 'N/A' || timeOut === 'N/A' || 
+      timeIn === '-' || timeOut === '-') {
+    return '-';
+  }
+  
+  // Parse times
+  const parseTime = (timeStr: string): Date | null => {
+    // Handle ISO format
+    if (timeStr.includes('T')) {
+      const date = new Date(timeStr);
+      return isNaN(date.getTime()) ? null : date;
+    }
+    
+    // Handle formatted time like "2:30 PM"
+    const match = timeStr.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i);
+    if (match) {
+      let hours = parseInt(match[1]);
+      const minutes = parseInt(match[2]);
+      const period = match[3]?.toUpperCase();
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+      const date = new Date();
+      date.setHours(hours, minutes, 0, 0);
+      return date;
+    }
+    
+    return null;
+  };
+  
+  const inTime = parseTime(timeIn);
+  const outTime = parseTime(timeOut);
+  
+  if (!inTime || !outTime) return '-';
+  
+  // Calculate difference
+  let diffMs = outTime.getTime() - inTime.getTime();
+  
+  // Handle overnight (if out time is earlier than in time)
+  if (diffMs < 0) {
+    diffMs += 24 * 60 * 60 * 1000;
+  }
+  
+  // Convert to hours, minutes, seconds
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  
+  // Format output
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 && hours === 0) parts.push(`${seconds}s`);
+  
+  return parts.length > 0 ? parts.join(' ') : '< 1m';
+}
+
+/**
  * Format date for display
  */
 function formatDisplayDate(dateStr: string): string {
@@ -936,9 +1006,28 @@ export default function AttendanceTransparencyPage({
                     style={{
                       fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
                       fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                      color: hasNoLogout(record.timeIn, record.timeOut) ? '#f59e0b' : undefined,
                     }}
                   >
-                    {record.timeOut}
+                    {hasNoLogout(record.timeIn, record.timeOut) ? 'No Logout ⚠️' : record.timeOut}
+                  </span>
+                </div>
+                {/* Duration */}
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Clock className="w-4 h-4" />
+                    <span style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px` }}>
+                      Duration:
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                      color: DESIGN_TOKENS.colors.brand.orange,
+                    }}
+                  >
+                    {calculateDuration(record.timeIn, record.timeOut)}
                   </span>
                 </div>
               </div>
@@ -995,6 +1084,7 @@ export default function AttendanceTransparencyPage({
                   <th className="text-left px-6 py-4" style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`, fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>Scanned By</th>
                   <th className="text-left px-6 py-4" style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`, fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>Time Out</th>
                   <th className="text-left px-6 py-4" style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`, fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>Scanned By</th>
+                  <th className="text-left px-6 py-4" style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`, fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>Duration</th>
                   <th className="text-left px-6 py-4" style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`, fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>Status</th>
                 </tr>
               </thead>
@@ -1095,12 +1185,24 @@ export default function AttendanceTransparencyPage({
                       fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                     }}
                   >
+                    Duration
+                  </th>
+                  <th
+                    className="text-left px-6 py-4"
+                    style={{
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    }}
+                  >
                     Status
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {paginatedRecords.map((record) => (
+                {paginatedRecords.map((record) => {
+                  const noLogout = hasNoLogout(record.timeIn, record.timeOut);
+                  const duration = calculateDuration(record.timeIn, record.timeOut);
+                  return (
                   <tr
                     key={record.id}
                     onClick={() => {
@@ -1114,6 +1216,10 @@ export default function AttendanceTransparencyPage({
                         : "rgba(0, 0, 0, 0.05)",
                       transitionDuration: `${DESIGN_TOKENS.motion.duration.fast}ms`,
                       height: "48px",
+                      // Highlight row if no logout
+                      background: noLogout 
+                        ? (isDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 243, 205, 0.8)')
+                        : undefined,
                     }}
                   >
                     <td
@@ -1159,14 +1265,16 @@ export default function AttendanceTransparencyPage({
                       </div>
                     </td>
                     <td
-                      className="px-6 py-4 text-muted-foreground"
+                      className="px-6 py-4"
                       style={{
                         fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                        color: noLogout ? '#f59e0b' : undefined,
+                        fontWeight: noLogout ? DESIGN_TOKENS.typography.fontWeight.bold : undefined,
                       }}
                     >
                       <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4" />
-                        {record.timeOut}
+                        <Clock className="w-4 h-4" style={{ color: noLogout ? '#f59e0b' : undefined }} />
+                        {noLogout ? 'No Logout ⚠️' : record.timeOut}
                       </div>
                     </td>
                     <td
@@ -1180,11 +1288,22 @@ export default function AttendanceTransparencyPage({
                         {record.scannedByTimeOut || "—"}
                       </div>
                     </td>
+                    <td
+                      className="px-6 py-4"
+                      style={{
+                        fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        color: DESIGN_TOKENS.colors.brand.orange,
+                      }}
+                    >
+                      {duration}
+                    </td>
                     <td className="px-6 py-4">
                       <StatusChip status={record.status} size="sm" />
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1373,11 +1492,23 @@ export default function AttendanceTransparencyPage({
                 style={{
                   fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
                   fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  color: DESIGN_TOKENS.colors.brand.orange,
+                  color: hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) ? '#f59e0b' : DESIGN_TOKENS.colors.brand.orange,
                 }}
               >
-                Time Out
+                Time Out {hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) && '⚠️ NO LOGOUT'}
               </label>
+              {hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) && (
+                <div 
+                  className="mb-3 px-3 py-2 rounded-lg text-sm"
+                  style={{
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    color: '#f59e0b',
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                  }}
+                >
+                  ⚠️ This member did not log out from this event
+                </div>
+              )}
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -1390,9 +1521,10 @@ export default function AttendanceTransparencyPage({
                     style={{
                       fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
                       fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                      color: hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) ? '#f59e0b' : undefined,
                     }}
                   >
-                    {selectedRecord.timeOut}
+                    {hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) ? 'N/A' : selectedRecord.timeOut}
                   </p>
                 </div>
                 <div className="flex-1">
@@ -1410,6 +1542,43 @@ export default function AttendanceTransparencyPage({
                   >
                     {selectedRecord.scannedByTimeOut || "—"}
                   </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Duration Section */}
+            <div className="mb-6">
+              <label
+                className="block mb-3"
+                style={{
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  color: DESIGN_TOKENS.colors.brand.orange,
+                }}
+              >
+                Attendance Duration
+              </label>
+              <div 
+                className="px-4 py-3 rounded-lg"
+                style={{
+                  background: isDark ? 'rgba(246, 66, 31, 0.15)' : 'rgba(246, 66, 31, 0.08)',
+                  border: `1px solid ${DESIGN_TOKENS.colors.brand.orange}30`,
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <Clock className="w-5 h-5" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                  <span
+                    style={{
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
+                      color: DESIGN_TOKENS.colors.brand.orange,
+                    }}
+                  >
+                    {calculateDuration(selectedRecord.timeIn, selectedRecord.timeOut)}
+                  </span>
+                  {hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) && (
+                    <span className="text-sm text-muted-foreground">(incomplete - no logout)</span>
+                  )}
                 </div>
               </div>
             </div>

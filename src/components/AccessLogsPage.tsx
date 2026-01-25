@@ -34,6 +34,9 @@ import {
   Monitor,
   X,
   RefreshCw,
+  Calendar,
+  CheckSquare,
+  AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
@@ -41,7 +44,7 @@ import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import CustomDropdown from "./CustomDropdown";
-import { logAccess } from "../services/gasSystemToolsService";
+import { logAccess, clearAllAccessLogs, clearAccessLogsByDateRange, clearSpecificAccessLogs } from "../services/gasSystemToolsService";
 import { searchOfficers } from "../services/gasDirectoryService";
 
 // Organization branding (match AttendanceDashboardPage)
@@ -167,6 +170,7 @@ interface AccessLogsPageProps {
   addUploadToast?: (message: UploadToastMessage) => void;
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
   removeUploadToast?: (id: string) => void;
+  onModalStateChange?: (isOpen: boolean) => void;
 }
 
 const GAS_SYSTEM_TOOLS_API_URL =
@@ -182,6 +186,7 @@ export default function AccessLogsPage({
   addUploadToast = () => {},
   updateUploadToast = () => {},
   removeUploadToast = () => {},
+  onModalStateChange = () => {},
 }: AccessLogsPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedType, setSelectedType] = useState<string>("all");
@@ -201,6 +206,21 @@ export default function AccessLogsPage({
   const [exportType, setExportType] = useState("");
   const hasLoggedViewRef = useRef(false);
   const [selectedProfilePic, setSelectedProfilePic] = useState<string | null>(null);
+
+  // Clear Logs Modal State
+  const [showClearLogsModal, setShowClearLogsModal] = useState(false);
+  const [clearMode, setClearMode] = useState<'all' | 'dateRange' | 'selected'>('all');
+  const [clearStartDate, setClearStartDate] = useState("");
+  const [clearEndDate, setClearEndDate] = useState("");
+  const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
+  const [isClearing, setIsClearing] = useState(false);
+  const [showConfirmClear, setShowConfirmClear] = useState(false);
+
+  // Notify parent when any modal is open (to hide chatbot)
+  useEffect(() => {
+    const isAnyModalOpen = showClearLogsModal || showConfirmClear || showDetailModal;
+    onModalStateChange(isAnyModalOpen);
+  }, [showClearLogsModal, showConfirmClear, showDetailModal, onModalStateChange]);
 
   const actionTypes = [
     { value: "all", label: "All", icon: Filter },
@@ -731,6 +751,104 @@ export default function AccessLogsPage({
     setExportType("");
   }, [exportType]);
 
+  /**
+   * Handle clearing access logs based on selected mode
+   */
+  const handleClearLogs = async () => {
+    if (isClearing) return;
+    
+    setIsClearing(true);
+    const toastId = `clear-access-logs-${Date.now()}`;
+
+    addUploadToast({
+      id: toastId,
+      title: 'Clearing Access Logs',
+      message: 'Processing request...',
+      status: 'loading',
+      progress: 0,
+    });
+
+    try {
+      updateUploadToast(toastId, { progress: 30, message: 'Connecting to server...' });
+      
+      let result;
+
+      if (clearMode === 'all') {
+        updateUploadToast(toastId, { progress: 50, message: 'Clearing all logs...' });
+        result = await clearAllAccessLogs(username);
+      } else if (clearMode === 'dateRange') {
+        if (!clearStartDate || !clearEndDate) {
+          throw new Error('Please select both start and end dates');
+        }
+        if (new Date(clearStartDate) > new Date(clearEndDate)) {
+          throw new Error('Start date must be before end date');
+        }
+        updateUploadToast(toastId, { progress: 50, message: 'Clearing logs by date range...' });
+        result = await clearAccessLogsByDateRange(clearStartDate, clearEndDate, username);
+      } else if (clearMode === 'selected') {
+        if (selectedLogIds.length === 0) {
+          throw new Error('Please select at least one log to clear');
+        }
+        updateUploadToast(toastId, { progress: 50, message: `Clearing ${selectedLogIds.length} selected logs...` });
+        result = await clearSpecificAccessLogs(selectedLogIds, username);
+      }
+
+      updateUploadToast(toastId, { progress: 80, message: 'Refreshing data...' });
+      
+      // Refresh the logs after clearing
+      await fetchAccessLogs();
+      
+      updateUploadToast(toastId, {
+        status: 'success',
+        progress: 100,
+        title: 'Logs Cleared',
+        message: result?.message || `Successfully cleared ${result?.deletedCount || 0} log entries`,
+      });
+
+      // Reset state
+      setShowClearLogsModal(false);
+      setShowConfirmClear(false);
+      setSelectedLogIds([]);
+      setClearStartDate("");
+      setClearEndDate("");
+
+      setTimeout(() => removeUploadToast(toastId), 3000);
+    } catch (error) {
+      console.error('Clear Logs Error:', error);
+      updateUploadToast(toastId, {
+        status: 'error',
+        progress: 100,
+        title: 'Clear Failed',
+        message: error instanceof Error ? error.message : 'Failed to clear logs',
+      });
+      setTimeout(() => removeUploadToast(toastId), 5000);
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  /**
+   * Toggle selection of a log for clearing
+   */
+  const toggleLogSelection = (logId: string) => {
+    setSelectedLogIds(prev => 
+      prev.includes(logId) 
+        ? prev.filter(id => id !== logId)
+        : [...prev, logId]
+    );
+  };
+
+  /**
+   * Select/deselect all filtered logs
+   */
+  const toggleSelectAll = () => {
+    if (selectedLogIds.length === filteredLogs.length) {
+      setSelectedLogIds([]);
+    } else {
+      setSelectedLogIds(filteredLogs.map(log => log.id));
+    }
+  };
+
   const getActionTypeIcon = (type: string) => {
     switch (type) {
       case "login":
@@ -996,6 +1114,23 @@ export default function AccessLogsPage({
               disabled={isLoading || filteredLogs.length === 0}
             />
           </div>
+          {/* Clear Logs Button */}
+          <button
+            onClick={() => setShowClearLogsModal(true)}
+            disabled={isLoading || logs.length === 0}
+            className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 hover:scale-[1.02]"
+            style={{
+              background: `linear-gradient(135deg, #ef4444 0%, #dc2626 100%)`,
+              color: "#ffffff",
+              fontSize: "14px",
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+              boxShadow: "0 2px 8px rgba(239, 68, 68, 0.25)",
+            }}
+            aria-label="Clear access logs"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Clear Logs</span>
+          </button>
         </div>
       </div>
 
@@ -1698,6 +1833,474 @@ export default function AccessLogsPage({
               >
                 Close
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clear Logs Modal - Elegant Centered Design */}
+      {showClearLogsModal && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(8px)" }}
+          onClick={() => !isClearing && setShowClearLogsModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl max-h-[85vh] flex flex-col animate-in zoom-in-95 fade-in duration-200"
+            style={{
+              background: isDark ? "#1f2937" : "#ffffff",
+              border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+              boxShadow: isDark 
+                ? "0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05)"
+                : "0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              className="px-5 py-4 border-b flex items-center justify-between flex-shrink-0"
+              style={{
+                borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                background: isDark ? "rgba(239, 68, 68, 0.1)" : "rgba(239, 68, 68, 0.05)",
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-9 h-9 rounded-full flex items-center justify-center"
+                  style={{ background: "rgba(239, 68, 68, 0.15)", color: "#ef4444" }}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3
+                    className="text-base"
+                    style={{
+                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                      color: isDark ? "#f3f4f6" : "#1f2937",
+                    }}
+                  >
+                    Clear Access Logs
+                  </h3>
+                  <p className="text-xs" style={{ color: isDark ? "#9ca3af" : "#6b7280" }}>
+                    Select how you want to clear the logs
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => !isClearing && setShowClearLogsModal(false)}
+                disabled={isClearing}
+                className="p-1.5 rounded-lg transition-colors hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50"
+              >
+                <X className="w-4 h-4" style={{ color: isDark ? "#9ca3af" : "#6b7280" }} />
+              </button>
+            </div>
+
+            {/* Modal Body - Scrollable */}
+            <div className="px-5 py-4 space-y-3 overflow-y-auto flex-1">
+              {/* Clear Mode Selection */}
+              <div className="space-y-2.5">
+                <label
+                  className="text-xs"
+                  style={{
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                    color: isDark ? "#e5e7eb" : "#374151",
+                  }}
+                >
+                  Clear Mode
+                </label>
+
+                {/* Clear All Option */}
+                <button
+                  onClick={() => setClearMode('all')}
+                  disabled={isClearing}
+                  className={`w-full p-2.5 rounded-xl border transition-all text-left flex items-start gap-2.5 ${
+                    clearMode === 'all' ? 'ring-2 ring-red-500' : ''
+                  }`}
+                  style={{
+                    background: clearMode === 'all'
+                      ? (isDark ? "rgba(239, 68, 68, 0.1)" : "rgba(239, 68, 68, 0.05)")
+                      : (isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(0, 0, 0, 0.02)"),
+                    borderColor: clearMode === 'all'
+                      ? "#ef4444"
+                      : (isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"),
+                  }}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                      clearMode === 'all' ? 'border-red-500 bg-red-500' : 'border-gray-400'
+                    }`}
+                  >
+                    {clearMode === 'all' && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className="text-xs"
+                      style={{
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        color: isDark ? "#f3f4f6" : "#1f2937",
+                      }}
+                    >
+                      Clear All Logs
+                    </div>
+                    <div className="text-[11px] mt-0.5" style={{ color: isDark ? "#9ca3af" : "#6b7280" }}>
+                      Remove all {logs.length} access logs from the system
+                    </div>
+                  </div>
+                </button>
+
+                {/* Clear by Date Range Option */}
+                <button
+                  onClick={() => setClearMode('dateRange')}
+                  disabled={isClearing}
+                  className={`w-full p-2.5 rounded-xl border transition-all text-left flex items-start gap-2.5 ${
+                    clearMode === 'dateRange' ? 'ring-2 ring-red-500' : ''
+                  }`}
+                  style={{
+                    background: clearMode === 'dateRange'
+                      ? (isDark ? "rgba(239, 68, 68, 0.1)" : "rgba(239, 68, 68, 0.05)")
+                      : (isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(0, 0, 0, 0.02)"),
+                    borderColor: clearMode === 'dateRange'
+                      ? "#ef4444"
+                      : (isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"),
+                  }}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                      clearMode === 'dateRange' ? 'border-red-500 bg-red-500' : 'border-gray-400'
+                    }`}
+                  >
+                    {clearMode === 'dateRange' && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className="text-xs"
+                      style={{
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        color: isDark ? "#f3f4f6" : "#1f2937",
+                      }}
+                    >
+                      Clear by Date Range
+                    </div>
+                    <div className="text-[11px] mt-0.5" style={{ color: isDark ? "#9ca3af" : "#6b7280" }}>
+                      Remove logs within a specific date range
+                    </div>
+                  </div>
+                </button>
+
+                {/* Date Range Inputs (shown when dateRange mode is selected) */}
+                {clearMode === 'dateRange' && (
+                  <div className="ml-6 space-y-2 animate-in slide-in-from-top-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label
+                          className="block text-[10px] mb-1"
+                          style={{ color: isDark ? "#9ca3af" : "#6b7280" }}
+                        >
+                          Start Date
+                        </label>
+                        <input
+                          type="date"
+                          value={clearStartDate}
+                          onChange={(e) => setClearStartDate(e.target.value)}
+                          disabled={isClearing}
+                          className="w-full px-2.5 py-1.5 rounded-lg text-xs"
+                          style={{
+                            background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(0, 0, 0, 0.04)",
+                            border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+                            color: isDark ? "#e5e7eb" : "#374151",
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          className="block text-[10px] mb-1"
+                          style={{ color: isDark ? "#9ca3af" : "#6b7280" }}
+                        >
+                          End Date
+                        </label>
+                        <input
+                          type="date"
+                          value={clearEndDate}
+                          onChange={(e) => setClearEndDate(e.target.value)}
+                          disabled={isClearing}
+                          className="w-full px-2.5 py-1.5 rounded-lg text-xs"
+                          style={{
+                            background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(0, 0, 0, 0.04)",
+                            border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+                            color: isDark ? "#e5e7eb" : "#374151",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Clear Selected Option */}
+                <button
+                  onClick={() => setClearMode('selected')}
+                  disabled={isClearing}
+                  className={`w-full p-2.5 rounded-xl border transition-all text-left flex items-start gap-2.5 ${
+                    clearMode === 'selected' ? 'ring-2 ring-red-500' : ''
+                  }`}
+                  style={{
+                    background: clearMode === 'selected'
+                      ? (isDark ? "rgba(239, 68, 68, 0.1)" : "rgba(239, 68, 68, 0.05)")
+                      : (isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(0, 0, 0, 0.02)"),
+                    borderColor: clearMode === 'selected'
+                      ? "#ef4444"
+                      : (isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"),
+                  }}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                      clearMode === 'selected' ? 'border-red-500 bg-red-500' : 'border-gray-400'
+                    }`}
+                  >
+                    {clearMode === 'selected' && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className="text-xs"
+                      style={{
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        color: isDark ? "#f3f4f6" : "#1f2937",
+                      }}
+                    >
+                      Clear Selected Logs
+                    </div>
+                    <div className="text-[11px] mt-0.5" style={{ color: isDark ? "#9ca3af" : "#6b7280" }}>
+                      {selectedLogIds.length > 0
+                        ? `${selectedLogIds.length} log(s) selected for deletion`
+                        : "Select specific logs from the list below"}
+                    </div>
+                  </div>
+                </button>
+
+                {/* Selection Controls (shown when selected mode is active) */}
+                {clearMode === 'selected' && (
+                  <div className="ml-6 space-y-2 animate-in slide-in-from-top-2">
+                    <div className="flex items-center justify-between">
+                      <button
+                        onClick={toggleSelectAll}
+                        disabled={isClearing}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] transition-colors"
+                        style={{
+                          background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(0, 0, 0, 0.04)",
+                          color: isDark ? "#e5e7eb" : "#374151",
+                        }}
+                      >
+                        <CheckSquare className="w-3 h-3" />
+                        {selectedLogIds.length === filteredLogs.length ? "Deselect All" : "Select All"}
+                      </button>
+                      <span className="text-[10px]" style={{ color: isDark ? "#9ca3af" : "#6b7280" }}>
+                        {selectedLogIds.length} / {filteredLogs.length}
+                      </span>
+                    </div>
+
+                    {/* Scrollable list of logs to select */}
+                    <div
+                      className="max-h-28 overflow-y-auto rounded-lg border"
+                      style={{
+                        background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(0, 0, 0, 0.02)",
+                        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                      }}
+                    >
+                      {filteredLogs.slice(0, 50).map((log) => (
+                        <label
+                          key={log.id}
+                          className="flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedLogIds.includes(log.id)}
+                            onChange={() => toggleLogSelection(log.id)}
+                            disabled={isClearing}
+                            className="w-3 h-3 rounded border-gray-300 text-red-500 focus:ring-red-500"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div
+                              className="text-xs truncate"
+                              style={{ color: isDark ? "#e5e7eb" : "#374151" }}
+                            >
+                              {log.user} - {log.action}
+                            </div>
+                            <div className="text-[10px]" style={{ color: isDark ? "#6b7280" : "#9ca3af" }}>
+                              {new Date(log.timestamp).toLocaleString()}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                      {filteredLogs.length > 50 && (
+                        <div
+                          className="px-2 py-1.5 text-xs text-center"
+                          style={{ color: isDark ? "#9ca3af" : "#6b7280" }}
+                        >
+                          Showing first 50 of {filteredLogs.length} logs
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Warning Notice */}
+              <div
+                className="p-3 rounded-xl flex items-start gap-2"
+                style={{
+                  background: isDark ? "rgba(245, 158, 11, 0.1)" : "rgba(245, 158, 11, 0.08)",
+                  border: `1px solid ${isDark ? "rgba(245, 158, 11, 0.3)" : "rgba(245, 158, 11, 0.2)"}`,
+                }}
+              >
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
+                <div>
+                  <div
+                    className="text-[11px]"
+                    style={{
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                      color: isDark ? "#fbbf24" : "#d97706",
+                    }}
+                  >
+                    This action cannot be undone
+                  </div>
+                  <div className="text-[10px] mt-0.5" style={{ color: isDark ? "#9ca3af" : "#6b7280" }}>
+                    Deleted logs will be permanently removed. Consider exporting first.
+                  </div>
+                </div>
+              </div>
+
+              {/* Auto-clear Info */}
+              <div
+                className="p-2 rounded-lg text-[10px]"
+                style={{
+                  background: isDark ? "rgba(59, 130, 246, 0.1)" : "rgba(59, 130, 246, 0.05)",
+                  color: isDark ? "#93c5fd" : "#3b82f6",
+                }}
+              >
+                <Clock className="w-3 h-3 inline mr-1" />
+                Auto-cleanup: Logs older than 7 days are cleared every Monday at 12:00 AM
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div
+              className="px-5 py-3 border-t flex items-center justify-end gap-2 flex-shrink-0"
+              style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}
+            >
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => !isClearing && setShowClearLogsModal(false)}
+                disabled={isClearing}
+              >
+                Cancel
+              </Button>
+              <button
+                onClick={() => setShowConfirmClear(true)}
+                disabled={
+                  isClearing ||
+                  (clearMode === 'dateRange' && (!clearStartDate || !clearEndDate)) ||
+                  (clearMode === 'selected' && selectedLogIds.length === 0)
+                }
+                className="px-4 py-1.5 rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-50"
+                style={{
+                  background: `linear-gradient(135deg, #ef4444 0%, #dc2626 100%)`,
+                  color: "#ffffff",
+                  fontSize: "13px",
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                  boxShadow: "0 2px 8px rgba(239, 68, 68, 0.25)",
+                }}
+              >
+                {isClearing ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Clearing...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Clear Logs
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog - Elegant Centered Design */}
+      {showConfirmClear && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(0, 0, 0, 0.75)", backdropFilter: "blur(8px)" }}
+          onClick={() => !isClearing && setShowConfirmClear(false)}
+        >
+          <div
+            className="w-full max-w-xs rounded-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 fade-in duration-200"
+            style={{
+              background: isDark ? "#1f2937" : "#ffffff",
+              border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+              boxShadow: isDark 
+                ? "0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05)"
+                : "0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 text-center">
+              <div
+                className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center"
+                style={{ background: "rgba(239, 68, 68, 0.15)" }}
+              >
+                <AlertTriangle className="w-7 h-7" style={{ color: "#ef4444" }} />
+              </div>
+              <h4
+                className="text-lg mb-1.5"
+                style={{
+                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
+                  color: isDark ? "#f3f4f6" : "#1f2937",
+                }}
+              >
+                Confirm Deletion
+              </h4>
+              <p className="text-xs mb-5" style={{ color: isDark ? "#9ca3af" : "#6b7280" }}>
+                {clearMode === 'all' && `Are you sure you want to delete all ${logs.length} access logs?`}
+                {clearMode === 'dateRange' && `Are you sure you want to delete logs from ${clearStartDate} to ${clearEndDate}?`}
+                {clearMode === 'selected' && `Are you sure you want to delete ${selectedLogIds.length} selected log(s)?`}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowConfirmClear(false)}
+                  disabled={isClearing}
+                  className="flex-1 px-3 py-2 rounded-lg transition-colors disabled:opacity-50 text-sm"
+                  style={{
+                    background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(0, 0, 0, 0.04)",
+                    color: isDark ? "#e5e7eb" : "#374151",
+                    border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"}`,
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleClearLogs}
+                  disabled={isClearing}
+                  className="flex-1 px-3 py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 text-sm"
+                  style={{
+                    background: `linear-gradient(135deg, #ef4444 0%, #dc2626 100%)`,
+                    color: "#ffffff",
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                  }}
+                >
+                  {isClearing ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    "Yes, Delete"
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
