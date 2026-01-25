@@ -127,10 +127,11 @@ export default function PwaInstallPrompt({
 
   if (shouldRenderPrompt && isIos && !deferredPrompt) {
     const panelClasses =
-      "fixed bottom-6 right-6 z-50 w-[320px] max-w-[90vw] rounded-xl border border-orange-100 bg-white p-3 shadow-xl";
+      "fixed bottom-6 right-6 w-[320px] max-w-[90vw] rounded-xl border border-orange-100 bg-white p-3 shadow-xl";
     return (
       <div
         className={panelClasses}
+        style={{ zIndex: 999998 }} // Above chatbot but below toasts
         role="dialog"
         aria-live="polite"
       >
@@ -171,11 +172,12 @@ export default function PwaInstallPrompt({
   if (!shouldRenderPrompt) return null;
 
   const panelClasses =
-    "fixed bottom-6 right-6 z-50 w-[320px] max-w-[90vw] rounded-xl border border-orange-100 bg-white p-3 shadow-xl";
+    "fixed bottom-6 right-6 w-[320px] max-w-[90vw] rounded-xl border border-orange-100 bg-white p-3 shadow-xl";
 
   return (
     <div
       className={panelClasses}
+      style={{ zIndex: 999998 }} // Above chatbot but below toasts
       role="dialog"
       aria-live="polite"
     >

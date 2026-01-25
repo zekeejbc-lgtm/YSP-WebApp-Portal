@@ -12,6 +12,44 @@
  * Features: Skeleton loading, progress toast, event prioritization
  * 
  * =============================================================================
+ * 
+ * CACHING & DATA CONSISTENCY (QR vs Manual):
+ * -------------------------------------------
+ * Both QR Scanner and Manual Entry modes share the SAME mechanisms:
+ * 
+ * 1. MEMBER CACHING:
+ *    - Both use loadMembersFromCache() and saveMembersToCache() 
+ *    - Members are cached in localStorage with keys: MEMBERS_CACHE_KEY, MEMBERS_CACHE_TS_KEY
+ *    - memberCacheRef (in-memory Map) is used for quick lookups in both modes
+ *    - Cache is refreshed on background when online, persisted for offline use
+ * 
+ * 2. TIME FORMATTING:
+ *    - Both modes use the same timestamp format via toLocaleTimeString("en-PH")
+ *    - Timezone: Asia/Manila
+ *    - Format: "h:mm A" (e.g., "2:30 PM")
+ * 
+ * 3. BACKEND CALLS:
+ *    - QR: Uses recordTimeIn() / recordTimeOut() directly
+ *    - Manual: Uses recordTimeIn() / recordTimeOut() for Present/Late,
+ *              Uses recordManualAttendance() for Absent/Excused status
+ * 
+ * 4. OVERWRITE BEHAVIOR:
+ *    ⚠️ IMPORTANT: When overwriting an existing record, the backend uses
+ *    the CURRENT timestamp, NOT the original timestamp!
+ *    
+ *    - Backend function: recordManualAttendance() with overwrite=true
+ *    - Time is generated fresh: Utilities.formatDate(now, 'Asia/Manila', 'hh:mm a')
+ *    - This means overwriting will UPDATE the time to the current time
+ *    
+ *    Example: If original TimeIn was "9:00 AM" and you overwrite at "10:30 AM",
+ *    the new TimeIn will be "10:30 AM" (not the original "9:00 AM")
+ * 
+ * 5. OFFLINE SUPPORT:
+ *    - Both modes queue records locally when offline
+ *    - pendingAttendanceQueue manages offline records
+ *    - Records sync automatically when coming back online
+ * 
+ * =============================================================================
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -886,6 +924,11 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
   const memberSearchRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"Present" | "Late" | "Excused" | "Absent">("Present");
+  
+  // Batch recording state - smart detection via comma in input
+  const [selectedMembers, setSelectedMembers] = useState<MemberForAttendance[]>([]);
+  const [batchResults, setBatchResults] = useState<Array<{ name: string; status: "success" | "error" | "pending"; message: string }>>([]);
+  const [isBatchRecording, setIsBatchRecording] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
   const [previousRecord, setPreviousRecord] = useState<any>(null);
@@ -896,6 +939,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const scanPauseRef = useRef(false);
   const lastScanRef = useRef<{ id: string; at: number } | null>(null);
   const skipNextMemberReloadRef = useRef(false);
+  const manuallyStoppedRef = useRef(false); // Track if scanner was manually stopped after successful scan
   const qrScanCooldownMs = 800;
   const hasPrefetchedMembersRef = useRef(false);
   const currentUser = getStoredUser();
@@ -1001,14 +1045,21 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
   const saveMembersToCache = (membersToCache: MemberForAttendance[]) => {
     try {
-      // Merge with existing cache to preserve all members
+      // Merge with existing cache - update existing members and add new ones
       const existing = loadMembersFromCache() || [];
-      const existingIds = new Set(existing.map(m => m.id));
-      const newMembers = membersToCache.filter(m => !existingIds.has(m.id));
-      const merged = [...existing, ...newMembers];
+      const existingMap = new Map(existing.map(m => [m.id, m]));
+      
+      // Update or add members from the new list
+      for (const member of membersToCache) {
+        existingMap.set(member.id, member); // Update if exists, add if new
+      }
+      
+      const merged = Array.from(existingMap.values());
       localStorage.setItem(MEMBERS_CACHE_KEY, JSON.stringify(merged));
       localStorage.setItem(MEMBERS_CACHE_TS_KEY, String(Date.now()));
-    } catch {
+      console.log(`📦 Saved ${merged.length} members to cache (${membersToCache.length} updated/added)`);
+    } catch (error) {
+      console.warn("Cache write failed:", error);
       // Ignore cache write failures (e.g., storage full or disabled).
     }
   };
@@ -1526,14 +1577,22 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         return;
       }
 
+      // If we already have members loaded, just filter locally - no need to fetch from backend
       if (memberSearchInput && memberSearchInput.length >= 2) {
-        loadMembers(memberSearchInput, 100, true, false);
+        // Only fetch from backend if we don't have members loaded yet
+        if (members.length === 0) {
+          loadMembers(memberSearchInput, 100, true, false);
+        }
+        // Otherwise, filteredMembers will handle local filtering automatically
       } else if (currentStep === "recording" && selectedMode === "manual" && !memberSearchInput) {
-        loadMembers();
+        // Only load members if we don't have them yet
+        if (members.length === 0) {
+          loadMembers();
+        }
       }
     }, 300);
     return () => clearTimeout(timeoutId);
-  }, [memberSearchInput, currentStep, selectedMode, loadMembers]);
+  }, [memberSearchInput, currentStep, selectedMode, loadMembers, members.length]);
 
   // Navigation handlers
   const handleEventSelect = (event: Event) => {
@@ -1546,6 +1605,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     if (selectedEvent?.geofenceEnabled === false) {
       setShowEventDetailsModal(false);
       setCurrentStep("mode-selection");
+      // Pre-cache all members when event is selected
+      prefetchAndCacheAllMembers();
       return;
     }
     
@@ -1559,11 +1620,55 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     
     setShowEventDetailsModal(false);
     setCurrentStep("mode-selection");
+    // Pre-cache all members when event is selected
+    prefetchAndCacheAllMembers();
+  };
+  
+  // Prefetch and permanently cache all members when an event is selected
+  const prefetchAndCacheAllMembers = async () => {
+    try {
+      console.log("📦 Pre-caching all members for attendance...");
+      
+      // First, load from localStorage cache
+      const cachedMembers = loadMembersFromCache();
+      if (cachedMembers && cachedMembers.length > 0) {
+        console.log(`📦 Found ${cachedMembers.length} members in localStorage cache`);
+        cachedMembers.forEach(cacheMember);
+        setMembers(cachedMembers);
+      }
+      
+      // Then fetch from backend to get any new members (in background)
+      if (isOnline) {
+        const fetchedMembers = await getMembersForAttendance(undefined, 1000); // Get all members
+        console.log(`📦 Fetched ${fetchedMembers.length} members from backend`);
+        
+        // Cache each member in memory
+        fetchedMembers.forEach(cacheMember);
+        
+        // Merge with existing cache and save to localStorage
+        saveMembersToCache(fetchedMembers);
+        
+        // Update state with merged list
+        const merged = loadMembersFromCache() || fetchedMembers;
+        setMembers(merged);
+        
+        console.log(`📦 Total cached members: ${merged.length}`);
+      }
+    } catch (error) {
+      console.error("Failed to prefetch members:", error);
+      // Still use cached data if available
+      const cachedMembers = loadMembersFromCache();
+      if (cachedMembers && cachedMembers.length > 0) {
+        cachedMembers.forEach(cacheMember);
+        setMembers(cachedMembers);
+      }
+    }
   };
 
   const handleModeSelect = (mode: Mode) => {
     setSelectedMode(mode);
     setCurrentStep("recording");
+    manuallyStoppedRef.current = false; // Reset when entering recording mode
   };
 
   const handleGoBack = () => {
@@ -1571,6 +1676,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       setCurrentStep("mode-selection");
       setIsScanning(false);
       scanPauseRef.current = false;
+      manuallyStoppedRef.current = false; // Reset when leaving recording
       setSelectedMember("");
       setMemberSearchInput("");
       setShowMemberDropdown(false);
@@ -1587,6 +1693,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setSelectedEvent(null);
     setSelectedMode(null);
     setIsScanning(false);
+    manuallyStoppedRef.current = false; // Reset when going back to event selection
     scanPauseRef.current = false;
     setSelectedMember("");
     setMemberSearchInput("");
@@ -1721,9 +1828,13 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
   // Handle member selection
   const handleMemberSelect = (member: MemberForAttendance) => {
+    // Skip the debounced search that would be triggered by setting the search input
+    skipNextMemberReloadRef.current = true;
     setSelectedMember(member.id);
     setMemberSearchInput(member.name);
     setShowMemberDropdown(false);
+    // Reset loading state immediately since we already have the member
+    setIsLoadingMembers(false);
   };
 
   // Filter members based on search input
@@ -1816,163 +1927,188 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         day: 'numeric'
       });
 
-      // Helper to show success modal (used for both online and offline)
-      const showSuccessModal = (isOffline: boolean = false) => {
-        setPendingRecord({
-          memberData: member,
-          member: member!.name,
-          event: selectedEvent.name,
-          timeType: timeType === "in" ? "Time In" : "Time Out",
-          status: "Present",
-          timestamp: timestamp,
-          date: fullDate,
-          isOffline: isOffline,
-        });
-        scanPauseRef.current = true;
-        setShowVerificationModal(true);
-      };
+      // Show verification modal FIRST - record only after user confirms
+      // This allows user to verify the person's identity before recording
+      setPendingRecord({
+        memberData: member,
+        member: member!.name,
+        event: selectedEvent.name,
+        eventId: selectedEvent.id,
+        timeType: timeType === "in" ? "Time In" : "Time Out",
+        status: "Present",
+        timestamp: timestamp,
+        date: fullDate,
+        needsConfirmation: true, // Flag to indicate recording hasn't happened yet
+        isOffline: !isOnline,
+      });
+      scanPauseRef.current = true;
+      setShowVerificationModal(true);
+      setIsRecordingAttendance(false);
+      isProcessingScanRef.current = false;
+      
+    } catch (error) {
+      console.error("QR scan processing error:", error);
+      toast.error("Failed to process QR code", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+      setIsRecordingAttendance(false);
+      isProcessingScanRef.current = false;
+    }
+  };
 
-      // Helper to queue offline record
-      const queueOfflineRecord = () => {
-        addToPendingQueue({
+  // Confirm and record attendance after user verifies identity
+  const confirmAndRecordAttendance = async () => {
+    if (!pendingRecord?.memberData || !selectedEvent) {
+      toast.error("Missing member or event data");
+      return;
+    }
+
+    const member = pendingRecord.memberData;
+    const timestamp = pendingRecord.timestamp;
+    const fullDate = pendingRecord.date;
+    
+    setIsRecordingAttendance(true);
+
+    // Helper to queue offline record
+    const queueOfflineRecord = () => {
+      addToPendingQueue({
+        eventId: selectedEvent.id,
+        eventName: selectedEvent.name,
+        memberId: member.id,
+        memberName: member.name,
+        memberData: member,
+        status: pendingRecord.status || 'Present',
+        timeType: timeType,
+        timestamp: timestamp,
+        fullDate: fullDate,
+        location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+        recordedBy: getCurrentUserName(),
+      });
+      
+      // Update pending record to show it's queued
+      setPendingRecord({
+        ...pendingRecord,
+        needsConfirmation: false,
+        isOffline: true,
+      });
+      
+      toast.success(`${pendingRecord.status} - ${member.name}`, {
+        description: `${pendingRecord.timeType} queued for sync`,
+      });
+      
+      // Close modal and reset
+      setShowVerificationModal(false);
+      scanPauseRef.current = false;
+      setPendingRecord(null);
+      setIsRecordingAttendance(false);
+      
+      // STOP scanning after successful queue - user must manually restart
+      if (selectedMode === "qr") {
+        manuallyStoppedRef.current = true; // Prevent auto-restart
+        handleStopScanning();
+        toast.info("Press Start Camera to scan next member", { duration: 3000 });
+      }
+    };
+
+    // If offline, queue the record
+    if (!isOnline) {
+      queueOfflineRecord();
+      return;
+    }
+
+    // Online flow - record to backend
+    try {
+      if (timeType === "in") {
+        const response = await recordTimeIn({
           eventId: selectedEvent.id,
-          eventName: selectedEvent.name,
-          memberId: member!.id,
-          memberName: member!.name,
-          memberData: member!,
-          status: 'Present',
-          timeType: timeType,
-          timestamp: timestamp,
-          fullDate: fullDate,
+          memberId: member.id,
+          memberName: member.name,
+          status: pendingRecord.status as 'Present' | 'Late' || 'Present',
           location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
           recordedBy: getCurrentUserName(),
         });
-        showSuccessModal(true);
-      };
 
-      // If offline, queue the record and show optimistic UI
-      if (!isOnline) {
-        queueOfflineRecord();
-        setIsRecordingAttendance(false);
-        isProcessingScanRef.current = false;
-        return;
-      }
-
-      // Online flow - try to record to backend
-      if (timeType === "in") {
-        try {
-          const response = await recordTimeIn({
-            eventId: selectedEvent.id,
-            memberId: member.id,
-            memberName: member.name,
-            status: 'Present',
-            location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
-            recordedBy: getCurrentUserName(),
-          });
-
-          // Success - show verification modal
-          setPendingRecord({
-            memberData: member,
-            member: member.name,
-            event: selectedEvent.name,
-            timeType: "Time In",
-            status: "Present",
-            timestamp: response.timeIn || timestamp,
-            date: fullDate,
-            attendanceId: response.attendanceId,
-          });
-          scanPauseRef.current = true;
-          setShowVerificationModal(true);
-        } catch (error) {
-          if (error instanceof AttendanceAPIError) {
-            if (error.code === AttendanceErrorCodes.EXISTING_RECORD) {
-              // Show overwrite warning
-              const existingRecord = error.existingRecord;
-              setPreviousRecord({
-                memberData: member,
-                member: member.name,
-                event: selectedEvent.name,
-                timeType: "Time In",
-                status: existingRecord?.status || "Present",
-                timestamp: existingRecord?.timeIn || "",
-                date: fullDate,
-              });
-              setPendingRecord({
-                memberData: member,
-                member: member.name,
-                event: selectedEvent.name,
-                timeType: "Time In",
-                status: "Present",
-                timestamp: timestamp,
-                date: fullDate,
-              });
-              scanPauseRef.current = true;
-              setShowOverwriteWarning(true);
-            } else if (error.code === AttendanceErrorCodes.NETWORK_ERROR || error.code === AttendanceErrorCodes.TIMEOUT) {
-              // Network error - queue for offline sync
-              queueOfflineRecord();
-            } else {
-              throw error;
-            }
-          } else {
-            // Unknown error - try to queue offline
-            queueOfflineRecord();
-          }
-        }
+        // Success!
+        toast.success(`${pendingRecord.status} - ${member.name}`, {
+          description: `${pendingRecord.timeType} recorded at ${formatTimeDisplay(response.timeIn) || timestamp}`,
+        });
+        
       } else {
         // Time Out
-        try {
-          const response = await recordTimeOut({
-            eventId: selectedEvent.id,
-            memberId: member.id,
-            location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
-            recordedBy: getCurrentUserName(),
-          });
+        const response = await recordTimeOut({
+          eventId: selectedEvent.id,
+          memberId: member.id,
+          location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+          recordedBy: getCurrentUserName(),
+        });
 
-          // Success - show verification modal
-          setPendingRecord({
+        // Success!
+        toast.success(`${pendingRecord.status} - ${member.name}`, {
+          description: `${pendingRecord.timeType} recorded at ${formatTimeDisplay(response.timeOut) || timestamp}`,
+        });
+      }
+
+      // Close modal and reset
+      setShowVerificationModal(false);
+      scanPauseRef.current = false;
+      setPendingRecord(null);
+      
+      // STOP scanning after successful record - user must manually restart
+      // This prevents accidental double scans and overloading
+      if (selectedMode === "qr") {
+        manuallyStoppedRef.current = true; // Prevent auto-restart
+        await handleStopScanning();
+        toast.info("Press Start Camera to scan next member", { duration: 3000 });
+      }
+      
+    } catch (error) {
+      if (error instanceof AttendanceAPIError) {
+        if (error.code === AttendanceErrorCodes.EXISTING_RECORD) {
+          // Show overwrite warning
+          const existingRecord = error.existingRecord;
+          setShowVerificationModal(false);
+          setPreviousRecord({
             memberData: member,
             member: member.name,
             event: selectedEvent.name,
-            timeType: "Time Out",
-            status: "Present",
-            timestamp: response.timeOut || timestamp,
+            timeType: pendingRecord.timeType,
+            status: existingRecord?.status || "Present",
+            timestamp: formatTimeDisplay(existingRecord?.timeIn || existingRecord?.timeOut) || "",
             date: fullDate,
-            attendanceId: response.attendanceId,
-            timeIn: response.timeIn,
           });
-          scanPauseRef.current = true;
-          setShowVerificationModal(true);
-        } catch (error) {
-          if (error instanceof AttendanceAPIError) {
-            if (error.code === AttendanceErrorCodes.NO_TIME_IN) {
-              toast.error("No Time In Record", {
-                description: `${member.name} hasn't timed in yet. Please record Time In first.`,
-              });
-            } else if (error.code === AttendanceErrorCodes.ALREADY_TIMED_OUT) {
-              toast.error("Already Timed Out", {
-                description: `${member.name} has already timed out for this event today.`,
-              });
-            } else if (error.code === AttendanceErrorCodes.NETWORK_ERROR || error.code === AttendanceErrorCodes.TIMEOUT) {
-              // Network error - queue for offline sync
-              queueOfflineRecord();
-            } else {
-              throw error;
-            }
-          } else {
-            // Unknown error - try to queue offline
-            queueOfflineRecord();
-          }
+          setPendingRecord({
+            ...pendingRecord,
+            needsConfirmation: false, // For overwrite flow
+          });
+          setShowOverwriteWarning(true);
+        } else if (error.code === AttendanceErrorCodes.NO_TIME_IN) {
+          toast.error("No Time In Record", {
+            description: `${member.name} hasn't timed in yet. Please record Time In first.`,
+          });
+          setShowVerificationModal(false);
+          scanPauseRef.current = false;
+          setPendingRecord(null);
+        } else if (error.code === AttendanceErrorCodes.ALREADY_TIMED_OUT) {
+          toast.error("Already Timed Out", {
+            description: `${member.name} has already timed out for this event today.`,
+          });
+          setShowVerificationModal(false);
+          scanPauseRef.current = false;
+          setPendingRecord(null);
+        } else if (error.code === AttendanceErrorCodes.NETWORK_ERROR || error.code === AttendanceErrorCodes.TIMEOUT) {
+          // Network error - queue for offline sync
+          queueOfflineRecord();
+          return;
+        } else {
+          throw error;
         }
+      } else {
+        // Unknown error - try to queue offline
+        queueOfflineRecord();
+        return;
       }
-    } catch (error) {
-      console.error("QR scan processing error:", error);
-      toast.error("Failed to record attendance", {
-        description: error instanceof Error ? error.message : "Unknown error",
-      });
     } finally {
       setIsRecordingAttendance(false);
-      isProcessingScanRef.current = false;
     }
   };
 
@@ -1983,6 +2119,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     }
 
     isStartingScannerRef.current = true;
+    manuallyStoppedRef.current = false; // User wants to scan again
     try {
       isProcessingScanRef.current = false;
       scanPauseRef.current = false;
@@ -2052,22 +2189,52 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     }
   };
 
-  // Stop QR scanning
+  // Stop QR scanning - with improved mobile handling
   const handleStopScanning = async () => {
-    if (qrScannerRef.current) {
-      try {
-        const state = qrScannerRef.current.getState();
-        if (state === Html5QrcodeScannerState.SCANNING) {
-          await qrScannerRef.current.stop();
-        }
-      } catch (error) {
-        console.error("Error stopping scanner:", error);
-      }
-      qrScannerRef.current = null;
-    }
+    console.log("🛑 Stop scanning requested, current state:", {
+      hasScanner: !!qrScannerRef.current,
+      isScanning,
+    });
+    
+    // Track if scanner was actually running to show toast only when needed
+    const wasScanning = isScanning || !!qrScannerRef.current;
+    
+    // Immediately update UI state to provide feedback
     setIsScanning(false);
     isProcessingScanRef.current = false;
     scanPauseRef.current = false;
+    
+    // Then clean up the scanner
+    if (qrScannerRef.current) {
+      try {
+        const state = qrScannerRef.current.getState();
+        console.log("🛑 Scanner state:", state);
+        if (state === Html5QrcodeScannerState.SCANNING || state === Html5QrcodeScannerState.PAUSED) {
+          await qrScannerRef.current.stop();
+          console.log("🛑 Scanner stopped successfully");
+        }
+      } catch (error) {
+        console.error("Error stopping scanner:", error);
+        // Force cleanup even if stop() fails
+        try {
+          await qrScannerRef.current.clear();
+        } catch {
+          // Ignore clear errors
+        }
+      }
+      qrScannerRef.current = null;
+    }
+    
+    // Clear the scanner container
+    const container = document.getElementById(qrScannerContainerId);
+    if (container) {
+      container.innerHTML = '';
+    }
+    
+    // Only show toast if scanner was actually running
+    if (wasScanning) {
+      toast.info("Camera stopped", { duration: 2000 });
+    }
   };
 
   // Cleanup scanner on unmount or when leaving QR mode
@@ -2091,7 +2258,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     }
   }, [currentStep, selectedMode]);
 
-  // Auto-start scanning when entering QR mode
+  // Auto-start scanning when entering QR mode (only on initial entry, not after manual stop)
   useEffect(() => {
     if (
       currentStep === "recording" &&
@@ -2099,7 +2266,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       cameraPermission !== "denied" &&
       !isScanning &&
       !showVerificationModal &&
-      !showOverwriteWarning
+      !showOverwriteWarning &&
+      !manuallyStoppedRef.current // Don't auto-start if manually stopped after successful scan
     ) {
       handleStartScanning();
     }
@@ -2235,7 +2403,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             event: selectedEvent.name,
             timeType: "Time In",
             status: status,
-            timestamp: response.timeIn || timestamp,
+            timestamp: formatTimeDisplay(response.timeIn) || timestamp,
             date: fullDate,
             attendanceId: response.attendanceId,
           });
@@ -2255,10 +2423,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
           event: selectedEvent.name,
           timeType: "Time Out",
           status: "Present",
-          timestamp: response.timeOut || timestamp,
+          timestamp: formatTimeDisplay(response.timeOut) || timestamp,
           date: fullDate,
           attendanceId: response.attendanceId,
-          timeIn: response.timeIn,
+          timeIn: formatTimeDisplay(response.timeIn),
         });
       }
 
@@ -2339,26 +2507,137 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     }
   };
 
-  const handleSuccessModalClose = () => {
-    setShowVerificationModal(false);
-    scanPauseRef.current = false;
+  // Smart batch recording handler - uses selectedMembers array
+  const handleBatchRecordAttendance = async () => {
+    if (selectedMembers.length === 0) {
+      toast.error("Please select at least one member");
+      return;
+    }
+
+    if (!selectedEvent) {
+      toast.error("No event selected");
+      return;
+    }
+
+    if ((status === "Absent" || status === "Excused") && timeType === "out") {
+      toast.error("Cannot record Time Out for Absent or Excused status");
+      return;
+    }
+
+    setIsBatchRecording(true);
+    setBatchResults([]);
+
+    // Initialize batch results with pending status
+    const initialResults = selectedMembers.map(member => ({ 
+      name: member.name, 
+      status: "pending" as const, 
+      message: "Processing..." 
+    }));
+    setBatchResults(initialResults);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    // Process each selected member
+    for (let i = 0; i < selectedMembers.length; i++) {
+      const member = selectedMembers[i];
+
+      try {
+        // Record attendance based on timeType and status
+        if (timeType === "in") {
+          if (status === "Absent" || status === "Excused") {
+            await recordManualAttendance({
+              eventId: selectedEvent.id,
+              memberId: member.id,
+              memberName: member.name,
+              status: status,
+              timeType: 'in',
+              notes: `Batch: Manually marked as ${status}`,
+              recordedBy: getCurrentUserName(),
+              overwrite: false,
+            });
+          } else {
+            await recordTimeIn({
+              eventId: selectedEvent.id,
+              memberId: member.id,
+              memberName: member.name,
+              status: status as 'Present' | 'Late',
+              location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+              recordedBy: getCurrentUserName(),
+            });
+          }
+        } else {
+          await recordTimeOut({
+            eventId: selectedEvent.id,
+            memberId: member.id,
+            location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+            recordedBy: getCurrentUserName(),
+          });
+        }
+
+        setBatchResults(prev => {
+          const updated = [...prev];
+          updated[i] = { name: member.name, status: "success", message: `${timeType === "in" ? "Time In" : "Time Out"} recorded` };
+          return updated;
+        });
+        successCount++;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Failed to record";
+        setBatchResults(prev => {
+          const updated = [...prev];
+          updated[i] = { name: member.name, status: "error", message: errorMessage };
+          return updated;
+        });
+        errorCount++;
+      }
+    }
+
+    setIsBatchRecording(false);
     
-    // Show toast notification
-    if (pendingRecord) {
-      toast.success(`${pendingRecord.status} - ${pendingRecord.member}`, {
-        description: `${pendingRecord.timeType} recorded at ${pendingRecord.timestamp}`,
+    // Show summary toast and clear on success
+    if (successCount > 0 && errorCount === 0) {
+      toast.success(`Batch recording complete`, {
+        description: `Successfully recorded ${successCount} ${successCount === 1 ? 'member' : 'members'}`,
+      });
+      // Clear selections on full success
+      setSelectedMembers([]);
+      setMemberSearchInput("");
+      setBatchResults([]);
+    } else if (successCount > 0 && errorCount > 0) {
+      toast.warning(`Batch recording completed with errors`, {
+        description: `${successCount} successful, ${errorCount} failed`,
+      });
+    } else {
+      toast.error(`Batch recording failed`, {
+        description: `All ${errorCount} records failed`,
       });
     }
+  };
 
-    setPendingRecord(null);
-
-    if (currentStep === "recording" && selectedMode === "qr" && cameraPermission !== "denied" && !isScanning) {
-      setTimeout(() => {
-        if (currentStep === "recording" && selectedMode === "qr" && !isScanning) {
-          handleStartScanning();
-        }
-      }, 200);
+  const handleSuccessModalClose = (showToast: boolean = true) => {
+    // If record still needs confirmation, this is a cancellation - don't record
+    if (pendingRecord?.needsConfirmation) {
+      toast.info("Attendance not recorded", {
+        description: "Verification was cancelled",
+        duration: 2000,
+      });
+      // Stop scanner on cancellation too and set manuallyStoppedRef
+      if (selectedMode === "qr") {
+        manuallyStoppedRef.current = true;
+        handleStopScanning();
+      }
     }
+    
+    setShowVerificationModal(false);
+    scanPauseRef.current = false;
+    setPendingRecord(null);
+    
+    // Don't auto-restart scanner - user must manually press Start Camera
+  };
+  
+  // Dismiss modal without recording (for backdrop click or X button)
+  const handleDismissVerificationModal = () => {
+    handleSuccessModalClose(false);
   };
 
   const glassStyle = getGlassStyle(isDark);
@@ -2936,7 +3215,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             </div>
 
             {/* Start/Stop Scanning Buttons */}
-            <div className="flex gap-3">
+            <div className="flex gap-3 relative" style={{ zIndex: 100 }}>
               <Button
                 variant="primary"
                 onClick={handleStartScanning}
@@ -2947,13 +3226,30 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 {isRecordingAttendance ? "Recording..." : "Start Camera"}
               </Button>
               {isScanning && (
-                <Button
-                  variant="secondary"
-                  onClick={handleStopScanning}
-                  icon={<StopCircle className="w-4 h-4 md:w-5 md:h-5" />}
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleStopScanning();
+                  }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleStopScanning();
+                  }}
+                  className="px-4 py-3 rounded-xl flex items-center justify-center gap-2 font-semibold transition-all active:scale-95 touch-manipulation"
+                  style={{
+                    background: isDark ? 'rgba(239, 68, 68, 0.9)' : 'rgba(239, 68, 68, 1)',
+                    color: 'white',
+                    border: '2px solid rgba(239, 68, 68, 0.3)',
+                    minWidth: '100px',
+                    zIndex: 100,
+                    WebkitTapHighlightColor: 'transparent',
+                  }}
                 >
+                  <StopCircle className="w-5 h-5" />
                   Stop
-                </Button>
+                </button>
               )}
             </div>
           </div>
@@ -2979,8 +3275,32 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                     minHeight: '300px',
                   }}
                 />
+                {/* Floating Stop Button - More prominent for mobile */}
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleStopScanning();
+                  }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleStopScanning();
+                  }}
+                  className="absolute top-3 right-3 p-3 rounded-full flex items-center justify-center transition-all active:scale-90 touch-manipulation"
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.95)',
+                    color: 'white',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
+                    zIndex: 1000,
+                    WebkitTapHighlightColor: 'transparent',
+                  }}
+                  title="Stop Camera"
+                >
+                  <X className="w-6 h-6" />
+                </button>
                 {/* Scanning indicator overlay */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-center">
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-center pointer-events-none">
                   <p className="text-white text-sm font-medium flex items-center justify-center gap-2">
                     <QrCode className="w-4 h-4 animate-pulse" />
                     Scanning for QR Code...
@@ -3113,7 +3433,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             </p>
           </div>
 
-          {/* Member Search with Autosuggest */}
+          {/* Smart Member Search - supports single and batch (comma-separated) */}
           <div className="mb-4 md:mb-6" ref={memberSearchRef}>
             <label
               className="block mb-2"
@@ -3124,8 +3444,67 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 color: DESIGN_TOKENS.colors.brand.orange,
               }}
             >
-              Search Member *
+              Search Member{selectedMembers.length > 0 ? 's' : ''} *
+              {selectedMembers.length > 1 && (
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  (Batch mode: {selectedMembers.length} selected)
+                </span>
+              )}
             </label>
+            
+            {/* Selected Members Chips */}
+            {selectedMembers.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {selectedMembers.map((member) => (
+                  <div 
+                    key={member.id}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm"
+                    style={{
+                      background: isDark ? 'rgba(246, 66, 31, 0.2)' : 'rgba(246, 66, 31, 0.1)',
+                      border: `1px solid ${DESIGN_TOKENS.colors.brand.orange}`,
+                    }}
+                  >
+                    {member.profilePicture ? (
+                      <img 
+                        src={member.profilePicture}
+                        alt={member.name}
+                        className="w-5 h-5 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div 
+                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-[10px]"
+                        style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
+                      >
+                        {getInitials(member.name)}
+                      </div>
+                    )}
+                    <span className="font-medium" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                      {member.name}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setSelectedMembers(prev => prev.filter(m => m.id !== member.id));
+                      }}
+                      className="p-0.5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                    >
+                      <X className="w-3 h-3 text-red-500" />
+                    </button>
+                  </div>
+                ))}
+                {selectedMembers.length > 1 && (
+                  <button
+                    onClick={() => {
+                      setSelectedMembers([]);
+                      setMemberSearchInput("");
+                    }}
+                    className="text-xs text-red-500 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="relative">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
@@ -3133,22 +3512,76 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                   type="text"
                   value={memberSearchInput}
                   onChange={(e) => {
-                    setMemberSearchInput(e.target.value);
+                    const value = e.target.value;
+                    setMemberSearchInput(value);
                     setShowMemberDropdown(true);
-                    // Clear selection if user is typing a new search
-                    if (selectedMember) {
+                    
+                    // Check if user typed a comma - try to add the previous term as a member
+                    if (value.endsWith(',')) {
+                      const searchTerm = value.slice(0, -1).trim();
+                      if (searchTerm) {
+                        // Find member by the search term
+                        const foundMember = members.find(m => 
+                          m.name.toLowerCase() === searchTerm.toLowerCase() ||
+                          m.id.toLowerCase() === searchTerm.toLowerCase() ||
+                          m.name.toLowerCase().includes(searchTerm.toLowerCase())
+                        );
+                        if (foundMember && !selectedMembers.find(sm => sm.id === foundMember.id)) {
+                          setSelectedMembers(prev => [...prev, foundMember]);
+                          setMemberSearchInput('');
+                          toast.success(`Added: ${foundMember.name}`, { duration: 1500 });
+                        } else if (!foundMember) {
+                          toast.error(`Member not found: "${searchTerm}"`, { duration: 2000 });
+                          setMemberSearchInput(searchTerm + ', ');
+                        } else {
+                          // Already selected
+                          setMemberSearchInput('');
+                        }
+                      } else {
+                        setMemberSearchInput('');
+                      }
+                    }
+                    
+                    // Clear single selection mode if we have batch
+                    if (selectedMember && selectedMembers.length === 0) {
                       const selectedMemberData = members.find(m => m.id === selectedMember);
-                      if (selectedMemberData && e.target.value !== selectedMemberData.name) {
+                      if (selectedMemberData && value !== selectedMemberData.name) {
                         setSelectedMember("");
                       }
                     }
                   }}
                   onFocus={() => setShowMemberDropdown(true)}
-                  placeholder="Type to search members..."
+                  onKeyDown={(e) => {
+                    // Handle Enter key to add member
+                    if (e.key === 'Enter' && memberSearchInput.trim()) {
+                      e.preventDefault();
+                      const searchTerm = memberSearchInput.trim();
+                      const foundMember = members.find(m => 
+                        m.name.toLowerCase() === searchTerm.toLowerCase() ||
+                        m.id.toLowerCase() === searchTerm.toLowerCase() ||
+                        m.name.toLowerCase().includes(searchTerm.toLowerCase())
+                      );
+                      if (foundMember && !selectedMembers.find(sm => sm.id === foundMember.id)) {
+                        setSelectedMembers(prev => [...prev, foundMember]);
+                        setMemberSearchInput('');
+                        setShowMemberDropdown(false);
+                        toast.success(`Added: ${foundMember.name}`, { duration: 1500 });
+                      }
+                    }
+                    // Handle Backspace to remove last chip when input is empty
+                    if (e.key === 'Backspace' && !memberSearchInput && selectedMembers.length > 0) {
+                      const lastMember = selectedMembers[selectedMembers.length - 1];
+                      setSelectedMembers(prev => prev.slice(0, -1));
+                      toast.info(`Removed: ${lastMember.name}`, { duration: 1500 });
+                    }
+                  }}
+                  placeholder={selectedMembers.length > 0 
+                    ? "Add more members (type and press Enter or comma)..." 
+                    : "Type to search members (use comma for batch)..."}
                   className="w-full pl-10 pr-10 py-3 rounded-xl border-2 transition-all focus:outline-none"
                   style={{
                     background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
-                    borderColor: selectedMember 
+                    borderColor: (selectedMember || selectedMembers.length > 0)
                       ? DESIGN_TOKENS.colors.brand.orange 
                       : isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
                     color: isDark ? '#ffffff' : '#000000',
@@ -3158,7 +3591,6 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                   <button
                     onClick={() => {
                       setMemberSearchInput("");
-                      setSelectedMember("");
                       setShowMemberDropdown(true);
                     }}
                     className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
@@ -3168,50 +3600,39 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 )}
               </div>
 
-              {/* Selected Member Preview */}
-              {selectedMember && (
-                <div 
-                  className="mt-2 p-3 rounded-lg border flex items-center gap-3"
-                  style={{
-                    background: isDark ? 'rgba(246, 66, 31, 0.1)' : 'rgba(246, 66, 31, 0.05)',
-                    borderColor: DESIGN_TOKENS.colors.brand.orange,
-                  }}
-                >
-                  {(() => {
-                    const member = members.find(m => m.id === selectedMember);
-                    return member ? (
-                      <>
-                        {member.profilePicture ? (
-                          <img 
-                            src={member.profilePicture}
-                            alt={member.name}
-                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
-                          />
-                        ) : (
-                          <div 
-                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
-                            style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
-                          >
-                            {getInitials(member.name)}
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold truncate" style={{ color: isDark ? '#fff' : '#000' }}>
-                            {member.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {member.position} • {member.committee}
-                          </p>
-                        </div>
-                        <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                      </>
-                    ) : null;
-                  })()}
+              {/* Hint text */}
+              <p className="text-xs text-muted-foreground mt-1">
+                💡 Tip: Type a name and press <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">Enter</kbd> or <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">,</kbd> to add multiple members for batch recording
+              </p>
+
+              {/* Batch Results - show during/after batch recording */}
+              {batchResults.length > 0 && (
+                <div className="mt-3 space-y-2 max-h-40 overflow-y-auto">
+                  {batchResults.map((result, idx) => (
+                    <div 
+                      key={idx}
+                      className={`flex items-center justify-between p-2 rounded-lg text-sm ${
+                        result.status === 'success' 
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300'
+                          : result.status === 'error'
+                          ? 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                      }`}
+                    >
+                      <span className="font-medium truncate flex-1">{result.name}</span>
+                      <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                        {result.status === 'success' && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                        {result.status === 'error' && <XCircle className="w-4 h-4 text-red-500" />}
+                        {result.status === 'pending' && <Loader2 className="w-4 h-4 animate-spin text-gray-500" />}
+                        <span className="text-xs">{result.message}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              {/* Autosuggest Dropdown */}
-              {showMemberDropdown && !selectedMember && (
+              {/* Autosuggest Dropdown - shows when no single selection and members.length === 0 or searching */}
+              {showMemberDropdown && selectedMembers.length === 0 && !selectedMember && (
                 <div 
                   className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl z-50 max-h-64 overflow-y-auto"
                   style={{
@@ -3229,7 +3650,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                     filteredMembers.slice(0, 10).map((member) => (
                       <button
                         key={member.id}
-                        onClick={() => handleMemberSelect(member)}
+                        onClick={() => {
+                          // Single select mode - for backward compatibility
+                          handleMemberSelect(member);
+                        }}
                         className="w-full p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left border-b last:border-b-0"
                         style={{
                           borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
@@ -3269,6 +3693,116 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                       <p className="text-xs mt-1">Try a different search term</p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Autosuggest Dropdown - shows when batch mode (selectedMembers > 0) */}
+              {showMemberDropdown && selectedMembers.length > 0 && memberSearchInput && (
+                <div 
+                  className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl z-50 max-h-64 overflow-y-auto"
+                  style={{
+                    background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                    backdropFilter: 'blur(20px)',
+                    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                  }}
+                >
+                  {isLoadingMembers ? (
+                    <div className="p-4 text-center text-muted-foreground flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading members...
+                    </div>
+                  ) : filteredMembers.filter(m => !selectedMembers.find(sm => sm.id === m.id)).length > 0 ? (
+                    filteredMembers.filter(m => !selectedMembers.find(sm => sm.id === m.id)).slice(0, 10).map((member) => (
+                      <button
+                        key={member.id}
+                        onClick={() => {
+                          setSelectedMembers(prev => [...prev, member]);
+                          setMemberSearchInput('');
+                          setShowMemberDropdown(false);
+                          toast.success(`Added: ${member.name}`, { duration: 1500 });
+                        }}
+                        className="w-full p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left border-b last:border-b-0"
+                        style={{
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                        }}
+                      >
+                        {member.profilePicture ? (
+                          <img 
+                            src={member.profilePicture}
+                            alt={member.name}
+                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                          />
+                        ) : (
+                          <div 
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+                            style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
+                          >
+                            {getInitials(member.name)}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p 
+                            className="font-medium truncate"
+                            style={{ color: isDark ? '#fff' : '#000' }}
+                          >
+                            {member.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {member.position} • {member.committee}
+                          </p>
+                        </div>
+                        <span className="text-xs text-orange-500 flex-shrink-0">+ Add</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="p-4 text-center text-muted-foreground">
+                      <User className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p>No more members found</p>
+                      <p className="text-xs mt-1">All matching members already selected</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Selected Single Member Preview - for backward compatibility */}
+              {selectedMember && selectedMembers.length === 0 && (
+                <div 
+                  className="mt-2 p-3 rounded-lg border flex items-center gap-3"
+                  style={{
+                    background: isDark ? 'rgba(246, 66, 31, 0.1)' : 'rgba(246, 66, 31, 0.05)',
+                    borderColor: DESIGN_TOKENS.colors.brand.orange,
+                  }}
+                >
+                  {(() => {
+                    const member = members.find(m => m.id === selectedMember);
+                    return member ? (
+                      <>
+                        {member.profilePicture ? (
+                          <img 
+                            src={member.profilePicture}
+                            alt={member.name}
+                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                          />
+                        ) : (
+                          <div 
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+                            style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
+                          >
+                            {getInitials(member.name)}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold truncate" style={{ color: isDark ? '#fff' : '#000' }}>
+                            {member.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {member.position} • {member.committee}
+                          </p>
+                        </div>
+                        <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                      </>
+                    ) : null;
+                  })()}
                 </div>
               )}
             </div>
@@ -3355,15 +3889,40 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             </div>
           )}
 
-          {/* Record Button */}
-          <Button 
-            onClick={handleRecordAttendance} 
-            icon={isRecordingAttendance ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Save className="w-4 h-4 md:w-5 md:h-5" />} 
-            fullWidth
-            disabled={isRecordingAttendance || isLoadingMembers || !selectedMember}
-          >
-            {isRecordingAttendance ? "Recording..." : "Record Attendance"}
-          </Button>
+          {/* Record Button - Single Mode (when only selectedMember is set) */}
+          {selectedMember && selectedMembers.length === 0 && (
+            <Button 
+              onClick={handleRecordAttendance} 
+              icon={isRecordingAttendance ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Save className="w-4 h-4 md:w-5 md:h-5" />} 
+              fullWidth
+              disabled={isRecordingAttendance || isLoadingMembers}
+            >
+              {isRecordingAttendance ? "Recording..." : "Record Attendance"}
+            </Button>
+          )}
+
+          {/* Record Button - Batch Mode (when selectedMembers array has items) */}
+          {selectedMembers.length > 0 && (
+            <Button 
+              onClick={handleBatchRecordAttendance} 
+              icon={isBatchRecording ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Save className="w-4 h-4 md:w-5 md:h-5" />} 
+              fullWidth
+              disabled={isBatchRecording || isLoadingMembers}
+            >
+              {isBatchRecording ? "Recording Batch..." : `Record ${selectedMembers.length} Member${selectedMembers.length > 1 ? 's' : ''}`}
+            </Button>
+          )}
+
+          {/* No selection placeholder */}
+          {!selectedMember && selectedMembers.length === 0 && (
+            <Button 
+              icon={<Save className="w-4 h-4 md:w-5 md:h-5" />} 
+              fullWidth
+              disabled
+            >
+              Record Attendance
+            </Button>
+          )}
           </div>
         </div>
       )}
@@ -3995,10 +4554,10 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       {showVerificationModal && pendingRecord && (
         <div
           className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6 md:p-8"
-          onClick={handleSuccessModalClose}
+          onClick={handleDismissVerificationModal}
         >
           <div
-            className="rounded-xl w-full max-w-md md:max-w-lg border max-h-[85vh] flex flex-col overflow-hidden"
+            className="rounded-xl w-full max-w-md md:max-w-lg border max-h-[85vh] flex flex-col overflow-hidden relative"
             style={{
               background: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
               backdropFilter: 'blur(20px)',
@@ -4023,6 +4582,15 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
               </div>
             )}
             
+            {/* Close Button - Top Right */}
+            <button
+              onClick={handleDismissVerificationModal}
+              className="absolute top-3 right-3 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors z-10"
+              title="Close"
+            >
+              <X className="w-5 h-5 text-gray-500" />
+            </button>
+            
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-5 md:p-7">
               {/* Success Icon Header */}
@@ -4040,6 +4608,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 >
                   {pendingRecord.isOffline ? (
                     <Clock className="w-9 h-9 md:w-11 md:h-11 text-white" />
+                  ) : pendingRecord.needsConfirmation ? (
+                    <User className="w-9 h-9 md:w-11 md:h-11 text-white" />
                   ) : (
                     <CheckCircle className="w-9 h-9 md:w-11 md:h-11 text-white" />
                   )}
@@ -4053,12 +4623,18 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                     color: pendingRecord.isOffline ? '#f59e0b' : DESIGN_TOKENS.colors.brand.red,
                   }}
                 >
-                  {pendingRecord.isOffline ? 'Queued for Sync' : 'Verify Attendance'}
+                  {pendingRecord.isOffline 
+                    ? 'Queued for Sync' 
+                    : pendingRecord.needsConfirmation 
+                      ? 'Verify Identity' 
+                      : 'Attendance Recorded'}
                 </h3>
                 <p className="text-sm text-muted-foreground">
                   {pendingRecord.isOffline 
                     ? 'This record will be synced when you have internet connection'
-                    : 'Please verify the member information before recording'}
+                    : pendingRecord.needsConfirmation
+                      ? 'Is this the correct person? Verify before recording.'
+                      : 'Attendance has been successfully recorded'}
                 </p>
               </div>
               
@@ -4189,16 +4765,42 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
               }}
             >
-              <button
-                onClick={handleSuccessModalClose}
-                className="w-full px-4 py-3 rounded-xl text-white transition-all hover:shadow-lg text-sm md:text-base"
-                style={{
-                  background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                }}
-              >
-                Verify & Record
-              </button>
+              {pendingRecord.needsConfirmation ? (
+                // Show Verify & Record button if not yet recorded
+                <button
+                  onClick={confirmAndRecordAttendance}
+                  disabled={isRecordingAttendance}
+                  className="w-full px-4 py-3 rounded-xl text-white transition-all hover:shadow-lg text-sm md:text-base flex items-center justify-center gap-2 disabled:opacity-70"
+                  style={{
+                    background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  }}
+                >
+                  {isRecordingAttendance ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Recording...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-5 h-5" />
+                      Verify & Record
+                    </>
+                  )}
+                </button>
+              ) : (
+                // Show Done button if already recorded (e.g., after overwrite)
+                <button
+                  onClick={() => handleSuccessModalClose(true)}
+                  className="w-full px-4 py-3 rounded-xl text-white transition-all hover:shadow-lg text-sm md:text-base"
+                  style={{
+                    background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  }}
+                >
+                  Done
+                </button>
+              )}
             </div>
           </div>
         </div>

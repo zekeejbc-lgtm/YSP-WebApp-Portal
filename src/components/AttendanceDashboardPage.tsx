@@ -29,7 +29,7 @@ const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
 const ORG_NAME = "Youth Service Philippines";
 const ORG_CHAPTER = "Tagum Chapter";
 
-// Helper function to format time values properly
+// Helper function to format time values properly (converts UTC to Manila time)
 function formatTimeValue(timeValue: any): string {
   if (!timeValue) return '-';
   
@@ -41,23 +41,19 @@ function formatTimeValue(timeValue: any): string {
     return timeStr;
   }
   
-  // Check if it's an ISO date string (contains T)
+  // Check if it's an ISO date string (contains T) - these are in UTC and need timezone conversion
   if (timeStr.includes('T')) {
     try {
-      // Extract the time portion directly from ISO string
-      // Format: 1899-12-30T14:34:00.000Z -> extract 14:34:00
-      const timePart = timeStr.split('T')[1];
-      if (timePart) {
-        // Remove Z and milliseconds, get HH:MM:SS or HH:MM
-        const cleanTime = timePart.replace('Z', '').split('.')[0];
-        const [hours, minutes] = cleanTime.split(':').map(Number);
-        
-        if (!isNaN(hours) && !isNaN(minutes)) {
-          // Convert to 12-hour format
-          const period = hours >= 12 ? 'PM' : 'AM';
-          const displayHour = hours % 12 || 12;
-          return `${displayHour}:${minutes.toString().padStart(2, '0')} ${period}`;
-        }
+      // Parse the ISO string as a Date object (this creates a UTC date)
+      const utcDate = new Date(timeStr);
+      if (!isNaN(utcDate.getTime())) {
+        // Convert to Manila time (UTC+8) using toLocaleTimeString
+        return utcDate.toLocaleTimeString('en-US', { 
+          hour: 'numeric', 
+          minute: '2-digit', 
+          hour12: true,
+          timeZone: 'Asia/Manila'
+        });
       }
     } catch {
       // Fall through
@@ -72,7 +68,8 @@ function formatTimeValue(timeValue: any): string {
         return date.toLocaleTimeString('en-US', { 
           hour: 'numeric', 
           minute: '2-digit', 
-          hour12: true 
+          hour12: true,
+          timeZone: 'Asia/Manila'
         });
       }
     } catch {
@@ -464,7 +461,27 @@ export default function AttendanceDashboardPage({
       const doc = new jsPDF('portrait', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 20;
+      const margin = 15;
+      const generatedTimestamp = new Date().toLocaleString();
+      const orgMotto = "Shaping the Future to a Greater Society";
+
+      // Helper function to draw page footer
+      const drawFooter = (pageNum: number, totalPages: number) => {
+        doc.setDrawColor(246, 66, 31);
+        doc.setLineWidth(0.5);
+        doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+        
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        doc.setFont('helvetica', 'normal');
+        doc.text('Youth Service Philippines - Tagum Chapter', margin, pageHeight - 10);
+        doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
+        
+        // Org motto in center
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'italic');
+        doc.text(`"${orgMotto}"`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+      };
 
       // Step 2: Load logo (25%)
       if (updateUploadToast) {
@@ -518,19 +535,14 @@ export default function AttendanceDashboardPage({
       doc.setFontSize(12);
       doc.text(ORG_CHAPTER, orgNameX, 26);
 
-      // Add report title with a decorative line
+      // Add report title
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       doc.text('ATTENDANCE REPORT', orgNameX, 35);
       
-      // Date on the right side
-      const dateText = new Date().toLocaleDateString('en-US', { 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric'
-      });
-      doc.setFontSize(9);
-      doc.text(dateText, pageWidth - margin, 35, { align: 'right' });
+      // Generated timestamp on the right side (moved from footer)
+      doc.setFontSize(8);
+      doc.text(`Generated: ${generatedTimestamp}`, pageWidth - margin, 35, { align: 'right' });
 
       // Step 4: Add event info (55%)
       if (updateUploadToast) {
@@ -561,17 +573,17 @@ export default function AttendanceDashboardPage({
       // Event details card with border
       doc.setDrawColor(230, 230, 230);
       doc.setFillColor(252, 252, 252);
-      doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 40, 3, 3, 'FD');
+      doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 32, 3, 3, 'FD');
       
       const cardContentY = yPosition + 6;
       const labelX = margin + 8;
-      const valueX = margin + 45;
-      const lineSpacing = 8;
+      const valueX = margin + 40;
+      const lineSpacing = 7;
       
       // Helper to draw label-value pairs
       const drawField = (label: string, value: string, y: number) => {
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
+        doc.setFontSize(8);
         doc.setTextColor(100, 100, 100);
         doc.text(`${label}:`, labelX, y);
         doc.setFont('helvetica', 'normal');
@@ -597,26 +609,7 @@ export default function AttendanceDashboardPage({
       // Event Status
       drawField('Event Status', currentEvent?.Status || 'N/A', cardContentY + lineSpacing * 3);
       
-      // Total attendees badge on the right side
-      const badgeX = pageWidth - margin - 45;
-      doc.setFillColor(246, 66, 31);
-      doc.roundedRect(badgeX, yPosition + 10, 40, 20, 3, 3, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(16);
-      doc.text(String(totalRecords), badgeX + 20, yPosition + 21, { align: 'center' });
-      doc.setFontSize(7);
-      doc.setFont('helvetica', 'normal');
-      doc.text('ATTENDEES', badgeX + 20, yPosition + 27, { align: 'center' });
-      
-      // Committee filter note if applied
-      if (selectedCommittee !== 'All') {
-        doc.setFontSize(7);
-        doc.setTextColor(100, 100, 100);
-        doc.text(`Filtered by: ${selectedCommittee}`, badgeX, yPosition + 36);
-      }
-      
-      yPosition += 48;
+      yPosition += 40;
 
       // Step 5: Add attendance summary (65%)
       if (updateUploadToast) {
@@ -625,7 +618,72 @@ export default function AttendanceDashboardPage({
       await new Promise(resolve => setTimeout(resolve, 100));
       if (cancelled) return;
 
-      // Section title with underline
+      // Calculate committee statistics
+      const committeeList = [
+        { name: 'Executive Board', short: 'EB' },
+        { name: 'Membership and Internal Affairs Committee', short: 'MIAC' },
+        { name: 'External Relations Committee', short: 'ERC' },
+        { name: 'Secretariat and Documentation Committee', short: 'SDC' },
+        { name: 'Finance and Treasury Committee', short: 'FTC' },
+        { name: 'Program Development Committee', short: 'PDC' },
+        { name: 'Communications and Marketing Committee', short: 'CMC' },
+        { name: 'General Committee', short: 'GEN' },
+      ];
+
+      const filteredRecords = getFilteredAttendance();
+      const totalMembers = allMembers.length;
+      
+      // Only count Present and Late as "attended" (not Excused or Absent)
+      const actualAttendees = filteredRecords.filter(r => r.status === 'Present' || r.status === 'Late');
+      const totalAttendees = actualAttendees.length;
+      
+      // Calculate committee stats - only count Present/Late as attended
+      const committeeStats = committeeList.map(comm => {
+        const isGeneral = comm.name === 'General Committee';
+        const committeeMembersCount = allMembers.filter(m => {
+          if (isGeneral) {
+            return !m.committee || m.committee === '' || m.committee === 'None' || m.committee === 'General Committee';
+          }
+          return m.committee === comm.name;
+        }).length;
+        
+        // Only count Present and Late status as "attended"
+        const committeeAttendeesCount = filteredRecords.filter(r => {
+          // Must be Present or Late to count as attended
+          if (r.status !== 'Present' && r.status !== 'Late') return false;
+          
+          const member = allMembers.find(m => m.id === r.memberId);
+          if (isGeneral) {
+            return !member?.committee || member.committee === '' || member.committee === 'None' || member.committee === 'General Committee';
+          }
+          return member?.committee === comm.name;
+        }).length;
+        
+        const percentage = committeeMembersCount > 0 
+          ? Math.round((committeeAttendeesCount / committeeMembersCount) * 100) 
+          : 0;
+        
+        return {
+          ...comm,
+          attendees: committeeAttendeesCount,
+          total: committeeMembersCount,
+          percentage,
+        };
+      });
+
+      // Status statistics
+      const presentCount = attendanceData.find(d => d.name === 'Present')?.value || 0;
+      const lateCount = attendanceData.find(d => d.name === 'Late')?.value || 0;
+      const excusedCount = attendanceData.find(d => d.name === 'Excused')?.value || 0;
+      const absentCount = attendanceData.find(d => d.name === 'Absent')?.value || 0;
+      
+      const overallPercentage = totalMembers > 0 ? Math.round((totalAttendees / totalMembers) * 100) : 0;
+      const presentPercentage = totalAttendees > 0 ? Math.round((presentCount / totalAttendees) * 100) : 0;
+      const latePercentage = totalAttendees > 0 ? Math.round((lateCount / totalAttendees) * 100) : 0;
+      const excusedPercentage = totalAttendees > 0 ? Math.round((excusedCount / totalAttendees) * 100) : 0;
+      const absentPercentage = totalAttendees > 0 ? Math.round((absentCount / totalAttendees) * 100) : 0;
+
+      // Section title: ATTENDANCE SUMMARY
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(30, 41, 59);
@@ -635,152 +693,454 @@ export default function AttendanceDashboardPage({
       doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
       yPosition += 10;
 
-      // Summary boxes - more refined
-      const boxWidth = (pageWidth - 2 * margin - 12) / 4;
-      const boxHeight = 18;
+      // Total Attendees Box (large, prominent)
+      const totalBoxWidth = pageWidth - 2 * margin;
+      doc.setFillColor(246, 66, 31);
+      doc.roundedRect(margin, yPosition, totalBoxWidth, 22, 3, 3, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('TOTAL ATTENDEES', margin + 10, yPosition + 10);
+      doc.setFontSize(20);
+      doc.text(`${totalAttendees}/${totalMembers}`, totalBoxWidth - 10, yPosition + 14, { align: 'right' });
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${overallPercentage}% attendance rate`, totalBoxWidth - 10, yPosition + 19, { align: 'right' });
+      yPosition += 28;
+
+      // Status boxes - 4 columns
+      const statusBoxWidth = (pageWidth - 2 * margin - 9) / 4;
+      const statusBoxHeight = 20;
       const statuses = [
-        { name: 'PRESENT', color: [16, 185, 129], count: attendanceData.find(d => d.name === 'Present')?.value || 0 },
-        { name: 'LATE', color: [245, 158, 11], count: attendanceData.find(d => d.name === 'Late')?.value || 0 },
-        { name: 'EXCUSED', color: [59, 130, 246], count: attendanceData.find(d => d.name === 'Excused')?.value || 0 },
-        { name: 'ABSENT', color: [239, 68, 68], count: attendanceData.find(d => d.name === 'Absent')?.value || 0 },
+        { name: 'PRESENT', color: [16, 185, 129], count: presentCount, pct: presentPercentage },
+        { name: 'LATE', color: [245, 158, 11], count: lateCount, pct: latePercentage },
+        { name: 'EXCUSED', color: [59, 130, 246], count: excusedCount, pct: excusedPercentage },
+        { name: 'ABSENT', color: [239, 68, 68], count: absentCount, pct: absentPercentage },
       ];
 
       statuses.forEach((status, index) => {
-        const boxX = margin + index * (boxWidth + 4);
-        
-        // Draw box with rounded corners
+        const boxX = margin + index * (statusBoxWidth + 3);
         doc.setFillColor(status.color[0], status.color[1], status.color[2]);
-        doc.roundedRect(boxX, yPosition, boxWidth, boxHeight, 2, 2, 'F');
+        doc.roundedRect(boxX, yPosition, statusBoxWidth, statusBoxHeight, 2, 2, 'F');
         
-        // Count number - large and bold
         doc.setTextColor(255, 255, 255);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(16);
-        doc.text(String(status.count), boxX + boxWidth / 2, yPosition + 9, { align: 'center' });
+        doc.setFontSize(14);
+        doc.text(String(status.count), boxX + statusBoxWidth / 2, yPosition + 9, { align: 'center' });
         
-        // Label - small caps style
         doc.setFontSize(6);
         doc.setFont('helvetica', 'normal');
-        doc.text(status.name, boxX + boxWidth / 2, yPosition + 14.5, { align: 'center' });
+        doc.text(`${status.name} (${status.pct}%)`, boxX + statusBoxWidth / 2, yPosition + 15, { align: 'center' });
       });
+      yPosition += statusBoxHeight + 10;
 
-      yPosition += boxHeight + 12;
-
-      // Step 6: Prepare table data (75%)
-      if (updateUploadToast) {
-        updateUploadToast(toastId, { message: 'Preparing attendee table...', progress: 75 });
-      }
-      await new Promise(resolve => setTimeout(resolve, 100));
-      if (cancelled) return;
-
-      // Attendee list section title
+      // COMMITTEE BREAKDOWN Section
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(30, 41, 59);
-      doc.text('ATTENDEE LIST', margin, yPosition);
+      doc.text('COMMITTEE BREAKDOWN', margin, yPosition);
       doc.setDrawColor(246, 66, 31);
       doc.setLineWidth(0.3);
-      doc.line(margin, yPosition + 2, margin + 35, yPosition + 2);
+      doc.line(margin, yPosition + 2, margin + 50, yPosition + 2);
       yPosition += 8;
 
-      const filteredRecords = getFilteredAttendance();
-      const tableData = filteredRecords.map((record, index) => {
-        const member = allMembers.find(m => m.id === record.memberId);
-        return [
-          String(index + 1),
-          record.memberName || member?.name || 'Unknown',
-          member?.committee || '-',
-          member?.position || '-',
-          record.status,
-          formatTimeValue(record.timeIn),
-          formatTimeValue(record.timeOut),
-          record.recordedByTimeIn || '-',
-          record.recordedByTimeOut || '-',
-        ];
-      });
+      // Committee boxes - 2 columns x 4 rows
+      const commBoxWidth = (pageWidth - 2 * margin - 6) / 2;
+      const commBoxHeight = 18;
+      const commColors = [
+        [246, 66, 31],   // Executive Board - Orange
+        [139, 92, 246],  // MIAC - Purple
+        [16, 185, 129],  // ERC - Green
+        [59, 130, 246],  // SDC - Blue
+        [245, 158, 11],  // FTC - Yellow
+        [236, 72, 153],  // PDC - Pink
+        [6, 182, 212],   // CMC - Cyan
+        [107, 114, 128], // General - Gray
+      ];
 
-      // Step 7: Generate table (90%)
+      committeeStats.forEach((comm, index) => {
+        const col = index % 2;
+        const row = Math.floor(index / 2);
+        const boxX = margin + col * (commBoxWidth + 6);
+        const boxY = yPosition + row * (commBoxHeight + 4);
+        
+        // Progress bar background
+        doc.setFillColor(240, 240, 240);
+        doc.roundedRect(boxX, boxY, commBoxWidth, commBoxHeight, 2, 2, 'F');
+        
+        // Progress bar fill
+        const fillWidth = comm.total > 0 ? (comm.attendees / comm.total) * commBoxWidth : 0;
+        doc.setFillColor(commColors[index][0], commColors[index][1], commColors[index][2]);
+        if (fillWidth > 0) {
+          doc.roundedRect(boxX, boxY, Math.max(fillWidth, 4), commBoxHeight, 2, 2, 'F');
+        }
+        
+        // Committee name
+        doc.setTextColor(30, 41, 59);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.text(comm.short, boxX + 4, boxY + 7);
+        
+        // Full name (smaller)
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(5);
+        doc.setTextColor(80, 80, 80);
+        const shortName = comm.name.length > 35 ? comm.name.substring(0, 35) + '...' : comm.name;
+        doc.text(shortName, boxX + 4, boxY + 12);
+        
+        // Count and percentage on right
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(30, 41, 59);
+        doc.text(`${comm.attendees}/${comm.total}`, boxX + commBoxWidth - 4, boxY + 8, { align: 'right' });
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`${comm.percentage}%`, boxX + commBoxWidth - 4, boxY + 14, { align: 'right' });
+      });
+      
+      yPosition += Math.ceil(committeeStats.length / 2) * (commBoxHeight + 4) + 5;
+
+      // Draw footer for summary page
+      drawFooter(1, 0); // Will update total pages later
+
+      // ============================================
+      // PAGE 2+: Detailed Tables by Status
+      // ============================================
+      
+      // Step 6: Prepare table data (75%)
       if (updateUploadToast) {
-        updateUploadToast(toastId, { message: 'Generating table...', progress: 90 });
+        updateUploadToast(toastId, { message: 'Preparing attendee tables...', progress: 75 });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
       if (cancelled) return;
 
-      // Create professional table with autoTable
-      autoTable(doc, {
-        startY: yPosition,
-        head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Rec. By (In)', 'Rec. By (Out)']],
-        body: tableData,
-        theme: 'grid',
-        headStyles: {
-          fillColor: [246, 66, 31], // Orange
-          textColor: 255,
-          fontStyle: 'bold',
-          fontSize: 7,
-          cellPadding: 2,
-          halign: 'center',
+      // Helper function to create table data for a set of records
+      const createTableData = (records: typeof filteredRecords, startIndex: number = 1) => {
+        return records.map((record, index) => {
+          const member = allMembers.find(m => m.id === record.memberId);
+          return [
+            String(startIndex + index),
+            record.memberName || member?.name || 'Unknown',
+            member?.committee || '-',
+            member?.position || '-',
+            record.status,
+            formatTimeValue(record.timeIn),
+            formatTimeValue(record.timeOut),
+            record.recordedByTimeIn || '-',
+            record.recordedByTimeOut || '-',
+          ];
+        });
+      };
+
+      // Group records by status
+      const presentRecords = filteredRecords.filter(r => r.status === 'Present');
+      const lateRecords = filteredRecords.filter(r => r.status === 'Late');
+      const excusedRecords = filteredRecords.filter(r => r.status === 'Excused');
+      const absentRecords = filteredRecords.filter(r => r.status === 'Absent');
+
+      // Define table configurations for each status
+      const tableConfigs = [
+        {
+          title: 'ALL ATTENDEES',
+          records: filteredRecords,
+          color: [246, 66, 31] as [number, number, number],
+          altRowColor: [254, 249, 244] as [number, number, number],
         },
-        bodyStyles: {
-          fontSize: 7,
-          textColor: [50, 50, 50],
-          cellPadding: 2,
+        {
+          title: 'PRESENT',
+          records: presentRecords,
+          color: [16, 185, 129] as [number, number, number],
+          altRowColor: [236, 253, 245] as [number, number, number],
         },
-        alternateRowStyles: {
-          fillColor: [254, 249, 244], // Very light orange tint
+        {
+          title: 'LATE',
+          records: lateRecords,
+          color: [245, 158, 11] as [number, number, number],
+          altRowColor: [255, 251, 235] as [number, number, number],
         },
-        columnStyles: {
-          0: { cellWidth: 7, halign: 'center', fontStyle: 'bold' },
-          1: { cellWidth: 28 },
-          2: { cellWidth: 28 },
-          3: { cellWidth: 18 },
-          4: { cellWidth: 14, halign: 'center' },
-          5: { cellWidth: 16, halign: 'center' },
-          6: { cellWidth: 16, halign: 'center' },
-          7: { cellWidth: 22 },
-          8: { cellWidth: 22 },
+        {
+          title: 'EXCUSED',
+          records: excusedRecords,
+          color: [59, 130, 246] as [number, number, number],
+          altRowColor: [239, 246, 255] as [number, number, number],
         },
-        styles: {
-          lineColor: [220, 220, 220],
-          lineWidth: 0.1,
+        {
+          title: 'ABSENT',
+          records: absentRecords,
+          color: [239, 68, 68] as [number, number, number],
+          altRowColor: [254, 242, 242] as [number, number, number],
         },
-        margin: { left: margin, right: margin },
-        didDrawPage: (data) => {
-          // Add professional footer on each page
-          const pageCount = doc.getNumberOfPages();
+      ];
+
+      // Step 7: Generate tables (85%)
+      if (updateUploadToast) {
+        updateUploadToast(toastId, { message: 'Generating tables...', progress: 85 });
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
+
+      // Start new page for tables
+      doc.addPage();
+      yPosition = 20;
+
+      // Generate a table for each status group
+      for (let configIndex = 0; configIndex < tableConfigs.length; configIndex++) {
+        const config = tableConfigs[configIndex];
+        
+        // Skip empty tables (except for ALL ATTENDEES which should always show)
+        if (config.records.length === 0 && config.title !== 'ALL ATTENDEES') continue;
+        
+        // Add section title
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 41, 59);
+        doc.text(`${config.title} (${config.records.length})`, margin, yPosition);
+        doc.setDrawColor(config.color[0], config.color[1], config.color[2]);
+        doc.setLineWidth(0.3);
+        doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
+        yPosition += 8;
+
+        const tableData = createTableData(config.records);
+
+        // Create table with autoTable
+        autoTable(doc, {
+          startY: yPosition,
+          head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Rec. By (In)', 'Rec. By (Out)']],
+          body: tableData.length > 0 ? tableData : [['-', 'No records', '-', '-', '-', '-', '-', '-', '-']],
+          theme: 'grid',
+          headStyles: {
+            fillColor: config.color,
+            textColor: 255,
+            fontStyle: 'bold',
+            fontSize: 7,
+            cellPadding: 2,
+            halign: 'center',
+          },
+          bodyStyles: {
+            fontSize: 7,
+            textColor: [50, 50, 50],
+            cellPadding: 2,
+          },
+          alternateRowStyles: {
+            fillColor: config.altRowColor,
+          },
+          columnStyles: {
+            0: { cellWidth: 7, halign: 'center', fontStyle: 'bold' },
+            1: { cellWidth: 28 },
+            2: { cellWidth: 28 },
+            3: { cellWidth: 18 },
+            4: { cellWidth: 14, halign: 'center' },
+            5: { cellWidth: 16, halign: 'center' },
+            6: { cellWidth: 16, halign: 'center' },
+            7: { cellWidth: 22 },
+            8: { cellWidth: 22 },
+          },
+          styles: {
+            lineColor: [220, 220, 220],
+            lineWidth: 0.1,
+          },
+          margin: { left: margin, right: margin },
+        });
+
+        // Get the final Y position after the table
+        yPosition = (doc as any).lastAutoTable.finalY + 12;
+
+        // Check if we need a new page for the next table
+        if (yPosition > pageHeight - 50 && configIndex < tableConfigs.length - 1) {
+          doc.addPage();
+          yPosition = 20;
+        }
+      }
+
+      // ============================================
+      // LAST PAGE: Charts
+      // ============================================
+      
+      // Step 8: Generate charts (95%)
+      if (updateUploadToast) {
+        updateUploadToast(toastId, { message: 'Generating charts...', progress: 95 });
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled) return;
+
+      // Add new page for charts
+      doc.addPage();
+      yPosition = 20;
+
+      // Charts page title
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text('ATTENDANCE ANALYTICS', margin, yPosition);
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.5);
+      doc.line(margin, yPosition + 3, margin + 55, yPosition + 3);
+      yPosition += 12;
+
+      // ---- PIE CHART: Attendance Status Distribution ----
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Attendance Status Distribution', margin, yPosition);
+      yPosition += 6;
+
+      const pieChartCenterX = margin + 35;
+      const pieChartCenterY = yPosition + 25;
+      const pieRadius = 22;
+      
+      const pieData = [
+        { name: 'Present', value: presentCount, color: [16, 185, 129] },
+        { name: 'Late', value: lateCount, color: [245, 158, 11] },
+        { name: 'Excused', value: excusedCount, color: [59, 130, 246] },
+        { name: 'Absent', value: absentCount, color: [239, 68, 68] },
+      ].filter(d => d.value > 0);
+
+      const pieTotal = pieData.reduce((sum, d) => sum + d.value, 0);
+      let startAngle = -Math.PI / 2; // Start from top
+
+      if (pieTotal > 0) {
+        pieData.forEach(slice => {
+          const sliceAngle = (slice.value / pieTotal) * 2 * Math.PI;
+          const endAngle = startAngle + sliceAngle;
           
-          // Footer line
-          doc.setDrawColor(246, 66, 31);
-          doc.setLineWidth(0.5);
-          doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+          // Draw pie slice using lines (approximate)
+          doc.setFillColor(slice.color[0], slice.color[1], slice.color[2]);
           
-          // Footer text
-          doc.setFontSize(7);
-          doc.setTextColor(100, 100, 100);
-          doc.setFont('helvetica', 'normal');
-          doc.text(
-            'Youth Service Philippines - Tagum Chapter',
-            margin,
-            pageHeight - 10
-          );
-          doc.text(
-            `Page ${data.pageNumber} of ${pageCount}`,
-            pageWidth - margin,
-            pageHeight - 10,
-            { align: 'right' }
-          );
+          // Create path for pie slice
+          const segments = 20;
+          const points: [number, number][] = [[pieChartCenterX, pieChartCenterY]];
           
-          // Generated timestamp in center
-          doc.setFontSize(6);
-          doc.text(
-            `Generated: ${new Date().toLocaleString()}`,
-            pageWidth / 2,
-            pageHeight - 10,
-            { align: 'center' }
-          );
-        },
+          for (let i = 0; i <= segments; i++) {
+            const angle = startAngle + (sliceAngle * i / segments);
+            points.push([
+              pieChartCenterX + Math.cos(angle) * pieRadius,
+              pieChartCenterY + Math.sin(angle) * pieRadius
+            ]);
+          }
+          
+          // Draw the slice using a polygon approximation
+          doc.setFillColor(slice.color[0], slice.color[1], slice.color[2]);
+          
+          // Use triangle fan approach
+          for (let i = 1; i < points.length - 1; i++) {
+            doc.triangle(
+              points[0][0], points[0][1],
+              points[i][0], points[i][1],
+              points[i + 1][0], points[i + 1][1],
+              'F'
+            );
+          }
+          
+          startAngle = endAngle;
+        });
+      } else {
+        // Draw empty circle
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.5);
+        doc.circle(pieChartCenterX, pieChartCenterY, pieRadius, 'S');
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text('No Data', pieChartCenterX, pieChartCenterY, { align: 'center' });
+      }
+
+      // Pie chart legend - positioned to the right of the pie
+      const legendX = margin + 75;
+      let legendY = yPosition + 5;
+      
+      doc.setFontSize(7);
+      pieData.forEach((item) => {
+        const pct = pieTotal > 0 ? Math.round((item.value / pieTotal) * 100) : 0;
+        
+        // Color box
+        doc.setFillColor(item.color[0], item.color[1], item.color[2]);
+        doc.rect(legendX, legendY - 2, 6, 4, 'F');
+        
+        // Text
+        doc.setTextColor(50, 50, 50);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`${item.name}: ${item.value} (${pct}%)`, legendX + 9, legendY);
+        
+        legendY += 8;
       });
 
-      // Step 8: Save file (100%)
+      yPosition += 55;
+
+      // ---- BAR CHART: Committee Attendance ----
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text('Committee Attendance Breakdown', margin, yPosition);
+      yPosition += 8;
+
+      const barChartX = margin;
+      const barChartWidth = pageWidth - 2 * margin;
+      const barHeight = 10;
+      const barSpacing = 2;
+
+      committeeStats.forEach((comm, index) => {
+        const barY = yPosition + index * (barHeight + barSpacing);
+        
+        // Background bar (total)
+        doc.setFillColor(230, 230, 230);
+        doc.roundedRect(barChartX + 22, barY, barChartWidth - 50, barHeight, 1, 1, 'F');
+        
+        // Progress bar (attendees)
+        const fillWidth = comm.total > 0 
+          ? ((comm.attendees / comm.total) * (barChartWidth - 50))
+          : 0;
+        
+        if (fillWidth > 0) {
+          doc.setFillColor(commColors[index][0], commColors[index][1], commColors[index][2]);
+          doc.roundedRect(barChartX + 22, barY, Math.max(fillWidth, 2), barHeight, 1, 1, 'F');
+        }
+        
+        // Committee short name on left
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(50, 50, 50);
+        doc.text(comm.short, barChartX, barY + 7);
+        
+        // Value on right
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`${comm.attendees}/${comm.total} (${comm.percentage}%)`, barChartX + barChartWidth - 2, barY + 7, { align: 'right' });
+      });
+
+      yPosition += committeeStats.length * (barHeight + barSpacing) + 8;
+
+      // Bar chart legend - compact 2 columns
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text('Legend:', margin, yPosition);
+      yPosition += 5;
+
+      const legendColWidth = (pageWidth - 2 * margin) / 2;
+      committeeStats.forEach((comm, index) => {
+        const col = index % 2;
+        const row = Math.floor(index / 2);
+        const lx = margin + col * legendColWidth;
+        const ly = yPosition + row * 7;
+        
+        // Color box
+        doc.setFillColor(commColors[index][0], commColors[index][1], commColors[index][2]);
+        doc.rect(lx, ly - 2, 5, 3, 'F');
+        
+        // Text
+        doc.setFontSize(5.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(50, 50, 50);
+        const displayName = comm.name.length > 38 ? comm.name.substring(0, 38) + '...' : comm.name;
+        doc.text(`${comm.short} - ${displayName}`, lx + 7, ly);
+      });
+
+      // Update all pages with correct page numbers
+      const totalPages = doc.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        drawFooter(i, totalPages);
+      }
+
+      // Step 9: Save file (100%)
       if (updateUploadToast) {
         updateUploadToast(toastId, { message: 'Saving PDF file...', progress: 100 });
       }

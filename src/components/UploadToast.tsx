@@ -1,5 +1,6 @@
 import { Loader2, CheckCircle2, AlertCircle, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface UploadToastMessage {
   id: string;
@@ -20,8 +21,12 @@ interface UploadToastProps {
 
 export function UploadToast({ message, onDismiss }: UploadToastProps) {
   const [isVisible, setIsVisible] = useState(true);
+  const [swipeOffset, setSwipeOffset] = useState(0);
   const hasAction = Boolean(message.onAction && message.actionLabel);
+  const touchStartX = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
+  // Auto-dismiss for non-loading states
   useEffect(() => {
     if (!hasAction && (message.status === 'success' || message.status === 'error' || message.status === 'info')) {
       const timer = setTimeout(() => {
@@ -32,11 +37,53 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
     }
   }, [message.status, message.id, onDismiss, hasAction]);
 
+  // Handle swipe to dismiss
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const currentX = e.touches[0].clientX;
+    const diff = currentX - touchStartX.current;
+    // Only allow swiping to the right (positive diff)
+    if (diff > 0) {
+      setSwipeOffset(diff);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    // If swiped more than 100px, dismiss
+    if (swipeOffset > 100) {
+      if (message.onCancel) message.onCancel();
+      setIsVisible(false);
+      setTimeout(() => onDismiss(message.id), 300);
+    } else {
+      // Snap back
+      setSwipeOffset(0);
+    }
+    touchStartX.current = null;
+  };
+
+  const dismissToast = () => {
+    if (message.onCancel) message.onCancel();
+    setIsVisible(false);
+    setTimeout(() => onDismiss(message.id), 300);
+  };
+
   return (
     <div
+      ref={containerRef}
       className={`transform transition-all duration-300 ${
-        isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
+        isVisible ? 'opacity-100' : 'translate-x-full opacity-0'
       }`}
+      style={{
+        transform: isVisible ? `translateX(${swipeOffset}px)` : 'translateX(100%)',
+        opacity: isVisible ? Math.max(0, 1 - swipeOffset / 200) : 0,
+      }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       <div className={`rounded-xl shadow-xl border overflow-hidden bg-white ${
         message.status === 'loading'
@@ -82,19 +129,37 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
               </p>
             </div>
 
-            <button
-              onClick={() => {
-                if (message.onCancel) {
-                  message.onCancel();
-                  return;
-                }
-                setIsVisible(false);
-                setTimeout(() => onDismiss(message.id), 300);
+            {/* Dismiss button - large clickable area */}
+            <div
+              onClick={dismissToast}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '36px',
+                height: '36px',
+                marginRight: '-8px',
+                marginTop: '-4px',
+                borderRadius: '50%',
+                cursor: 'pointer',
+                color: '#9ca3af',
+                backgroundColor: 'transparent',
+                transition: 'all 0.15s',
               }}
-              className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#f3f4f6';
+                e.currentTarget.style.color = '#374151';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = '#9ca3af';
+              }}
+              role="button"
+              tabIndex={0}
+              aria-label="Dismiss notification"
             >
-              <X className="w-4 h-4" />
-            </button>
+              <X style={{ width: '20px', height: '20px' }} />
+            </div>
           </div>
 
           {/* Progress bar for loading state */}
@@ -120,8 +185,7 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
               <button
                 onClick={() => {
                   message.onAction?.();
-                  setIsVisible(false);
-                  setTimeout(() => onDismiss(message.id), 300);
+                  dismissToast();
                 }}
                 className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors"
               >
@@ -146,18 +210,32 @@ interface UploadToastContainerProps {
 }
 
 export function UploadToastContainer({ messages, onDismiss, isDark }: UploadToastContainerProps) {
-  return (
+  // Use portal to render at document.body level - ensures it's above everything including chatbot
+  return createPortal(
     <div 
-      className={`fixed bottom-6 right-6 max-w-sm space-y-3 pointer-events-none ${
-        isDark ? 'dark' : ''
-      }`}
-      style={{ zIndex: 2147483647 }} // Force z-index higher than all modals and chatbot
+      style={{ 
+        position: 'fixed',
+        bottom: '24px',
+        right: '24px',
+        maxWidth: '320px',
+        zIndex: 2147483647, // Maximum z-index - above everything
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+      }}
     >
       {messages.map((msg) => (
-        <div key={msg.id} className="pointer-events-auto">
+        <div 
+          key={msg.id}
+          style={{ 
+            pointerEvents: 'auto',
+            cursor: 'default',
+          }}
+        >
           <UploadToast message={msg} onDismiss={onDismiss} />
         </div>
       ))}
-    </div>
+    </div>,
+    document.body
   );
 }

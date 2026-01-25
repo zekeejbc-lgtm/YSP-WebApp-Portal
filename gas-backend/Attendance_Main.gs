@@ -478,6 +478,31 @@ function getEventAttendanceRecords(eventId) {
     const headers = data[0];
     const records = [];
     
+    // Helper function to format time values properly
+    const formatTimeValue = (value) => {
+      if (!value) return '';
+      // If it's already a string in proper format, return as-is
+      if (typeof value === 'string' && /^\d{1,2}:\d{2}\s?(AM|PM|am|pm)$/i.test(value.trim())) {
+        return value.trim();
+      }
+      // If it's a Date object (Google Sheets stores times as Date with 1899 base date)
+      if (value instanceof Date) {
+        return Utilities.formatDate(value, 'Asia/Manila', 'hh:mm a');
+      }
+      // If it's a string that might be an ISO date
+      if (typeof value === 'string' && value.includes('T')) {
+        try {
+          const date = new Date(value);
+          if (!isNaN(date.getTime())) {
+            return Utilities.formatDate(date, 'Asia/Manila', 'hh:mm a');
+          }
+        } catch (e) {
+          // Fall through
+        }
+      }
+      return String(value);
+    };
+    
     for (let i = 1; i < data.length; i++) {
       if (data[i][headers.indexOf('EventID')] === eventId) {
         records.push({
@@ -486,8 +511,8 @@ function getEventAttendanceRecords(eventId) {
           memberId: data[i][headers.indexOf('MemberID')],
           memberName: data[i][headers.indexOf('MemberName')],
           status: data[i][headers.indexOf('Status')],
-          timeIn: data[i][headers.indexOf('TimeIn')],
-          timeOut: data[i][headers.indexOf('TimeOut')],
+          timeIn: formatTimeValue(data[i][headers.indexOf('TimeIn')]),
+          timeOut: formatTimeValue(data[i][headers.indexOf('TimeOut')]),
           date: data[i][headers.indexOf('AttendanceDate')],
           geofenceStatus: data[i][headers.indexOf('GeofenceStatus')],
           notes: data[i][headers.indexOf('Notes')],
@@ -528,6 +553,31 @@ function checkExistingAttendance(eventId, memberId) {
     const headers = data[0];
     const today = Utilities.formatDate(new Date(), 'Asia/Manila', 'yyyy-MM-dd');
     
+    // Helper function to format time values properly
+    const formatTimeValue = (value) => {
+      if (!value) return '';
+      // If it's already a string in proper format, return as-is
+      if (typeof value === 'string' && /^\d{1,2}:\d{2}\s?(AM|PM|am|pm)$/i.test(value.trim())) {
+        return value.trim();
+      }
+      // If it's a Date object (Google Sheets stores times as Date with 1899 base date)
+      if (value instanceof Date) {
+        return Utilities.formatDate(value, 'Asia/Manila', 'hh:mm a');
+      }
+      // If it's a string that might be an ISO date
+      if (typeof value === 'string' && value.includes('T')) {
+        try {
+          const date = new Date(value);
+          if (!isNaN(date.getTime())) {
+            return Utilities.formatDate(date, 'Asia/Manila', 'hh:mm a');
+          }
+        } catch (e) {
+          // Fall through
+        }
+      }
+      return String(value);
+    };
+    
     for (let i = 1; i < data.length; i++) {
       const rowEventId = data[i][headers.indexOf('EventID')];
       const rowMemberId = data[i][headers.indexOf('MemberID')];
@@ -542,8 +592,8 @@ function checkExistingAttendance(eventId, memberId) {
             exists: true,
             record: {
               attendanceId: data[i][headers.indexOf('AttendanceID')],
-              timeIn: data[i][headers.indexOf('TimeIn')],
-              timeOut: data[i][headers.indexOf('TimeOut')],
+              timeIn: formatTimeValue(data[i][headers.indexOf('TimeIn')]),
+              timeOut: formatTimeValue(data[i][headers.indexOf('TimeOut')]),
               status: data[i][headers.indexOf('Status')],
               date: recordDate
             }
