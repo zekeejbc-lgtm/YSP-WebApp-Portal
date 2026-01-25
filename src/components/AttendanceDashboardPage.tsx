@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
+import SmartEventSearch from "./SmartEventSearch";
 import {
   PieChart,
   Pie,
@@ -17,7 +18,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Loader2 } from "lucide-react";
+import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance } from "../services/gasAttendanceService";
 import jsPDF from "jspdf";
@@ -281,11 +282,8 @@ export default function AttendanceDashboardPage({
   removeUploadToast,
   onDashboardContextUpdate,
 }: AttendanceDashboardPageProps) {
-  // Event selection mode
-  const [eventSelectionMode, setEventSelectionMode] = useState<EventSelectionMode>('single');
-  const [selectedEvent, setSelectedEvent] = useState("");
-  const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
-  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
+  // Smart search event selection (unified - replaces mode-based selection)
+  const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
   
   const [selectedCommittee, setSelectedCommittee] = useState("All");
   const [chartType, setChartType] = useState<"pie" | "donut" | "bar" | "line" | "column">("pie");
@@ -296,6 +294,9 @@ export default function AttendanceDashboardPage({
   // Export Preview Modal
   const [showExportPreview, setShowExportPreview] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'spreadsheet'>('pdf');
+  const [exportModalTab, setExportModalTab] = useState<'preview' | 'settings'>('preview');
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
   const [exportOptions, setExportOptions] = useState<ExportOptions>({
     includeNotRecorded: true,
     includeSummaryTable: true,
@@ -303,9 +304,6 @@ export default function AttendanceDashboardPage({
     includeCharts: true,
     selectedTables: ['all', 'present', 'late', 'excused', 'absent', 'notRecorded'],
   });
-  
-  // Not recorded toggle
-  const [showNotRecordedTable, setShowNotRecordedTable] = useState(false);
 
   // Loading states
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
@@ -353,34 +351,15 @@ export default function AttendanceDashboardPage({
     loadMembers();
   }, []);
 
-  // Get effective selected events based on mode
+  // Get effective selected events - now simply returns selectedEventIds
   const getEffectiveSelectedEvents = useCallback(() => {
-    switch (eventSelectionMode) {
-      case 'single':
-        return selectedEvent ? [selectedEvent] : [];
-      case 'multiple':
-        return selectedEvents;
-      case 'dateRange':
-        return events
-          .filter(e => {
-            if (!dateRange.from || !dateRange.to) return false;
-            const eventDate = new Date(e.StartDate);
-            const fromDate = new Date(dateRange.from);
-            const toDate = new Date(dateRange.to);
-            return eventDate >= fromDate && eventDate <= toDate;
-          })
-          .map(e => e.EventID);
-      case 'all':
-        return events.map(e => e.EventID);
-      default:
-        return [];
-    }
-  }, [eventSelectionMode, selectedEvent, selectedEvents, dateRange, events]);
+    return selectedEventIds;
+  }, [selectedEventIds]);
 
-  // Fetch attendance records based on selection mode
+  // Fetch attendance records based on selection
   useEffect(() => {
     const loadAttendance = async () => {
-      const effectiveEvents = getEffectiveSelectedEvents();
+      const effectiveEvents = selectedEventIds;
       
       if (effectiveEvents.length === 0) {
         setAttendanceRecords([]);
@@ -390,7 +369,7 @@ export default function AttendanceDashboardPage({
 
       setIsLoadingAttendance(true);
       try {
-        if (eventSelectionMode === 'single' && effectiveEvents.length === 1) {
+        if (effectiveEvents.length === 1) {
           const records = await getEventAttendanceRecords(effectiveEvents[0]);
           setAttendanceRecords(records);
           setMultiEventRecords(new Map([[effectiveEvents[0], records]]));
@@ -419,7 +398,7 @@ export default function AttendanceDashboardPage({
     };
 
     loadAttendance();
-  }, [eventSelectionMode, selectedEvent, selectedEvents, dateRange, events, getEffectiveSelectedEvents]);
+  }, [selectedEventIds]);
 
   // Determine recommended chart type based on selection
   const getRecommendedChartType = useCallback((): "pie" | "donut" | "bar" | "line" | "column" => {
@@ -450,9 +429,9 @@ export default function AttendanceDashboardPage({
     const totalRecorded = present + late + excused + absent;
 
     const context: AttendanceDashboardContext = {
-      mode: eventSelectionMode,
+      mode: selectedEventIds.length <= 1 ? 'single' : 'multiple',
       selectedEvents: effectiveEvents,
-      dateRange: eventSelectionMode === 'dateRange' ? dateRange : null,
+      dateRange: null,
       totalEvents: events.length,
       statistics: {
         totalRecords: totalRecorded,
@@ -481,7 +460,7 @@ export default function AttendanceDashboardPage({
     };
 
     onDashboardContextUpdate(context);
-  }, [eventSelectionMode, selectedEvent, selectedEvents, dateRange, events, attendanceRecords, multiEventRecords, allMembers, onDashboardContextUpdate, getEffectiveSelectedEvents, getRecommendedChartType]);
+  }, [selectedEventIds, events, attendanceRecords, multiEventRecords, allMembers, onDashboardContextUpdate, getEffectiveSelectedEvents, getRecommendedChartType]);
 
   // Get members who were not recorded in attendance
   const getNotRecordedMembers = useCallback((): MemberForAttendance[] => {
@@ -669,7 +648,361 @@ export default function AttendanceDashboardPage({
       return;
     }
     setExportFormat(format);
+    setExportModalTab('preview');
     setShowExportPreview(true);
+    
+    // Auto-generate preview for PDF
+    if (format === 'pdf') {
+      generatePDFPreview();
+    }
+  };
+
+  // Cleanup PDF preview URL when modal closes
+  const handleCloseExportModal = () => {
+    setShowExportPreview(false);
+    if (pdfPreviewUrl) {
+      URL.revokeObjectURL(pdfPreviewUrl);
+      setPdfPreviewUrl(null);
+    }
+  };
+
+  // Generate PDF preview (returns blob URL for iframe display)
+  const generatePDFPreview = async () => {
+    if (attendanceRecords.length === 0) return;
+    
+    setIsGeneratingPreview(true);
+    
+    // Revoke previous URL if exists
+    if (pdfPreviewUrl) {
+      URL.revokeObjectURL(pdfPreviewUrl);
+      setPdfPreviewUrl(null);
+    }
+    
+    try {
+      const doc = new jsPDF('portrait', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 15;
+      const generatedTimestamp = new Date().toLocaleString();
+      const orgMotto = "Shaping the Future to a Greater Society";
+
+      // Helper function to draw page footer
+      const drawFooter = (pageNum: number, totalPages: number) => {
+        doc.setDrawColor(246, 66, 31);
+        doc.setLineWidth(0.5);
+        doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+        
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        doc.setFont('helvetica', 'normal');
+        doc.text('Youth Service Philippines - Tagum Chapter', margin, pageHeight - 10);
+        doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
+        
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'italic');
+        doc.text(`"${orgMotto}"`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+      };
+
+      // Load logo
+      let logoLoaded = false;
+      try {
+        const logoImg = await loadImage(ORG_LOGO_URL);
+        doc.setFillColor(246, 66, 31);
+        doc.rect(0, 0, pageWidth, 45, 'F');
+        
+        const logoSize = 30;
+        const logoX = margin;
+        const logoY = 7.5;
+        
+        doc.setFillColor(255, 255, 255);
+        doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 2, 'F');
+        doc.addImage(logoImg, 'PNG', logoX, logoY, logoSize, logoSize);
+        logoLoaded = true;
+      } catch {
+        doc.setFillColor(246, 66, 31);
+        doc.rect(0, 0, pageWidth, 45, 'F');
+      }
+
+      // Organization name
+      doc.setTextColor(255, 255, 255);
+      const orgNameX = logoLoaded ? margin + 35 : margin;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(18);
+      doc.text(ORG_NAME, orgNameX, 18);
+      doc.setFontSize(12);
+      doc.text(ORG_CHAPTER, orgNameX, 26);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text('ATTENDANCE REPORT', orgNameX, 35);
+      doc.setFontSize(8);
+      doc.text(`Generated: ${generatedTimestamp}`, pageWidth - margin, 35, { align: 'right' });
+
+      // Get current event info
+      const currentEvent = effectiveEvents.length === 1 
+        ? events.find(e => e.EventID === effectiveEvents[0]) 
+        : null;
+      
+      let yPosition = 52;
+
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.5);
+      doc.line(margin, yPosition, pageWidth - margin, yPosition);
+      yPosition += 8;
+
+      // EVENT DETAILS Section
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text('EVENT DETAILS', margin, yPosition);
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.3);
+      doc.line(margin, yPosition + 2, margin + 35, yPosition + 2);
+      yPosition += 10;
+
+      // Event details card
+      doc.setDrawColor(230, 230, 230);
+      doc.setFillColor(252, 252, 252);
+      doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 32, 3, 3, 'FD');
+      
+      const cardContentY = yPosition + 6;
+      const labelX = margin + 8;
+      const valueX = margin + 40;
+      const lineSpacing = 7;
+      
+      const drawField = (label: string, value: string, y: number) => {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`${label}:`, labelX, y);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(30, 41, 59);
+        doc.text(value, valueX, y);
+      };
+      
+      if (effectiveEvents.length === 1 && currentEvent) {
+        drawField('Event Name', currentEvent.Title || 'N/A', cardContentY);
+        drawField('Event Date', currentEvent.StartDate ? formatDateValue(currentEvent.StartDate) : '-', cardContentY + lineSpacing);
+        const eventTimeValue = currentEvent.StartTime 
+          ? `${formatTimeValue(currentEvent.StartTime)}${currentEvent.EndTime ? ' - ' + formatTimeValue(currentEvent.EndTime) : ''}`
+          : '-';
+        drawField('Event Time', eventTimeValue, cardContentY + lineSpacing * 2);
+        drawField('Event Status', currentEvent.Status || 'N/A', cardContentY + lineSpacing * 3);
+      } else {
+        drawField('Selection', `${effectiveEvents.length} Events Selected`, cardContentY);
+        drawField('Date Range', 'Multiple events', cardContentY + lineSpacing);
+        drawField('Total Records', `${totalRecords} attendance records`, cardContentY + lineSpacing * 2);
+        drawField('Filter', selectedCommittee, cardContentY + lineSpacing * 3);
+      }
+      
+      yPosition += 40;
+
+      // ATTENDANCE SUMMARY Section
+      const filteredRecords = getFilteredAttendance();
+      const actualAttendees = filteredRecords.filter(r => r.status === 'Present' || r.status === 'Late');
+      const totalAttendees = actualAttendees.length;
+      const totalMembers = allMembers.length;
+      const overallPercentage = totalMembers > 0 ? Math.round((totalAttendees / totalMembers) * 100) : 0;
+
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text('ATTENDANCE SUMMARY', margin, yPosition);
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.3);
+      doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
+      yPosition += 10;
+
+      // Total Attendees Box
+      const totalBoxWidth = pageWidth - 2 * margin;
+      doc.setFillColor(246, 66, 31);
+      doc.roundedRect(margin, yPosition, totalBoxWidth, 22, 3, 3, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('TOTAL ATTENDEES', margin + 10, yPosition + 10);
+      doc.setFontSize(20);
+      doc.text(`${totalAttendees}/${totalMembers}`, totalBoxWidth - 10, yPosition + 14, { align: 'right' });
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${overallPercentage}% attendance rate`, totalBoxWidth - 10, yPosition + 19, { align: 'right' });
+      yPosition += 28;
+
+      // Status boxes
+      const statusBoxWidth = (pageWidth - 2 * margin - 9) / 4;
+      const statusBoxHeight = 20;
+      const presentCount = attendanceData.find(d => d.name === 'Present')?.value || 0;
+      const lateCount = attendanceData.find(d => d.name === 'Late')?.value || 0;
+      const excusedCount = attendanceData.find(d => d.name === 'Excused')?.value || 0;
+      const absentCount = attendanceData.find(d => d.name === 'Absent')?.value || 0;
+      
+      const statuses = [
+        { name: 'PRESENT', color: [16, 185, 129], count: presentCount },
+        { name: 'LATE', color: [245, 158, 11], count: lateCount },
+        { name: 'EXCUSED', color: [59, 130, 246], count: excusedCount },
+        { name: 'ABSENT', color: [239, 68, 68], count: absentCount },
+      ];
+
+      statuses.forEach((status, index) => {
+        const boxX = margin + index * (statusBoxWidth + 3);
+        doc.setFillColor(status.color[0], status.color[1], status.color[2]);
+        doc.roundedRect(boxX, yPosition, statusBoxWidth, statusBoxHeight, 2, 2, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
+        doc.text(String(status.count), boxX + statusBoxWidth / 2, yPosition + 9, { align: 'center' });
+        
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'normal');
+        doc.text(status.name, boxX + statusBoxWidth / 2, yPosition + 15, { align: 'center' });
+      });
+      
+      yPosition += statusBoxHeight + 10;
+
+      // Add tables based on export options
+      if (exportOptions.selectedTables.length > 0) {
+        doc.addPage();
+        yPosition = 20;
+
+        const createTableData = (records: typeof filteredRecords, startIndex: number = 1) => {
+          return records.map((record, index) => {
+            const member = allMembers.find(m => m.id === record.memberId);
+            return [
+              String(startIndex + index),
+              record.memberName || member?.name || 'Unknown',
+              member?.committee || '-',
+              member?.position || '-',
+              record.status,
+              formatTimeValue(record.timeIn),
+              formatTimeValue(record.timeOut),
+            ];
+          });
+        };
+
+        const presentRecords = filteredRecords.filter(r => r.status === 'Present');
+        const lateRecords = filteredRecords.filter(r => r.status === 'Late');
+        const excusedRecords = filteredRecords.filter(r => r.status === 'Excused');
+        const absentRecords = filteredRecords.filter(r => r.status === 'Absent');
+        const notRecordedMembersList = getNotRecordedMembers();
+
+        const tableConfigs = [
+          { key: 'all', title: 'ALL ATTENDEES', records: filteredRecords, color: [246, 66, 31] as [number, number, number] },
+          { key: 'present', title: 'PRESENT', records: presentRecords, color: [16, 185, 129] as [number, number, number] },
+          { key: 'late', title: 'LATE', records: lateRecords, color: [245, 158, 11] as [number, number, number] },
+          { key: 'excused', title: 'EXCUSED', records: excusedRecords, color: [59, 130, 246] as [number, number, number] },
+          { key: 'absent', title: 'ABSENT', records: absentRecords, color: [239, 68, 68] as [number, number, number] },
+        ].filter(config => exportOptions.selectedTables.includes(config.key as any));
+
+        for (const config of tableConfigs) {
+          if (config.records.length === 0 && config.key !== 'all') continue;
+          
+          doc.setFontSize(11);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(30, 41, 59);
+          doc.text(`${config.title} (${config.records.length})`, margin, yPosition);
+          doc.setDrawColor(config.color[0], config.color[1], config.color[2]);
+          doc.setLineWidth(0.3);
+          doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
+          yPosition += 8;
+
+          const tableData = createTableData(config.records);
+
+          autoTable(doc, {
+            startY: yPosition,
+            head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out']],
+            body: tableData.length > 0 ? tableData : [['-', 'No records', '-', '-', '-', '-', '-']],
+            theme: 'grid',
+            headStyles: {
+              fillColor: config.color,
+              textColor: 255,
+              fontStyle: 'bold',
+              fontSize: 7,
+            },
+            bodyStyles: { fontSize: 7, textColor: [50, 50, 50] },
+            columnStyles: {
+              0: { cellWidth: 8, halign: 'center' },
+              1: { cellWidth: 35 },
+              2: { cellWidth: 35 },
+              3: { cellWidth: 22 },
+              4: { cellWidth: 18, halign: 'center' },
+              5: { cellWidth: 20, halign: 'center' },
+              6: { cellWidth: 20, halign: 'center' },
+            },
+            margin: { left: margin, right: margin },
+          });
+
+          yPosition = (doc as any).lastAutoTable.finalY + 15;
+          
+          if (yPosition > pageHeight - 40) {
+            doc.addPage();
+            yPosition = 20;
+          }
+        }
+
+        // Not Recorded Members table
+        if (exportOptions.selectedTables.includes('notRecorded') && notRecordedMembersList.length > 0) {
+          if (yPosition > pageHeight - 60) {
+            doc.addPage();
+            yPosition = 20;
+          }
+
+          doc.setFontSize(11);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(30, 41, 59);
+          doc.text(`NOT RECORDED (${notRecordedMembersList.length})`, margin, yPosition);
+          doc.setDrawColor(107, 114, 128);
+          doc.setLineWidth(0.3);
+          doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
+          yPosition += 8;
+
+          const notRecordedData = notRecordedMembersList.map((member, index) => [
+            String(index + 1),
+            member.name || 'Unknown',
+            member.committee || '-',
+            member.position || '-',
+          ]);
+
+          autoTable(doc, {
+            startY: yPosition,
+            head: [['#', 'Name', 'Committee', 'Position']],
+            body: notRecordedData,
+            theme: 'grid',
+            headStyles: {
+              fillColor: [107, 114, 128],
+              textColor: 255,
+              fontStyle: 'bold',
+              fontSize: 7,
+            },
+            bodyStyles: { fontSize: 7, textColor: [50, 50, 50] },
+            columnStyles: {
+              0: { cellWidth: 10, halign: 'center' },
+              1: { cellWidth: 50 },
+              2: { cellWidth: 50 },
+              3: { cellWidth: 30 },
+            },
+            margin: { left: margin, right: margin },
+          });
+        }
+      }
+
+      // Update footers
+      const totalPages = doc.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        drawFooter(i, totalPages);
+      }
+
+      // Generate blob URL for preview
+      const pdfBlob = doc.output('blob');
+      const url = URL.createObjectURL(pdfBlob);
+      setPdfPreviewUrl(url);
+      
+    } catch (error) {
+      console.error('PDF Preview Generation Error:', error);
+      toast.error('Failed to generate PDF preview');
+    } finally {
+      setIsGeneratingPreview(false);
+    }
   };
 
   // Export to PDF with progress bar using existing UploadToast
@@ -1927,10 +2260,10 @@ export default function AttendanceDashboardPage({
           <ControlsSkeleton isDark={isDark} />
         ) : (
           <div className="grid md:grid-cols-2 gap-6" style={{ overflow: 'visible' }}>
-            {/* Event Selector */}
+            {/* Smart Event Search */}
             <div>
               <label
-                className="block mb-2"
+                className="block mb-3"
                 style={{
                   fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
                   fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
@@ -1938,195 +2271,22 @@ export default function AttendanceDashboardPage({
                   color: DESIGN_TOKENS.colors.brand.orange,
                 }}
               >
-                Selection Mode
+                Select Events
               </label>
-              <div className="flex flex-wrap gap-2 mb-3">
-                {[
-                  { value: 'single', label: 'Single Event' },
-                  { value: 'multiple', label: 'Multiple Events' },
-                  { value: 'dateRange', label: 'Date Range' },
-                  { value: 'all', label: 'All Events' },
-                ].map((mode) => (
-                  <button
-                    key={mode.value}
-                    onClick={() => {
-                      setEventSelectionMode(mode.value as EventSelectionMode);
-                      // Reset selections when changing mode
-                      if (mode.value !== 'single') setSelectedEvent('');
-                      if (mode.value !== 'multiple') setSelectedEvents([]);
-                      if (mode.value !== 'dateRange') setDateRange({ from: '', to: '' });
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
-                      eventSelectionMode === mode.value
-                        ? "bg-[#f6421f] text-white"
-                        : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
-                    }`}
-                    style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
-                  >
-                    {mode.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Single Event Selector */}
-              {eventSelectionMode === 'single' && (
-                <>
-                  <label
-                    className="block mb-2 mt-3"
-                    style={{
-                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                      fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px`,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-                      color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
-                    }}
-                  >
-                    Select Event
-                  </label>
-                  <CustomDropdown
-                    value={selectedEvent}
-                    onChange={setSelectedEvent}
-                    options={[
-                      { value: "", label: events.length === 0 ? "No events available" : "Choose an event..." },
-                      ...events.map((event) => ({
-                        value: event.EventID,
-                        label: `${event.Title} (${event.Status})`,
-                      }))
-                    ]}
-                    isDark={isDark}
-                    size="md"
-                  />
-                </>
-              )}
-
-              {/* Multiple Events Selector */}
-              {eventSelectionMode === 'multiple' && (
-                <>
-                  <label
-                    className="block mb-2 mt-3"
-                    style={{
-                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                      fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px`,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-                      color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
-                    }}
-                  >
-                    Select Events ({selectedEvents.length} selected)
-                  </label>
-                  <div 
-                    className="max-h-48 overflow-y-auto rounded-lg border p-2 space-y-1"
-                    style={{
-                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-                      background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)',
-                    }}
-                  >
-                    {events.map((event) => (
-                      <label
-                        key={event.EventID}
-                        className="flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedEvents.includes(event.EventID)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedEvents([...selectedEvents, event.EventID]);
-                            } else {
-                              setSelectedEvents(selectedEvents.filter(id => id !== event.EventID));
-                            }
-                          }}
-                          className="w-4 h-4 rounded accent-[#f6421f]"
-                        />
-                        <span className="text-sm truncate">{event.Title}</span>
-                        <span 
-                          className="text-xs px-2 py-0.5 rounded-full ml-auto"
-                          style={{
-                            background: event.Status === 'Active' ? 'rgba(16,185,129,0.15)' : 
-                                       event.Status === 'Completed' ? 'rgba(59,130,246,0.15)' : 'rgba(245,158,11,0.15)',
-                            color: event.Status === 'Active' ? '#10b981' : 
-                                  event.Status === 'Completed' ? '#3b82f6' : '#f59e0b',
-                          }}
-                        >
-                          {event.Status}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {/* Date Range Selector */}
-              {eventSelectionMode === 'dateRange' && (
-                <>
-                  <label
-                    className="block mb-2 mt-3"
-                    style={{
-                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                      fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px`,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-                      color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
-                    }}
-                  >
-                    Select Date Range
-                  </label>
-                  <div className="flex gap-3">
-                    <div className="flex-1">
-                      <label className="text-xs text-muted-foreground block mb-1">From</label>
-                      <input
-                        type="date"
-                        value={dateRange.from}
-                        onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border text-sm"
-                        style={{
-                          background: isDark ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.8)',
-                          borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-                        }}
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-xs text-muted-foreground block mb-1">To</label>
-                      <input
-                        type="date"
-                        value={dateRange.to}
-                        onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border text-sm"
-                        style={{
-                          background: isDark ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.8)',
-                          borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-                        }}
-                      />
-                    </div>
-                  </div>
-                  {dateRange.from && dateRange.to && (
-                    <p className="text-xs text-muted-foreground mt-2">
-                      {getEffectiveSelectedEvents().length} event(s) found in range
-                    </p>
-                  )}
-                </>
-              )}
-
-              {/* All Events Info */}
-              {eventSelectionMode === 'all' && (
-                <div 
-                  className="mt-3 p-3 rounded-lg border"
-                  style={{
-                    background: isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)',
-                    borderColor: 'rgba(246,66,31,0.3)',
-                  }}
-                >
-                  <p className="text-sm" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
-                    <strong>{events.length}</strong> events will be included in the analysis
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    All active, scheduled, and completed events
-                  </p>
-                </div>
-              )}
+              <SmartEventSearch
+                events={events}
+                selectedEventIds={selectedEventIds}
+                onSelectionChange={setSelectedEventIds}
+                isDark={isDark}
+                placeholder="Search events by name or date..."
+                disabled={isLoadingEvents}
+              />
             </div>
 
             {/* Committee Selector */}
             <div>
               <label
-                className="block mb-2"
+                className="block mb-3"
                 style={{
                   fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
                   fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
@@ -2244,154 +2404,181 @@ export default function AttendanceDashboardPage({
         )
       )}
 
-      {/* Chart Type Selector */}
+      {/* Chart Type Selector - Context-Aware */}
       {effectiveEvents.length > 0 && (
         <div
-          className="rounded-xl p-6 mb-6 border"
+          className="rounded-xl p-5 mb-6 border"
           style={{
             background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
             backdropFilter: 'blur(20px)',
             borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
           }}
         >
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
-            <label
-              style={{
-                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                color: DESIGN_TOKENS.colors.brand.orange,
-              }}
-            >
-              Chart Type
-            </label>
-            {/* Recommended Chart Indicator */}
+          {/* Header with Recommendation */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: `${DESIGN_TOKENS.colors.brand.orange}15` }}
+              >
+                <TrendingUp className="w-5 h-5" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              </div>
+              <div>
+                <h3
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    margin: 0,
+                  }}
+                >
+                  Visualization Type
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {effectiveEvents.length === 1 
+                    ? 'Single event analysis' 
+                    : `Comparing ${effectiveEvents.length} events`}
+                </p>
+              </div>
+            </div>
+            
+            {/* Smart Recommendation Badge */}
             <div 
-              className="text-xs px-3 py-1 rounded-full"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm"
               style={{
-                background: isDark ? 'rgba(246,66,31,0.15)' : 'rgba(246,66,31,0.1)',
-                color: DESIGN_TOKENS.colors.brand.orange,
+                background: isDark ? 'rgba(16,185,129,0.15)' : 'rgba(16,185,129,0.1)',
+                color: '#10b981',
               }}
             >
-              💡 Recommended: <strong style={{ textTransform: 'capitalize' }}>{recommendedChart}</strong>
-              {effectiveEvents.length === 1 ? ' (single event)' : ` (${effectiveEvents.length} events)`}
+              <span className="text-base">✨</span>
+              <span className="font-medium" style={{ textTransform: 'capitalize' }}>
+                {recommendedChart} recommended
+              </span>
             </div>
           </div>
-          <div className="flex flex-wrap gap-3">
+          
+          {/* Chart Type Cards - Show contextually relevant options */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {/* Distribution Charts (always relevant) */}
             {[
-              { type: 'pie', label: 'Pie', desc: 'Overall distribution' },
-              { type: 'donut', label: 'Donut', desc: 'Distribution with center' },
-              { type: 'column', label: 'Column', desc: 'Status comparison' },
-              { type: 'bar', label: 'Bar', desc: effectiveEvents.length > 1 ? 'Events comparison' : 'Committee breakdown' },
-              { type: 'line', label: 'Line', desc: effectiveEvents.length > 1 ? 'Trends over events' : 'Committee trends' },
-            ].map((item) => (
-              <button
-                key={item.type}
-                onClick={() => setChartType(item.type as any)}
-                className={`px-4 py-2 rounded-lg transition-all flex flex-col items-center ${
-                  chartType === item.type
-                    ? "bg-[#f6421f] text-white"
-                    : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
-                } ${item.type === recommendedChart ? 'ring-2 ring-[#f6421f] ring-offset-2' : ''}`}
-                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
-              >
-                <span>{item.label}</span>
-                <span className={`text-xs mt-0.5 ${chartType === item.type ? 'text-white/80' : 'text-muted-foreground'}`}>
-                  {item.desc}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Not Recorded Members Toggle */}
-      {effectiveEvents.length > 0 && (
-        <div
-          className="rounded-xl p-4 mb-6 border flex items-center justify-between"
-          style={{
-            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-            backdropFilter: 'blur(20px)',
-            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          }}
-        >
-          <div>
-            <h3
-              style={{
-                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              }}
-            >
-              Not Recorded Members Table
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Show members from the member list who have no attendance record ({notRecordedMembers.length} members)
-            </p>
-          </div>
-          <button
-            onClick={() => setShowNotRecordedTable(!showNotRecordedTable)}
-            className={`px-4 py-2 rounded-lg transition-all ${
-              showNotRecordedTable
-                ? "bg-[#f6421f] text-white"
-                : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
-            }`}
-            style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
-          >
-            {showNotRecordedTable ? 'Hide Table' : 'Show Table'}
-          </button>
-        </div>
-      )}
-
-      {/* Not Recorded Members Table */}
-      {effectiveEvents.length > 0 && showNotRecordedTable && notRecordedMembers.length > 0 && (
-        <div
-          className="rounded-xl p-6 mb-6 border"
-          style={{
-            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-            backdropFilter: 'blur(20px)',
-            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          }}
-        >
-          <h3
-            className="mb-4"
-            style={{
-              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-              fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              color: '#6b7280',
-            }}
-          >
-            Not Recorded Members ({notRecordedMembers.length})
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr 
-                  className="border-b"
-                  style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}
-                >
-                  <th className="text-left py-3 px-3 font-semibold">#</th>
-                  <th className="text-left py-3 px-3 font-semibold">Name</th>
-                  <th className="text-left py-3 px-3 font-semibold">Committee</th>
-                  <th className="text-left py-3 px-3 font-semibold">Position</th>
-                </tr>
-              </thead>
-              <tbody>
-                {notRecordedMembers.map((member, index) => (
-                  <tr 
-                    key={member.id || index}
-                    className="border-b hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                    style={{ borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}
+              { 
+                type: 'pie' as const, 
+                label: 'Pie', 
+                icon: PieChartIcon,
+                desc: 'Overall distribution',
+                relevance: effectiveEvents.length === 1 ? 'high' : 'medium',
+              },
+              { 
+                type: 'donut' as const, 
+                label: 'Donut', 
+                icon: PieChartIcon,
+                desc: 'With center stats',
+                relevance: effectiveEvents.length === 1 ? 'high' : 'medium',
+              },
+              { 
+                type: 'column' as const, 
+                label: 'Column', 
+                icon: BarChart3,
+                desc: 'Status counts',
+                relevance: effectiveEvents.length === 1 ? 'high' : 'low',
+              },
+              { 
+                type: 'bar' as const, 
+                label: 'Bar', 
+                icon: BarChart3,
+                desc: effectiveEvents.length > 1 ? 'Compare events' : 'By committee',
+                relevance: effectiveEvents.length > 1 ? 'high' : 'medium',
+              },
+              { 
+                type: 'line' as const, 
+                label: 'Line', 
+                icon: LineChartIcon,
+                desc: effectiveEvents.length > 1 ? 'Event trends' : 'Committee trends',
+                relevance: effectiveEvents.length > 3 ? 'high' : 'low',
+              },
+            ]
+              // Sort by relevance (high first) when multiple events selected
+              .sort((a, b) => {
+                const order = { high: 0, medium: 1, low: 2 };
+                return order[a.relevance] - order[b.relevance];
+              })
+              .map((item) => {
+                const isSelected = chartType === item.type;
+                const isRecommended = item.type === recommendedChart;
+                const IconComponent = item.icon;
+                
+                return (
+                  <button
+                    key={item.type}
+                    onClick={() => setChartType(item.type)}
+                    className={`relative p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2 ${
+                      isSelected
+                        ? 'border-[#f6421f] shadow-lg scale-[1.02]'
+                        : isRecommended
+                          ? 'border-green-500/50 hover:border-green-500'
+                          : 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'
+                    }`}
+                    style={{
+                      background: isSelected 
+                        ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange}15, ${DESIGN_TOKENS.colors.brand.orange}05)`
+                        : isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+                    }}
                   >
-                    <td className="py-2 px-3 text-muted-foreground">{index + 1}</td>
-                    <td className="py-2 px-3 font-medium">{member.name || 'Unknown'}</td>
-                    <td className="py-2 px-3 text-muted-foreground">{member.committee || '-'}</td>
-                    <td className="py-2 px-3 text-muted-foreground">{member.position || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    {/* Recommended indicator */}
+                    {isRecommended && !isSelected && (
+                      <div 
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center text-xs"
+                        style={{ background: '#10b981', color: 'white' }}
+                      >
+                        ✓
+                      </div>
+                    )}
+                    
+                    {/* Icon */}
+                    <div
+                      className="w-10 h-10 rounded-lg flex items-center justify-center"
+                      style={{
+                        background: isSelected 
+                          ? DESIGN_TOKENS.colors.brand.orange 
+                          : isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+                      }}
+                    >
+                      <IconComponent 
+                        className="w-5 h-5" 
+                        style={{ 
+                          color: isSelected 
+                            ? 'white' 
+                            : isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.5)' 
+                        }} 
+                      />
+                    </div>
+                    
+                    {/* Label */}
+                    <span 
+                      className="font-semibold text-sm"
+                      style={{ 
+                        color: isSelected 
+                          ? DESIGN_TOKENS.colors.brand.orange 
+                          : undefined 
+                      }}
+                    >
+                      {item.label}
+                    </span>
+                    
+                    {/* Description */}
+                    <span className="text-xs text-muted-foreground text-center leading-tight">
+                      {item.desc}
+                    </span>
+                    
+                    {/* Relevance indicator */}
+                    {item.relevance === 'low' && (
+                      <span className="text-[10px] text-muted-foreground/50 italic">
+                        Less relevant
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
           </div>
         </div>
       )}
@@ -2512,54 +2699,52 @@ export default function AttendanceDashboardPage({
                   color: DESIGN_TOKENS.colors.brand.orange,
                 }}
               >
-                {eventSelectionMode === 'single' && 'Select an Event'}
-                {eventSelectionMode === 'multiple' && 'Select Events'}
-                {eventSelectionMode === 'dateRange' && 'Select a Date Range'}
-                {eventSelectionMode === 'all' && 'No Events Found'}
+                Search for Events
               </h3>
               <p className="text-muted-foreground">
-                {eventSelectionMode === 'single' && 'Choose an event from the dropdown above to view attendance analytics'}
-                {eventSelectionMode === 'multiple' && 'Select one or more events to compare attendance across them'}
-                {eventSelectionMode === 'dateRange' && 'Enter a start and end date to analyze events in that period'}
-                {eventSelectionMode === 'all' && 'There are no events available to analyze'}
+                Use the search bar above to find and select events. You can search by name or date.
+              </p>
+              <p className="text-sm text-muted-foreground mt-2">
+                Try: "January 2026", "last 7 days", "this month", or event names
               </p>
             </>
           )}
         </div>
       )}
 
-      {/* Export Preview Modal */}
+      {/* Export Preview Modal - Two Tab System */}
       {showExportPreview && (
         <div
           className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
           style={{ zIndex: 9999 }}
-          onClick={() => setShowExportPreview(false)}
+          onClick={handleCloseExportModal}
         >
           <div
             className="rounded-xl w-full border flex flex-col overflow-hidden shadow-2xl"
             style={{
-              maxWidth: 600,
-              maxHeight: '85vh',
+              maxWidth: exportModalTab === 'preview' && exportFormat === 'pdf' ? 900 : 600,
+              maxHeight: '90vh',
               background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
               backdropFilter: 'blur(20px)',
               borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              transition: 'max-width 0.3s ease',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
+            {/* Header with Tab Navigation */}
             <div 
-              className="px-5 py-4 border-b shrink-0"
+              className="shrink-0"
               style={{
-                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
                 background: DESIGN_TOKENS.colors.brand.orange,
               }}
             >
-              <div className="flex items-center justify-between">
-                <h3 className="text-white font-semibold text-lg">
-                  Export Preview - {exportFormat === 'pdf' ? 'PDF' : 'Spreadsheet'}
+              <div className="px-5 py-4 flex items-center justify-between">
+                <h3 className="text-white font-semibold text-lg flex items-center gap-2">
+                  {exportFormat === 'pdf' ? <FileText className="w-5 h-5" /> : <Download className="w-5 h-5" />}
+                  Export {exportFormat === 'pdf' ? 'PDF' : 'Spreadsheet'}
                 </h3>
                 <button
-                  onClick={() => setShowExportPreview(false)}
+                  onClick={handleCloseExportModal}
                   className="p-1.5 rounded-lg hover:bg-white/20 transition-colors text-white"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2567,182 +2752,314 @@ export default function AttendanceDashboardPage({
                   </svg>
                 </button>
               </div>
+              
+              {/* Tab Buttons */}
+              {exportFormat === 'pdf' && (
+                <div className="px-5 pb-2 flex gap-2">
+                  <button
+                    onClick={() => setExportModalTab('preview')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      exportModalTab === 'preview'
+                        ? 'bg-white text-[#f6421f] shadow-lg'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    <Eye className="w-4 h-4" />
+                    Preview
+                  </button>
+                  <button
+                    onClick={() => setExportModalTab('settings')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      exportModalTab === 'settings'
+                        ? 'bg-white text-[#f6421f] shadow-lg'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    <Settings className="w-4 h-4" />
+                    Settings
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Export Summary */}
-              <div 
-                className="p-4 rounded-lg border"
-                style={{
-                  background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
-                  borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-                }}
-              >
-                <h4 className="font-semibold mb-2">Export Summary</h4>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">Events:</span>{' '}
-                    <strong>{effectiveEvents.length}</strong>
+            {/* Tab Content */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {/* Tab 1: PDF Preview */}
+              {exportModalTab === 'preview' && exportFormat === 'pdf' && (
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  {/* Preview Toolbar */}
+                  <div 
+                    className="px-4 py-2 border-b flex items-center justify-between shrink-0"
+                    style={{ 
+                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                      background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
+                    }}
+                  >
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="text-muted-foreground">
+                        {effectiveEvents.length} event{effectiveEvents.length !== 1 ? 's' : ''} • {totalRecords} records
+                      </span>
+                      {exportOptions.selectedTables.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-xs bg-[#f6421f]/10 text-[#f6421f] font-medium">
+                          {exportOptions.selectedTables.length} table{exportOptions.selectedTables.length !== 1 ? 's' : ''} included
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => generatePDFPreview()}
+                      disabled={isGeneratingPreview}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isGeneratingPreview ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </button>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Total Records:</span>{' '}
-                    <strong>{totalRecords}</strong>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Not Recorded:</span>{' '}
-                    <strong>{notRecordedMembers.length}</strong>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Committee:</span>{' '}
-                    <strong>{selectedCommittee}</strong>
+                  
+                  {/* PDF Iframe Viewer */}
+                  <div className="flex-1 bg-gray-200 dark:bg-gray-900 overflow-hidden relative">
+                    {isGeneratingPreview ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
+                        <Loader2 className="w-10 h-10 animate-spin text-[#f6421f]" />
+                        <div className="text-center">
+                          <p className="font-medium">Generating Preview...</p>
+                          <p className="text-sm text-muted-foreground">This may take a moment</p>
+                        </div>
+                      </div>
+                    ) : pdfPreviewUrl ? (
+                      <iframe
+                        src={pdfPreviewUrl}
+                        className="w-full h-full"
+                        style={{ minHeight: 450 }}
+                        title="PDF Preview"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-8">
+                        <FileText className="w-16 h-16 text-muted-foreground/50" />
+                        <div>
+                          <p className="font-medium">No Preview Available</p>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Select tables in Settings tab and click Refresh to generate preview
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setExportModalTab('settings')}
+                          className="mt-2 px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors text-sm"
+                        >
+                          Go to Settings
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-                
-                {effectiveEvents.length > 1 && (
-                  <p className="text-xs text-muted-foreground mt-2 pt-2 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
-                    📄 Multi-event export will generate {effectiveEvents.length + 1} pages (1 summary + {effectiveEvents.length} event details)
-                  </p>
-                )}
-              </div>
+              )}
 
-              {/* Table Selection */}
-              <div>
-                <h4 className="font-semibold mb-3">Include Tables</h4>
-                <div className="space-y-2">
-                  {[
-                    { key: 'all', label: 'All Attendees', desc: 'Complete list of all attendance records' },
-                    { key: 'present', label: 'Present', desc: 'Members who attended on time', color: '#10b981' },
-                    { key: 'late', label: 'Late', desc: 'Members who arrived late', color: '#f59e0b' },
-                    { key: 'excused', label: 'Excused', desc: 'Members with excused absences', color: '#3b82f6' },
-                    { key: 'absent', label: 'Absent', desc: 'Members who were absent', color: '#ef4444' },
-                    { key: 'notRecorded', label: 'Not Recorded', desc: 'Members with no attendance record', color: '#6b7280' },
-                  ].map((table) => (
-                    <label
-                      key={table.key}
-                      className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              {/* Tab 2: Settings / Spreadsheet Config */}
+              {(exportModalTab === 'settings' || exportFormat === 'spreadsheet') && (
+                <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                  {/* Export Summary */}
+                  <div 
+                    className="p-4 rounded-lg border"
+                    style={{
+                      background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
+                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                    }}
+                  >
+                    <h4 className="font-semibold mb-2 flex items-center gap-2">
+                      <Users className="w-4 h-4 text-[#f6421f]" />
+                      Export Summary
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Events:</span>{' '}
+                        <strong>{effectiveEvents.length}</strong>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Total Records:</span>{' '}
+                        <strong>{totalRecords}</strong>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Not Recorded:</span>{' '}
+                        <strong>{notRecordedMembers.length}</strong>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Committee:</span>{' '}
+                        <strong>{selectedCommittee}</strong>
+                      </div>
+                    </div>
+                    
+                    {effectiveEvents.length > 1 && (
+                      <p className="text-xs text-muted-foreground mt-2 pt-2 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                        📄 Multi-event export will generate {effectiveEvents.length + 1} pages (1 summary + {effectiveEvents.length} event details)
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Table Selection */}
+                  <div>
+                    <h4 className="font-semibold mb-3">Include Tables</h4>
+                    <div className="space-y-2">
+                      {[
+                        { key: 'all', label: 'All Attendees', desc: 'Complete list of all attendance records' },
+                        { key: 'present', label: 'Present', desc: 'Members who attended on time', color: '#10b981' },
+                        { key: 'late', label: 'Late', desc: 'Members who arrived late', color: '#f59e0b' },
+                        { key: 'excused', label: 'Excused', desc: 'Members with excused absences', color: '#3b82f6' },
+                        { key: 'absent', label: 'Absent', desc: 'Members who were absent', color: '#ef4444' },
+                        { key: 'notRecorded', label: 'Not Recorded', desc: 'Members with no attendance record', color: '#6b7280' },
+                      ].map((table) => (
+                        <label
+                          key={table.key}
+                          className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          style={{
+                            background: exportOptions.selectedTables.includes(table.key as any) 
+                              ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                              : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={exportOptions.selectedTables.includes(table.key as any)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setExportOptions({
+                                  ...exportOptions,
+                                  selectedTables: [...exportOptions.selectedTables, table.key as any],
+                                });
+                              } else {
+                                setExportOptions({
+                                  ...exportOptions,
+                                  selectedTables: exportOptions.selectedTables.filter(t => t !== table.key),
+                                });
+                              }
+                            }}
+                            className="w-4 h-4 rounded accent-[#f6421f]"
+                          />
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              {table.color && (
+                                <div 
+                                  className="w-3 h-3 rounded-full" 
+                                  style={{ background: table.color }}
+                                />
+                              )}
+                              <span className="font-medium">{table.label}</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground">{table.desc}</span>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Additional Options */}
+                  <div>
+                    <h4 className="font-semibold mb-3">Additional Options</h4>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={exportOptions.includeSummaryTable}
+                          onChange={(e) => setExportOptions({ ...exportOptions, includeSummaryTable: e.target.checked })}
+                          className="w-4 h-4 rounded accent-[#f6421f]"
+                        />
+                        <div className="flex-1">
+                          <span className="font-medium">Include Summary Page</span>
+                          <p className="text-xs text-muted-foreground">Overview with statistics and committee breakdown</p>
+                        </div>
+                      </label>
+                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={exportOptions.includeCharts}
+                          onChange={(e) => setExportOptions({ ...exportOptions, includeCharts: e.target.checked })}
+                          className="w-4 h-4 rounded accent-[#f6421f]"
+                        />
+                        <div className="flex-1">
+                          <span className="font-medium">Include Charts</span>
+                          <p className="text-xs text-muted-foreground">Visual charts in the export (PDF only)</p>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Events to Export (for multi-event) */}
+                  {effectiveEvents.length > 1 && (
+                    <div>
+                      <h4 className="font-semibold mb-3">Events to Export</h4>
+                      <div className="max-h-40 overflow-y-auto space-y-1 rounded-lg border p-2" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                        {effectiveEvents.map((eventId, index) => {
+                          const event = events.find(e => e.EventID === eventId);
+                          const eventRecords = multiEventRecords.get(eventId) || [];
+                          return (
+                            <div 
+                              key={eventId}
+                              className="flex items-center justify-between text-sm p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+                            >
+                              <span className="truncate flex-1">{index + 1}. {event?.Title || 'Unknown'}</span>
+                              <span className="text-muted-foreground ml-2">{eventRecords.length} records</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Preview Hint for PDF */}
+                  {exportFormat === 'pdf' && (
+                    <div 
+                      className="p-3 rounded-lg border flex items-center gap-3"
                       style={{
-                        background: exportOptions.selectedTables.includes(table.key as any) 
-                          ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
-                          : 'transparent',
+                        background: isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)',
+                        borderColor: isDark ? 'rgba(246,66,31,0.3)' : 'rgba(246,66,31,0.2)',
                       }}
                     >
-                      <input
-                        type="checkbox"
-                        checked={exportOptions.selectedTables.includes(table.key as any)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setExportOptions({
-                              ...exportOptions,
-                              selectedTables: [...exportOptions.selectedTables, table.key as any],
-                            });
-                          } else {
-                            setExportOptions({
-                              ...exportOptions,
-                              selectedTables: exportOptions.selectedTables.filter(t => t !== table.key),
-                            });
-                          }
-                        }}
-                        className="w-4 h-4 rounded accent-[#f6421f]"
-                      />
+                      <Eye className="w-5 h-5 text-[#f6421f] shrink-0" />
                       <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          {table.color && (
-                            <div 
-                              className="w-3 h-3 rounded-full" 
-                              style={{ background: table.color }}
-                            />
-                          )}
-                          <span className="font-medium">{table.label}</span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">{table.desc}</span>
+                        <p className="text-sm font-medium">Preview Available</p>
+                        <p className="text-xs text-muted-foreground">Switch to the Preview tab to see exactly how your PDF will look before exporting.</p>
                       </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Additional Options */}
-              <div>
-                <h4 className="font-semibold mb-3">Additional Options</h4>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={exportOptions.includeSummaryTable}
-                      onChange={(e) => setExportOptions({ ...exportOptions, includeSummaryTable: e.target.checked })}
-                      className="w-4 h-4 rounded accent-[#f6421f]"
-                    />
-                    <div className="flex-1">
-                      <span className="font-medium">Include Summary Page</span>
-                      <p className="text-xs text-muted-foreground">Overview with statistics and committee breakdown</p>
                     </div>
-                  </label>
-                  <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={exportOptions.includeCharts}
-                      onChange={(e) => setExportOptions({ ...exportOptions, includeCharts: e.target.checked })}
-                      className="w-4 h-4 rounded accent-[#f6421f]"
-                    />
-                    <div className="flex-1">
-                      <span className="font-medium">Include Charts</span>
-                      <p className="text-xs text-muted-foreground">Visual charts in the export (PDF only)</p>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              {/* Events to Export (for multi-event) */}
-              {effectiveEvents.length > 1 && (
-                <div>
-                  <h4 className="font-semibold mb-3">Events to Export</h4>
-                  <div className="max-h-40 overflow-y-auto space-y-1 rounded-lg border p-2" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
-                    {effectiveEvents.map((eventId, index) => {
-                      const event = events.find(e => e.EventID === eventId);
-                      const eventRecords = multiEventRecords.get(eventId) || [];
-                      return (
-                        <div 
-                          key={eventId}
-                          className="flex items-center justify-between text-sm p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-                        >
-                          <span className="truncate flex-1">{index + 1}. {event?.Title || 'Unknown'}</span>
-                          <span className="text-muted-foreground ml-2">{eventRecords.length} records</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  )}
                 </div>
               )}
             </div>
 
             {/* Footer */}
             <div 
-              className="px-5 py-4 border-t shrink-0 flex justify-end gap-3"
+              className="px-5 py-4 border-t shrink-0 flex items-center justify-between gap-3"
               style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
             >
-              <button
-                onClick={() => setShowExportPreview(false)}
-                className="px-4 py-2 rounded-lg border hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                style={{ borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setShowExportPreview(false);
-                  if (exportFormat === 'pdf') {
-                    handleExportPDF();
-                  } else {
-                    handleExportSpreadsheet();
-                  }
-                }}
-                disabled={exportOptions.selectedTables.length === 0}
-                className="px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
-              >
-                Export {exportFormat === 'pdf' ? 'PDF' : 'Spreadsheet'}
-              </button>
+              <div className="text-sm text-muted-foreground">
+                {exportOptions.selectedTables.length === 0 ? (
+                  <span className="text-amber-500">⚠️ Select at least one table</span>
+                ) : (
+                  <span>{exportOptions.selectedTables.length} table{exportOptions.selectedTables.length !== 1 ? 's' : ''} selected</span>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCloseExportModal}
+                  className="px-4 py-2 rounded-lg border hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  style={{ borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    handleCloseExportModal();
+                    if (exportFormat === 'pdf') {
+                      handleExportPDF();
+                    } else {
+                      handleExportSpreadsheet();
+                    }
+                  }}
+                  disabled={exportOptions.selectedTables.length === 0}
+                  className="px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+                >
+                  <Download className="w-4 h-4" />
+                  Export {exportFormat === 'pdf' ? 'PDF' : 'Spreadsheet'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
