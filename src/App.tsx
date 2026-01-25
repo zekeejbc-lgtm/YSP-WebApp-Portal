@@ -665,8 +665,26 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       try {
         const backendVersion = await getCacheVersionFromBackend();
         if (!isMounted) return;
-        setLocalCacheVersion(backendVersion);
-        setCacheVersion(backendVersion);
+        
+        // Get the current local version BEFORE updating
+        const localVersion = getLocalCacheVersion();
+        
+        // Check if user has an outdated cache version
+        // Only show modal if:
+        // 1. User has used the app before (localVersion > 0)
+        // 2. Backend version is newer than local version
+        if (localVersion > 0 && backendVersion > localVersion) {
+          // User has outdated cache - show the hard refresh modal
+          console.log(`[Cache] Outdated cache detected: local=${localVersion}, backend=${backendVersion}`);
+          setLocalCacheVersion(backendVersion);
+          setCacheVersion(backendVersion);
+          setHardRefreshMode("full");
+          setShowCacheRefreshModal(true);
+        } else {
+          // First-time user (localVersion=0) or already up-to-date - just sync silently
+          setLocalCacheVersion(backendVersion);
+          setCacheVersion(backendVersion);
+        }
       } catch {
         if (!isMounted) return;
         setCacheVersion(getLocalCacheVersion());
@@ -679,8 +697,19 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       }
     };
 
-    const handleCacheVersionChange = () => {
-      setCacheVersion(getLocalCacheVersion());
+    const handleCacheVersionChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ newVersion?: number; oldVersion?: number }>;
+      const newVersion = customEvent.detail?.newVersion;
+      
+      // Update local cache version to prevent repeated modal triggers
+      if (newVersion !== undefined) {
+        setLocalCacheVersion(newVersion);
+        setCacheVersion(newVersion);
+        console.log(`[Cache] Version bumped: old=${customEvent.detail?.oldVersion}, new=${newVersion}`);
+      } else {
+        setCacheVersion(getLocalCacheVersion());
+      }
+      
       // When cache is bumped by admin, force FULL refresh (clear all storage, log out users)
       setHardRefreshMode("full");
       setShowCacheRefreshModal(true);

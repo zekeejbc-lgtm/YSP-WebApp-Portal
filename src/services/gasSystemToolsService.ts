@@ -253,6 +253,8 @@ export function setLocalCacheVersion(version: number): void {
 
 /**
  * Check if cache needs refresh (local version differs from backend)
+ * NOTE: This does NOT update the local version - the caller (App.tsx) handles
+ * updating the local version after the user sees/dismisses the refresh modal
  */
 export async function checkCacheRefreshNeeded(): Promise<boolean> {
   try {
@@ -260,8 +262,7 @@ export async function checkCacheRefreshNeeded(): Promise<boolean> {
     const localVersion = getLocalCacheVersion();
     
     if (backendVersion > localVersion) {
-      // Update local version and signal refresh needed
-      setLocalCacheVersion(backendVersion);
+      // Signal refresh needed - caller will update local version after modal
       return true;
     }
     
@@ -518,11 +519,17 @@ export function startCacheVersionPolling(intervalMs = 10000): void {
   
   cachePollingInterval = window.setInterval(async () => {
     try {
-      const needsRefresh = await checkCacheRefreshNeeded();
-      if (needsRefresh) {
-        // Dispatch custom event that can be caught by the app
+      const backendVersion = await getCacheVersionFromBackend();
+      const localVersion = getLocalCacheVersion();
+      
+      if (backendVersion > localVersion) {
+        // Dispatch custom event with the new version so App can update local storage
         window.dispatchEvent(new CustomEvent('cache-version-changed', {
-          detail: { message: 'A new version is available. Please refresh.' }
+          detail: { 
+            message: 'A new version is available. Please refresh.',
+            newVersion: backendVersion,
+            oldVersion: localVersion
+          }
         }));
       }
     } catch (error) {
