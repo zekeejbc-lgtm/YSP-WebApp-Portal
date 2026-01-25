@@ -449,6 +449,7 @@ export default function AttendanceTransparencyPage({
   // =====================================================
 
   return (
+    <>
     <PageLayout
       title="Attendance Transparency"
       subtitle={`Viewing attendance records for ${userName}`}
@@ -1213,10 +1214,36 @@ export default function AttendanceTransparencyPage({
         </div>
       )}
 
-      {/* Detail Modal */}
+      {!isLoading && !error && viewMode === "table" && filteredRecords.length > 0 && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredRecords.length}
+          pageSize={ITEMS_PER_PAGE}
+          isDark={isDark}
+          onPageChange={setCurrentPage}
+        />
+      )}
+
+      {/* Shimmer animation styles */}
+      <style>{`
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+      `}</style>
+    </PageLayout>
+
+      {/* ===========================================
+        DETAIL MODAL - MOVED OUTSIDE PAGE LAYOUT
+        ===========================================
+        This ensures the modal stacks ON TOP of the PageLayout 
+        (and its header/footer) rather than being trapped inside it.
+      */}
       {showDetailModal && selectedRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[300] flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 md:p-8"
+          style={{ zIndex: 9999 }}
           onClick={() => setShowDetailModal(false)}
         >
           <div
@@ -1422,25 +1449,6 @@ export default function AttendanceTransparencyPage({
           </div>
         </div>
       )}
-
-      {!isLoading && !error && viewMode === "table" && filteredRecords.length > 0 && (
-        <PaginationControls
-          currentPage={currentPage}
-          totalPages={totalPages}
-          totalItems={filteredRecords.length}
-          pageSize={ITEMS_PER_PAGE}
-          isDark={isDark}
-          onPageChange={setCurrentPage}
-        />
-      )}
-
-      {/* Shimmer animation styles */}
-      <style>{`
-        @keyframes shimmer {
-          0% { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
-        }
-      `}</style>
-    </PageLayout>
+    </>
   );
 }
