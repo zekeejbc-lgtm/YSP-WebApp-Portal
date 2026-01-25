@@ -18,7 +18,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users } from "lucide-react";
+import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance } from "../services/gasAttendanceService";
 import jsPDF from "jspdf";
@@ -290,6 +290,7 @@ export default function AttendanceDashboardPage({
   const [showModal, setShowModal] = useState(false);
   const [modalData, setModalData] = useState<{ status: string; members: MemberForAttendance[] } | null>(null);
   const [exportType, setExportType] = useState("");
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
 
   // Export Preview Modal
   const [showExportPreview, setShowExportPreview] = useState(false);
@@ -1139,7 +1140,11 @@ export default function AttendanceDashboardPage({
       await new Promise(resolve => setTimeout(resolve, 100));
       if (cancelled) return;
 
-      const currentEvent = events.find(e => e.EventID === selectedEvent);
+      // Get current event - use first selected event for single event, or null for multi
+      const effectiveEventsForPDF = getEffectiveSelectedEvents();
+      const currentEvent = effectiveEventsForPDF.length === 1 
+        ? events.find(e => e.EventID === effectiveEventsForPDF[0]) 
+        : null;
       let yPosition = 52;
 
       // Add subtle divider line below header
@@ -1906,7 +1911,11 @@ export default function AttendanceDashboardPage({
       await new Promise(resolve => setTimeout(resolve, 100));
       if (cancelled) return;
 
-      const currentEvent = events.find(e => e.EventID === selectedEvent);
+      // Get current event - use first selected event for single event, or null for multi
+      const effectiveEventsForExport = getEffectiveSelectedEvents();
+      const currentEvent = effectiveEventsForExport.length === 1 
+        ? events.find(e => e.EventID === effectiveEventsForExport[0]) 
+        : null;
       const filteredRecords = getFilteredAttendance();
 
       // Step 2: Prepare data (50%)
@@ -2613,26 +2622,68 @@ export default function AttendanceDashboardPage({
                 </p>
               )}
             </div>
-            <div className="flex flex-wrap gap-3">
+            {/* Export Dropdown */}
+            <div className="relative">
               <button
-                onClick={() => handleExportWithPreview('pdf')}
+                onClick={() => setShowExportDropdown(!showExportDropdown)}
                 disabled={isLoadingAttendance || attendanceRecords.length === 0}
-                className="px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
               >
-                Export PDF
+                <Download className="w-4 h-4" />
+                Export
+                <ChevronDown className={`w-4 h-4 transition-transform ${showExportDropdown ? 'rotate-180' : ''}`} />
               </button>
-              <button
-                onClick={() => handleExportWithPreview('spreadsheet')}
-                disabled={isLoadingAttendance || attendanceRecords.length === 0}
-                className="px-4 py-2 rounded-lg border hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ 
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
-                  borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
-                }}
-              >
-                Export Spreadsheet
-              </button>
+              
+              {/* Export Dropdown Menu */}
+              {showExportDropdown && (
+                <div
+                  className="absolute right-0 top-full mt-2 w-56 rounded-xl border shadow-xl overflow-hidden"
+                  style={{
+                    background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                    backdropFilter: 'blur(20px)',
+                    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                    zIndex: 100,
+                  }}
+                >
+                  <button
+                    onClick={() => {
+                      setShowExportDropdown(false);
+                      handleExportWithPreview('pdf');
+                    }}
+                    className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left"
+                  >
+                    <FileText className="w-5 h-5 text-[#f6421f]" />
+                    <div>
+                      <div className="font-medium">Export as PDF</div>
+                      <div className="text-xs text-muted-foreground">With preview & charts</div>
+                    </div>
+                  </button>
+                  <div style={{ borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}` }} />
+                  <button
+                    onClick={() => {
+                      setShowExportDropdown(false);
+                      handleExportWithPreview('spreadsheet');
+                    }}
+                    className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left"
+                  >
+                    <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                    <div>
+                      <div className="font-medium">Export as Spreadsheet</div>
+                      <div className="text-xs text-muted-foreground">Excel-compatible format</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+              
+              {/* Backdrop to close dropdown */}
+              {showExportDropdown && (
+                <div 
+                  className="fixed inset-0" 
+                  style={{ zIndex: 50 }}
+                  onClick={() => setShowExportDropdown(false)}
+                />
+              )}
             </div>
           </div>
           {renderChart()}

@@ -223,10 +223,10 @@ export default function SmartEventSearch({
       onSelectionChange([...selectedEventIds, event.EventID]);
     }
     
-    // Clear the input and keep focus
+    // Clear the input and close dropdown when an event is selected
     setInputValue('');
     setHighlightedIndex(-1);
-    inputRef.current?.focus();
+    setIsOpen(false);  // Close dropdown after selection
   };
 
   // Handle removing a selected event
