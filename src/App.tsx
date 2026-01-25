@@ -79,6 +79,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
   import { Helmet } from 'react-helmet-async';
   import MusicPlayer from "./components/MusicPlayer";
 import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
+import type { AttendanceDashboardContext } from "./components/AttendanceDashboardPage";
   const DonationPage = lazy(() => import("./components/DonationPage"));
   const LoginPanel = lazy(() => import("./components/LoginPanel"));
   const FeedbackPage = lazy(() => import("./components/FeedbackPage"));
@@ -613,6 +614,7 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
       trigger: number;
     } | null>(null);
     const [showAttendanceDashboard, setShowAttendanceDashboard] = useState(false);
+    const [attendanceDashboardContext, setAttendanceDashboardContext] = useState<AttendanceDashboardContext | null>(null);
     const [showAttendanceRecording, setShowAttendanceRecording] = useState(false);
     const [showManageEvents, setShowManageEvents] = useState(false);
     const [showMyQRID, setShowMyQRID] = useState(false);
@@ -2600,6 +2602,7 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
         currentPage={activePage}
         hidden={isEditingProfile || isEditingHomepage}
         onTriggerEditMode={handleTriggerProfileEditMode}
+        attendanceDashboardContext={attendanceDashboardContext}
       />
     );
 
@@ -2836,6 +2839,7 @@ import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
               removeUploadToast={removeUploadToast}
+              onDashboardContextUpdate={setAttendanceDashboardContext}
             />
           </Suspense>
           {/* Upload Toast Container for export progress */}

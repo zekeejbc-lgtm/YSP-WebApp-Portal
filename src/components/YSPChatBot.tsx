@@ -5,6 +5,8 @@ import { getAllOfficers, searchOfficers, type DirectoryOfficer } from "../servic
 import { fetchEvents, formatEventDate } from "../services/gasEventsService";
 import { fetchAllProjects } from "../services/projectsService";
 import { getStoredUser, fetchUserProfile, type UserProfile } from "../services/gasLoginService";
+import type { AttendanceDashboardContext } from "./AttendanceDashboardPage";
+
 // ✅ YOUR API KEY
 const API_URL =
   "https://script.google.com/macros/s/AKfycbxBc_bEYUCdt71zuUZouXmhvhOilUBSgI0PymwzUqI9URanSF6U7UEKN_ziHQ_s9gLRcQ/exec";
@@ -26,6 +28,7 @@ interface YSPChatBotProps {
   currentPage?: string;
   hidden?: boolean;
   onTriggerEditMode?: () => void;
+  attendanceDashboardContext?: AttendanceDashboardContext | null;
 }
 
 // 👇 Add this new interface for the Knowledge Base
@@ -897,6 +900,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
   currentPage = "",
   hidden = false,
   onTriggerEditMode,
+  attendanceDashboardContext,
 }) => {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
@@ -921,6 +925,128 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const directoryAnalyticsCacheRef = useRef<{ timestamp: number; officers: DirectoryOfficer[] } | null>(null);
   const cooldownEndRef = useRef<number>(0); // 👈 Tracks real time
+
+  // 📊 ATTENDANCE DASHBOARD KNOWLEDGE BASE
+  const generateAttendanceContextResponse = (query: string): string | null => {
+    if (!attendanceDashboardContext) return null;
+    
+    const lowerQuery = query.toLowerCase();
+    const ctx = attendanceDashboardContext;
+    const stats = ctx.statistics;
+    
+    // Check if asking about attendance stats
+    if (/\b(attendance|statistics|stats|summary|overview|how many|count|total)\b/.test(lowerQuery)) {
+      // Overall attendance summary
+      if (/\b(overall|summary|total|all|how is|statistics|stats)\b/.test(lowerQuery)) {
+        const eventNames = ctx.eventDetails.map(e => e.title).join(', ');
+        return `📊 **Attendance Dashboard Summary**\n\n` +
+          `**Selection:** ${ctx.mode === 'single' ? '1 event' : ctx.mode === 'all' ? 'All events' : `${ctx.selectedEvents.length} events`}\n` +
+          `${ctx.eventDetails.length === 1 ? `**Event:** ${ctx.eventDetails[0].title}` : `**Events:** ${eventNames}`}\n\n` +
+          `**Statistics:**\n` +
+          `• ✅ Present: ${stats.present}\n` +
+          `• ⏰ Late: ${stats.late}\n` +
+          `• 📋 Excused: ${stats.excused}\n` +
+          `• ❌ Absent: ${stats.absent}\n` +
+          `• ❓ Not Recorded: ${stats.notRecorded}\n\n` +
+          `**Attendance Rate:** ${stats.attendanceRate}%\n` +
+          `**Total Records:** ${stats.totalRecords}\n\n` +
+          `💡 Recommended chart: **${ctx.recommendedChartType}** chart`;
+      }
+      
+      // Present count
+      if (/\b(present|on time|attended)\b/.test(lowerQuery)) {
+        return `✅ **Present Members**\n\n` +
+          `There are **${stats.present}** members marked as Present.\n\n` +
+          `This represents ${stats.totalRecords > 0 ? Math.round((stats.present / stats.totalRecords) * 100) : 0}% of all recorded attendance.`;
+      }
+      
+      // Late count
+      if (/\b(late|tardy)\b/.test(lowerQuery)) {
+        return `⏰ **Late Members**\n\n` +
+          `There are **${stats.late}** members marked as Late.\n\n` +
+          `This represents ${stats.totalRecords > 0 ? Math.round((stats.late / stats.totalRecords) * 100) : 0}% of all recorded attendance.`;
+      }
+      
+      // Excused count
+      if (/\b(excused|excuse)\b/.test(lowerQuery)) {
+        return `📋 **Excused Members**\n\n` +
+          `There are **${stats.excused}** members marked as Excused.\n\n` +
+          `This represents ${stats.totalRecords > 0 ? Math.round((stats.excused / stats.totalRecords) * 100) : 0}% of all recorded attendance.`;
+      }
+      
+      // Absent count
+      if (/\b(absent|missing|didn't attend|did not attend)\b/.test(lowerQuery)) {
+        return `❌ **Absent Members**\n\n` +
+          `There are **${stats.absent}** members marked as Absent.\n\n` +
+          `This represents ${stats.totalRecords > 0 ? Math.round((stats.absent / stats.totalRecords) * 100) : 0}% of all recorded attendance.`;
+      }
+      
+      // Not recorded count
+      if (/\b(not recorded|unrecorded|no record|missing record)\b/.test(lowerQuery)) {
+        return `❓ **Not Recorded Members**\n\n` +
+          `There are **${stats.notRecorded}** members in the member list who have no attendance record.\n\n` +
+          `These members may not have attended or their attendance wasn't captured in the system.`;
+      }
+      
+      // Attendance rate
+      if (/\b(rate|percentage|percent)\b/.test(lowerQuery)) {
+        return `📈 **Attendance Rate**\n\n` +
+          `The current attendance rate is **${stats.attendanceRate}%**.\n\n` +
+          `This is calculated based on members who were Present or Late (${stats.present + stats.late}) out of total members.`;
+      }
+    }
+    
+    // Check if asking about events
+    if (/\b(event|events|which event|what event|current event)\b/.test(lowerQuery)) {
+      if (ctx.eventDetails.length === 0) {
+        return "No events are currently selected in the Attendance Dashboard. Select an event to see its statistics.";
+      }
+      
+      if (ctx.eventDetails.length === 1) {
+        const e = ctx.eventDetails[0];
+        return `📅 **Current Event**\n\n` +
+          `**${e.title}**\n` +
+          `• Date: ${e.date}\n` +
+          `• Status: ${e.status}\n\n` +
+          `**Attendance Breakdown:**\n` +
+          `• ✅ Present: ${e.present}\n` +
+          `• ⏰ Late: ${e.late}\n` +
+          `• 📋 Excused: ${e.excused}\n` +
+          `• ❌ Absent: ${e.absent}`;
+      }
+      
+      // Multiple events
+      let response = `📅 **Selected Events (${ctx.eventDetails.length})**\n\n`;
+      ctx.eventDetails.forEach((e, i) => {
+        response += `**${i + 1}. ${e.title}**\n`;
+        response += `   Date: ${e.date} | Status: ${e.status}\n`;
+        response += `   ✅ ${e.present} | ⏰ ${e.late} | 📋 ${e.excused} | ❌ ${e.absent}\n\n`;
+      });
+      return response;
+    }
+    
+    // Check if asking about chart recommendation
+    if (/\b(chart|graph|recommend|best|which chart|what chart)\b/.test(lowerQuery)) {
+      const chartDescriptions: Record<string, string> = {
+        'pie': 'shows overall status distribution as a circle',
+        'donut': 'shows distribution with a hollow center for emphasis',
+        'column': 'compares status counts vertically - great for single events',
+        'bar': 'compares across committees or events horizontally',
+        'line': 'shows trends across multiple events over time',
+      };
+      
+      return `📊 **Chart Recommendation**\n\n` +
+        `Based on your current selection (${ctx.selectedEvents.length} event${ctx.selectedEvents.length !== 1 ? 's' : ''}), ` +
+        `I recommend using a **${ctx.recommendedChartType}** chart.\n\n` +
+        `This chart ${chartDescriptions[ctx.recommendedChartType] || 'works well for your data'}.\n\n` +
+        `**Available Charts:**\n` +
+        Object.entries(chartDescriptions).map(([name, desc]) => 
+          `• **${name.charAt(0).toUpperCase() + name.slice(1)}**: ${desc}`
+        ).join('\n');
+    }
+    
+    return null;
+  };
 
   // ⏱️ ROBUST TIMER: Uses Date.now() so it never gets stuck
   useEffect(() => {
@@ -2180,6 +2306,23 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
         setIsLoading(false);
       }
       return;
+    }
+
+    // 📊 Check for attendance dashboard context queries
+    if (currentPage === 'attendance-dashboard' || currentPage === 'AttendanceDashboard') {
+      const attendanceResponse = generateAttendanceContextResponse(text);
+      if (attendanceResponse) {
+        setTimeout(() => {
+          const botMsg: Message = {
+            id: Date.now() + 1,
+            text: attendanceResponse,
+            sender: "bot",
+          };
+          setMessages((prev) => [...prev, botMsg]);
+          setIsLoading(false);
+        }, 600);
+        return;
+      }
     }
 
     const localMatch = findLocalAnswer(text);

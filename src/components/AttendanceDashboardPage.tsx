@@ -133,6 +133,47 @@ interface AttendanceDashboardPageProps {
   addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number; onCancel?: () => void }) => void;
   updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number }>) => void;
   removeUploadToast?: (id: string) => void;
+  onDashboardContextUpdate?: (context: AttendanceDashboardContext | null) => void;
+}
+
+// Event selection mode types
+type EventSelectionMode = 'single' | 'multiple' | 'dateRange' | 'all';
+
+// Export options interface
+interface ExportOptions {
+  includeNotRecorded: boolean;
+  includeSummaryTable: boolean;
+  includeDetailedTables: boolean;
+  includeCharts: boolean;
+  selectedTables: ('present' | 'late' | 'excused' | 'absent' | 'notRecorded' | 'all')[];
+}
+
+// Dashboard context for chatbot integration
+export interface AttendanceDashboardContext {
+  mode: EventSelectionMode;
+  selectedEvents: string[];
+  dateRange: { from: string; to: string } | null;
+  totalEvents: number;
+  statistics: {
+    totalRecords: number;
+    present: number;
+    late: number;
+    excused: number;
+    absent: number;
+    notRecorded: number;
+    attendanceRate: number;
+  };
+  eventDetails: Array<{
+    id: string;
+    title: string;
+    date: string;
+    status: string;
+    present: number;
+    late: number;
+    excused: number;
+    absent: number;
+  }>;
+  recommendedChartType: 'pie' | 'donut' | 'bar' | 'line' | 'column';
 }
 
 // Committee filter options
@@ -238,13 +279,33 @@ export default function AttendanceDashboardPage({
   addUploadToast,
   updateUploadToast,
   removeUploadToast,
+  onDashboardContextUpdate,
 }: AttendanceDashboardPageProps) {
+  // Event selection mode
+  const [eventSelectionMode, setEventSelectionMode] = useState<EventSelectionMode>('single');
   const [selectedEvent, setSelectedEvent] = useState("");
+  const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
+  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
+  
   const [selectedCommittee, setSelectedCommittee] = useState("All");
-  const [chartType, setChartType] = useState<"pie" | "donut" | "bar" | "line" | "heatmap">("pie");
+  const [chartType, setChartType] = useState<"pie" | "donut" | "bar" | "line" | "column">("pie");
   const [showModal, setShowModal] = useState(false);
   const [modalData, setModalData] = useState<{ status: string; members: MemberForAttendance[] } | null>(null);
   const [exportType, setExportType] = useState("");
+
+  // Export Preview Modal
+  const [showExportPreview, setShowExportPreview] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'spreadsheet'>('pdf');
+  const [exportOptions, setExportOptions] = useState<ExportOptions>({
+    includeNotRecorded: true,
+    includeSummaryTable: true,
+    includeDetailedTables: true,
+    includeCharts: true,
+    selectedTables: ['all', 'present', 'late', 'excused', 'absent', 'notRecorded'],
+  });
+  
+  // Not recorded toggle
+  const [showNotRecordedTable, setShowNotRecordedTable] = useState(false);
 
   // Loading states
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
@@ -254,6 +315,7 @@ export default function AttendanceDashboardPage({
   // Data states
   const [events, setEvents] = useState<EventData[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [multiEventRecords, setMultiEventRecords] = useState<Map<string, AttendanceRecord[]>>(new Map());
   const [allMembers, setAllMembers] = useState<MemberForAttendance[]>([]);
 
   // Fetch events on mount
@@ -291,29 +353,166 @@ export default function AttendanceDashboardPage({
     loadMembers();
   }, []);
 
-  // Fetch attendance records when event is selected
+  // Get effective selected events based on mode
+  const getEffectiveSelectedEvents = useCallback(() => {
+    switch (eventSelectionMode) {
+      case 'single':
+        return selectedEvent ? [selectedEvent] : [];
+      case 'multiple':
+        return selectedEvents;
+      case 'dateRange':
+        return events
+          .filter(e => {
+            if (!dateRange.from || !dateRange.to) return false;
+            const eventDate = new Date(e.StartDate);
+            const fromDate = new Date(dateRange.from);
+            const toDate = new Date(dateRange.to);
+            return eventDate >= fromDate && eventDate <= toDate;
+          })
+          .map(e => e.EventID);
+      case 'all':
+        return events.map(e => e.EventID);
+      default:
+        return [];
+    }
+  }, [eventSelectionMode, selectedEvent, selectedEvents, dateRange, events]);
+
+  // Fetch attendance records based on selection mode
   useEffect(() => {
     const loadAttendance = async () => {
-      if (!selectedEvent) {
+      const effectiveEvents = getEffectiveSelectedEvents();
+      
+      if (effectiveEvents.length === 0) {
         setAttendanceRecords([]);
+        setMultiEventRecords(new Map());
         return;
       }
 
       setIsLoadingAttendance(true);
       try {
-        const records = await getEventAttendanceRecords(selectedEvent);
-        setAttendanceRecords(records);
+        if (eventSelectionMode === 'single' && effectiveEvents.length === 1) {
+          const records = await getEventAttendanceRecords(effectiveEvents[0]);
+          setAttendanceRecords(records);
+          setMultiEventRecords(new Map([[effectiveEvents[0], records]]));
+        } else {
+          // Load attendance for multiple events
+          const recordsMap = new Map<string, AttendanceRecord[]>();
+          const allRecords: AttendanceRecord[] = [];
+          
+          for (const eventId of effectiveEvents) {
+            const records = await getEventAttendanceRecords(eventId);
+            recordsMap.set(eventId, records);
+            allRecords.push(...records);
+          }
+          
+          setMultiEventRecords(recordsMap);
+          setAttendanceRecords(allRecords);
+        }
       } catch (error) {
         console.error('Error fetching attendance records:', error);
         toast.error('Failed to load attendance records');
         setAttendanceRecords([]);
+        setMultiEventRecords(new Map());
       } finally {
         setIsLoadingAttendance(false);
       }
     };
 
     loadAttendance();
-  }, [selectedEvent]);
+  }, [eventSelectionMode, selectedEvent, selectedEvents, dateRange, events, getEffectiveSelectedEvents]);
+
+  // Determine recommended chart type based on selection
+  const getRecommendedChartType = useCallback((): "pie" | "donut" | "bar" | "line" | "column" => {
+    const effectiveEvents = getEffectiveSelectedEvents();
+    
+    if (effectiveEvents.length === 0) return 'pie';
+    if (effectiveEvents.length === 1) return 'column'; // Single event: column chart recommended
+    if (effectiveEvents.length <= 5) return 'bar'; // Few events: bar chart
+    return 'line'; // Many events: line chart for trends
+  }, [getEffectiveSelectedEvents]);
+
+  // Update chatbot context when data changes
+  useEffect(() => {
+    if (!onDashboardContextUpdate) return;
+    
+    const effectiveEvents = getEffectiveSelectedEvents();
+    if (effectiveEvents.length === 0) {
+      onDashboardContextUpdate(null);
+      return;
+    }
+
+    const filtered = getFilteredAttendance();
+    const notRecordedMembers = getNotRecordedMembers();
+    const present = filtered.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
+    const late = filtered.filter(r => r.status === 'Late').length;
+    const excused = filtered.filter(r => r.status === 'Excused').length;
+    const absent = filtered.filter(r => r.status === 'Absent').length;
+    const totalRecorded = present + late + excused + absent;
+
+    const context: AttendanceDashboardContext = {
+      mode: eventSelectionMode,
+      selectedEvents: effectiveEvents,
+      dateRange: eventSelectionMode === 'dateRange' ? dateRange : null,
+      totalEvents: events.length,
+      statistics: {
+        totalRecords: totalRecorded,
+        present,
+        late,
+        excused,
+        absent,
+        notRecorded: notRecordedMembers.length,
+        attendanceRate: allMembers.length > 0 ? Math.round(((present + late) / allMembers.length) * 100) : 0,
+      },
+      eventDetails: effectiveEvents.map(eventId => {
+        const event = events.find(e => e.EventID === eventId);
+        const eventRecords = multiEventRecords.get(eventId) || [];
+        return {
+          id: eventId,
+          title: event?.Title || 'Unknown',
+          date: event?.StartDate ? formatDateValue(event.StartDate) : '-',
+          status: event?.Status || '-',
+          present: eventRecords.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length,
+          late: eventRecords.filter(r => r.status === 'Late').length,
+          excused: eventRecords.filter(r => r.status === 'Excused').length,
+          absent: eventRecords.filter(r => r.status === 'Absent').length,
+        };
+      }),
+      recommendedChartType: getRecommendedChartType(),
+    };
+
+    onDashboardContextUpdate(context);
+  }, [eventSelectionMode, selectedEvent, selectedEvents, dateRange, events, attendanceRecords, multiEventRecords, allMembers, onDashboardContextUpdate, getEffectiveSelectedEvents, getRecommendedChartType]);
+
+  // Get members who were not recorded in attendance
+  const getNotRecordedMembers = useCallback((): MemberForAttendance[] => {
+    const recordedMemberIds = new Set(attendanceRecords.map(r => r.memberId));
+    
+    let filteredMembers = allMembers.filter(member => !recordedMemberIds.has(member.id));
+    
+    // Apply committee filter if needed
+    if (selectedCommittee !== "All") {
+      filteredMembers = filteredMembers.filter((member) => {
+        switch (selectedCommittee) {
+          case "Executive Board (only heads/Officers)":
+            return member.position?.toLowerCase().includes('head') || 
+                   member.position?.toLowerCase().includes('officer') ||
+                   member.position?.toLowerCase().includes('president') ||
+                   member.position?.toLowerCase().includes('vice') ||
+                   member.position?.toLowerCase().includes('secretary') ||
+                   member.position?.toLowerCase().includes('treasurer');
+          case "Only Members":
+            return member.position?.toLowerCase() === 'member' || 
+                   member.position?.toLowerCase().includes('member');
+          case "Only Volunteers":
+            return member.position?.toLowerCase().includes('volunteer');
+          default:
+            return member.committee === selectedCommittee;
+        }
+      });
+    }
+    
+    return filteredMembers;
+  }, [attendanceRecords, allMembers, selectedCommittee]);
 
   // Filter attendance by committee
   const getFilteredAttendance = useCallback(() => {
@@ -394,8 +593,54 @@ export default function AttendanceDashboardPage({
     }));
   }, [attendanceRecords, allMembers]);
 
+  // Calculate multi-event chart data (for line/bar across events)
+  const getMultiEventChartData = useCallback(() => {
+    const effectiveEvents = getEffectiveSelectedEvents();
+    
+    return effectiveEvents.map(eventId => {
+      const event = events.find(e => e.EventID === eventId);
+      const eventRecords = multiEventRecords.get(eventId) || [];
+      
+      const present = eventRecords.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
+      const late = eventRecords.filter(r => r.status === 'Late').length;
+      const excused = eventRecords.filter(r => r.status === 'Excused').length;
+      const absent = eventRecords.filter(r => r.status === 'Absent').length;
+      
+      return {
+        event: event?.Title?.substring(0, 15) || 'Unknown',
+        fullTitle: event?.Title || 'Unknown',
+        date: event?.StartDate ? formatDateValue(event.StartDate) : '-',
+        Present: present,
+        Late: late,
+        Excused: excused,
+        Absent: absent,
+        Total: present + late + excused + absent,
+      };
+    });
+  }, [getEffectiveSelectedEvents, events, multiEventRecords]);
+
+  // Get column chart data for single event (status distribution)
+  const getColumnChartData = useCallback(() => {
+    const filtered = getFilteredAttendance();
+    const present = filtered.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
+    const late = filtered.filter(r => r.status === 'Late').length;
+    const excused = filtered.filter(r => r.status === 'Excused').length;
+    const absent = filtered.filter(r => r.status === 'Absent').length;
+    
+    return [
+      { status: 'Present', count: present, color: '#10b981' },
+      { status: 'Late', count: late, color: '#f59e0b' },
+      { status: 'Excused', count: excused, color: '#3b82f6' },
+      { status: 'Absent', count: absent, color: '#ef4444' },
+    ];
+  }, [getFilteredAttendance]);
+
   // Get members by status for modal
   const getMembersByStatus = useCallback((status: string): MemberForAttendance[] => {
+    if (status === 'Not Recorded') {
+      return getNotRecordedMembers();
+    }
+    
     const filtered = getFilteredAttendance();
     const statusMembers = filtered.filter((r) => {
       if (status === 'Present') {
@@ -408,13 +653,23 @@ export default function AttendanceDashboardPage({
       const member = allMembers.find((m) => m.id === r.memberId);
       return member || { id: r.memberId, name: r.memberName, committee: '', position: '' };
     });
-  }, [getFilteredAttendance, allMembers]);
+  }, [getFilteredAttendance, allMembers, getNotRecordedMembers]);
 
   const handleChartClick = (data: any) => {
     const status = data.name || data.status;
     const members = getMembersByStatus(status);
     setModalData({ status, members });
     setShowModal(true);
+  };
+
+  // Handle export with preview
+  const handleExportWithPreview = (format: 'pdf' | 'spreadsheet') => {
+    if (attendanceRecords.length === 0) {
+      toast.error("No attendance data to export");
+      return;
+    }
+    setExportFormat(format);
+    setShowExportPreview(true);
   };
 
   // Export to PDF with progress bar using existing UploadToast
@@ -837,40 +1092,53 @@ export default function AttendanceDashboardPage({
       const lateRecords = filteredRecords.filter(r => r.status === 'Late');
       const excusedRecords = filteredRecords.filter(r => r.status === 'Excused');
       const absentRecords = filteredRecords.filter(r => r.status === 'Absent');
+      
+      // Get not recorded members
+      const notRecordedMembers = getNotRecordedMembers();
 
-      // Define table configurations for each status
-      const tableConfigs = [
+      // Define table configurations for each status - filter based on exportOptions
+      const allTableConfigs = [
         {
+          key: 'allAttendees' as const,
           title: 'ALL ATTENDEES',
           records: filteredRecords,
           color: [246, 66, 31] as [number, number, number],
           altRowColor: [254, 249, 244] as [number, number, number],
         },
         {
+          key: 'present' as const,
           title: 'PRESENT',
           records: presentRecords,
           color: [16, 185, 129] as [number, number, number],
           altRowColor: [236, 253, 245] as [number, number, number],
         },
         {
+          key: 'late' as const,
           title: 'LATE',
           records: lateRecords,
           color: [245, 158, 11] as [number, number, number],
           altRowColor: [255, 251, 235] as [number, number, number],
         },
         {
+          key: 'excused' as const,
           title: 'EXCUSED',
           records: excusedRecords,
           color: [59, 130, 246] as [number, number, number],
           altRowColor: [239, 246, 255] as [number, number, number],
         },
         {
+          key: 'absent' as const,
           title: 'ABSENT',
           records: absentRecords,
           color: [239, 68, 68] as [number, number, number],
           altRowColor: [254, 242, 242] as [number, number, number],
         },
       ];
+      
+      // Filter based on exportOptions
+      const tableConfigs = allTableConfigs.filter(config => {
+        return exportOptions.includeTables[config.key];
+      });
 
       // Step 7: Generate tables (85%)
       if (updateUploadToast) {
@@ -950,6 +1218,80 @@ export default function AttendanceDashboardPage({
           doc.addPage();
           yPosition = 20;
         }
+      }
+
+      // Add Not Recorded table if enabled in exportOptions
+      if (exportOptions.includeTables.notRecorded && notRecordedMembers.length > 0) {
+        // Check if we need a new page
+        if (yPosition > pageHeight - 80) {
+          doc.addPage();
+          yPosition = 20;
+        }
+        
+        // Section title
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 41, 59);
+        doc.text(`NOT RECORDED (${notRecordedMembers.length})`, margin, yPosition);
+        doc.setDrawColor(156, 163, 175); // Gray
+        doc.setLineWidth(0.3);
+        doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
+        yPosition += 8;
+
+        // Create table data for not recorded members
+        const notRecordedTableData = notRecordedMembers.map((member, index) => [
+          String(index + 1),
+          member.name || 'Unknown',
+          member.committee || '-',
+          member.position || '-',
+          'Not Recorded',
+          '-',
+          '-',
+          '-',
+          '-',
+        ]);
+
+        // Create table
+        autoTable(doc, {
+          startY: yPosition,
+          head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Rec. By (In)', 'Rec. By (Out)']],
+          body: notRecordedTableData,
+          theme: 'grid',
+          headStyles: {
+            fillColor: [156, 163, 175], // Gray
+            textColor: 255,
+            fontStyle: 'bold',
+            fontSize: 7,
+            cellPadding: 2,
+            halign: 'center',
+          },
+          bodyStyles: {
+            fontSize: 7,
+            textColor: [50, 50, 50],
+            cellPadding: 2,
+          },
+          alternateRowStyles: {
+            fillColor: [249, 250, 251], // Gray-50
+          },
+          columnStyles: {
+            0: { cellWidth: 7, halign: 'center', fontStyle: 'bold' },
+            1: { cellWidth: 28 },
+            2: { cellWidth: 28 },
+            3: { cellWidth: 18 },
+            4: { cellWidth: 14, halign: 'center' },
+            5: { cellWidth: 16, halign: 'center' },
+            6: { cellWidth: 16, halign: 'center' },
+            7: { cellWidth: 22 },
+            8: { cellWidth: 22 },
+          },
+          styles: {
+            lineColor: [220, 220, 220],
+            lineWidth: 0.1,
+          },
+          margin: { left: margin, right: margin },
+        });
+
+        yPosition = (doc as any).lastAutoTable.finalY + 12;
       }
 
       // ============================================
@@ -1395,7 +1737,12 @@ export default function AttendanceDashboardPage({
 
   const attendanceData = getAttendanceData();
   const barChartData = getBarChartData();
+  const multiEventChartData = getMultiEventChartData();
+  const columnChartData = getColumnChartData();
+  const notRecordedMembers = getNotRecordedMembers();
   const totalRecords = getFilteredAttendance().length;
+  const effectiveEvents = getEffectiveSelectedEvents();
+  const recommendedChart = getRecommendedChartType();
 
   const renderChart = () => {
     if (isLoadingAttendance) {
@@ -1414,6 +1761,9 @@ export default function AttendanceDashboardPage({
         </div>
       );
     }
+
+    // For multiple events, use multi-event data
+    const useMultiEventData = effectiveEvents.length > 1;
 
     switch (chartType) {
       case "pie":
@@ -1467,14 +1817,50 @@ export default function AttendanceDashboardPage({
           </ResponsiveContainer>
         );
 
-      case "bar":
+      case "column":
+        // Single event column chart showing status distribution
         return (
           <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={barChartData}>
+            <BarChart data={columnChartData} layout="horizontal">
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="committee" />
+              <XAxis dataKey="status" />
               <YAxis />
-              <Tooltip />
+              <Tooltip 
+                formatter={(value: number, name: string) => [value, 'Count']}
+                contentStyle={{
+                  background: isDark ? '#1e293b' : '#fff',
+                  border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+                  borderRadius: 8,
+                }}
+              />
+              <Bar 
+                dataKey="count" 
+                onClick={(data: any) => handleChartClick({ name: data.status })}
+                cursor="pointer"
+              >
+                {columnChartData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} className="hover:opacity-80" />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        );
+
+      case "bar":
+        // For multiple events, show events comparison; for single event, show committee breakdown
+        return (
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={useMultiEventData ? multiEventChartData : barChartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey={useMultiEventData ? "event" : "committee"} />
+              <YAxis />
+              <Tooltip 
+                contentStyle={{
+                  background: isDark ? '#1e293b' : '#fff',
+                  border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+                  borderRadius: 8,
+                }}
+              />
               <Legend />
               <Bar dataKey="Present" fill="#10b981" />
               <Bar dataKey="Late" fill="#f59e0b" />
@@ -1485,18 +1871,25 @@ export default function AttendanceDashboardPage({
         );
 
       case "line":
+        // For multiple events, show trend across events; for single event, show committee trend
         return (
           <ResponsiveContainer width="100%" height={400}>
-            <LineChart data={barChartData}>
+            <LineChart data={useMultiEventData ? multiEventChartData : barChartData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="committee" />
+              <XAxis dataKey={useMultiEventData ? "event" : "committee"} />
               <YAxis />
-              <Tooltip />
+              <Tooltip 
+                contentStyle={{
+                  background: isDark ? '#1e293b' : '#fff',
+                  border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+                  borderRadius: 8,
+                }}
+              />
               <Legend />
-              <Line type="monotone" dataKey="Present" stroke="#10b981" strokeWidth={2} />
-              <Line type="monotone" dataKey="Late" stroke="#f59e0b" strokeWidth={2} />
-              <Line type="monotone" dataKey="Excused" stroke="#3b82f6" strokeWidth={2} />
-              <Line type="monotone" dataKey="Absent" stroke="#ef4444" strokeWidth={2} />
+              <Line type="monotone" dataKey="Present" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} />
+              <Line type="monotone" dataKey="Late" stroke="#f59e0b" strokeWidth={2} dot={{ r: 4 }} />
+              <Line type="monotone" dataKey="Excused" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
+              <Line type="monotone" dataKey="Absent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} />
             </LineChart>
           </ResponsiveContainer>
         );
@@ -1545,21 +1938,189 @@ export default function AttendanceDashboardPage({
                   color: DESIGN_TOKENS.colors.brand.orange,
                 }}
               >
-                Select Event
+                Selection Mode
               </label>
-              <CustomDropdown
-                value={selectedEvent}
-                onChange={setSelectedEvent}
-                options={[
-                  { value: "", label: events.length === 0 ? "No events available" : "Choose an event..." },
-                  ...events.map((event) => ({
-                    value: event.EventID,
-                    label: `${event.Title} (${event.Status})`,
-                  }))
-                ]}
-                isDark={isDark}
-                size="md"
-              />
+              <div className="flex flex-wrap gap-2 mb-3">
+                {[
+                  { value: 'single', label: 'Single Event' },
+                  { value: 'multiple', label: 'Multiple Events' },
+                  { value: 'dateRange', label: 'Date Range' },
+                  { value: 'all', label: 'All Events' },
+                ].map((mode) => (
+                  <button
+                    key={mode.value}
+                    onClick={() => {
+                      setEventSelectionMode(mode.value as EventSelectionMode);
+                      // Reset selections when changing mode
+                      if (mode.value !== 'single') setSelectedEvent('');
+                      if (mode.value !== 'multiple') setSelectedEvents([]);
+                      if (mode.value !== 'dateRange') setDateRange({ from: '', to: '' });
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
+                      eventSelectionMode === mode.value
+                        ? "bg-[#f6421f] text-white"
+                        : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
+                    }`}
+                    style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Single Event Selector */}
+              {eventSelectionMode === 'single' && (
+                <>
+                  <label
+                    className="block mb-2 mt-3"
+                    style={{
+                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px`,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                      color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
+                    }}
+                  >
+                    Select Event
+                  </label>
+                  <CustomDropdown
+                    value={selectedEvent}
+                    onChange={setSelectedEvent}
+                    options={[
+                      { value: "", label: events.length === 0 ? "No events available" : "Choose an event..." },
+                      ...events.map((event) => ({
+                        value: event.EventID,
+                        label: `${event.Title} (${event.Status})`,
+                      }))
+                    ]}
+                    isDark={isDark}
+                    size="md"
+                  />
+                </>
+              )}
+
+              {/* Multiple Events Selector */}
+              {eventSelectionMode === 'multiple' && (
+                <>
+                  <label
+                    className="block mb-2 mt-3"
+                    style={{
+                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px`,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                      color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
+                    }}
+                  >
+                    Select Events ({selectedEvents.length} selected)
+                  </label>
+                  <div 
+                    className="max-h-48 overflow-y-auto rounded-lg border p-2 space-y-1"
+                    style={{
+                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                      background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)',
+                    }}
+                  >
+                    {events.map((event) => (
+                      <label
+                        key={event.EventID}
+                        className="flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedEvents.includes(event.EventID)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedEvents([...selectedEvents, event.EventID]);
+                            } else {
+                              setSelectedEvents(selectedEvents.filter(id => id !== event.EventID));
+                            }
+                          }}
+                          className="w-4 h-4 rounded accent-[#f6421f]"
+                        />
+                        <span className="text-sm truncate">{event.Title}</span>
+                        <span 
+                          className="text-xs px-2 py-0.5 rounded-full ml-auto"
+                          style={{
+                            background: event.Status === 'Active' ? 'rgba(16,185,129,0.15)' : 
+                                       event.Status === 'Completed' ? 'rgba(59,130,246,0.15)' : 'rgba(245,158,11,0.15)',
+                            color: event.Status === 'Active' ? '#10b981' : 
+                                  event.Status === 'Completed' ? '#3b82f6' : '#f59e0b',
+                          }}
+                        >
+                          {event.Status}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Date Range Selector */}
+              {eventSelectionMode === 'dateRange' && (
+                <>
+                  <label
+                    className="block mb-2 mt-3"
+                    style={{
+                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px`,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                      color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
+                    }}
+                  >
+                    Select Date Range
+                  </label>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="text-xs text-muted-foreground block mb-1">From</label>
+                      <input
+                        type="date"
+                        value={dateRange.from}
+                        onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
+                        className="w-full px-3 py-2 rounded-lg border text-sm"
+                        style={{
+                          background: isDark ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.8)',
+                          borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                        }}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-muted-foreground block mb-1">To</label>
+                      <input
+                        type="date"
+                        value={dateRange.to}
+                        onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
+                        className="w-full px-3 py-2 rounded-lg border text-sm"
+                        style={{
+                          background: isDark ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.8)',
+                          borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {dateRange.from && dateRange.to && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {getEffectiveSelectedEvents().length} event(s) found in range
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* All Events Info */}
+              {eventSelectionMode === 'all' && (
+                <div 
+                  className="mt-3 p-3 rounded-lg border"
+                  style={{
+                    background: isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)',
+                    borderColor: 'rgba(246,66,31,0.3)',
+                  }}
+                >
+                  <p className="text-sm" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                    <strong>{events.length}</strong> events will be included in the analysis
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    All active, scheduled, and completed events
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Committee Selector */}
@@ -1588,16 +2149,21 @@ export default function AttendanceDashboardPage({
       </div>
 
       {/* Stats Cards */}
-      {selectedEvent && (
+      {effectiveEvents.length > 0 && (
         isLoadingAttendance ? (
           <StatsCardSkeleton isDark={isDark} />
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
             <div
-              className="rounded-xl p-4 border"
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
               style={{
                 background: isDark ? 'rgba(16, 185, 129, 0.15)' : 'rgba(16, 185, 129, 0.1)',
                 borderColor: '#10b981',
+              }}
+              onClick={() => {
+                const members = getMembersByStatus('Present');
+                setModalData({ status: 'Present', members });
+                setShowModal(true);
               }}
             >
               <p className="text-sm text-muted-foreground mb-1">Present</p>
@@ -1606,10 +2172,15 @@ export default function AttendanceDashboardPage({
               </p>
             </div>
             <div
-              className="rounded-xl p-4 border"
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
               style={{
                 background: isDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.1)',
                 borderColor: '#f59e0b',
+              }}
+              onClick={() => {
+                const members = getMembersByStatus('Late');
+                setModalData({ status: 'Late', members });
+                setShowModal(true);
               }}
             >
               <p className="text-sm text-muted-foreground mb-1">Late</p>
@@ -1618,10 +2189,15 @@ export default function AttendanceDashboardPage({
               </p>
             </div>
             <div
-              className="rounded-xl p-4 border"
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
               style={{
                 background: isDark ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)',
                 borderColor: '#3b82f6',
+              }}
+              onClick={() => {
+                const members = getMembersByStatus('Excused');
+                setModalData({ status: 'Excused', members });
+                setShowModal(true);
               }}
             >
               <p className="text-sm text-muted-foreground mb-1">Excused</p>
@@ -1630,10 +2206,15 @@ export default function AttendanceDashboardPage({
               </p>
             </div>
             <div
-              className="rounded-xl p-4 border"
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
               style={{
                 background: isDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.1)',
                 borderColor: '#ef4444',
+              }}
+              onClick={() => {
+                const members = getMembersByStatus('Absent');
+                setModalData({ status: 'Absent', members });
+                setShowModal(true);
               }}
             >
               <p className="text-sm text-muted-foreground mb-1">Absent</p>
@@ -1641,12 +2222,30 @@ export default function AttendanceDashboardPage({
                 {attendanceData.find(d => d.name === 'Absent')?.value || 0}
               </p>
             </div>
+            {/* Not Recorded Card */}
+            <div
+              className="rounded-xl p-4 border cursor-pointer hover:scale-105 transition-transform"
+              style={{
+                background: isDark ? 'rgba(107, 114, 128, 0.15)' : 'rgba(107, 114, 128, 0.1)',
+                borderColor: '#6b7280',
+              }}
+              onClick={() => {
+                const members = getNotRecordedMembers();
+                setModalData({ status: 'Not Recorded', members });
+                setShowModal(true);
+              }}
+            >
+              <p className="text-sm text-muted-foreground mb-1">Not Recorded</p>
+              <p className="text-2xl font-bold" style={{ color: '#6b7280' }}>
+                {notRecordedMembers.length}
+              </p>
+            </div>
           </div>
         )
       )}
 
       {/* Chart Type Selector */}
-      {selectedEvent && (
+      {effectiveEvents.length > 0 && (
         <div
           className="rounded-xl p-6 mb-6 border"
           style={{
@@ -1655,38 +2254,150 @@ export default function AttendanceDashboardPage({
             borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
           }}
         >
-          <label
-            className="block mb-3"
-            style={{
-              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-              fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
-              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              color: DESIGN_TOKENS.colors.brand.orange,
-            }}
-          >
-            Chart Type
-          </label>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+            <label
+              style={{
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                color: DESIGN_TOKENS.colors.brand.orange,
+              }}
+            >
+              Chart Type
+            </label>
+            {/* Recommended Chart Indicator */}
+            <div 
+              className="text-xs px-3 py-1 rounded-full"
+              style={{
+                background: isDark ? 'rgba(246,66,31,0.15)' : 'rgba(246,66,31,0.1)',
+                color: DESIGN_TOKENS.colors.brand.orange,
+              }}
+            >
+              💡 Recommended: <strong style={{ textTransform: 'capitalize' }}>{recommendedChart}</strong>
+              {effectiveEvents.length === 1 ? ' (single event)' : ` (${effectiveEvents.length} events)`}
+            </div>
+          </div>
           <div className="flex flex-wrap gap-3">
-            {["pie", "donut", "bar", "line"].map((type) => (
+            {[
+              { type: 'pie', label: 'Pie', desc: 'Overall distribution' },
+              { type: 'donut', label: 'Donut', desc: 'Distribution with center' },
+              { type: 'column', label: 'Column', desc: 'Status comparison' },
+              { type: 'bar', label: 'Bar', desc: effectiveEvents.length > 1 ? 'Events comparison' : 'Committee breakdown' },
+              { type: 'line', label: 'Line', desc: effectiveEvents.length > 1 ? 'Trends over events' : 'Committee trends' },
+            ].map((item) => (
               <button
-                key={type}
-                onClick={() => setChartType(type as any)}
-                className={`px-4 py-2 rounded-lg transition-all ${
-                  chartType === type
+                key={item.type}
+                onClick={() => setChartType(item.type as any)}
+                className={`px-4 py-2 rounded-lg transition-all flex flex-col items-center ${
+                  chartType === item.type
                     ? "bg-[#f6421f] text-white"
                     : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
-                }`}
-                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold, textTransform: "capitalize" }}
+                } ${item.type === recommendedChart ? 'ring-2 ring-[#f6421f] ring-offset-2' : ''}`}
+                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
               >
-                {type}
+                <span>{item.label}</span>
+                <span className={`text-xs mt-0.5 ${chartType === item.type ? 'text-white/80' : 'text-muted-foreground'}`}>
+                  {item.desc}
+                </span>
               </button>
             ))}
           </div>
         </div>
       )}
 
+      {/* Not Recorded Members Toggle */}
+      {effectiveEvents.length > 0 && (
+        <div
+          className="rounded-xl p-4 mb-6 border flex items-center justify-between"
+          style={{
+            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+            backdropFilter: 'blur(20px)',
+            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+          }}
+        >
+          <div>
+            <h3
+              style={{
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              }}
+            >
+              Not Recorded Members Table
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Show members from the member list who have no attendance record ({notRecordedMembers.length} members)
+            </p>
+          </div>
+          <button
+            onClick={() => setShowNotRecordedTable(!showNotRecordedTable)}
+            className={`px-4 py-2 rounded-lg transition-all ${
+              showNotRecordedTable
+                ? "bg-[#f6421f] text-white"
+                : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
+            }`}
+            style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}
+          >
+            {showNotRecordedTable ? 'Hide Table' : 'Show Table'}
+          </button>
+        </div>
+      )}
+
+      {/* Not Recorded Members Table */}
+      {effectiveEvents.length > 0 && showNotRecordedTable && notRecordedMembers.length > 0 && (
+        <div
+          className="rounded-xl p-6 mb-6 border"
+          style={{
+            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+            backdropFilter: 'blur(20px)',
+            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+          }}
+        >
+          <h3
+            className="mb-4"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+              fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              color: '#6b7280',
+            }}
+          >
+            Not Recorded Members ({notRecordedMembers.length})
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr 
+                  className="border-b"
+                  style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}
+                >
+                  <th className="text-left py-3 px-3 font-semibold">#</th>
+                  <th className="text-left py-3 px-3 font-semibold">Name</th>
+                  <th className="text-left py-3 px-3 font-semibold">Committee</th>
+                  <th className="text-left py-3 px-3 font-semibold">Position</th>
+                </tr>
+              </thead>
+              <tbody>
+                {notRecordedMembers.map((member, index) => (
+                  <tr 
+                    key={member.id || index}
+                    className="border-b hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                    style={{ borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}
+                  >
+                    <td className="py-2 px-3 text-muted-foreground">{index + 1}</td>
+                    <td className="py-2 px-3 font-medium">{member.name || 'Unknown'}</td>
+                    <td className="py-2 px-3 text-muted-foreground">{member.committee || '-'}</td>
+                    <td className="py-2 px-3 text-muted-foreground">{member.position || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Chart Display */}
-      {selectedEvent && (
+      {effectiveEvents.length > 0 && (
         <div
           className="rounded-xl p-6 mb-6 border"
           style={{
@@ -1710,25 +2421,31 @@ export default function AttendanceDashboardPage({
               {!isLoadingAttendance && (
                 <p className="text-sm text-muted-foreground mt-1">
                   {totalRecords} total record{totalRecords !== 1 ? 's' : ''} 
+                  {effectiveEvents.length > 1 && ` across ${effectiveEvents.length} events`}
                   {selectedCommittee !== "All" && ` (filtered by ${selectedCommittee})`}
                 </p>
               )}
             </div>
             <div className="flex flex-wrap gap-3">
-              <div className="min-w-[180px]">
-                <CustomDropdown
-                  value={exportType}
-                  onChange={setExportType}
-                  options={[
-                    { value: "pdf", label: "Export as PDF" },
-                    { value: "spreadsheet", label: "Export as Spreadsheet" },
-                  ]}
-                  placeholder="Export"
-                  isDark={isDark}
-                  size="sm"
-                  disabled={isLoadingAttendance || attendanceRecords.length === 0}
-                />
-              </div>
+              <button
+                onClick={() => handleExportWithPreview('pdf')}
+                disabled={isLoadingAttendance || attendanceRecords.length === 0}
+                className="px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+              >
+                Export PDF
+              </button>
+              <button
+                onClick={() => handleExportWithPreview('spreadsheet')}
+                disabled={isLoadingAttendance || attendanceRecords.length === 0}
+                className="px-4 py-2 rounded-lg border hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ 
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                  borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+                }}
+              >
+                Export Spreadsheet
+              </button>
             </div>
           </div>
           {renderChart()}
@@ -1736,7 +2453,7 @@ export default function AttendanceDashboardPage({
       )}
 
       {/* Loading Empty State */}
-      {!selectedEvent && isLoadingEvents && (
+      {effectiveEvents.length === 0 && isLoadingEvents && (
         <div
           className="rounded-xl p-12 text-center border"
           style={{
@@ -1756,7 +2473,7 @@ export default function AttendanceDashboardPage({
       )}
 
       {/* Empty State */}
-      {!selectedEvent && !isLoadingEvents && (
+      {effectiveEvents.length === 0 && !isLoadingEvents && (
         <div
           className="rounded-xl p-12 text-center border"
           style={{
@@ -1795,13 +2512,239 @@ export default function AttendanceDashboardPage({
                   color: DESIGN_TOKENS.colors.brand.orange,
                 }}
               >
-                Select an Event
+                {eventSelectionMode === 'single' && 'Select an Event'}
+                {eventSelectionMode === 'multiple' && 'Select Events'}
+                {eventSelectionMode === 'dateRange' && 'Select a Date Range'}
+                {eventSelectionMode === 'all' && 'No Events Found'}
               </h3>
               <p className="text-muted-foreground">
-                Choose an event from the dropdown above to view attendance analytics
+                {eventSelectionMode === 'single' && 'Choose an event from the dropdown above to view attendance analytics'}
+                {eventSelectionMode === 'multiple' && 'Select one or more events to compare attendance across them'}
+                {eventSelectionMode === 'dateRange' && 'Enter a start and end date to analyze events in that period'}
+                {eventSelectionMode === 'all' && 'There are no events available to analyze'}
               </p>
             </>
           )}
+        </div>
+      )}
+
+      {/* Export Preview Modal */}
+      {showExportPreview && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          style={{ zIndex: 9999 }}
+          onClick={() => setShowExportPreview(false)}
+        >
+          <div
+            className="rounded-xl w-full border flex flex-col overflow-hidden shadow-2xl"
+            style={{
+              maxWidth: 600,
+              maxHeight: '85vh',
+              background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+              backdropFilter: 'blur(20px)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div 
+              className="px-5 py-4 border-b shrink-0"
+              style={{
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                background: DESIGN_TOKENS.colors.brand.orange,
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-white font-semibold text-lg">
+                  Export Preview - {exportFormat === 'pdf' ? 'PDF' : 'Spreadsheet'}
+                </h3>
+                <button
+                  onClick={() => setShowExportPreview(false)}
+                  className="p-1.5 rounded-lg hover:bg-white/20 transition-colors text-white"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {/* Export Summary */}
+              <div 
+                className="p-4 rounded-lg border"
+                style={{
+                  background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
+                  borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                }}
+              >
+                <h4 className="font-semibold mb-2">Export Summary</h4>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Events:</span>{' '}
+                    <strong>{effectiveEvents.length}</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Total Records:</span>{' '}
+                    <strong>{totalRecords}</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Not Recorded:</span>{' '}
+                    <strong>{notRecordedMembers.length}</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Committee:</span>{' '}
+                    <strong>{selectedCommittee}</strong>
+                  </div>
+                </div>
+                
+                {effectiveEvents.length > 1 && (
+                  <p className="text-xs text-muted-foreground mt-2 pt-2 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                    📄 Multi-event export will generate {effectiveEvents.length + 1} pages (1 summary + {effectiveEvents.length} event details)
+                  </p>
+                )}
+              </div>
+
+              {/* Table Selection */}
+              <div>
+                <h4 className="font-semibold mb-3">Include Tables</h4>
+                <div className="space-y-2">
+                  {[
+                    { key: 'all', label: 'All Attendees', desc: 'Complete list of all attendance records' },
+                    { key: 'present', label: 'Present', desc: 'Members who attended on time', color: '#10b981' },
+                    { key: 'late', label: 'Late', desc: 'Members who arrived late', color: '#f59e0b' },
+                    { key: 'excused', label: 'Excused', desc: 'Members with excused absences', color: '#3b82f6' },
+                    { key: 'absent', label: 'Absent', desc: 'Members who were absent', color: '#ef4444' },
+                    { key: 'notRecorded', label: 'Not Recorded', desc: 'Members with no attendance record', color: '#6b7280' },
+                  ].map((table) => (
+                    <label
+                      key={table.key}
+                      className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      style={{
+                        background: exportOptions.selectedTables.includes(table.key as any) 
+                          ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                          : 'transparent',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={exportOptions.selectedTables.includes(table.key as any)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setExportOptions({
+                              ...exportOptions,
+                              selectedTables: [...exportOptions.selectedTables, table.key as any],
+                            });
+                          } else {
+                            setExportOptions({
+                              ...exportOptions,
+                              selectedTables: exportOptions.selectedTables.filter(t => t !== table.key),
+                            });
+                          }
+                        }}
+                        className="w-4 h-4 rounded accent-[#f6421f]"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          {table.color && (
+                            <div 
+                              className="w-3 h-3 rounded-full" 
+                              style={{ background: table.color }}
+                            />
+                          )}
+                          <span className="font-medium">{table.label}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{table.desc}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Additional Options */}
+              <div>
+                <h4 className="font-semibold mb-3">Additional Options</h4>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeSummaryTable}
+                      onChange={(e) => setExportOptions({ ...exportOptions, includeSummaryTable: e.target.checked })}
+                      className="w-4 h-4 rounded accent-[#f6421f]"
+                    />
+                    <div className="flex-1">
+                      <span className="font-medium">Include Summary Page</span>
+                      <p className="text-xs text-muted-foreground">Overview with statistics and committee breakdown</p>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeCharts}
+                      onChange={(e) => setExportOptions({ ...exportOptions, includeCharts: e.target.checked })}
+                      className="w-4 h-4 rounded accent-[#f6421f]"
+                    />
+                    <div className="flex-1">
+                      <span className="font-medium">Include Charts</span>
+                      <p className="text-xs text-muted-foreground">Visual charts in the export (PDF only)</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Events to Export (for multi-event) */}
+              {effectiveEvents.length > 1 && (
+                <div>
+                  <h4 className="font-semibold mb-3">Events to Export</h4>
+                  <div className="max-h-40 overflow-y-auto space-y-1 rounded-lg border p-2" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                    {effectiveEvents.map((eventId, index) => {
+                      const event = events.find(e => e.EventID === eventId);
+                      const eventRecords = multiEventRecords.get(eventId) || [];
+                      return (
+                        <div 
+                          key={eventId}
+                          className="flex items-center justify-between text-sm p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+                        >
+                          <span className="truncate flex-1">{index + 1}. {event?.Title || 'Unknown'}</span>
+                          <span className="text-muted-foreground ml-2">{eventRecords.length} records</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div 
+              className="px-5 py-4 border-t shrink-0 flex justify-end gap-3"
+              style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
+            >
+              <button
+                onClick={() => setShowExportPreview(false)}
+                className="px-4 py-2 rounded-lg border hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                style={{ borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowExportPreview(false);
+                  if (exportFormat === 'pdf') {
+                    handleExportPDF();
+                  } else {
+                    handleExportSpreadsheet();
+                  }
+                }}
+                disabled={exportOptions.selectedTables.length === 0}
+                className="px-4 py-2 rounded-lg bg-[#f6421f] text-white hover:bg-[#d93819] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+              >
+                Export {exportFormat === 'pdf' ? 'PDF' : 'Spreadsheet'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1842,6 +2785,7 @@ export default function AttendanceDashboardPage({
                          : modalData.status === 'Late' ? '#f59e0b'
                          : modalData.status === 'Excused' ? '#3b82f6'
                          : modalData.status === 'Absent' ? '#ef4444'
+                         : modalData.status === 'Not Recorded' ? '#6b7280'
                          : DESIGN_TOKENS.colors.brand.red,
                   }}
                 >
@@ -1867,27 +2811,37 @@ export default function AttendanceDashboardPage({
                              : modalData.status === 'Late' ? 'rgba(245, 158, 11, 0.15)'
                              : modalData.status === 'Excused' ? 'rgba(59, 130, 246, 0.15)'
                              : modalData.status === 'Absent' ? 'rgba(239, 68, 68, 0.15)'
+                             : modalData.status === 'Not Recorded' ? 'rgba(107, 114, 128, 0.15)'
                              : 'rgba(128, 128, 128, 0.15)',
                     color: modalData.status === 'Present' ? '#10b981' 
                          : modalData.status === 'Late' ? '#f59e0b'
                          : modalData.status === 'Excused' ? '#3b82f6'
                          : modalData.status === 'Absent' ? '#ef4444'
+                         : modalData.status === 'Not Recorded' ? '#6b7280'
                          : '#888',
                   }}
                 >
                   {modalData.members.length} member{modalData.members.length !== 1 ? 's' : ''}
                 </div>
-                {totalRecords > 0 && (
+                {modalData.status !== 'Not Recorded' && totalRecords > 0 && (
                   <span className="text-muted-foreground">
-                    {Math.round((modalData.members.length / totalRecords) * 100)}% of total
+                    {Math.round((modalData.members.length / totalRecords) * 100)}% of total recorded
+                  </span>
+                )}
+                {modalData.status === 'Not Recorded' && allMembers.length > 0 && (
+                  <span className="text-muted-foreground">
+                    {Math.round((modalData.members.length / allMembers.length) * 100)}% of all members
                   </span>
                 )}
               </div>
               
               {/* Event Info */}
-              {selectedEvent && events.length > 0 && (
+              {effectiveEvents.length > 0 && events.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-2">
-                  Event: {events.find(e => e.EventID === selectedEvent)?.Title || selectedEvent}
+                  {effectiveEvents.length === 1 
+                    ? `Event: ${events.find(e => e.EventID === effectiveEvents[0])?.Title || effectiveEvents[0]}`
+                    : `${effectiveEvents.length} events selected`
+                  }
                 </p>
               )}
             </div>
