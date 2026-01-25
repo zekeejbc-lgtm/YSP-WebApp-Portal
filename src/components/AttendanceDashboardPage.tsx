@@ -1437,7 +1437,7 @@ export default function AttendanceDashboardPage({
       // Define table configurations for each status - filter based on exportOptions
       const allTableConfigs = [
         {
-          key: 'allAttendees' as const,
+          key: 'all' as const,
           title: 'ALL ATTENDEES',
           records: filteredRecords,
           color: [246, 66, 31] as [number, number, number],
@@ -1473,9 +1473,9 @@ export default function AttendanceDashboardPage({
         },
       ];
       
-      // Filter based on exportOptions
+      // Filter based on exportOptions.selectedTables array
       const tableConfigs = allTableConfigs.filter(config => {
-        return exportOptions.includeTables[config.key];
+        return exportOptions.selectedTables.includes(config.key);
       });
 
       // Step 7: Generate tables (85%)
@@ -1559,7 +1559,7 @@ export default function AttendanceDashboardPage({
       }
 
       // Add Not Recorded table if enabled in exportOptions
-      if (exportOptions.includeTables.notRecorded && notRecordedMembers.length > 0) {
+      if (exportOptions.selectedTables.includes('notRecorded') && notRecordedMembers.length > 0) {
         // Check if we need a new page
         if (yPosition > pageHeight - 80) {
           doc.addPage();
