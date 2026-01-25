@@ -1633,31 +1633,32 @@ export default function AttendanceDashboardPage({
       }
 
       // ============================================
-      // LAST PAGE: Charts
+      // LAST PAGE: Charts (only if enabled)
       // ============================================
       
-      // Step 8: Generate charts (95%)
-      if (updateUploadToast) {
-        updateUploadToast(toastId, { message: 'Generating charts...', progress: 95 });
-      }
-      await new Promise(resolve => setTimeout(resolve, 100));
-      if (cancelled) return;
+      if (exportOptions.includeCharts) {
+        // Step 8: Generate charts (95%)
+        if (updateUploadToast) {
+          updateUploadToast(toastId, { message: 'Generating charts...', progress: 95 });
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (cancelled) return;
 
-      // Add new page for charts
-      doc.addPage();
-      yPosition = 20;
+        // Add new page for charts
+        doc.addPage();
+        yPosition = 20;
 
-      // Charts page title
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(30, 41, 59);
-      doc.text('ATTENDANCE ANALYTICS', margin, yPosition);
-      doc.setDrawColor(246, 66, 31);
-      doc.setLineWidth(0.5);
-      doc.line(margin, yPosition + 3, margin + 55, yPosition + 3);
-      yPosition += 12;
+        // Charts page title
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 41, 59);
+        doc.text('ATTENDANCE ANALYTICS', margin, yPosition);
+        doc.setDrawColor(246, 66, 31);
+        doc.setLineWidth(0.5);
+        doc.line(margin, yPosition + 3, margin + 55, yPosition + 3);
+        yPosition += 12;
 
-      // ---- PIE CHART: Attendance Status Distribution ----
+        // ---- PIE CHART: Attendance Status Distribution ----
       doc.setFontSize(10);
       doc.setFont('helvetica', 'bold');
       doc.text('Attendance Status Distribution', margin, yPosition);
@@ -1812,6 +1813,7 @@ export default function AttendanceDashboardPage({
         const displayName = comm.name.length > 38 ? comm.name.substring(0, 38) + '...' : comm.name;
         doc.text(`${comm.short} - ${displayName}`, lx + 7, ly);
       });
+      } // End of includeCharts conditional
 
       // Update all pages with correct page numbers
       const totalPages = doc.getNumberOfPages();
