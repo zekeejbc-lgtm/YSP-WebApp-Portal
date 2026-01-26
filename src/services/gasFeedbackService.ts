@@ -128,6 +128,17 @@ export async function updateFeedback(feedback: Feedback): Promise<{ message: str
 }
 
 /**
+ * Delete a feedback by ID
+ */
+export async function deleteFeedback(feedbackId: string): Promise<{ message: string }> {
+  const result = await callFeedbackAPI<{ message: string }>(
+    'deleteFeedback',
+    { feedbackId }
+  );
+  return { message: result.message || 'Success' };
+}
+
+/**
  * Initiate the feedback sheets (Admin only/Setup)
  */
 export async function initiateFeedbackSheets(): Promise<{ message: string }> {

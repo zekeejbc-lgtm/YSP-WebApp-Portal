@@ -702,8 +702,8 @@ export function logPageView(username: string, pageName: string): void {
 /**
  * Helper to log create actions
  */
-export function logCreate(username: string, itemType: string, itemName?: string): void {
-  logAccess({
+export function logCreate(username: string, itemType: string, itemName?: string): Promise<boolean> {
+  return logAccess({
     username,
     action: `Created ${itemType}${itemName ? `: ${itemName}` : ''}`,
     actionType: 'create',
@@ -714,8 +714,8 @@ export function logCreate(username: string, itemType: string, itemName?: string)
 /**
  * Helper to log edit actions
  */
-export function logEdit(username: string, itemType: string, itemName?: string): void {
-  logAccess({
+export function logEdit(username: string, itemType: string, itemName?: string): Promise<boolean> {
+  return logAccess({
     username,
     action: `Edited ${itemType}${itemName ? `: ${itemName}` : ''}`,
     actionType: 'edit',
@@ -726,8 +726,8 @@ export function logEdit(username: string, itemType: string, itemName?: string): 
 /**
  * Helper to log delete actions
  */
-export function logDelete(username: string, itemType: string, itemName?: string): void {
-  logAccess({
+export function logDelete(username: string, itemType: string, itemName?: string): Promise<boolean> {
+  return logAccess({
     username,
     action: `Deleted ${itemType}${itemName ? `: ${itemName}` : ''}`,
     actionType: 'delete',

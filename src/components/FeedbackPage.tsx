@@ -6,7 +6,7 @@ import CustomDropdown from './CustomDropdown';
 import Breadcrumb from './design-system/Breadcrumb';
 import { DESIGN_TOKENS } from './design-system';
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
-import { getFeedbacks, createFeedback, updateFeedback, Feedback } from '../services/gasFeedbackService';
+import { getFeedbacks, createFeedback, updateFeedback, deleteFeedback, uploadFeedbackImage, Feedback } from '../services/gasFeedbackService';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -65,6 +65,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
   const [newFeedbackId, setNewFeedbackId] = useState('');
   const [adminReply, setAdminReply] = useState('');
   const [editingFeedback, setEditingFeedback] = useState<Feedback | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false); // Delete confirmation state
   
   // Admin/Auditor dashboard states
   const [showDashboard, setShowDashboard] = useState(false);
@@ -83,6 +84,14 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     showAuthorCodes: true,
     showAuthorNames: false,
     showAuthorEmails: false,
+    showEmptyTables: false,
+    showStatusTables: true,
+    showCategoryTables: true,
+    dateRange: {
+      start: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0], // Default 1 month ago
+      end: new Date().toISOString().split('T')[0]
+    },
+    customTitle: '',
     selectedStatuses: ['Pending', 'Reviewed', 'Resolved', 'Dropped'] as string[],
     selectedCategories: [] as string[],
   });
@@ -299,21 +308,36 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
         });
       }
 
-      // Determine Author ID
-      const currentAuthorId = userRole === 'guest' ? 'Guest' : (username || 'YSP-Member');
+      // Format timestamp for Manila timezone
+      const manilaTimestamp = new Date().toLocaleString('en-US', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      });
+
+      // Determine Author and AuthorId based on anonymous setting
+      // If anonymous: author = "Anonymous", authorId = "Anonymous"
+      // If not anonymous: author = form name, authorId = username (for officers) or "Guest" (for guests)
+      const feedbackAuthor = formData.anonymous ? 'Anonymous' : formData.author;
+      const feedbackAuthorId = formData.anonymous ? 'Anonymous' : (userRole === 'guest' ? 'Guest' : (username || 'YSP-Member'));
 
       const newFeedback: Feedback = {
         id: feedbackId,
-        timestamp: new Date().toISOString(),
-        author: formData.anonymous ? 'Anonymous' : formData.author,
-        authorId: currentAuthorId,
+        timestamp: manilaTimestamp,
+        author: feedbackAuthor,
+        authorId: feedbackAuthorId,
         feedback: formData.feedback,
         anonymous: formData.anonymous,
         category: formData.category,
         imageUrl: finalImageUrl,
         status: 'Pending',
         visibility: formData.preferPrivate ? 'Private' : 'Public',
-        email: formData.email || undefined,
+        email: formData.anonymous ? undefined : formData.email, // Don't save email if anonymous
         rating: formData.rating
       };
 
@@ -588,6 +612,33 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     const generatedTimestamp = new Date().toLocaleString();
     const orgMotto = "Shaping the Future to a Greater Society";
 
+    // 1. Filter Data based on Export Settings
+    const startDate = new Date(exportOptions.dateRange.start);
+    const endDate = new Date(exportOptions.dateRange.end);
+    endDate.setHours(23, 59, 59, 999); // End of day
+
+    const reportFeedbacks = feedbacks.filter(f => {
+      const fDate = new Date(f.timestamp);
+      return fDate >= startDate && fDate <= endDate;
+    });
+
+    // Recalculate stats for this report
+    const reportStats = {
+      total: reportFeedbacks.length,
+      pending: reportFeedbacks.filter(f => f.status === 'Pending').length,
+      reviewed: reportFeedbacks.filter(f => f.status === 'Reviewed').length,
+      resolved: reportFeedbacks.filter(f => f.status === 'Resolved').length,
+      dropped: reportFeedbacks.filter(f => f.status === 'Dropped').length,
+      notReplied: reportFeedbacks.filter(f => !f.reply || f.reply.trim() === '').length,
+      avgRating: reportFeedbacks.length > 0 
+        ? reportFeedbacks.reduce((a, b) => a + b.rating, 0) / reportFeedbacks.filter(f => f.rating > 0).length || 0 
+        : 0,
+      categoryBreakdown: categories.reduce((acc, cat) => {
+         acc[cat] = reportFeedbacks.filter(f => f.category === cat).length;
+         return acc;
+      }, {} as Record<string, number>)
+    };
+
     // Helper function to draw page footer
     const drawFooter = (pageNum: number, totalPages: number) => {
       doc.setDrawColor(246, 66, 31);
@@ -647,222 +698,402 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     doc.line(margin, yPosition, pageWidth - margin, yPosition);
     yPosition += 8;
 
-    // STATISTICS SECTION
+    // PAGE 1: SMART EXECUTIVE SUMMARY & BOXES
     if (exportOptions.includeStatistics) {
+      
+      // --- SMART SUMMARY GENERATION LOGIC ---
+      const generateSmartSummary = () => {
+        if (reportStats.total === 0) {
+          return `Between ${startDate.toLocaleDateString()} and ${endDate.toLocaleDateString()}, no feedback entries were recorded. The system is active and ready to receive submissions. No immediate actions are required at this time.`;
+        }
+
+        const resolutionRate = (reportStats.resolved / reportStats.total) * 100;
+        const pendingRate = (reportStats.pending / reportStats.total) * 100;
+        const responseRate = ((reportStats.total - reportStats.notReplied) / reportStats.total) * 100;
+        
+        // Find top category
+        const topCategoryEntry = Object.entries(reportStats.categoryBreakdown).sort((a, b) => b[1] - a[1])[0];
+        const topCategoryName = topCategoryEntry ? topCategoryEntry[0] : 'N/A';
+        const topCategoryCount = topCategoryEntry ? topCategoryEntry[1] : 0;
+        const topCategoryPercent = ((topCategoryCount / reportStats.total) * 100).toFixed(1);
+
+        let narrative = `From ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}, the organization received a total of ${reportStats.total} feedbacks. `;
+
+        // Status Narrative
+        if (resolutionRate >= 80) {
+          narrative += `The team has demonstrated exceptional performance, successfully resolving ${reportStats.resolved} issues (${resolutionRate.toFixed(1)}% resolution rate). `;
+        } else if (resolutionRate >= 50) {
+          narrative += `We have made steady progress, resolving ${reportStats.resolved} issues (${resolutionRate.toFixed(1)}% resolution rate). `;
+        } else if (reportStats.resolved === 0 && reportStats.total > 0) {
+           narrative += `Currently, no issues have been marked as resolved yet. `;
+        } else {
+           narrative += `Resolution efforts are ongoing, with ${reportStats.resolved} issues resolved (${resolutionRate.toFixed(1)}% rate). `;
+        }
+
+        if (pendingRate > 40) {
+          narrative += `Attention is advised as ${reportStats.pending} items (${pendingRate.toFixed(1)}%) remain in 'Pending' status. Prioritizing these items is recommended. `;
+        } else if (reportStats.pending > 0) {
+          narrative += `There are ${reportStats.pending} pending items currently in the queue. `;
+        } else {
+          narrative += `There are zero pending items, indicating a clear backlog. `;
+        }
+
+        // Category Narrative
+        if (topCategoryCount > 0) {
+           narrative += `The primary driver of feedback for this period is '${topCategoryName}', accounting for ${topCategoryPercent}% of all submissions. `;
+        }
+
+        // Rating Narrative
+        if (reportStats.avgRating > 0) {
+           if (reportStats.avgRating >= 4.5) {
+             narrative += `User sentiment is overwhelmingly positive with an excellent average rating of ${reportStats.avgRating.toFixed(2)}/5. `;
+           } else if (reportStats.avgRating >= 3.0) {
+             narrative += `User sentiment is generally positive, averaging ${reportStats.avgRating.toFixed(2)}/5. `;
+           } else {
+             narrative += `User satisfaction metrics indicate room for improvement, with an average rating of ${reportStats.avgRating.toFixed(2)}/5. `;
+           }
+        }
+
+        // Response Narrative
+        if (reportStats.notReplied === 0) {
+          narrative += `Notably, the administration has achieved a 100% response rate, replying to all submissions.`;
+        } else if (reportStats.notReplied > 0) {
+          narrative += `${reportStats.notReplied} submissions are still awaiting an official response (${responseRate.toFixed(1)}% coverage).`;
+        }
+
+        return narrative;
+      };
+
+      const summaryText = generateSmartSummary();
+
+      // --- SUMMARY CARD ---
+      doc.setFillColor(248, 250, 252); // Very light gray/slate
+      doc.setDrawColor(226, 232, 240); // Border color
+      doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 45, 3, 3, 'FD'); // Filled and Stroked
+      
+      // Card Title
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(246, 66, 31); // Brand Orange
+      doc.text('EXECUTIVE SUMMARY', margin + 6, yPosition + 8);
+
+      // Card Body
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(51, 65, 85); // Slate 700
+      
+      const summaryLines = doc.splitTextToSize(summaryText, pageWidth - 2 * margin - 12);
+      doc.text(summaryLines, margin + 6, yPosition + 15);
+      
+      yPosition += 55; // Move past the card
+
+      // --- STATUS BOXES ---
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(30, 41, 59);
-      doc.text('FEEDBACK STATISTICS', margin, yPosition);
+      doc.text('STATUS OVERVIEW', margin, yPosition);
       doc.setDrawColor(246, 66, 31);
       doc.setLineWidth(0.3);
-      doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
-      yPosition += 10;
+      doc.line(margin, yPosition + 2, margin + 40, yPosition + 2);
+      yPosition += 8;
 
-      // Total box
-      const totalBoxWidth = pageWidth - 2 * margin;
-      doc.setFillColor(246, 66, 31);
-      doc.roundedRect(margin, yPosition, totalBoxWidth, 22, 3, 3, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(14);
-      doc.text('TOTAL FEEDBACKS', margin + 10, yPosition + 10);
-      doc.setFontSize(20);
-      doc.text(`${statistics.total}`, totalBoxWidth - 10, yPosition + 14, { align: 'right' });
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`${statistics.notReplied} not replied`, totalBoxWidth - 10, yPosition + 19, { align: 'right' });
-      yPosition += 28;
-
-      // Status boxes
       const statusBoxWidth = (pageWidth - 2 * margin - 9) / 4;
-      const statusBoxHeight = 20;
+      const statusBoxHeight = 22;
       const statuses = [
-        { name: 'PENDING', color: [251, 191, 36], count: statistics.pending },
-        { name: 'REVIEWED', color: [59, 130, 246], count: statistics.reviewed },
-        { name: 'RESOLVED', color: [34, 197, 94], count: statistics.resolved },
-        { name: 'DROPPED', color: [239, 68, 68], count: statistics.dropped },
+        { name: 'PENDING', color: [251, 191, 36], count: reportStats.pending },
+        { name: 'REVIEWED', color: [59, 130, 246], count: reportStats.reviewed },
+        { name: 'RESOLVED', color: [34, 197, 94], count: reportStats.resolved },
+        { name: 'DROPPED', color: [239, 68, 68], count: reportStats.dropped },
       ];
 
       statuses.forEach((status, index) => {
         const boxX = margin + index * (statusBoxWidth + 3);
+        
+        // Box Background
         doc.setFillColor(status.color[0], status.color[1], status.color[2]);
         doc.roundedRect(boxX, yPosition, statusBoxWidth, statusBoxHeight, 2, 2, 'F');
         
+        // Count
         doc.setTextColor(255, 255, 255);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(14);
-        doc.text(String(status.count), boxX + statusBoxWidth / 2, yPosition + 9, { align: 'center' });
+        doc.setFontSize(16);
+        doc.text(String(status.count), boxX + statusBoxWidth / 2, yPosition + 10, { align: 'center' });
         
-        doc.setFontSize(6);
+        // Label
+        doc.setFontSize(7);
         doc.setFont('helvetica', 'normal');
-        doc.text(status.name, boxX + statusBoxWidth / 2, yPosition + 15, { align: 'center' });
+        doc.text(status.name, boxX + statusBoxWidth / 2, yPosition + 17, { align: 'center' });
       });
-      yPosition += statusBoxHeight + 10;
+      yPosition += statusBoxHeight + 12;
 
-      // Not Replied highlight
-      doc.setFillColor(239, 68, 68);
-      doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 16, 2, 2, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.text('NOT REPLIED', margin + 10, yPosition + 10);
-      doc.setFontSize(16);
-      doc.text(`${statistics.notReplied}`, pageWidth - margin - 10, yPosition + 11, { align: 'right' });
-      yPosition += 24;
+      // --- CATEGORY BOXES ---
+      // We want to fit this on the first page.
+      // Check remaining space
+      const remainingSpace = pageHeight - margin - yPosition - 15; // 15 for footer
+      if (remainingSpace > 40) {
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 41, 59);
+        doc.text('CATEGORY BREAKDOWN', margin, yPosition);
+        doc.setDrawColor(246, 66, 31);
+        doc.setLineWidth(0.3);
+        doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
+        yPosition += 8;
+
+        // Grid Layout for Categories
+        const catBoxWidth = (pageWidth - 2 * margin - 9) / 4; // 4 columns
+        const catBoxHeight = 16;
+        const gap = 3;
+        
+        // Filter out 0 counts if space is tight, or show top N?
+        // Let's show all non-zero, then 0s if space permits.
+        const activeCategories = Object.entries(reportStats.categoryBreakdown)
+           .filter(([_, count]) => count > 0)
+           .sort((a, b) => b[1] - a[1]);
+        
+        // If no categories active, show empty state or just a few 0s
+        const displayCategories = activeCategories.length > 0 ? activeCategories : categories.slice(0, 8).map(c => [c, 0]);
+
+        displayCategories.forEach((cat, index) => {
+           // Check if we are running off the page
+           if (yPosition + catBoxHeight > pageHeight - 20) return;
+
+           const col = index % 4;
+           const row = Math.floor(index / 4);
+           
+           // If we are starting a new row, verify space
+           if (col === 0 && row > 0) {
+              yPosition += catBoxHeight + gap;
+              if (yPosition + catBoxHeight > pageHeight - 20) return;
+           }
+
+           // Special handling for first row yPosition
+           const currentY = row === 0 ? yPosition : yPosition; 
+           // Wait, the logic above increments yPosition for rows > 0. 
+           // Let's simplify:
+           // We calculate absolute pos based on row.
+        });
+
+        // Simpler loop
+        let currentRow = 0;
+        let currentCol = 0;
+        const startY = yPosition;
+
+        displayCategories.forEach(([name, count]) => {
+           const boxX = margin + currentCol * (catBoxWidth + gap);
+           const boxY = startY + currentRow * (catBoxHeight + gap);
+
+           // Stop if off page
+           if (boxY + catBoxHeight > pageHeight - 20) return;
+
+           // Draw Box
+           // We need RGB for setFillColor. Convert hex or rgba.
+           // For simplicity, we'll use a standard light gray fill and colored text/border to match theme.
+           
+           doc.setDrawColor(200, 200, 200);
+           doc.setFillColor(255, 255, 255);
+           doc.roundedRect(boxX, boxY, catBoxWidth, catBoxHeight, 2, 2, 'FD');
+
+           // Count Pill
+           doc.setFillColor(246, 66, 31);
+           doc.roundedRect(boxX + catBoxWidth - 12, boxY + 3, 9, 6, 2, 2, 'F');
+           doc.setTextColor(255, 255, 255);
+           doc.setFontSize(7);
+           doc.setFont('helvetica', 'bold');
+           doc.text(String(count), boxX + catBoxWidth - 7.5, boxY + 7, { align: 'center' });
+
+           // Category Name
+           doc.setTextColor(50, 50, 50);
+           doc.setFontSize(7);
+           doc.setFont('helvetica', 'bold');
+           // Truncate name if too long
+           const displayName = name.length > 18 ? name.substring(0, 16) + '..' : name;
+           doc.text(String(displayName), boxX + 3, boxY + 10);
+
+           currentCol++;
+           if (currentCol >= 4) {
+             currentCol = 0;
+             currentRow++;
+           }
+        });
+      }
     }
 
-    // FEEDBACK TABLE
-    doc.addPage();
-    yPosition = 20;
+    // Helper to generate table for a specific dataset
+    const generateTable = (title: string, data: Feedback[]) => {
+      if (data.length === 0 && !exportOptions.showEmptyTables) return;
 
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(30, 41, 59);
-    doc.text(`FEEDBACK LIST (${getDashboardFeedbacks.length})`, margin, yPosition);
-    yPosition += 8;
+      doc.addPage();
+      yPosition = 20;
 
-    // Prepare table data with feedback message and image links
-    const tableData = getDashboardFeedbacks.map((fb, index) => {
-      // Determine what to show for author
-      let authorDisplay = fb.id; // Always show code by default
-      
-      if (exportOptions.showAuthorNames && !fb.anonymous) {
-        authorDisplay = fb.author;
-      } else if (exportOptions.showAuthorEmails && fb.email && !fb.anonymous) {
-        authorDisplay = fb.email;
-      } else if (fb.anonymous) {
-        authorDisplay = 'Anonymous';
-      } else if (!exportOptions.showAuthorCodes) {
-        authorDisplay = 'Hidden';
-      }
-
-      // Truncate feedback message for table display
-      const feedbackText = fb.feedback ? 
-        (fb.feedback.length > 100 ? fb.feedback.substring(0, 100) + '...' : fb.feedback) : '-';
-      
-      // Format image URLs
-      const imageLinks = fb.imageUrl ? 
-        fb.imageUrl.split(',').map((url: string, i: number) => `[Image ${i + 1}]`).join(' ') : '-';
-
-      return [
-        String(index + 1),
-        fb.id,
-        authorDisplay,
-        fb.category,
-        feedbackText,
-        imageLinks,
-        fb.status,
-        fb.rating > 0 ? `${fb.rating}/5` : '-',
-        new Date(fb.timestamp).toLocaleDateString(),
-      ];
-    });
-
-    autoTable(doc, {
-      startY: yPosition,
-      head: [['#', 'Feedback ID', 'Author', 'Category', 'Message', 'Images', 'Status', 'Rating', 'Date']],
-      body: tableData.length > 0 ? tableData : [['-', '-', 'No feedbacks', '-', '-', '-', '-', '-', '-']],
-      theme: 'grid',
-      headStyles: {
-        fillColor: [246, 66, 31],
-        textColor: 255,
-        fontStyle: 'bold',
-        fontSize: 6,
-      },
-      bodyStyles: { fontSize: 6, textColor: [50, 50, 50] },
-      columnStyles: {
-        0: { cellWidth: 8, halign: 'center' },
-        1: { cellWidth: 28 },
-        2: { cellWidth: 25 },
-        3: { cellWidth: 20 },
-        4: { cellWidth: 50 },
-        5: { cellWidth: 18 },
-        6: { cellWidth: 15, halign: 'center' },
-        7: { cellWidth: 12, halign: 'center' },
-        8: { cellWidth: 18, halign: 'center' },
-      },
-      margin: { left: margin, right: margin },
-    });
-
-    // Add detailed feedback list with full messages and image URLs on new pages
-    doc.addPage();
-    yPosition = 20;
-    
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(30, 41, 59);
-    doc.text('DETAILED FEEDBACK MESSAGES', margin, yPosition);
-    yPosition += 10;
-
-    getDashboardFeedbacks.forEach((fb, index) => {
-      // Check if we need a new page
-      if (yPosition > 260) {
-        doc.addPage();
-        yPosition = 20;
-      }
-
-      // Feedback header
-      doc.setFontSize(8);
+      doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
-      doc.setTextColor(246, 66, 31);
-      doc.text(`${index + 1}. ${fb.id} | ${fb.category} | ${fb.status}`, margin, yPosition);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`${title} (${data.length})`, margin, yPosition);
       yPosition += 5;
 
-      // Author info
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(100, 100, 100);
-      const authorInfo = fb.anonymous ? 'Anonymous' : (exportOptions.showAuthorNames ? fb.author : fb.id);
-      doc.text(`From: ${authorInfo} | Date: ${new Date(fb.timestamp).toLocaleDateString()} | Rating: ${fb.rating}/5`, margin, yPosition);
-      yPosition += 6;
-
-      // Full feedback message
-      doc.setTextColor(30, 41, 59);
-      const feedbackLines = doc.splitTextToSize(fb.feedback || 'No message', pageWidth - margin * 2);
-      feedbackLines.forEach((line: string) => {
-        if (yPosition > 270) {
-          doc.addPage();
-          yPosition = 20;
+      const tableData = data.map((fb, index) => {
+        let authorDisplay = fb.id;
+        if (exportOptions.showAuthorNames && !fb.anonymous) {
+          authorDisplay = fb.author;
+        } else if (exportOptions.showAuthorEmails && fb.email && !fb.anonymous) {
+          authorDisplay = fb.email;
+        } else if (fb.anonymous) {
+          authorDisplay = 'Anonymous';
         }
-        doc.text(line, margin, yPosition);
-        yPosition += 4;
+
+        // NO TRUNCATION HERE - Let autoTable wrap it
+        const imageLinks = fb.imageUrl ? 
+          fb.imageUrl.split(',').map((_, i) => `[Image ${i + 1}]`).join(' ') : '-';
+
+        return [
+          String(index + 1),
+          fb.id,
+          authorDisplay,
+          fb.category,
+          fb.feedback || '-', // Full text
+          imageLinks,
+          fb.status,
+          fb.rating > 0 ? `${fb.rating}/5` : '-',
+          new Date(fb.timestamp).toLocaleDateString(),
+        ];
       });
 
-      // Image URLs if present
-      if (fb.imageUrl) {
-        yPosition += 2;
-        doc.setFont('helvetica', 'italic');
-        doc.setTextColor(59, 130, 246);
-        const imageUrls = fb.imageUrl.split(',');
-        imageUrls.forEach((url: string, i: number) => {
-          if (yPosition > 270) {
-            doc.addPage();
-            yPosition = 20;
-          }
-          doc.text(`Image ${i + 1}: ${url.trim()}`, margin, yPosition);
-          yPosition += 4;
-        });
-      }
+      autoTable(doc, {
+        startY: yPosition,
+        head: [['#', 'ID', 'Author', 'Category', 'Message', 'Images', 'Status', 'Rating', 'Date']],
+        body: tableData.length > 0 ? tableData : [['-', '-', '-', '-', 'No data available', '-', '-', '-', '-']],
+        theme: 'grid',
+        headStyles: {
+          fillColor: [246, 66, 31],
+          textColor: 255,
+          fontStyle: 'bold',
+          fontSize: 8,
+        },
+        bodyStyles: { fontSize: 8, textColor: [50, 50, 50] },
+        columnStyles: {
+          0: { cellWidth: 8, halign: 'center' },
+          1: { cellWidth: 22 },
+          2: { cellWidth: 20 },
+          3: { cellWidth: 18 },
+          4: { cellWidth: 'auto' }, // Allow wrapping
+          5: { cellWidth: 15 },
+          6: { cellWidth: 15, halign: 'center' },
+          7: { cellWidth: 12, halign: 'center' },
+          8: { cellWidth: 18, halign: 'center' },
+        },
+        margin: { left: margin, right: margin },
+        styles: { overflow: 'linebreak', cellPadding: 2 },
+      });
+    };
 
-      // Admin reply if exists
-      if (fb.reply) {
-        yPosition += 2;
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(34, 197, 94);
-        doc.text('Admin Reply:', margin, yPosition);
-        yPosition += 4;
-        doc.setFont('helvetica', 'normal');
-        const replyLines = doc.splitTextToSize(fb.reply, pageWidth - margin * 2);
-        replyLines.forEach((line: string) => {
-          if (yPosition > 270) {
-            doc.addPage();
-            yPosition = 20;
-          }
-          doc.text(line, margin, yPosition);
-          yPosition += 4;
-        });
-      }
+    // PAGE 2+: TABLES PER STATUS (Filtered by Toggle)
+    if (exportOptions.showStatusTables) {
+      const statusGroups = ['Pending', 'Reviewed', 'Resolved', 'Dropped'];
+      statusGroups.forEach(status => {
+        const statusData = reportFeedbacks.filter(f => f.status === status);
+        generateTable(`Status: ${status}`, statusData);
+      });
+    }
 
-      yPosition += 8; // Space between feedbacks
-    });
+    // PAGE N: TABLES PER CATEGORY (Filtered by Toggle)
+    if (exportOptions.showCategoryTables) {
+      categories.forEach(category => {
+        const categoryData = reportFeedbacks.filter(f => f.category === category);
+        generateTable(`Category: ${category}`, categoryData);
+      });
+    }
+
+    // PAGE LAST: CHARTS
+    if (exportOptions.includeCharts) {
+      doc.addPage();
+      yPosition = 20;
+
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text('ANALYTICS CHARTS', margin, yPosition);
+      yPosition += 20;
+
+      // Draw Bar Chart: Status Distribution
+      doc.setFontSize(11);
+      doc.text('Status Distribution', margin, yPosition);
+      yPosition += 10;
+
+      const maxVal = Math.max(reportStats.pending, reportStats.reviewed, reportStats.resolved, reportStats.dropped, 1);
+      const chartHeight = 60;
+      const chartWidth = pageWidth - 2 * margin;
+      const barWidth = (chartWidth / 4) - 10;
+      
+      const statusChartData = [
+        { label: 'Pending', value: reportStats.pending, color: [251, 191, 36] },
+        { label: 'Reviewed', value: reportStats.reviewed, color: [59, 130, 246] },
+        { label: 'Resolved', value: reportStats.resolved, color: [34, 197, 94] },
+        { label: 'Dropped', value: reportStats.dropped, color: [239, 68, 68] },
+      ];
+
+      // Draw axes
+      doc.setDrawColor(200, 200, 200);
+      doc.line(margin, yPosition + chartHeight, margin + chartWidth, yPosition + chartHeight); // X axis
+      doc.line(margin, yPosition, margin, yPosition + chartHeight); // Y axis
+
+      // Draw bars
+      statusChartData.forEach((data, index) => {
+        const barHeight = (data.value / maxVal) * chartHeight;
+        const x = margin + 10 + (index * (barWidth + 10));
+        const y = yPosition + chartHeight - barHeight;
+        
+        doc.setFillColor(data.color[0], data.color[1], data.color[2]);
+        doc.rect(x, y, barWidth, barHeight, 'F');
+        
+        // Label
+        doc.setFontSize(8);
+        doc.setTextColor(50, 50, 50);
+        doc.text(String(data.value), x + barWidth/2, y - 2, { align: 'center' });
+        doc.text(data.label, x + barWidth/2, yPosition + chartHeight + 5, { align: 'center' });
+      });
+
+      yPosition += chartHeight + 30;
+
+      // Draw Bar Chart: Category Distribution (Top 5)
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Top Categories', margin, yPosition);
+      yPosition += 10;
+
+      const sortedCategories = Object.entries(reportStats.categoryBreakdown)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5); // Top 5
+      
+      if (sortedCategories.length > 0) {
+        const maxCatVal = Math.max(...sortedCategories.map(c => c[1]), 1);
+        const catBarWidth = (chartWidth / sortedCategories.length) - 10;
+
+        // Draw axes
+        doc.setDrawColor(200, 200, 200);
+        doc.line(margin, yPosition + chartHeight, margin + chartWidth, yPosition + chartHeight);
+        doc.line(margin, yPosition, margin, yPosition + chartHeight);
+
+        sortedCategories.forEach((data, index) => {
+          const barHeight = (data[1] / maxCatVal) * chartHeight;
+          const x = margin + 10 + (index * (catBarWidth + 10));
+          const y = yPosition + chartHeight - barHeight;
+          
+          doc.setFillColor(246, 66, 31); // Brand Orange
+          doc.rect(x, y, catBarWidth, barHeight, 'F');
+          
+          doc.setFontSize(8);
+          doc.setTextColor(50, 50, 50);
+          doc.text(String(data[1]), x + catBarWidth/2, y - 2, { align: 'center' });
+          
+          // Truncate label if too long
+          const label = data[0].length > 10 ? data[0].substring(0, 8) + '..' : data[0];
+          doc.text(label, x + catBarWidth/2, yPosition + chartHeight + 5, { align: 'center' });
+        });
+      } else {
+         doc.text('No category data available.', margin, yPosition + 10);
+      }
+    }
 
     // Update footers
     const totalPages = doc.getNumberOfPages();
@@ -1067,16 +1298,51 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     if (!editingFeedback || !selectedFeedback) return;
     
     setIsLoading(true);
+    const updateToastId = `update-${Date.now()}`;
+    
+    if (addUploadToast) {
+      addUploadToast({
+        id: updateToastId,
+        title: 'Updating Feedback',
+        message: 'Saving changes to database...',
+        status: 'loading',
+        progress: 30
+      });
+    }
+    
     try {
+      // Format reply timestamp for Manila timezone if replying
+      const replyTimestamp = adminReply ? new Date().toLocaleString('en-US', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      }) : editingFeedback.replyTimestamp;
+      
       const updatedData: Feedback = {
         ...editingFeedback,
         reply: adminReply || undefined,
-        replyTimestamp: adminReply ? new Date().toISOString() : editingFeedback.replyTimestamp,
+        replyTimestamp: replyTimestamp,
         replier: adminReply ? (username || 'Admin Team') : editingFeedback.replier,
         replierId: adminReply ? 'ADMIN-ACTION' : editingFeedback.replierId
       };
 
       await updateFeedback(updatedData);
+
+      if (updateUploadToast) {
+        updateUploadToast(updateToastId, {
+          status: 'success',
+          message: 'Feedback updated successfully!',
+          progress: 100
+        });
+      }
+      if (removeUploadToast) {
+        setTimeout(() => removeUploadToast(updateToastId), 3000);
+      }
 
       const wasDropped = selectedFeedback.status === 'Dropped';
       const isDropped = updatedData.status === 'Dropped';
@@ -1102,11 +1368,96 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       }
       setShowDetailModal(false);
       setSelectedFeedback(null);
+      setConfirmingDelete(false);
     } catch (error) {
       console.error("Update failed:", error);
+      
+      if (updateUploadToast) {
+        updateUploadToast(updateToastId, {
+          status: 'error',
+          message: 'Failed to update feedback.',
+          progress: 100
+        });
+      }
+      if (removeUploadToast) {
+        setTimeout(() => removeUploadToast(updateToastId), 5000);
+      }
+      
       toast.error("Update failed", {
         description: "Failed to save changes. Please try again."
       });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteFeedback = async () => {
+    if (!selectedFeedback) return;
+    
+    // If not confirming yet, show confirmation buttons
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      return;
+    }
+    
+    // User confirmed, proceed with deletion
+    setIsLoading(true);
+    const deleteToastId = `delete-${Date.now()}`;
+    
+    if (addUploadToast) {
+      addUploadToast({
+        id: deleteToastId,
+        title: 'Deleting Feedback',
+        message: 'Removing feedback from database...',
+        status: 'loading',
+        progress: 30
+      });
+    }
+    
+    try {
+      await deleteFeedback(selectedFeedback.id);
+
+      if (updateUploadToast) {
+        updateUploadToast(deleteToastId, {
+          status: 'success',
+          message: 'Feedback deleted successfully!',
+          progress: 100
+        });
+      }
+      if (removeUploadToast) {
+        setTimeout(() => removeUploadToast(deleteToastId), 3000);
+      }
+
+      // Remove from local state
+      setFeedbacks(feedbacks.filter(f => f.id !== selectedFeedback.id));
+      
+      toast.success('Feedback deleted!', {
+        description: 'The feedback has been permanently removed.'
+      });
+      
+      logDelete(username || 'admin', "Feedback", selectedFeedback.id).catch(console.error);
+      
+      setShowDetailModal(false);
+      setSelectedFeedback(null);
+      setConfirmingDelete(false);
+    } catch (error) {
+      console.error("Delete failed:", error);
+      
+      if (updateUploadToast) {
+        updateUploadToast(deleteToastId, {
+          status: 'error',
+          message: 'Failed to delete feedback.',
+          progress: 100
+        });
+      }
+      if (removeUploadToast) {
+        setTimeout(() => removeUploadToast(deleteToastId), 5000);
+      }
+      
+      toast.error("Delete failed", {
+        description: "Failed to delete feedback. Please try again."
+      });
+      setConfirmingDelete(false);
     } finally {
       setIsLoading(false);
     }
@@ -1349,11 +1700,12 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
           {/* Chart Section */}
           <div
-            className="rounded-xl p-6 mb-6 border"
+            className="rounded-xl p-6 mb-6 border relative"
             style={{
               background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
               backdropFilter: 'blur(20px)',
               borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              zIndex: 20,
             }}
           >
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
@@ -1523,11 +1875,12 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
           {/* Feedback List Table */}
           <div
-            className="rounded-xl p-6 border"
+            className="rounded-xl p-6 border relative"
             style={{
               background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
               backdropFilter: 'blur(20px)',
               borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              zIndex: 10,
             }}
           >
             <div className="flex items-center justify-between mb-4">
@@ -1989,12 +2342,26 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       {showSubmitModal && (
         <>
           <div 
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-80"
-            onClick={() => setShowSubmitModal(false)}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+            style={{ zIndex: 9999991 }}
+            onClick={() => {
+              // Clear form when closing modal
+              setFormData({
+                author: '',
+                email: '',
+                rating: 0,
+                category: 'Other',
+                feedback: '',
+                anonymous: false,
+                preferPrivate: false
+              });
+              setUploadedImages([]);
+              setShowSubmitModal(false);
+            }}
           />
-          <div className="fixed inset-0 z-90 flex items-center justify-center p-4">
+          <div className="fixed inset-0 flex items-center justify-center p-4" style={{ zIndex: 9999992 }}>
             <div 
-              className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl"
+              className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl"
               style={{
                 background: isDark ? 'rgba(15, 23, 42, 0.98)' : 'rgba(255, 255, 255, 0.98)',
                 border: '2px solid rgba(238, 135, 36, 0.3)',
@@ -2002,12 +2369,11 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                 WebkitBackdropFilter: 'blur(20px)',
               }}
             >
-              <div className="sticky top-0 p-6 border-b flex items-center justify-between"
+              <div className="flex-shrink-0 p-4 sm:p-6 border-b flex items-center justify-between"
                 style={{
                   background: isDark ? 'rgba(15, 23, 42, 0.98)' : 'rgba(255, 255, 255, 0.98)',
                   backdropFilter: 'blur(20px)',
                   borderColor: isDark ? 'rgba(238, 135, 36, 0.2)' : 'rgba(238, 135, 36, 0.3)',
-                  zIndex: 20
                 }}
               >
                 <h3 
@@ -2021,14 +2387,28 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                   Submit Feedback
                 </h3>
                 <button
-                  onClick={() => setShowSubmitModal(false)}
+                  onClick={() => {
+                    // Clear form when closing modal
+                    setFormData({
+                      author: '',
+                      email: '',
+                      rating: 0,
+                      category: 'Other',
+                      feedback: '',
+                      anonymous: false,
+                      preferPrivate: false
+                    });
+                    setUploadedImages([]);
+                    setShowSubmitModal(false);
+                  }}
                   className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-all"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <form onSubmit={handleSubmit} className="p-6 space-y-5">
+              <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
                 {/* Anonymous Toggle */}
                 <div className="flex items-center gap-3 p-4 rounded-xl" style={{
                   background: isDark ? 'rgba(238, 135, 36, 0.1)' : 'rgba(238, 135, 36, 0.05)',
@@ -2183,7 +2563,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                   {uploadedImages.length > 0 && (
                     <div className="grid grid-cols-3 gap-3 mt-3">
                       {uploadedImages.map((image, index) => (
-                        <div key={index} className="relative group">
+                        <div key={index} className="relative">
                           <img
                             src={image.preview}
                             alt={`Preview ${index + 1}`}
@@ -2192,7 +2572,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                           <button
                             type="button"
                             onClick={() => removeImage(index)}
-                            className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
+                            className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-lg transition-all hover:scale-110 shadow-lg"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -2218,19 +2598,39 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                     I prefer to keep my feedback private
                   </label>
                 </div>
+                </div>
 
-                {/* Action Buttons */}
-                <div className="flex gap-3 pt-2">
+                {/* Action Buttons - Fixed Footer */}
+                <div 
+                  className="flex-shrink-0 flex gap-3 p-4 sm:p-6 border-t"
+                  style={{
+                    background: isDark ? 'rgba(15, 23, 42, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                    borderColor: isDark ? 'rgba(238, 135, 36, 0.2)' : 'rgba(238, 135, 36, 0.3)',
+                  }}
+                >
                   <button
                     type="button"
-                    onClick={() => setShowSubmitModal(false)}
-                    className="flex-1 py-3.5 rounded-xl transition-all duration-300 hover:scale-105 active:scale-95"
+                    onClick={() => {
+                      // Clear form when closing modal
+                      setFormData({
+                        author: '',
+                        email: '',
+                        rating: 0,
+                        category: 'Other',
+                        feedback: '',
+                        anonymous: false,
+                        preferPrivate: false
+                      });
+                      setUploadedImages([]);
+                      setShowSubmitModal(false);
+                    }}
+                    className="flex-1 py-2.5 rounded-xl transition-all duration-300 hover:scale-[1.02] active:scale-95"
                     style={{
                       background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
                       border: `2px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
                       color: isDark ? '#fff' : '#1e293b',
                       fontWeight: '600',
-                      fontSize: '1rem'
+                      fontSize: '0.875rem'
                     }}
                   >
                     Cancel
@@ -2238,23 +2638,23 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                   <button
                     type="submit"
                     disabled={isLoading}
-                    className="flex-1 py-3.5 rounded-xl text-white transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 py-2.5 rounded-xl text-white transition-all duration-300 hover:shadow-xl hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
                       background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
-                      fontWeight: '700',
-                      fontSize: '1rem',
-                      boxShadow: '0 8px 20px rgba(246, 66, 31, 0.4)'
+                      fontWeight: '600',
+                      fontSize: '0.875rem',
+                      boxShadow: '0 4px 12px rgba(246, 66, 31, 0.3)'
                     }}
                   >
                     {isLoading ? (
                       <>
-                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                         <span>Submitting...</span>
                       </>
                     ) : (
                       <>
-                        <Send className="w-5 h-5" />
-                        <span>Submit Feedback</span>
+                        <Send className="w-4 h-4" />
+                        <span>Submit</span>
                       </>
                     )}
                   </button>
@@ -2269,10 +2669,11 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       {showFeedbackIdModal && (
         <>
           <div 
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-80"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+            style={{ zIndex: 9999991 }}
             onClick={() => setShowFeedbackIdModal(false)}
           />
-          <div className="fixed inset-0 z-90 flex items-center justify-center p-4">
+          <div className="fixed inset-0 flex items-center justify-center p-4" style={{ zIndex: 9999992 }}>
             <div 
               className="w-full max-w-md rounded-2xl p-6 text-center"
               style={{
@@ -2368,10 +2769,11 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       {showDetailModal && selectedFeedback && (
         <>
           <div 
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-80"
-            onClick={() => setShowDetailModal(false)}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+            style={{ zIndex: 9999991 }}
+            onClick={() => { setShowDetailModal(false); setConfirmingDelete(false); }}
           />
-          <div className="fixed inset-0 z-90 flex items-center justify-center p-4">
+          <div className="fixed inset-0 flex items-center justify-center p-4" style={{ zIndex: 9999992 }}>
             <div 
               className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl"
               style={{
@@ -2405,7 +2807,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                   </p>
                 </div>
                 <button
-                  onClick={() => setShowDetailModal(false)}
+                  onClick={() => { setShowDetailModal(false); setConfirmingDelete(false); }}
                   className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-all"
                 >
                   <X className="w-5 h-5" />
@@ -2643,33 +3045,95 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
                 {/* Admin Action Buttons */}
                 {(isAdmin || userRole === 'auditor') && (
-                  <div className="flex gap-3 pt-6 mt-6 border-t" style={{ borderColor: isDark ? 'rgba(238, 135, 36, 0.2)' : 'rgba(238, 135, 36, 0.3)' }}>
-                    <button
-                      onClick={() => setShowDetailModal(false)}
-                      className="flex-1 py-3.5 rounded-xl transition-all duration-300 hover:scale-105 active:scale-95"
-                      style={{
-                        background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
-                        border: `2px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
-                        color: isDark ? '#fff' : '#1e293b',
-                        fontWeight: '600',
-                        fontSize: '1rem'
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleUpdateFeedback}
-                      className="flex-1 py-3.5 rounded-xl text-white transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
-                      style={{
-                        background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
-                        fontWeight: '700',
-                        fontSize: '1rem',
-                        boxShadow: '0 8px 20px rgba(246, 66, 31, 0.4)'
-                      }}
-                    >
-                      <CheckCircle className="w-5 h-5" />
-                      <span>Save Changes</span>
-                    </button>
+                  <div className="flex flex-col gap-3 pt-6 mt-6 border-t" style={{ borderColor: isDark ? 'rgba(238, 135, 36, 0.2)' : 'rgba(238, 135, 36, 0.3)' }}>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => { setShowDetailModal(false); setConfirmingDelete(false); }}
+                        className="flex-1 py-2.5 rounded-xl transition-all duration-300 hover:scale-[1.02] active:scale-95"
+                        style={{
+                          background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                          border: `2px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+                          color: isDark ? '#fff' : '#1e293b',
+                          fontWeight: '600',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleUpdateFeedback}
+                        disabled={isLoading}
+                        className="flex-1 py-2.5 rounded-xl text-white transition-all duration-300 hover:shadow-xl hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+                        style={{
+                          background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                          fontWeight: '600',
+                          fontSize: '0.875rem',
+                          boxShadow: '0 4px 12px rgba(246, 66, 31, 0.3)'
+                        }}
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        <span>Save</span>
+                      </button>
+                    </div>
+                    {/* Delete Button with Inline Confirmation */}
+                    {confirmingDelete ? (
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => setConfirmingDelete(false)}
+                          disabled={isLoading}
+                          className="flex-1 py-2.5 rounded-xl transition-all duration-300 hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2"
+                          style={{
+                            background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                            border: `2px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+                            color: isDark ? '#fff' : '#1e293b',
+                            fontWeight: '600',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          <X className="w-4 h-4" />
+                          <span>Cancel</span>
+                        </button>
+                        <button
+                          onClick={handleDeleteFeedback}
+                          disabled={isLoading}
+                          className="flex-1 py-2.5 rounded-xl text-white transition-all duration-300 hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+                          style={{
+                            background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                            fontWeight: '600',
+                            fontSize: '0.875rem',
+                            boxShadow: '0 4px 12px rgba(239, 68, 68, 0.4)'
+                          }}
+                        >
+                          {isLoading ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              <span>Deleting...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="w-4 h-4" />
+                              <span>Yes, Delete</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={handleDeleteFeedback}
+                        disabled={isLoading}
+                        className="w-full py-2.5 rounded-xl transition-all duration-300 hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+                        style={{
+                          background: isDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.1)',
+                          border: `2px solid ${isDark ? 'rgba(239, 68, 68, 0.4)' : 'rgba(239, 68, 68, 0.5)'}`,
+                          color: '#ef4444',
+                          fontWeight: '600',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span>Delete Feedback</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2682,7 +3146,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       {showExportModal && (
         <div
           className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-          style={{ zIndex: 9999 }}
+          style={{ zIndex: 9999993 }}
           onClick={handleCloseExportModal}
         >
           <div
@@ -2874,43 +3338,136 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                   {/* Content Options */}
                   <div>
                     <h4 className="font-semibold mb-3">Content Options</h4>
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                        style={{
-                          background: exportOptions.includeStatistics 
-                            ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
-                            : 'transparent',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={exportOptions.includeStatistics}
-                          onChange={(e) => setExportOptions({ ...exportOptions, includeStatistics: e.target.checked })}
-                          className="w-4 h-4 rounded accent-[#f6421f]"
-                        />
-                        <div className="flex-1">
-                          <span className="font-medium">Include Statistics Summary</span>
-                          <p className="text-xs text-muted-foreground">Total, pending, reviewed counts and average rating</p>
+                    <div className="space-y-4">
+                      {/* Date Range Settings */}
+                      <div className="p-3 rounded-lg border" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                        <p className="text-sm font-medium mb-2">Report Period</p>
+                        <div className="flex gap-3">
+                          <div className="flex-1">
+                            <label className="block text-xs text-muted-foreground mb-1">Start Date</label>
+                            <input
+                              type="date"
+                              value={exportOptions.dateRange.start}
+                              onChange={(e) => setExportOptions({
+                                ...exportOptions,
+                                dateRange: { ...exportOptions.dateRange, start: e.target.value }
+                              })}
+                              className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent"
+                              style={{ borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)' }}
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="block text-xs text-muted-foreground mb-1">End Date</label>
+                            <input
+                              type="date"
+                              value={exportOptions.dateRange.end}
+                              onChange={(e) => setExportOptions({
+                                ...exportOptions,
+                                dateRange: { ...exportOptions.dateRange, end: e.target.value }
+                              })}
+                              className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent"
+                              style={{ borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)' }}
+                            />
+                          </div>
                         </div>
-                      </label>
-                      <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                        style={{
-                          background: exportOptions.includeCharts 
-                            ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
-                            : 'transparent',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={exportOptions.includeCharts}
-                          onChange={(e) => setExportOptions({ ...exportOptions, includeCharts: e.target.checked })}
-                          className="w-4 h-4 rounded accent-[#f6421f]"
-                        />
-                        <div className="flex-1">
-                          <span className="font-medium">Include Charts</span>
-                          <p className="text-xs text-muted-foreground">Visual representation of data (PDF only)</p>
-                        </div>
-                      </label>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          style={{
+                            background: exportOptions.includeStatistics 
+                              ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                              : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={exportOptions.includeStatistics}
+                            onChange={(e) => setExportOptions({ ...exportOptions, includeStatistics: e.target.checked })}
+                            className="w-4 h-4 rounded accent-[#f6421f]"
+                          />
+                          <div className="flex-1">
+                            <span className="font-medium">Include Statistics Summary</span>
+                            <p className="text-xs text-muted-foreground">Total, pending, reviewed counts and average rating</p>
+                          </div>
+                        </label>
+
+                        <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          style={{
+                            background: exportOptions.includeCharts 
+                              ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                              : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={exportOptions.includeCharts}
+                            onChange={(e) => setExportOptions({ ...exportOptions, includeCharts: e.target.checked })}
+                            className="w-4 h-4 rounded accent-[#f6421f]"
+                          />
+                          <div className="flex-1">
+                            <span className="font-medium">Include Charts</span>
+                            <p className="text-xs text-muted-foreground">Visual representation of data (PDF only)</p>
+                          </div>
+                        </label>
+
+                        <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          style={{
+                            background: exportOptions.showEmptyTables 
+                              ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                              : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={exportOptions.showEmptyTables}
+                            onChange={(e) => setExportOptions({ ...exportOptions, showEmptyTables: e.target.checked })}
+                            className="w-4 h-4 rounded accent-[#f6421f]"
+                          />
+                          <div className="flex-1">
+                            <span className="font-medium">Show Empty Tables</span>
+                            <p className="text-xs text-muted-foreground">Display status/category tables even if they have no data</p>
+                          </div>
+                        </label>
+                        
+                        <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          style={{
+                            background: exportOptions.showStatusTables 
+                              ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                              : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={exportOptions.showStatusTables}
+                            onChange={(e) => setExportOptions({ ...exportOptions, showStatusTables: e.target.checked })}
+                            className="w-4 h-4 rounded accent-[#f6421f]"
+                          />
+                          <div className="flex-1">
+                            <span className="font-medium">Show Status Tables</span>
+                            <p className="text-xs text-muted-foreground">Include individual tables for each status (Pending, Resolved, etc.)</p>
+                          </div>
+                        </label>
+
+                        <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          style={{
+                            background: exportOptions.showCategoryTables 
+                              ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
+                              : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={exportOptions.showCategoryTables}
+                            onChange={(e) => setExportOptions({ ...exportOptions, showCategoryTables: e.target.checked })}
+                            className="w-4 h-4 rounded accent-[#f6421f]"
+                          />
+                          <div className="flex-1">
+                            <span className="font-medium">Show Category Tables</span>
+                            <p className="text-xs text-muted-foreground">Include individual tables for each category (Bug, Suggestion, etc.)</p>
+                          </div>
+                        </label>
+                      </div>
                     </div>
                   </div>
 

@@ -242,7 +242,7 @@ export default function CustomDropdown({
         width: dropdownPosition.width,
         maxHeight: `${dropdownMaxHeight}px`,
         overflowY: "auto",
-        zIndex: 999999,
+        zIndex: 9999995, // Higher than modals (9999992) to appear on top
         background: isDark ? "#111827" : "#ffffff",
         border: `2px solid ${isDark ? "#374151" : "#d1d5db"}`,
         borderRadius: "8px",
