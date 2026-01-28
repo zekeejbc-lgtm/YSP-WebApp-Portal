@@ -98,6 +98,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
   const FounderModal = lazy(() => import("./components/FounderModal"));
   const DeveloperModal = lazy(() => import("./components/DeveloperModal"));
   import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
+  import { Analytics } from "@vercel/analytics/react";
   import { FormattedText } from "./components/FormattedText";
   import { 
     SkeletonCardGrid, 
@@ -5479,6 +5480,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
 {/* YSP AI Chatbot */}
         {chatbot}
+
+        {/* Vercel Web Analytics */}
+        <Analytics />
         
       </div>
     );
