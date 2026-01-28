@@ -77,6 +77,7 @@ import { CacheRefreshModal } from "./components/SystemToolsPage";
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
+  import { SpeedInsights } from '@vercel/speed-insights/react';
   import MusicPlayer from "./components/MusicPlayer";
 import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
 import type { AttendanceDashboardContext } from "./components/AttendanceDashboardPage";
@@ -5479,6 +5480,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
 {/* YSP AI Chatbot */}
         {chatbot}
+
+        {/* Vercel Speed Insights */}
+        <SpeedInsights />
         
       </div>
     );
