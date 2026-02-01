@@ -443,6 +443,9 @@ export default function IssuanceCenterPage({
   const [committees, setCommittees] = useState<Committee[]>([]);
   const [members, setMembers] = useState<MemberWithEmail[]>([]);
   const [isLoadingRecipients, setIsLoadingRecipients] = useState(false);
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
   const [externalName, setExternalName] = useState("");
   const [externalEmail, setExternalEmail] = useState("");
   
@@ -598,13 +601,17 @@ export default function IssuanceCenterPage({
     setCommittees(yspCommittees);
   };
   
-  const loadEvents = async () => {
+  const loadEvents = async (forceRefresh = false) => {
+    setIsLoadingEvents(true);
     try {
-      // Try cache first
-      const cached = getCachedData<EventData[]>(CACHE_KEYS.events);
-      if (cached) {
-        setEvents(cached);
-        return;
+      // Try cache first (unless force refresh)
+      if (!forceRefresh) {
+        const cached = getCachedData<EventData[]>(CACHE_KEYS.events);
+        if (cached && cached.length > 0) {
+          setEvents(cached);
+          setIsLoadingEvents(false);
+          return;
+        }
       }
       const data = await fetchEvents();
       // fetchEvents returns EventData[] directly
@@ -613,17 +620,24 @@ export default function IssuanceCenterPage({
       setCachedData(CACHE_KEYS.events, filtered);
     } catch (error) {
       console.error("Error loading events:", error);
+    } finally {
+      setIsLoadingEvents(false);
     }
   };
   
-  const loadMembers = async () => {
+  const loadMembers = async (forceRefresh = false) => {
+    setIsLoadingMembers(true);
+    setMembersError(null);
     try {
-      // Try localStorage cache first for instant load
-      const cached = getCachedData<MemberWithEmail[]>(CACHE_KEYS.members);
-      if (cached && cached.length > 0) {
-        setMembers(cached);
-        console.log(`[Issuance] Loaded ${cached.length} members from cache`);
-        return;
+      // Try localStorage cache first for instant load (unless force refresh)
+      if (!forceRefresh) {
+        const cached = getCachedData<MemberWithEmail[]>(CACHE_KEYS.members);
+        if (cached && cached.length > 0) {
+          setMembers(cached);
+          console.log(`[Issuance] Loaded ${cached.length} members from cache`);
+          setIsLoadingMembers(false);
+          return;
+        }
       }
       
       // Fetch from Directory service (same data as Officer Directory page)
@@ -657,12 +671,19 @@ export default function IssuanceCenterPage({
         arr.findIndex(x => x.email.toLowerCase() === m.email.toLowerCase()) === idx
       );
       
-      setMembers(uniqueMembers);
-      setCachedData(CACHE_KEYS.members, uniqueMembers);
-      console.log(`[Issuance] Fetched ${uniqueMembers.length} members from Directory service`);
+      if (uniqueMembers.length === 0) {
+        setMembersError('No members with email addresses found. Use @External to add recipients manually.');
+      } else {
+        setMembers(uniqueMembers);
+        setCachedData(CACHE_KEYS.members, uniqueMembers);
+        console.log(`[Issuance] Fetched ${uniqueMembers.length} members from Directory service`);
+      }
     } catch (error) {
       console.error("Error loading members from Directory:", error);
+      setMembersError('Failed to load members. Click to retry or use @External to add recipients.');
       // Members will be empty, user can still add external recipients
+    } finally {
+      setIsLoadingMembers(false);
     }
   };
   
@@ -2038,8 +2059,50 @@ export default function IssuanceCenterPage({
                               </div>
                             )}
                             
-                            {/* Person Suggestions */}
-                            {activeCommand === '@Person' && universalSearchSuggestions.length > 0 && (
+                            {/* Person Suggestions - Loading State */}
+                            {activeCommand === '@Person' && isLoadingMembers && (
+                              <div className="p-6 text-center">
+                                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: '#3b82f6' }} />
+                                <p className="text-sm text-muted-foreground">Loading members...</p>
+                              </div>
+                            )}
+                            
+                            {/* Person Suggestions - Error State */}
+                            {activeCommand === '@Person' && !isLoadingMembers && membersError && (
+                              <div className="p-4 text-center">
+                                <p className="text-sm text-red-500 mb-2">{membersError}</p>
+                                <button
+                                  onClick={() => loadMembers(true)}
+                                  className="text-sm px-3 py-1.5 rounded-md transition-colors"
+                                  style={{ 
+                                    background: isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)',
+                                    color: '#3b82f6'
+                                  }}
+                                >
+                                  Retry Loading Members
+                                </button>
+                              </div>
+                            )}
+                            
+                            {/* Person Suggestions - Empty State */}
+                            {activeCommand === '@Person' && !isLoadingMembers && !membersError && members.length === 0 && (
+                              <div className="p-4 text-center">
+                                <p className="text-sm text-muted-foreground mb-2">No members loaded yet.</p>
+                                <button
+                                  onClick={() => loadMembers(true)}
+                                  className="text-sm px-3 py-1.5 rounded-md transition-colors"
+                                  style={{ 
+                                    background: isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)',
+                                    color: '#3b82f6'
+                                  }}
+                                >
+                                  Load Members
+                                </button>
+                              </div>
+                            )}
+                            
+                            {/* Person Suggestions - Results */}
+                            {activeCommand === '@Person' && !isLoadingMembers && universalSearchSuggestions.length > 0 && (
                               <>
                                 <div className="px-3 py-2 text-xs font-semibold text-muted-foreground border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
                                   Members ({members.length} total)
@@ -2097,8 +2160,33 @@ export default function IssuanceCenterPage({
                               </>
                             )}
                             
-                            {/* Event Suggestions */}
-                            {activeCommand === '@Event' && universalSearchSuggestions.length > 0 && (
+                            {/* Event Suggestions - Loading State */}
+                            {activeCommand === '@Event' && isLoadingEvents && (
+                              <div className="p-6 text-center">
+                                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: '#8b5cf6' }} />
+                                <p className="text-sm text-muted-foreground">Loading events...</p>
+                              </div>
+                            )}
+                            
+                            {/* Event Suggestions - Empty State */}
+                            {activeCommand === '@Event' && !isLoadingEvents && events.length === 0 && (
+                              <div className="p-4 text-center">
+                                <p className="text-sm text-muted-foreground mb-2">No events loaded yet.</p>
+                                <button
+                                  onClick={() => loadEvents(true)}
+                                  className="text-sm px-3 py-1.5 rounded-md transition-colors"
+                                  style={{ 
+                                    background: isDark ? 'rgba(139, 92, 246, 0.2)' : 'rgba(139, 92, 246, 0.1)',
+                                    color: '#8b5cf6'
+                                  }}
+                                >
+                                  Load Events
+                                </button>
+                              </div>
+                            )}
+                            
+                            {/* Event Suggestions - Results */}
+                            {activeCommand === '@Event' && !isLoadingEvents && universalSearchSuggestions.length > 0 && (
                               <>
                                 <div className="px-3 py-2 text-xs font-semibold text-muted-foreground border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
                                   Events ({events.length} total) - Click to load attendees
