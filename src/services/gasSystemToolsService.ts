@@ -133,7 +133,12 @@ async function callSystemToolsAPI<T>(
     );
   }
 
-  console.log('[SystemTools] Calling API:', action, { url: GAS_API_URL.substring(0, 60) });
+  // Suppress verbose logging for frequent polling actions
+  const isSilentAction = action === 'getCacheVersion';
+
+  if (!isSilentAction) {
+    console.log('[SystemTools] Calling API:', action, { url: GAS_API_URL.substring(0, 60) });
+  }
 
   try {
     const response = await fetch(GAS_API_URL, {
@@ -145,7 +150,9 @@ async function callSystemToolsAPI<T>(
       signal,
     });
 
-    console.log('[SystemTools] Response status:', response.status, response.statusText);
+    if (!isSilentAction) {
+      console.log('[SystemTools] Response status:', response.status, response.statusText);
+    }
 
     if (!response.ok) {
       throw new SystemToolsAPIError(
@@ -155,7 +162,10 @@ async function callSystemToolsAPI<T>(
     }
 
     const result: SystemToolsResponse<T> = await response.json();
-    console.log('[SystemTools] Response data:', result.success ? 'success' : 'failed', result);
+    
+    if (!isSilentAction) {
+      console.log('[SystemTools] Response data:', result.success ? 'success' : 'failed', result);
+    }
 
     if (!result.success) {
       throw new SystemToolsAPIError(
@@ -166,6 +176,7 @@ async function callSystemToolsAPI<T>(
 
     return result.data as T;
   } catch (error) {
+    // Always log errors, even for silent actions
     console.error('[SystemTools] API Error:', error);
     if (error instanceof SystemToolsAPIError) {
       throw error;

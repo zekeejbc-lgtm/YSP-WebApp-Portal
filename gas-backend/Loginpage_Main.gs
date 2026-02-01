@@ -363,6 +363,8 @@ function doPost(e) {
         return handleLogin(username, password);
       case 'verifySession':
         return handleVerifySession(requestData.sessionToken);
+      case 'checkUserRole':
+        return handleCheckUserRole(requestData.username);
       case 'getProfile':
         return handleGetProfile(requestData.username);
       // Inside doPost switch statement:
@@ -581,6 +583,79 @@ function handleVerifySession(sessionToken) {
     valid: isValid,
     timestamp: new Date().toISOString()
   });
+}
+
+/**
+ * Lightweight role check for polling - returns only role and status
+ * Used by frontend to detect role changes without fetching full profile
+ * @param {string} username - Username to check role for
+ * @returns {TextOutput} JSON response with role and status
+ */
+function handleCheckUserRole(username) {
+  if (!username) {
+    return createErrorResponse('Username is required', 400);
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    
+    if (!sheet) {
+      return createErrorResponse('User database not found', 500);
+    }
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    // Find column indices for just the fields we need
+    const idx = {
+      username: headers.indexOf('Username'),
+      role: headers.indexOf('Role'),
+      status: headers.indexOf('Status'),
+      name: headers.indexOf('Full name'),
+    };
+
+    if (idx.username === -1) {
+      return createErrorResponse('Database configuration error', 500);
+    }
+
+    // Search for user by username (case-insensitive)
+    const usernameLower = username.toLowerCase().trim();
+    
+    for (let i = 1; i < data.length; i++) {
+      const rowUsername = (data[i][idx.username] || '').toString().toLowerCase().trim();
+      
+      if (rowUsername === usernameLower) {
+        let role = idx.role > -1 ? (data[i][idx.role] || '').toString().trim().toLowerCase() : 'member';
+        let status = idx.status > -1 ? (data[i][idx.status] || '').toString().toLowerCase().trim() : 'active';
+        const name = idx.name > -1 ? (data[i][idx.name] || '').toString() : '';
+        
+        // Normalize role to expected values
+        const validRoles = ['auditor', 'admin', 'head', 'member', 'suspended', 'banned', 'guest'];
+        if (!validRoles.includes(role)) {
+          role = 'member';
+        }
+        
+        // Sync status with role if needed
+        if (role === 'banned') status = 'banned';
+        else if (role === 'suspended') status = 'suspended';
+        
+        return createSuccessResponse({
+          success: true,
+          role: role,
+          status: status,
+          name: name,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    return createErrorResponse('User not found', 404);
+
+  } catch (error) {
+    Logger.log('handleCheckUserRole Error: ' + error.toString());
+    return createErrorResponse('Failed to check role: ' + error.message, 500);
+  }
 }
 
 /**

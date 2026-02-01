@@ -57,6 +57,7 @@
     getStoredUser,
     hasActiveSession,
     verifySession,
+    checkUserRole,
     LoginErrorCodes,
     type LoginUser,
   } from "./services/gasLoginService";
@@ -73,7 +74,7 @@
   stopCacheVersionPolling,
 } from "./services/gasSystemToolsService";
   // 👈 ADD THIS IMPORT
-import { CacheRefreshModal } from "./components/SystemToolsPage";
+import { CacheRefreshModal, RoleChangeModal, determineRoleChangeType, type RoleChangeType } from "./components/SystemToolsPage";
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
@@ -91,6 +92,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
   const AttendanceTransparencyPage = lazy(() => import("./components/AttendanceTransparencyPage"));
   const MyProfilePage = lazy(() => import("./components/MyProfilePage"));
   const AnnouncementsPage = lazy(() => import("./components/AnnouncementsPage_Enhanced"));
+  const IssuanceCenterPage = lazy(() => import("./components/IssuanceCenterPage"));
   const SystemToolsPage = lazy(() => import("./components/SystemToolsPage"));
   const ManageMembersPage = lazy(() => import("./components/ManageMembersPage"));
   const MembershipApplicationsPage = lazy(() => import("./components/MembershipApplicationsPage"));
@@ -598,6 +600,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     const [sessionChecked, setSessionChecked] = useState(false);
     const [userRole, setUserRole] = useState<string>("guest"); // guest, member, admin
     const [userName, setUserName] = useState<string>("");
+    const [userEmail, setUserEmail] = useState<string>("");
     const [userIdCode, setUserIdCode] = useState<string>("");
     const [userPosition, setUserPosition] = useState<string>("");
     const [userProfilePicture, setUserProfilePicture] = useState<string>("");
@@ -621,6 +624,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     const [showAttendanceTransparency, setShowAttendanceTransparency] = useState(false);
     const [showMyProfile, setShowMyProfile] = useState(false);
     const [showAnnouncements, setShowAnnouncements] = useState(false);
+    const [showIssuanceCenter, setShowIssuanceCenter] = useState(false);
     const [showAccessLogs, setShowAccessLogs] = useState(false);
     const [showSystemTools, setShowSystemTools] = useState(false);
     const [showManageMembers, setShowManageMembers] = useState(false);
@@ -641,6 +645,15 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
   const [showCacheRefreshModal, setShowCacheRefreshModal] = useState(false);
   const [hardRefreshMode, setHardRefreshMode] = useState<"standard" | "full">("standard");
 
+  // Role Change Modal State
+  const [showRoleChangeModal, setShowRoleChangeModal] = useState(false);
+  const [roleChangeInfo, setRoleChangeInfo] = useState<{
+    changeType: RoleChangeType;
+    oldRole: string;
+    newRole: string;
+  } | null>(null);
+  const roleCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const handleRequestCacheClear = () => {
     setHardRefreshMode("full");
     setShowCacheRefreshModal(true);
@@ -657,6 +670,103 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     setHardRefreshMode("standard");
     await forceClearAllCaches({ preserveSession });
   };
+
+  // Role Change Handlers
+  const handleDismissRoleChange = () => {
+    setShowRoleChangeModal(false);
+    // Don't clear roleChangeInfo so user sees current state
+  };
+
+  const handleConfirmRoleChange = async () => {
+    setShowRoleChangeModal(false);
+    // For banned users, force logout
+    if (roleChangeInfo?.newRole === 'banned') {
+      clearSession();
+      setIsAdmin(false);
+      setUserRole("guest");
+      setUserName("");
+      setUserEmail("");
+      setUserIdCode("");
+      setUserPosition("");
+      setUserProfilePicture("");
+      setActivePage("home");
+      toast.error('Account access has been revoked');
+      return;
+    }
+    // For all other role changes, clear cache and force re-login
+    await forceClearAllCaches({ preserveSession: false });
+  };
+
+  // Role Checking Polling Effect (15-30 seconds interval)
+  useEffect(() => {
+    // Only run when user is logged in
+    if (!isAdmin || userRole === 'guest' || !userName) {
+      if (roleCheckIntervalRef.current) {
+        clearInterval(roleCheckIntervalRef.current);
+        roleCheckIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const storedUser = getStoredUser();
+    if (!storedUser?.username) return;
+
+    let isMounted = true;
+
+    const checkRole = async () => {
+      if (!isMounted) return;
+      
+      try {
+        const result = await checkUserRole(storedUser.username);
+        
+        if (!isMounted) return;
+        
+        if (result.success && result.role) {
+          const currentStoredUser = getStoredUser();
+          const currentRole = currentStoredUser?.role || userRole;
+          
+          // Check if role has changed
+          if (result.role !== currentRole) {
+            console.log(`[RoleCheck] Role changed: ${currentRole} → ${result.role}`);
+            
+            const changeType = determineRoleChangeType(currentRole, result.role);
+            setRoleChangeInfo({
+              changeType,
+              oldRole: currentRole,
+              newRole: result.role,
+            });
+            setShowRoleChangeModal(true);
+            
+            // Stop polling once we detect a change
+            if (roleCheckIntervalRef.current) {
+              clearInterval(roleCheckIntervalRef.current);
+              roleCheckIntervalRef.current = null;
+            }
+          }
+        }
+      } catch (error) {
+        // Silently fail - don't disrupt user experience for polling failures
+        console.debug('[RoleCheck] Polling error (ignored):', error);
+      }
+    };
+
+    // Initial check after a short delay (5 seconds after login)
+    const initialTimeout = setTimeout(() => {
+      if (isMounted) checkRole();
+    }, 5000);
+
+    // Then poll every 20 seconds (between 15-30 as requested)
+    roleCheckIntervalRef.current = setInterval(checkRole, 20000);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(initialTimeout);
+      if (roleCheckIntervalRef.current) {
+        clearInterval(roleCheckIntervalRef.current);
+        roleCheckIntervalRef.current = null;
+      }
+    };
+  }, [isAdmin, userRole, userName]);
 
   useEffect(() => {
     let isMounted = true;
@@ -848,6 +958,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         setIsAdmin(true);
         setUserRole(storedUser.role);
         setUserName(storedUser.name);
+        setUserEmail(storedUser.email || '');
         setUserIdCode(storedUser.id || '');
         setUserPosition(storedUser.position || '');
         setUserProfilePicture(storedUser.profilePic || '');
@@ -1298,6 +1409,18 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             },
             icon: <MessageCircle className="w-4 h-4" />,
             // Public - no roles required
+          },
+          {
+            id: "issuance-center",
+            label: "Issuance Center",
+            action: () => {
+              setActivePage("issuance-center");
+              setShowIssuanceCenter(true);
+              setOpenDropdown(null);
+              setIsMenuOpen(false);
+            },
+            icon: <FileText className="w-4 h-4" />,
+            roles: ["admin", "auditor", "head", "member"], // All logged-in users can view their issuances
           },
           {
             id: "membership-editor",
@@ -1961,6 +2084,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             setIsAdmin(true); // Allow login but limited
             setUserRole('suspended');
             setUserName(user.name);
+            setUserEmail(user.email || '');
             setUserIdCode(user.id || '');
             setUserPosition(user.position || '');
             setUserProfilePicture(user.profilePic || '');
@@ -1975,6 +2099,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           setIsAdmin(true);
           setUserRole(user.role);
           setUserName(user.name);
+          setUserEmail(user.email || '');
           setUserIdCode(user.id || '');
           setUserPosition(user.position || '');
           setUserProfilePicture(user.profilePic || '');
@@ -2065,6 +2190,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         setIsAdmin(true);
         setUserRole(storedUser.role);
         setUserName(storedUser.name);
+        setUserEmail(storedUser.email || '');
         setUserIdCode(storedUser.id || '');
         setUserPosition(storedUser.position || '');
         setUserProfilePicture(storedUser.profilePic || '');
@@ -2093,6 +2219,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       setIsAdmin(false);
       setUserRole("guest");
       setUserName("");
+      setUserEmail("");
       setUserIdCode("");
       setUserPosition("");
       setUserProfilePicture("");
@@ -3053,6 +3180,19 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       );
     }
 
+    // Show Issuance Center page
+    if (showIssuanceCenter) {
+      return (
+        <>
+          <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading issuance center..." />}>
+            <IssuanceCenterPage onClose={() => setShowIssuanceCenter(false)} isDark={isDark} userRole={userRole} username={userName || 'admin'} userEmail={userEmail} />
+          </Suspense>
+          {chatbot}
+        </>
+      );
+    }
+
     // Show Access Logs page
     if (showAccessLogs) {
       if (isPageInMaintenance("access-logs")) {
@@ -3226,6 +3366,18 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             onConfirm={handleConfirmHardRefresh}
             onClose={handleDismissHardRefresh}
           />
+          {roleChangeInfo && (
+            <RoleChangeModal
+              isOpen={showRoleChangeModal}
+              isDark={isDark}
+              changeType={roleChangeInfo.changeType}
+              oldRole={roleChangeInfo.oldRole}
+              newRole={roleChangeInfo.newRole}
+              userName={userName}
+              onConfirm={handleConfirmRoleChange}
+              onClose={handleDismissRoleChange}
+            />
+          )}
           {chatbot}
         </>
       );
@@ -3323,7 +3475,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         {/* Top Bar - Floating Header - Only on Homepage */}
         {!showOfficerDirectory && !showAttendanceDashboard && !showAttendanceRecording && 
         !showManageEvents && !showMyQRID && 
-        !showAttendanceTransparency && !showAnnouncements && !showAccessLogs && 
+        !showAttendanceTransparency && !showAnnouncements && !showIssuanceCenter && !showAccessLogs && 
         !showSystemTools && !showManageMembers && !showFeedbackPage && 
         !showMembershipApplicationsPage && !showMyProfile && !showSettings && (
           <TopBar
@@ -3398,6 +3550,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             setShowMyQRID(false);
             setShowAttendanceTransparency(false);
             setShowAnnouncements(false);
+            setShowIssuanceCenter(false);
             setShowAccessLogs(false);
             setShowSystemTools(false);
             setShowFeedbackPage(false);
@@ -5476,6 +5629,20 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           onConfirm={handleConfirmHardRefresh}
           onClose={handleDismissHardRefresh}
         />
+
+{/* 👈 Role Change Modal - Shown when user's role is changed by admin */}
+        {roleChangeInfo && (
+          <RoleChangeModal
+            isOpen={showRoleChangeModal}
+            isDark={isDark}
+            changeType={roleChangeInfo.changeType}
+            oldRole={roleChangeInfo.oldRole}
+            newRole={roleChangeInfo.newRole}
+            userName={userName}
+            onConfirm={handleConfirmRoleChange}
+            onClose={handleDismissRoleChange}
+          />
+        )}
 
 {/* YSP AI Chatbot */}
         {chatbot}

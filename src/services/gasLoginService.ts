@@ -885,6 +885,82 @@ export function isRestricted(role: LoginUser['role']): boolean {
   return ['suspended', 'banned'].includes(role);
 }
 
+// =================== ROLE CHECKING ===================
+
+export interface RoleCheckResponse {
+  success: boolean;
+  role?: LoginUser['role'];
+  status?: string;
+  name?: string;
+  timestamp?: string;
+  error?: string;
+}
+
+/**
+ * Lightweight role check for polling - only fetches role and status
+ * Used to detect if user's role has been changed by admin
+ * @param username - Username to check
+ * @returns Promise<RoleCheckResponse>
+ */
+export async function checkUserRole(
+  username: string,
+  signal?: AbortSignal
+): Promise<RoleCheckResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'API not configured' };
+  }
+
+  if (!username) {
+    return { success: false, error: 'Username required' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for polling
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'checkUserRole',
+        username: username.trim(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
+
+  } catch (error) {
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
 // =================== PASSWORD MANAGEMENT ===================
 
 /**
@@ -1529,6 +1605,7 @@ export default {
   hasAdminAccess,
   hasLeadershipAccess,
   isRestricted,
+  checkUserRole,
   verifyPassword,
   changePassword,
   sendVerificationOTP,

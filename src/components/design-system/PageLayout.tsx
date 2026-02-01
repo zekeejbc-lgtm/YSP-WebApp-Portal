@@ -96,9 +96,11 @@ export default function PageLayout({
   }, []);
 
   return (
-    <div className="min-h-screen bg-background transition-colors duration-300 relative">
+    <div 
+      className="min-h-screen bg-background transition-colors duration-300 fixed inset-0 overflow-auto"
+    >
       {/* Animated Background Blobs */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+      <div className="fixed inset-0 overflow-hidden pointer-events-none" style={{ zIndex: 0 }}>
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-orange-200/40 dark:bg-orange-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob" />
         <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-yellow-200/40 dark:bg-yellow-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob animation-delay-2000" />
         <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-red-200/40 dark:bg-red-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob animation-delay-4000" />
@@ -109,7 +111,7 @@ export default function PageLayout({
         className="fixed left-0 right-0 transition-all duration-300"
         style={{
           top: '1rem', // Same level as homepage TopBar (16px from top)
-          zIndex: 200, // Higher than filters (z-100) to stay on top when scrolling
+          zIndex: 10, // Relative to PageLayout container (which is already at high z-index)
         }}
       >
         <div
