@@ -2762,6 +2762,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
+        isDark={isDark}
       />
     );
 

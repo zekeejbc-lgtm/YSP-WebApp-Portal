@@ -30,6 +30,7 @@ interface YSPChatBotProps {
   hidden?: boolean;
   onTriggerEditMode?: () => void;
   attendanceDashboardContext?: AttendanceDashboardContext | null;
+  isDark?: boolean;
 }
 
 // 👇 Add this new interface for the Knowledge Base
@@ -902,6 +903,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
   hidden = false,
   onTriggerEditMode,
   attendanceDashboardContext,
+  isDark = false,
 }) => {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
@@ -2480,6 +2482,31 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     return list;
   }, [currentPage, userRole]);
 
+  // 🌙 Dark mode color scheme
+  const colors = {
+    // Backgrounds
+    chatWindowBg: isDark ? "#1f2937" : "#ffffff",
+    messageAreaBg: isDark ? "#111827" : "#f9fafb",
+    inputAreaBg: isDark ? "#1f2937" : "#ffffff",
+    suggestionBg: isDark ? "#1f2937" : "#ffffff",
+    suggestionHoverBg: isDark ? "#374151" : "#f3f4f6",
+    botMessageBg: isDark ? "#374151" : "#ffffff",
+    inputBg: isDark ? "#374151" : "#f9fafb",
+    inputBgCooldown: isDark ? "#1f2937" : "#f3f4f6",
+    botAvatarBg: isDark ? "#374151" : "#ffffff",
+    imageBg: isDark ? "#374151" : "#f3f4f6",
+    // Borders
+    border: isDark ? "#4b5563" : "#e5e7eb",
+    borderLight: isDark ? "#374151" : "#e5e7eb",
+    inputBorderFocus: "#ea580c",
+    // Text
+    textPrimary: isDark ? "#f9fafb" : "#1f2937",
+    textSecondary: isDark ? "#d1d5db" : "#6b7280",
+    textMuted: isDark ? "#9ca3af" : "#4b5563",
+    // Shadows
+    chatWindowShadow: isDark ? "0 10px 40px -10px rgba(0,0,0,0.5)" : "0 10px 40px -10px rgba(0,0,0,0.2)",
+  };
+
   const ui = useMemo(() => {
     return (
       <div
@@ -2503,11 +2530,11 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
             flexDirection: "column",
             width: "min(380px, calc(100vw - 32px))",
             height: "min(600px, calc(100vh - 120px))",
-            backgroundColor: "#ffffff",
-            border: "1px solid #e5e7eb",
+            backgroundColor: colors.chatWindowBg,
+            border: `1px solid ${colors.border}`,
             borderRadius: "16px",
             overflow: "hidden",
-            boxShadow: "0 10px 40px -10px rgba(0,0,0,0.2)",
+            boxShadow: colors.chatWindowShadow,
             pointerEvents: "auto",
             transformOrigin: "bottom right",
             animation: isOpen ? "scaleIn 0.2s ease-out" : "none",
@@ -2587,7 +2614,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
               overflowY: "auto",
               overflowX: "hidden",
               padding: "16px",
-              backgroundColor: "#f9fafb",
+              backgroundColor: colors.messageAreaBg,
               display: "flex",
               flexDirection: "column",
               gap: "16px",
@@ -2613,9 +2640,9 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                         height: "28px",
                         borderRadius: "50%",
                         overflow: "hidden",
-                        backgroundColor: "#ffffff",
+                        backgroundColor: colors.botAvatarBg,
                         flexShrink: 0,
-                        border: "1px solid #e5e7eb",
+                        border: `1px solid ${colors.border}`,
                       }}
                     >
                       <img 
@@ -2636,8 +2663,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                         height: "150px", // Fixed height for consistency
                         borderRadius: "12px",
                         overflow: "hidden",
-                        backgroundColor: "#f3f4f6",
-                        border: "1px solid #e5e7eb",
+                        backgroundColor: colors.imageBg,
+                        border: `1px solid ${colors.border}`,
                         marginBottom: "4px"
                       }}>
                         <img 
@@ -2658,10 +2685,10 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                         borderTopLeftRadius: isUser ? "18px" : "4px",
                         fontSize: "14px",
                         lineHeight: "1.5",
-                        backgroundColor: isUser ? "#ea580c" : "#ffffff",
-                        color: isUser ? "#ffffff" : "#1f2937",
-                        border: isUser ? "none" : "1px solid #e5e7eb",
-                        boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                        backgroundColor: isUser ? "#ea580c" : colors.botMessageBg,
+                        color: isUser ? "#ffffff" : colors.textPrimary,
+                        border: isUser ? "none" : `1px solid ${colors.border}`,
+                        boxShadow: isDark ? "0 1px 2px rgba(0,0,0,0.2)" : "0 1px 2px rgba(0,0,0,0.05)",
                         wordBreak: "break-word",
                         overflowWrap: "anywhere",
                         whiteSpace: "pre-wrap",
@@ -2701,8 +2728,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                     height: "28px",
                     borderRadius: "50%",
                     overflow: "hidden",
-                    backgroundColor: "#ffffff",
-                    border: "1px solid #e5e7eb",
+                    backgroundColor: colors.botAvatarBg,
+                    border: `1px solid ${colors.border}`,
                   }}
                 >
                   <img 
@@ -2713,8 +2740,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                 </div>
                 <div
                   style={{
-                    backgroundColor: "#ffffff",
-                    border: "1px solid #e5e7eb",
+                    backgroundColor: colors.botMessageBg,
+                    border: `1px solid ${colors.border}`,
                     padding: "10px 14px",
                     borderRadius: "18px",
                     borderTopLeftRadius: "4px",
@@ -2724,7 +2751,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                   }}
                 >
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-600" />
-                  <span style={{ fontSize: "12px", color: "#6b7280" }}>Thinking...</span>
+                  <span style={{ fontSize: "12px", color: colors.textSecondary }}>Thinking...</span>
                 </div>
               </div>
             )}
@@ -2740,7 +2767,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                 display: "flex",
                 gap: "8px",
                 overflowX: "auto",
-                backgroundColor: "#f9fafb", // matches message area bg
+                backgroundColor: colors.messageAreaBg, // matches message area bg
               }}
             >
             {suggestionList
@@ -2764,26 +2791,26 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                   whiteSpace: "nowrap",
                   padding: "8px 14px",
                   borderRadius: "20px",
-                  border: "1px solid #e5e7eb",
-                  backgroundColor: "#ffffff",
-                  color: "#4b5563",
+                  border: `1px solid ${colors.border}`,
+                  backgroundColor: colors.suggestionBg,
+                  color: colors.textMuted,
                   fontSize: "12px",
                   fontWeight: "500",
                   cursor: isLoading ? "default" : "pointer",
                   transition: "all 0.2s",
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                  boxShadow: isDark ? "0 1px 2px rgba(0,0,0,0.2)" : "0 1px 2px rgba(0,0,0,0.05)",
                   flexShrink: 0,
                 }}
                 onMouseEnter={(e) => {
                    if (!isLoading) {
-                     e.currentTarget.style.backgroundColor = "#f3f4f6";
-                     e.currentTarget.style.borderColor = "#d1d5db";
+                     e.currentTarget.style.backgroundColor = colors.suggestionHoverBg;
+                     e.currentTarget.style.borderColor = isDark ? "#6b7280" : "#d1d5db";
                    }
                 }}
                 onMouseLeave={(e) => {
                    if (!isLoading) {
-                     e.currentTarget.style.backgroundColor = "#ffffff";
-                     e.currentTarget.style.borderColor = "#e5e7eb";
+                     e.currentTarget.style.backgroundColor = colors.suggestionBg;
+                     e.currentTarget.style.borderColor = colors.border;
                    }
                 }}
               >
@@ -2800,8 +2827,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
               display: "flex",
               gap: "10px",
               padding: "12px 16px",
-              borderTop: "1px solid #e5e7eb",
-              backgroundColor: "#ffffff",
+              borderTop: `1px solid ${colors.border}`,
+              backgroundColor: colors.inputAreaBg,
             }}
           >
             <input
@@ -2816,21 +2843,21 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
               }
               style={{
                 flex: 1,
-                border: "1px solid #e5e7eb",
+                border: `1px solid ${colors.border}`,
                 borderRadius: "24px",
                 padding: "10px 16px",
                 outline: "none",
                 fontSize: "14px",
-                color: "#1f2937",
+                color: colors.textPrimary,
                 // Change background if cooling down
-                backgroundColor: cooldown > 0 ? "#f3f4f6" : "#f9fafb", 
+                backgroundColor: cooldown > 0 ? colors.inputBgCooldown : colors.inputBg, 
                 transition: "all 0.2s",
                 cursor: cooldown > 0 ? "not-allowed" : "text"
               }}
               onFocus={(e) => {
                 if (cooldown === 0) e.target.style.borderColor = "#ea580c";
               }}
-              onBlur={(e) => (e.target.style.borderColor = "#e5e7eb")}
+              onBlur={(e) => (e.target.style.borderColor = colors.border)}
             />
             <button
               type="submit"
@@ -2983,7 +3010,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
         `}</style>
       </div>
     );
-}, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList]); // ✅ Add cooldown here
+}, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList, isDark, colors]); // ✅ Add cooldown, isDark, colors here
 
   if (!mounted) return null;
   if (hidden) return null; // Hide chatbot when in edit mode
