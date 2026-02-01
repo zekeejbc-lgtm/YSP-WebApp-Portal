@@ -34,6 +34,7 @@
     AlertCircle,
     Settings,
   } from "lucide-react";
+  import { openEmailApp, openPhoneApp } from "./utils/externalLinks";
   import {
     fetchHomepageContent,
     updateHomepageContent,
@@ -113,6 +114,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
   import TopBar from "./components/design-system/TopBar";
   import AnimatedHamburger from "./components/design-system/AnimatedHamburger";
   import GlowingCard from "./components/GlowingCard";
+  import LazyProjectCard from "./components/LazyProjectCard";
   import AccessLogsPage from "./components/AccessLogsPage";
   import MaintenanceScreen from "./components/MaintenanceScreen";
   import PwaInstallPrompt from "./components/PwaInstallPrompt";
@@ -587,7 +589,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         try {
           // This fetches from your Google Sheet and updates LocalStorage
           await getMaintenanceModeFromBackend(true); 
-          console.log("System maintenance status synced.");
         } catch (error) {
           console.error("Failed to sync maintenance status:", error);
         }
@@ -727,8 +728,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           
           // Check if role has changed
           if (result.role !== currentRole) {
-            console.log(`[RoleCheck] Role changed: ${currentRole} → ${result.role}`);
-            
             const changeType = determineRoleChangeType(currentRole, result.role);
             setRoleChangeInfo({
               changeType,
@@ -785,7 +784,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         // 2. Backend version is newer than local version
         if (localVersion > 0 && backendVersion > localVersion) {
           // User has outdated cache - show the hard refresh modal
-          console.log(`[Cache] Outdated cache detected: local=${localVersion}, backend=${backendVersion}`);
           setLocalCacheVersion(backendVersion);
           setCacheVersion(backendVersion);
           setHardRefreshMode("full");
@@ -815,7 +813,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       if (newVersion !== undefined) {
         setLocalCacheVersion(newVersion);
         setCacheVersion(newVersion);
-        console.log(`[Cache] Version bumped: old=${customEvent.detail?.oldVersion}, new=${newVersion}`);
       } else {
         setCacheVersion(getLocalCacheVersion());
       }
@@ -896,6 +893,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     // Access Logs Modal State (to hide chatbot when modals are open)
     const [accessLogsModalOpen, setAccessLogsModalOpen] = useState(false);
     
+    // Issuance Center Modal State (to hide chatbot when modals are open)
+    const [issuanceModalOpen, setIssuanceModalOpen] = useState(false);
+    
     // Homepage Content - Fetched from GAS Backend
     const [homepageContent, setHomepageContent] = useState<HomepageMainContent & {
       projects: { title: string };
@@ -962,7 +962,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         setUserIdCode(storedUser.id || '');
         setUserPosition(storedUser.position || '');
         setUserProfilePicture(storedUser.profilePic || '');
-        console.log('[App] Session restored for user:', storedUser.name);
       }
       setSessionChecked(true);
     }, []);
@@ -1003,7 +1002,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             }
             return updated;
           });
-          console.log('[App] Homepage content loaded from GAS');
           updateUploadToast(toastId, {
             status: 'success',
             progress: 100,
@@ -1038,14 +1036,12 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       const loadProjects = async () => {
         setIsLoadingProjects(true);
         try {
-          console.log('[App] Fetching projects from backend...');
           const result = await fetchAllProjects();
           
           if (result.error) {
             console.error('[App] Error loading projects:', result.error);
             toast.error('Failed to load projects');
           } else {
-            console.log('[App] Loaded projects:', result.projects);
             setProjects(result.projects);
           }
         } catch (error) {
@@ -1066,7 +1062,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           // Invalidate cache to ensure we get fresh data on mount
           invalidateOtherContentCache();
           
-          console.log('[App] Fetching other content (Contact/OrgChart) from backend...');
           const otherContent = await fetchHomepageOtherContent();
           
           // 1. Update Org Chart State
@@ -1097,8 +1092,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               partnerButtonLink: otherContent.partnerGformUrl || prev.contact.partnerButtonLink,
             }
           }));
-
-          console.log('[App] Contact info updated from backend');
         } catch (error) {
           console.error('[App] Error loading other content:', error);
         }
@@ -1914,10 +1907,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
       try {
         updateUploadToast(toastId, { progress: 30, message: 'Uploading to Google Drive...' });
-        console.log('[App] Starting org chart upload:', file.name);
         
         const result = await uploadOrgChart(file, signal);
-        console.log('[App] Upload result:', result);
 
         if (signal.aborted) {
           return;
@@ -1925,7 +1916,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         
         if (result.success && result.imageUrl) {
           // The backend already saves the URL to the sheet, just update local state
-          console.log('[App] Setting org chart URL to:', result.imageUrl);
           setOrgChartUrl(result.imageUrl);
           updateUploadToast(toastId, {
             status: 'success',
@@ -1986,9 +1976,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
       try {
         // Clear from backend - this updates the sheet to have empty org chart URL
-        console.log('[App] Deleting org chart from backend...');
         const success = await updateHomepageOtherContent({ orgChartUrl: '' }, signal);
-        console.log('[App] Delete result:', success);
 
         if (signal.aborted) {
           return;
@@ -2666,9 +2654,18 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       }
 
       return (
-        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100" style={{ WebkitOverflowScrolling: 'touch', whiteSpace: 'nowrap', paddingBottom: 8, minHeight: 370 }}>
-          {projects.map((project) => (
-            <span key={project.projectId} style={{ display: 'inline-block', verticalAlign: 'top', marginRight: 24, width: 350, maxWidth: '90vw' }}>
+        <div 
+          className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100" 
+          style={{ 
+            WebkitOverflowScrolling: 'touch', 
+            whiteSpace: 'nowrap', 
+            paddingBottom: 8, 
+            minHeight: 370,
+            willChange: 'transform', // Optimize for scrolling
+          }}
+        >
+          {projects.map((project, index) => (
+            <LazyProjectCard key={project.projectId} index={index}>
               <GlowingCard
                 isDark={isDark}
                 glowOnHover={true}
@@ -2737,7 +2734,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                   </div>
                 </div>
               </GlowingCard>
-            </span>
+            </LazyProjectCard>
           ))}
         </div>
       );
@@ -2759,7 +2756,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen}
+        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || !!modalProject || showLoginPanel}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
       />
@@ -3182,11 +3179,23 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
     // Show Issuance Center page
     if (showIssuanceCenter) {
+      if (isPageInMaintenance("issuance")) {
+        const config = getPageMaintenanceConfig("issuance");
+        return (
+          <>
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Issuance Center" onBack={() => setShowIssuanceCenter(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <Suspense fallback={null}>
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+            </Suspense>
+            {chatbot}
+          </>
+        );
+      }
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading issuance center..." />}>
-            <IssuanceCenterPage onClose={() => setShowIssuanceCenter(false)} isDark={isDark} userRole={userRole} username={userName || 'admin'} userEmail={userEmail} />
+            <IssuanceCenterPage onClose={() => setShowIssuanceCenter(false)} isDark={isDark} userRole={userRole} username={userName || 'admin'} userEmail={userEmail} userProfilePicture={userProfilePicture} onModalStateChange={setIssuanceModalOpen} />
           </Suspense>
           {chatbot}
         </>
@@ -4696,13 +4705,11 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                 </h2>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Email Card */}
-                  <a
-                    // CHANGED: Use Gmail Web Compose with encodeURIComponent to handle '+' sign correctly
-                    href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(homepageContent.contact.email)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-4 p-4 md:p-5 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-xl transition-all duration-250 hover:-translate-y-0.5 hover:shadow-md cursor-pointer active:scale-[0.98]"
+                  {/* Email Card - PWA friendly: opens native email app */}
+                  <button
+                    type="button"
+                    onClick={() => openEmailApp(homepageContent.contact.email)}
+                    className="flex items-center gap-4 p-4 md:p-5 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-xl transition-all duration-250 hover:-translate-y-0.5 hover:shadow-md cursor-pointer active:scale-[0.98] text-left w-full"
                   >
                     <div className="shrink-0">
                       <Mail className="w-6 h-6 text-blue-600 dark:text-blue-400" />
@@ -4718,12 +4725,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                         {homepageContent.contact.email}
                       </p>
                     </div>
-                  </a>
+                  </button>
 
-                  {/* Phone Card */}
-                  <a
-                    href={`tel:${homepageContent.contact.phone.replace(/\s/g, '')}`}
-                    className="flex items-center gap-4 p-4 md:p-5 bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800 rounded-xl transition-all duration-250 hover:-translate-y-0.5 hover:shadow-md cursor-pointer active:scale-[0.98]"
+                  {/* Phone Card - PWA friendly: opens native phone app */}
+                  <button
+                    type="button"
+                    onClick={() => openPhoneApp(homepageContent.contact.phone)}
+                    className="flex items-center gap-4 p-4 md:p-5 bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800 rounded-xl transition-all duration-250 hover:-translate-y-0.5 hover:shadow-md cursor-pointer active:scale-[0.98] text-left w-full"
                   >
                     <div className="shrink-0">
                       <Phone className="w-6 h-6 text-green-600 dark:text-green-400" />
@@ -4739,7 +4747,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                         {homepageContent.contact.phone}
                       </p>
                     </div>
-                  </a>
+                  </button>
 
                   {/* Location Card */}
                   <a
@@ -4815,7 +4823,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                       {homepageContent.contact.partnerDescription}
                     </p>
                     
-                    {/* LOGIC: Determine if it is an email or a web link */}
+                    {/* LOGIC: Determine if it is an email or a web link - PWA friendly */}
                     {(() => {
                       let linkValue = homepageContent.contact.partnerButtonLink || "";
                       linkValue = linkValue.trim();
@@ -4823,40 +4831,52 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                       // Check if it is an email
                       const isEmail = linkValue.includes("@") && !linkValue.toLowerCase().includes("http");
                       
-                      let finalHref = linkValue;
-                      let target = "_blank"; // Default to new tab for web
-                      
                       if (isEmail) {
-                        // OPTION: Force open in Gmail Web Compose
-                        // We must use encodeURIComponent to handle special characters like '+' in emails
-                        finalHref = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(linkValue)}`;
-                        target = "_blank"; // Open Gmail in new tab
+                        // PWA-friendly: Use button with onClick to open native email app
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => openEmailApp(linkValue)}
+                            className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:scale-105"
+                            style={{
+                              background:
+                                "linear-gradient(135deg, #f6421f 0%, #ee8724 50%, #fbcb29 100%)",
+                              fontFamily: "var(--font-headings)",
+                              fontWeight: "600",
+                              fontSize: "1.125rem",
+                              boxShadow: "0 4px 16px rgba(246, 66, 31, 0.4)",
+                            }}
+                          >
+                            <Mail className="w-5 h-5" />
+                            {homepageContent.contact.partnerButtonText}
+                          </button>
+                        );
                       } else {
                         // Standard Web Link
+                        let finalHref = linkValue;
                         if (!linkValue.startsWith("http://") && !linkValue.startsWith("https://")) {
                           finalHref = `https://${linkValue}`;
                         }
+                        return (
+                          <a
+                            href={finalHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:scale-105"
+                            style={{
+                              background:
+                                "linear-gradient(135deg, #f6421f 0%, #ee8724 50%, #fbcb29 100%)",
+                              fontFamily: "var(--font-headings)",
+                              fontWeight: "600",
+                              fontSize: "1.125rem",
+                              boxShadow: "0 4px 16px rgba(246, 66, 31, 0.4)",
+                            }}
+                          >
+                            <Globe className="w-5 h-5" />
+                            {homepageContent.contact.partnerButtonText}
+                          </a>
+                        );
                       }
-                      
-                      return (
-                        <a
-                          href={finalHref}
-                          target={target}
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:scale-105"
-                          style={{
-                            background:
-                              "linear-gradient(135deg, #f6421f 0%, #ee8724 50%, #fbcb29 100%)",
-                            fontFamily: "var(--font-headings)",
-                            fontWeight: "600",
-                            fontSize: "1.125rem",
-                            boxShadow: "0 4px 16px rgba(246, 66, 31, 0.4)",
-                          }}
-                        >
-                          {isEmail ? <Mail className="w-5 h-5" /> : <Globe className="w-5 h-5" />}
-                          {homepageContent.contact.partnerButtonText}
-                        </a>
-                      );
                     })()}
                   </div>
                 )}
@@ -5051,8 +5071,12 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               {/* Close Button - Inside the modal */}
               <button
                 onClick={closeModal}
-                className="absolute top-3 right-3 sm:top-4 sm:right-4 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center hover:bg-black/60 transition-all duration-300 hover:rotate-90 hover:scale-110"
-                style={{ zIndex: 10 }}
+                className="absolute top-3 right-3 sm:top-4 sm:right-4 w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center transition-all duration-300 hover:rotate-90 hover:scale-110"
+                style={{ 
+                  zIndex: 10,
+                  background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                  boxShadow: '0 4px 12px rgba(246, 66, 31, 0.4)'
+                }}
                 aria-label="Close modal"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
@@ -5081,7 +5105,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                 </div>
 
                 {/* Project Details */}
-                <div className="p-5 sm:p-6 md:p-8">
+                <div className="p-5 sm:p-6 md:p-8" style={{ overflowX: 'hidden' }}>
                   <h2
                     className="mb-3 md:mb-4 text-xl sm:text-2xl md:text-3xl text-left"
                     style={{
@@ -5100,6 +5124,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                       lineHeight: "1.75",
                       letterSpacing: "0.01em",
                       textAlign: "justify",
+                      wordBreak: "break-word",
+                      overflowWrap: "anywhere",
                     }}
                   >
                     <FormattedText text={modalProject.description} />
@@ -5107,14 +5133,14 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                 </div>
               </div>
 
-              {/* Fixed Footer with Action Buttons */}
-              <div className="grid grid-cols-2 gap-3 p-5 sm:p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-b-3xl">
-                {modalProject.link && modalProject.linkText && (
+              {/* Fixed Footer with Action Button */}
+              {modalProject.link && modalProject.linkText && (
+                <div className="flex justify-center p-5 sm:p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-b-3xl">
                   <a
                     href={modalProject.link}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg text-sm sm:text-base group min-w-0"
+                    className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg text-sm sm:text-base group min-w-0"
                     style={{
                       background:
                         "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
@@ -5126,21 +5152,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                     <ExternalLink className="w-4 h-4 group-hover:rotate-45 transition-transform" />
                     <span className="truncate">{modalProject.linkText}</span>
                   </a>
-                )}
-                <button
-                  onClick={closeModal}
-                  className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm sm:text-base min-w-0 ${
-                    modalProject.link && modalProject.linkText ? "" : "col-span-2"
-                  }`}
-                  style={{
-                    borderColor: "#f6421f",
-                    color: "#f6421f",
-                    fontWeight: "600",
-                  }}
-                >
-                  <span className="truncate">Close</span>
-                </button>
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -153,11 +153,37 @@ function forceAuthorization() {
   }
   
   Logger.log('');
+  Logger.log('=== CHECKING EMAIL QUOTA ===');
+  
+  // Check MailApp access for email quota tracking
+  try {
+    const quota = MailApp.getRemainingDailyQuota();
+    Logger.log('✓ Email quota access OK: ' + quota + ' emails remaining');
+  } catch (e) {
+    Logger.log('✗ Email quota access FAILED: ' + e.toString());
+  }
+  
+  Logger.log('');
   Logger.log('=== AUTHORIZATION COMPLETE ===');
   Logger.log('If all checks passed, deploy as web app with access: ANYONE');
   Logger.log('If any failed, check the spreadsheet IDs and permissions.');
   
   return 'Authorization triggered. Check the Logs for details.';
+}
+
+/**
+ * Force email authorization specifically
+ * RUN THIS FUNCTION MANUALLY to enable email quota tracking
+ */
+function forceEmailAuthorization() {
+  try {
+    const quota = MailApp.getRemainingDailyQuota();
+    Logger.log('Email quota access authorized! Remaining: ' + quota + ' emails');
+    return 'Email quota tracking enabled. Remaining quota: ' + quota + ' emails/day';
+  } catch (e) {
+    Logger.log('Email authorization failed: ' + e.toString());
+    return 'Failed to authorize email access: ' + e.toString();
+  }
 }
 
 /**
@@ -352,10 +378,11 @@ function initializeMaintenanceSheet() {
         'MaintenanceDate', 'DurationDays', 'EnabledAt', 'EnabledBy'
       ]]);
       
-      // Add fullPWA row as first entry
-      maintenanceSheet.getRange(2, 1, 1, 9).setValues([[
-        'fullPWA', 'FALSE', '', '', '', '', '', '', ''
-      ]]);
+      // Add default page rows
+      maintenanceSheet.getRange(2, 1, 2, 9).setValues([
+        ['fullPWA', 'FALSE', '', '', '', '', '', '', ''],
+        ['issuance', 'FALSE', '', '', '', '', '', '', '']
+      ]);
       
       // Format header row
       maintenanceSheet.getRange('A1:I1').setFontWeight('bold');
@@ -924,6 +951,101 @@ function handleExportData(username) {
 // =================== SYSTEM HEALTH ===================
 
 /**
+ * Get the daily email quota refresh time (midnight Pacific Time converted to local/ISO)
+ */
+function getEmailQuotaRefreshTime() {
+  // Google Apps Script resets email quota at midnight Pacific Time
+  const now = new Date();
+  const pacificOffset = -8; // PST (adjust to -7 for PDT if needed)
+  
+  // Calculate midnight Pacific Time for tomorrow
+  const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const pacificNow = new Date(utcNow + (3600000 * pacificOffset));
+  
+  // Set to midnight tomorrow Pacific Time
+  const midnightPacific = new Date(pacificNow);
+  midnightPacific.setDate(midnightPacific.getDate() + 1);
+  midnightPacific.setHours(0, 0, 0, 0);
+  
+  // Convert back to UTC
+  const refreshTimeUTC = new Date(midnightPacific.getTime() - (3600000 * pacificOffset) - (now.getTimezoneOffset() * 60000));
+  
+  return refreshTimeUTC.toISOString();
+}
+
+/**
+ * Get email quota status
+ * Uses MailApp.getRemainingDailyQuota() for real-time detection
+ */
+function getEmailQuotaStatus() {
+  try {
+    // Get remaining quota - this is a real-time API call
+    // Note: This requires the script to have mail permissions authorized
+    let remaining;
+    try {
+      remaining = MailApp.getRemainingDailyQuota();
+    } catch (mailError) {
+      // MailApp not authorized or not available
+      Logger.log('MailApp not available: ' + mailError.toString());
+      return {
+        remaining: null,
+        dailyLimit: null,
+        percentageUsed: null,
+        status: 'unavailable',
+        refreshTime: getEmailQuotaRefreshTime(),
+        lastChecked: new Date().toISOString(),
+        message: 'Email quota tracking requires mail permissions. Run forceEmailAuthorization() to enable.'
+      };
+    }
+    
+    // Daily limit varies by account type:
+    // - Free Gmail: 100 emails/day
+    // - Google Workspace: 1,500 emails/day (varies by plan)
+    // We'll detect based on remaining quota on first check
+    const cachedLimit = getSystemSetting('email_daily_limit');
+    let dailyLimit = cachedLimit ? parseInt(cachedLimit) : 100;
+    
+    // If remaining is higher than our cached limit, update it
+    if (remaining > dailyLimit) {
+      dailyLimit = remaining > 100 ? 1500 : 100; // Assume Workspace if > 100
+      setSystemSetting('email_daily_limit', dailyLimit.toString(), 'system');
+    }
+    
+    // Calculate percentage used
+    const used = dailyLimit - remaining;
+    const percentageUsed = Math.round((used / dailyLimit) * 100 * 100) / 100;
+    
+    // Determine status
+    let status = 'healthy';
+    if (percentageUsed >= 90) {
+      status = 'critical';
+    } else if (percentageUsed >= 70) {
+      status = 'warning';
+    }
+    
+    return {
+      remaining: remaining,
+      dailyLimit: dailyLimit,
+      percentageUsed: percentageUsed,
+      status: status,
+      refreshTime: getEmailQuotaRefreshTime(),
+      lastChecked: new Date().toISOString()
+    };
+  } catch (error) {
+    Logger.log('Email quota check error: ' + error.toString());
+    return {
+      remaining: null,
+      dailyLimit: null,
+      percentageUsed: null,
+      status: 'error',
+      refreshTime: getEmailQuotaRefreshTime(),
+      lastChecked: new Date().toISOString(),
+      error: error.toString()
+    };
+  }
+}
+
+/**
  * Get system health status
  */
 function handleGetSystemHealth() {
@@ -941,6 +1063,9 @@ function handleGetSystemHealth() {
       databaseStatus = 'error';
       Logger.log('Database check error: ' + dbError.toString());
     }
+    
+    // Check email quota
+    let emailQuota = getEmailQuotaStatus();
     
     // Get storage info across ALL spreadsheets
     let totalCells = 0;
@@ -1003,7 +1128,8 @@ function handleGetSystemHealth() {
       lastExportUrl: lastExportUrl,
       lastExportName: lastExportName,
       cacheVersion: cacheVersion,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      emailQuota: emailQuota
     });
   } catch (error) {
     Logger.log('System health check error: ' + error.toString());

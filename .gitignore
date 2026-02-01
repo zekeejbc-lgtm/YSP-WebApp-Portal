@@ -48,3 +48,6 @@ Thumbs.db
 
 # Qodo
 .qodo/
+
+# GAS Backend Secrets (API Keys)
+gas-backend/Secrets.gs

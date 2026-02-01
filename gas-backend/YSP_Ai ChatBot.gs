@@ -2,14 +2,8 @@
 // YSP AI BACKEND (ROTATING KEYS)
 // ==========================================
 
-// ADD YOUR MULTIPLE KEYS HERE
-const API_KEYS = [
-  'AIzaSyCGqxDa4-eI6Fz48tLqqxiuNMn839hCENc', // Key 1
-  'AIzaSyABAlLmqblSn53gu0SIwtpXaNucgIG556Q', // Key 2
-  'AIzaSyA_P9k9I4TQyEzgq4rHMWqWimueRL0uA-k',
-  'AIzaSyDerYlDjo_EaizhdKxjZ-CcHYEpX4rxD_o',
-  'AIzaSyAWOCoN3kM16vlHFR_sVPsSElC9rbS0IBQ'
-];
+// API_KEYS are defined in Secrets.gs (gitignored for security)
+// Make sure Secrets.gs exists with your API keys before deploying
 
 const MODEL_NAME = 'gemini-2.5-flash';
 

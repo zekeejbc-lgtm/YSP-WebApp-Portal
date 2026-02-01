@@ -44,20 +44,27 @@ export function FormattedText({ text, className = '', style = {} }: FormattedTex
         // URL match
         const url = match[1];
         const href = url.startsWith('www.') ? `https://${url}` : url;
+        // Truncate display text for long URLs (max 40 chars)
+        const displayUrl = url.length > 40 ? url.substring(0, 37) + '...' : url;
         elements.push(
           <a
             key={`link-${keyIndex++}`}
             href={href}
             target="_blank"
             rel="noopener noreferrer"
+            title={url}
             style={{
               color: '#f6421f',
               textDecoration: 'underline',
               fontWeight: 500,
+              wordBreak: 'break-all',
+              overflowWrap: 'anywhere',
+              display: 'inline-block',
+              maxWidth: '100%',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {url}
+            {displayUrl}
           </a>
         );
       } else if (match[2] || match[4]) {

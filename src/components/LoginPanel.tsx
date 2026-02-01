@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, Lock, User, Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import ForgotPasswordModal from './ForgotPasswordModal';
@@ -30,6 +30,35 @@ export default function LoginPanel({
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [recentUsernames, setRecentUsernames] = useState<string[]>([]);
   const [rememberMe, setRememberMe] = useState(false);
+  
+  // Refs for input elements to avoid re-renders during typing
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  
+  // Memoized handlers to prevent re-creation on each render
+  const handleUsernameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setUsername(value);
+    if (errors.username) {
+      setErrors(prev => ({ ...prev, username: undefined }));
+    }
+  }, [errors.username]);
+  
+  const handlePasswordChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setPassword(value);
+    if (errors.password) {
+      setErrors(prev => ({ ...prev, password: undefined }));
+    }
+  }, [errors.password]);
+  
+  const toggleShowPassword = useCallback(() => {
+    setShowPassword(prev => !prev);
+  }, []);
+  
+  const handleRememberMeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setRememberMe(e.target.checked);
+  }, []);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -128,125 +157,52 @@ export default function LoginPanel({
     setShowForgotPassword(true);
   };
 
-  if (!isOpen) return null;
+  // Memoize static styles to prevent recalculation - must be before any conditional returns
+  const backdropStyle = useMemo(() => ({
+    padding: '1rem',
+    paddingTop: 'calc(1rem + env(safe-area-inset-top))',
+    paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))',
+    background: 'rgba(0, 0, 0, 0.5)',
+    zIndex: 10001,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100vw',
+    height: '100dvh',
+    minHeight: '100vh',
+  }), []);
 
+  if (!isOpen) return null;
+  
   return (
     <div 
-      className="fixed flex items-center justify-center animate-[fadeIn_0.3s_ease]"
-      style={{
-        padding: '1rem',
-        paddingTop: 'calc(1rem + env(safe-area-inset-top))',
-        paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))',
-        background: 'rgba(0, 0, 0, 0.15)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        zIndex: 10001,
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        width: '100vw',
-        height: '100dvh',
-        minHeight: '100vh',
-      }}
+      className="fixed flex items-center justify-center"
+      style={backdropStyle}
       onClick={onClose}
     >
-      {/* Enhanced Backdrop with Multiple Blur Layers */}
-      <div 
-        className="fixed"
-        style={{ 
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          width: '100vw',
-          height: '100dvh',
-          minHeight: '100vh',
-          background: isDark 
-            ? 'radial-gradient(circle at 50% 50%, rgba(246, 66, 31, 0.05), rgba(0, 0, 0, 0.2))' 
-            : 'radial-gradient(circle at 50% 50%, rgba(246, 66, 31, 0.03), rgba(0, 0, 0, 0.12))',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          zIndex: -1 
-        }}
-      />
       
-      {/* Animated Background Orbs */}
-      <div className="fixed overflow-hidden pointer-events-none" style={{ 
-        zIndex: -1,
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        width: '100vw',
-        height: '100dvh',
-        minHeight: '100vh',
-      }}>
-        <div 
-          className="absolute top-1/4 left-1/4 w-72 h-72 rounded-full opacity-20 blur-3xl animate-blob"
-          style={{ 
-            background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
-            animationDelay: '0s',
-            animationDuration: '7s'
-          }}
-        />
-        <div 
-          className="absolute top-1/3 right-1/4 w-72 h-72 rounded-full opacity-20 blur-3xl animate-blob"
-          style={{ 
-            background: 'linear-gradient(135deg, #ee8724 0%, #fbcb29 100%)',
-            animationDelay: '2s',
-            animationDuration: '7s'
-          }}
-        />
-        <div 
-          className="absolute bottom-1/4 left-1/3 w-72 h-72 rounded-full opacity-20 blur-3xl animate-blob"
-          style={{ 
-            background: 'linear-gradient(135deg, #fbcb29 0%, #f6421f 100%)',
-            animationDelay: '4s',
-            animationDuration: '7s'
-          }}
-        />
-      </div>
-      
-      {/* Login Panel Container */}
+      {/* Login Panel Container - Scrollable wrapper */}
       <div 
-        className="relative w-full my-auto animate-[scaleIn_0.3s_ease]"
+        className="relative w-full my-auto"
         style={{
           maxWidth: '28rem',
-          minHeight: 'auto',
+          maxHeight: 'calc(100dvh - 2rem)',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          WebkitOverflowScrolling: 'touch',
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Decorative Gradient Glow */}
-        <div 
-          className="absolute -inset-1 rounded-3xl opacity-75 blur-xl pointer-events-none"
-          style={{
-            background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 50%, #fbcb29 100%)',
-          }}
-        />
-        
         {/* Main Card - Clean White Panel */}
         <div 
-          className="relative rounded-2xl sm:rounded-3xl border-2 shadow-2xl overflow-hidden"
+          className="relative rounded-2xl sm:rounded-3xl border-2 shadow-2xl"
           style={{
             background: '#ffffff',
-            borderColor: 'rgba(246, 66, 31, 0.2)',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4), 0 0 40px rgba(246, 66, 31, 0.15)',
-            maxHeight: '95vh',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
+            borderColor: 'rgba(246, 66, 31, 0.3)',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)',
           }}
         >
-          {/* Decorative Top Border Gradient */}
-          <div 
-            className="absolute top-0 left-0 right-0 h-1"
-            style={{
-              background: 'linear-gradient(90deg, #f6421f 0%, #ee8724 50%, #fbcb29 100%)',
-              boxShadow: '0 4px 12px rgba(246, 66, 31, 0.4)'
-            }}
-          />
-
           {/* Close Button */}
           <button
             onClick={onClose}
@@ -382,47 +338,24 @@ export default function LoginPanel({
                     </button>
                   </div>
                 )}
-                <div className="relative group">
+                <div className="relative">
                   <input
+                    ref={usernameRef}
                     id="username"
                     type="text"
                     value={username}
                     autoComplete="username"
-                    onChange={(e) => {
-                      setUsername(e.target.value);
-                      if (errors.username) setErrors({ ...errors, username: undefined });
-                    }}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck="false"
+                    onChange={handleUsernameChange}
                     placeholder="Enter your username"
-                    className="w-full h-12 sm:h-13 px-4 rounded-xl border-2 transition-all duration-300 focus:outline-none text-sm sm:text-base text-gray-900"
+                    className="w-full h-12 sm:h-13 px-4 rounded-xl border-2 text-sm sm:text-base text-gray-900 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200"
                     style={{
-                      background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.6) 100%)',
-                      backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)',
-                      borderColor: errors.username ? '#ef4444' : 'rgba(246, 66, 31, 0.2)',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(255, 255, 255, 0.8)',
-                    }}
-                    onFocus={(e) => {
-                      e.target.style.borderColor = '#ee8724';
-                      e.target.style.boxShadow = '0 0 0 4px rgba(238, 135, 36, 0.15), 0 4px 12px rgba(238, 135, 36, 0.2)';
-                      e.target.style.transform = 'translateY(-2px)';
-                    }}
-                    onBlur={(e) => {
-                      if (!errors.username) {
-                        e.target.style.borderColor = 'rgba(246, 66, 31, 0.2)';
-                        e.target.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(255, 255, 255, 0.8)';
-                      }
-                      e.target.style.transform = 'translateY(0)';
-                    }}
-                  />
-                  {/* Decorative Gradient Border on Focus */}
-                  <div 
-                    className="absolute inset-0 rounded-xl pointer-events-none opacity-0 group-focus-within:opacity-100 transition-opacity duration-300"
-                    style={{
-                      background: 'linear-gradient(135deg, #f6421f, #ee8724, #fbcb29)',
-                      padding: '2px',
-                      WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                      WebkitMaskComposite: 'xor',
-                      maskComposite: 'exclude',
+                      background: '#ffffff',
+                      borderColor: errors.username ? '#ef4444' : 'rgba(246, 66, 31, 0.3)',
+                      WebkitAppearance: 'none',
+                      fontSize: '16px', // Prevents iOS zoom on focus
                     }}
                   />
                 </div>
@@ -444,65 +377,39 @@ export default function LoginPanel({
                   <Lock className="w-4 h-4" style={{ color: '#ee8724' }} />
                   Password
                 </label>
-                <div className="relative group">
+                <div className="relative">
                   <input
+                    ref={passwordRef}
                     id="password"
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     autoComplete="current-password"
-                    onChange={(e) => {
-                      setPassword(e.target.value);
-                      if (errors.password) setErrors({ ...errors, password: undefined });
-                    }}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck="false"
+                    onChange={handlePasswordChange}
                     placeholder="Enter your password"
-                    className="w-full h-12 sm:h-13 pl-4 pr-12 rounded-xl border-2 transition-all duration-300 focus:outline-none text-sm sm:text-base text-gray-900"
+                    className="w-full h-12 sm:h-13 pl-4 pr-12 rounded-xl border-2 text-sm sm:text-base text-gray-900 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200"
                     style={{
-                      background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.6) 100%)',
-                      backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)',
-                      borderColor: errors.password ? '#ef4444' : 'rgba(246, 66, 31, 0.2)',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(255, 255, 255, 0.8)',
-                    }}
-                    onFocus={(e) => {
-                      e.target.style.borderColor = '#ee8724';
-                      e.target.style.boxShadow = '0 0 0 4px rgba(238, 135, 36, 0.15), 0 4px 12px rgba(238, 135, 36, 0.2)';
-                      e.target.style.transform = 'translateY(-2px)';
-                    }}
-                    onBlur={(e) => {
-                      if (!errors.password) {
-                        e.target.style.borderColor = 'rgba(246, 66, 31, 0.2)';
-                        e.target.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(255, 255, 255, 0.8)';
-                      }
-                      e.target.style.transform = 'translateY(0)';
+                      background: '#ffffff',
+                      borderColor: errors.password ? '#ef4444' : 'rgba(246, 66, 31, 0.3)',
+                      WebkitAppearance: 'none',
+                      fontSize: '16px', // Prevents iOS zoom on focus
                     }}
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg transition-all duration-300 active:scale-95 hover:bg-black/5"
+                    onClick={toggleShowPassword}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg active:scale-95 hover:bg-black/5"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                     tabIndex={-1}
-                    style={{
-                      backdropFilter: 'blur(5px)'
-                    }}
                   >
                     {showPassword ? (
-                      <EyeOff className="w-5 h-5 transition-transform hover:scale-110" style={{ color: '#6b7280' }} />
+                      <EyeOff className="w-5 h-5" style={{ color: '#6b7280' }} />
                     ) : (
-                      <Eye className="w-5 h-5 transition-transform hover:scale-110" style={{ color: '#6b7280' }} />
+                      <Eye className="w-5 h-5" style={{ color: '#6b7280' }} />
                     )}
                   </button>
-                  {/* Decorative Gradient Border on Focus */}
-                  <div 
-                    className="absolute inset-0 rounded-xl pointer-events-none opacity-0 group-focus-within:opacity-100 transition-opacity duration-300"
-                    style={{
-                      background: 'linear-gradient(135deg, #f6421f, #ee8724, #fbcb29)',
-                      padding: '2px',
-                      WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                      WebkitMaskComposite: 'xor',
-                      maskComposite: 'exclude',
-                    }}
-                  />
                 </div>
                 {errors.password && (
                   <p className="flex items-center gap-1.5 mt-1.5 text-xs text-red-500 animate-[slideDown_0.2s_ease]">
@@ -533,31 +440,23 @@ export default function LoginPanel({
                 <input
                   type="checkbox"
                   checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300"
+                  onChange={handleRememberMeChange}
+                  className="h-4 w-4 rounded border-gray-300 accent-orange-500"
                 />
                 Remember username on this device
               </label>
 
-              {/* Login Button with Enhanced Gradient */}
+              {/* Login Button */}
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-12 sm:h-13 rounded-xl text-white transition-all duration-300 hover:shadow-2xl hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base relative overflow-hidden group"
+                className="w-full h-12 sm:h-13 rounded-xl text-white active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base"
                 style={{
                   background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
                   fontWeight: '600',
-                  boxShadow: '0 8px 20px rgba(246, 66, 31, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.2)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)'
+                  boxShadow: '0 4px 12px rgba(246, 66, 31, 0.3)',
                 }}
               >
-                {/* Shine Effect */}
-                <div 
-                  className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000"
-                  style={{
-                    background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent)',
-                  }}
-                />
                 {isLoading ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

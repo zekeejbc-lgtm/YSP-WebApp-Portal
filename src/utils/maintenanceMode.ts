@@ -43,6 +43,7 @@ export const AVAILABLE_PAGES = [
   { id: "feedback", name: "Feedback & Suggestions" },
   { id: "my-profile", name: "My Profile" },
   { id: "access-logs", name: "Access Logs" },
+  { id: "issuance", name: "Issuance Center" },
 ];
 
 // Get current maintenance mode state

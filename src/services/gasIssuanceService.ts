@@ -23,6 +23,7 @@ export interface Issuance {
   TemplateID: string;
   TemplateName: string;
   Status: 'Draft' | 'Sent' | 'Downloaded' | 'Archived';
+  DeliveryMethod?: 'DownloadOnly' | 'Email'; // How the issuance was created
   CreatedBy: string;
   CreatedAt: string;
   SentAt: string;
@@ -99,7 +100,7 @@ export interface CreateIssuanceData {
   templateName: string;
   createdBy: string;
   recipientType: 'Event' | 'Person' | 'Committee' | 'Directory' | 'External';
-  recipientDetails: Array<{ name: string; email: string; eventId?: string }>;
+  recipientDetails: Array<{ name: string; email: string; eventId?: string; source?: string }>;
   totalRecipients: number;
   fieldInputs: Record<string, string>;
   emailTitle?: string;
@@ -107,6 +108,8 @@ export interface CreateIssuanceData {
   customTemplateUrl?: string;
   notes?: string;
   recipients: Array<{ name: string; email: string; type: 'Member' | 'External' }>;
+  downloadOnly?: boolean; // If true, marks issuance as Sent immediately (no email sent)
+  customNameOverride?: string; // If set, use this value for {NAME} instead of individual recipient names
 }
 
 export interface CreateTemplateData {
@@ -117,6 +120,17 @@ export interface CreateTemplateData {
   fields: string[];
   isDefault?: boolean;
   createdBy: string;
+}
+
+export interface UpdateTemplateData {
+  id: string;
+  name?: string;
+  description?: string;
+  type?: string;
+  docsUrl?: string;
+  fields?: string[];
+  isDefault?: boolean;
+  status?: 'Active' | 'Archived';
 }
 
 export interface SendResult {
@@ -144,6 +158,7 @@ export interface GASIssuanceResponse<T = unknown> {
   fileName?: string;
   pageCount?: number; // Number of pages in combined preview PDF
   pdfPreviews?: Array<{ recipientName: string; pdfBase64: string }>; // Array of PDFs for pagination
+  cancelled?: boolean; // True if sending was cancelled mid-process
 }
 
 // =====================================================
@@ -244,6 +259,18 @@ async function postToGAS<T>(data: Record<string, unknown>): Promise<GASIssuanceR
  */
 export async function initializeIssuanceSheets(): Promise<GASIssuanceResponse<unknown>> {
   return fetchFromGAS({ action: 'init' });
+}
+
+/**
+ * Migrate columns to fix alignment issues
+ * Call this if spreadsheet was created before DeliveryMethod column was added
+ */
+export async function migrateColumns(): Promise<GASIssuanceResponse> {
+  const response = await fetchFromGAS({ action: 'migrateColumns' });
+  if (response.success) {
+    clearIssuanceCache();
+  }
+  return response;
 }
 
 // =====================================================
@@ -374,6 +401,22 @@ export async function deleteIssuance(id: string): Promise<void> {
   clearIssuanceCache();
 }
 
+/**
+ * Permanently delete issuance (removes from database completely)
+ */
+export async function permanentDeleteIssuance(id: string): Promise<void> {
+  const response = await postToGAS({
+    action: 'permanentDeleteIssuance',
+    id,
+  });
+  
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to permanently delete issuance');
+  }
+  
+  clearIssuanceCache();
+}
+
 // =====================================================
 // TEMPLATE OPERATIONS
 // =====================================================
@@ -436,7 +479,7 @@ export async function createTemplate(data: CreateTemplateData): Promise<string> 
 /**
  * Update existing template
  */
-export async function updateTemplate(data: Partial<IssuanceTemplate> & { id: string }): Promise<void> {
+export async function updateTemplate(data: UpdateTemplateData): Promise<void> {
   const response = await postToGAS({
     action: 'updateTemplate',
     ...data,
@@ -566,7 +609,8 @@ export async function generatePdfPreview(
   templateUrl: string,
   fieldValues: Record<string, string>,
   recipientName: string,
-  recipients?: Array<{ name: string; email: string }>
+  recipients?: Array<{ name: string; email: string }>,
+  customNameOverride?: string // If set, use this for all {NAME} replacements
 ): Promise<{ 
   pdfUrl: string; 
   pdfFileId: string; 
@@ -580,6 +624,7 @@ export async function generatePdfPreview(
     fieldValues,
     recipientName,
     recipients, // Pass recipients for combined preview
+    customNameOverride, // Pass custom name override to backend
   });
   
   if (response.success) {
@@ -650,8 +695,8 @@ export async function sendIssuance(
   issuanceId: string,
   sentBy: string,
   onProgress?: (progress: SendResult) => void
-): Promise<SendResult> {
-  const response = await postToGAS<SendResult>({
+): Promise<SendResult & { cancelled?: boolean; message?: string }> {
+  const response = await postToGAS<SendResult & { cancelled?: boolean; message?: string }>({
     action: 'sendIssuance',
     issuanceId,
     sentBy,
@@ -660,10 +705,55 @@ export async function sendIssuance(
   if (response.success && response.results) {
     clearIssuanceCache();
     if (onProgress) onProgress(response.results);
-    return response.results;
+    return {
+      ...response.results,
+      cancelled: response.cancelled,
+      message: response.message,
+    };
   }
   
   throw new Error(response.error || 'Failed to send issuance');
+}
+
+/**
+ * Cancel sending for a specific issuance
+ * Sets a flag that the backend checks between each recipient
+ */
+export async function cancelSending(issuanceId: string): Promise<void> {
+  const response = await postToGAS({
+    action: 'cancelSending',
+    issuanceId,
+  });
+  
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to cancel sending');
+  }
+}
+
+/**
+ * Resend issuance to a single recipient (for failed emails)
+ */
+export async function resendToRecipient(
+  issuanceId: string,
+  recipientId: string,
+  sentBy: string
+): Promise<{ name: string; email: string; status: string }> {
+  const response = await postToGAS<{ recipient: { name: string; email: string; status: string } }>({
+    action: 'resendToRecipient',
+    issuanceId,
+    recipientId,
+    sentBy,
+  });
+  
+  // Check for recipient in response.data or directly in response (backend returns it at root level)
+  const recipient = response.data?.recipient || (response as unknown as { recipient: { name: string; email: string; status: string } }).recipient;
+  
+  if (response.success && recipient) {
+    clearIssuanceCache();
+    return recipient;
+  }
+  
+  throw new Error(response.error || 'Failed to resend email');
 }
 
 /**

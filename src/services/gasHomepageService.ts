@@ -164,7 +164,7 @@ const isCacheValid = (): boolean => {
 export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
   // Return cached content if valid
   if (isCacheValid() && cachedContent) {
-    console.log('[GAS Homepage] Returning cached content');
+    // Silenced: repetitive cache hit log
     return cachedContent;
   }
 
@@ -179,8 +179,9 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
   }
 
   try {
-    console.log('[GAS Homepage] Fetching content from GAS...');
-    console.log('[GAS Homepage] API URL:', GAS_CONFIG.HOMEPAGE_API_URL.substring(0, 50) + '...');
+    // Silenced: verbose fetch logs
+    // console.log('[GAS Homepage] Fetching content from GAS...');
+    // console.log('[GAS Homepage] API URL:', GAS_CONFIG.HOMEPAGE_API_URL.substring(0, 50) + '...');
     
     // Create AbortController for timeout
     const controller = new AbortController();
@@ -291,7 +292,7 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
       console.warn('[GAS Homepage] Failed to persist cache', e);
     }
     
-    console.log('[GAS Homepage] Content fetched successfully');
+    // Silenced: success log
     return content;
 
   } catch (error) {
@@ -362,9 +363,6 @@ export const updateHomepageContent = async (content: HomepageMainContent): Promi
   }
 
   try {
-    console.log('[GAS Homepage] Updating content...');
-    console.log('[GAS Homepage] API URL:', GAS_CONFIG.HOMEPAGE_API_URL);
-
     const payload = {
       action: 'updateHomepage',
       data: {
@@ -384,8 +382,6 @@ export const updateHomepageContent = async (content: HomepageMainContent): Promi
       },
     };
 
-    console.log('[GAS Homepage] Payload:', JSON.stringify(payload));
-
     const response = await fetch(GAS_CONFIG.HOMEPAGE_API_URL, {
       method: 'POST',
       headers: {
@@ -394,12 +390,8 @@ export const updateHomepageContent = async (content: HomepageMainContent): Promi
       body: JSON.stringify(payload),
     });
 
-    console.log('[GAS Homepage] Response status:', response.status);
-    console.log('[GAS Homepage] Response ok:', response.ok);
-
     // GAS may redirect, so check if we got a response
     const responseText = await response.text();
-    console.log('[GAS Homepage] Response text:', responseText);
 
     let result;
     try {
@@ -408,7 +400,6 @@ export const updateHomepageContent = async (content: HomepageMainContent): Promi
       console.error('[GAS Homepage] Failed to parse response:', parseError);
       // If we can't parse but got 200, it might still be successful
       if (response.ok) {
-        console.log('[GAS Homepage] Response OK but not JSON, assuming success');
         cachedContent = null;
         cacheTimestamp = 0;
         return true;
@@ -420,7 +411,6 @@ export const updateHomepageContent = async (content: HomepageMainContent): Promi
       // Invalidate cache so next fetch gets fresh data
       cachedContent = null;
       cacheTimestamp = 0;
-      console.log('[GAS Homepage] Content updated successfully');
       return true;
     }
 
@@ -439,7 +429,6 @@ export const updateHomepageContent = async (content: HomepageMainContent): Promi
 export const clearHomepageCache = (): void => {
   cachedContent = null;
   cacheTimestamp = 0;
-  console.log('[GAS Homepage] Cache cleared');
 };
 
 /**
@@ -565,7 +554,7 @@ const isOtherCacheValid = (): boolean => {
 export const invalidateOtherContentCache = (): void => {
   cachedOtherContent = null;
   otherCacheTimestamp = 0;
-  console.log('[GAS Homepage_Other] Cache invalidated');
+  // Silenced: cache invalidation log
 };
 
 /**
@@ -575,7 +564,7 @@ export const invalidateOtherContentCache = (): void => {
 export const fetchHomepageOtherContent = async (): Promise<HomepageOtherContent> => {
   // Return cached content if valid
   if (isOtherCacheValid() && cachedOtherContent) {
-    console.log('[GAS Homepage_Other] Returning cached content');
+    // Silenced: repetitive cache hit log
     return cachedOtherContent;
   }
 
@@ -590,7 +579,8 @@ export const fetchHomepageOtherContent = async (): Promise<HomepageOtherContent>
   }
 
   try {
-    console.log('[GAS Homepage_Other] Fetching content from GAS...');
+    // Silenced: verbose fetch log
+    // console.log('[GAS Homepage_Other] Fetching content from GAS...');
     
     // Create AbortController for timeout
     const controller = new AbortController();
@@ -662,7 +652,7 @@ export const fetchHomepageOtherContent = async (): Promise<HomepageOtherContent>
     cachedOtherContent = result.data;
     otherCacheTimestamp = Date.now();
     
-    console.log('[GAS Homepage_Other] Content fetched successfully');
+    // Silenced: success log
     return result.data;
 
   } catch (error) {
@@ -755,8 +745,6 @@ export const updateHomepageOtherContent = async (
   }
 
   try {
-    console.log('[GAS Homepage_Other] Updating content...');
-
     const payload = {
       action: 'updateHomepageOther',
       data: content,
@@ -772,14 +760,12 @@ export const updateHomepageOtherContent = async (
     });
 
     const responseText = await response.text();
-    console.log('[GAS Homepage_Other] Response:', responseText);
 
     let result;
     try {
       result = JSON.parse(responseText);
     } catch (parseError) {
       if (response.ok) {
-        console.log('[GAS Homepage_Other] Response OK but not JSON, assuming success');
         cachedOtherContent = null;
         otherCacheTimestamp = 0;
         return true;
@@ -791,7 +777,6 @@ export const updateHomepageOtherContent = async (
       // Invalidate cache
       cachedOtherContent = null;
       otherCacheTimestamp = 0;
-      console.log('[GAS Homepage_Other] Content updated successfully');
       return true;
     }
 

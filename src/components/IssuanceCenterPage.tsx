@@ -22,20 +22,26 @@ import {
   X, Plus, Search, FileText, Mail, Download, Eye, Edit2, Trash2,
   ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Loader2, CheckCircle, XCircle, AlertCircle,
   LayoutGrid, List, Send, Users, Calendar, Building, Globe, User,
-  RefreshCw, Settings, Copy, ExternalLink, FileCheck, Clock, Image
+  RefreshCw, Settings, Copy, ExternalLink, FileCheck, Clock, Image, Archive, AlertTriangle
 } from "lucide-react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
+import { FormattedText } from "./FormattedText";
 import {
   getIssuances,
   getIssuancesByRecipient,
   getIssuanceById,
   createIssuance,
   deleteIssuance,
+  permanentDeleteIssuance,
+  updateIssuance,
   getTemplates,
   createTemplate,
+  updateTemplate,
   sendIssuance,
+  cancelSending,
+  resendToRecipient,
   downloadIssuance,
   generatePdfPreview,
   getRecipientsByIssuance,
@@ -51,6 +57,7 @@ import {
   parseRecipientDetails,
   convertPdfToImagePreview,
   generateIssuanceFilename,
+  migrateColumns,
   type Issuance,
   type IssuanceTemplate,
   type Recipient,
@@ -74,6 +81,8 @@ interface IssuanceCenterPageProps {
   userRole: string;
   username?: string;
   userEmail?: string; // Email for filtering member's issuances
+  userProfilePicture?: string; // Profile picture URL for member view
+  onModalStateChange?: (isOpen: boolean) => void; // Callback when any modal opens/closes (to hide chatbot)
 }
 
 type ViewMode = 'table' | 'card';
@@ -102,7 +111,35 @@ interface FieldInput {
   placeholder: string;
   value: string;
   enabled: boolean;
+  isCustomName?: boolean; // For {NAME} field: true = use custom value, false = auto-fill from recipient
 }
+
+// =====================================================
+// UTILITY FUNCTIONS
+// =====================================================
+
+// Helper to get initials from a name (handles "Lastname, Firstname" format)
+const getInitials = (name: string) => {
+  if (!name) return '?';
+  // Handle names with comma (e.g., "Lastname, Firstname Middle")
+  let displayName = name;
+  if (name.includes(',')) {
+    // Split by comma and reverse to get "Firstname Lastname"
+    const parts = name.split(',').map(p => p.trim());
+    if (parts.length >= 2) {
+      // Get first name (after comma) first word
+      const firstNames = parts[1].split(' ').filter(p => p.length > 0);
+      const lastName = parts[0].split(' ')[0]; // Get first word of lastname
+      displayName = `${firstNames[0] || ''} ${lastName}`;
+    }
+  }
+  // Now get initials from displayName
+  const words = displayName.split(' ').filter(p => p.length > 0);
+  if (words.length === 0) return '?';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  // First letter of first word + first letter of second word  
+  return (words[0][0] + words[1][0]).toUpperCase();
+};
 
 // =====================================================
 // MEMBER ISSUANCE MODAL COMPONENT
@@ -115,6 +152,8 @@ interface MemberIssuanceModalProps {
   glassStyle: React.CSSProperties;
   userEmail: string;
   username: string;
+  profilePicture?: string;
+  members?: Array<{ name: string; email: string; profilePicture?: string }>;
   onClose: () => void;
   addUploadToast: (message: UploadToastMessage) => void;
   updateUploadToast: (id: string, updates: Partial<UploadToastMessage>) => void;
@@ -127,6 +166,8 @@ function MemberIssuanceModal({
   glassStyle,
   userEmail,
   username,
+  profilePicture,
+  members = [],
   onClose,
   addUploadToast,
   updateUploadToast,
@@ -149,6 +190,36 @@ function MemberIssuanceModal({
     }) || issuance.Recipients[0]; // Fallback to first recipient
   }, [issuance.Recipients, userEmail, username]);
 
+  // Helper to find real name from members list by email
+  const findMemberNameLocal = (email?: string): string | undefined => {
+    if (!members || members.length === 0 || !email) return undefined;
+    const emailLower = email.toLowerCase().trim();
+    const member = members.find(m => m.email?.toLowerCase().trim() === emailLower);
+    return member?.name;
+  };
+
+  // Determine display name and custom name indicator
+  const { displayName, customNameToShow } = useMemo(() => {
+    const fieldValues = parseFieldInputs(issuance.FieldInputs);
+    const nameFieldValue = fieldValues['{NAME}'];
+    
+    // Try to get real name from members list
+    const realNameFromMembers = findMemberNameLocal(userRecipient?.RecipientEmail);
+    
+    // Use real name from members if found, otherwise use stored recipient name
+    const name = realNameFromMembers || userRecipient?.RecipientName || username || 'N/A';
+    
+    // Check if stored name differs from real name (was stored incorrectly as custom value)
+    const storedNameIsCustom = realNameFromMembers && userRecipient?.RecipientName && realNameFromMembers !== userRecipient.RecipientName;
+    
+    // Determine what custom name to show
+    const customName = storedNameIsCustom 
+      ? userRecipient?.RecipientName  // Show the incorrectly stored name as custom
+      : (nameFieldValue && nameFieldValue !== name ? nameFieldValue : null);  // Show {NAME} field value if different
+    
+    return { displayName: name, customNameToShow: customName };
+  }, [issuance.FieldInputs, userRecipient, username, members]);
+
   const handleDownloadCertificate = async () => {
     if (!userRecipient) {
       toast.error('No certificate found for your account');
@@ -169,7 +240,10 @@ function MemberIssuanceModal({
     try {
       // Get field values from the issuance
       const fieldValues = parseFieldInputs(issuance.FieldInputs);
-      fieldValues['{NAME}'] = userRecipient.RecipientName;
+      // Only use recipient name as fallback if no custom {NAME} value was set
+      if (!fieldValues['{NAME}'] || fieldValues['{NAME}'].trim() === '') {
+        fieldValues['{NAME}'] = userRecipient.RecipientName;
+      }
 
       updateUploadToast(toastId, { progress: 40, message: 'Fetching template...' });
 
@@ -209,6 +283,14 @@ function MemberIssuanceModal({
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
 
+        // Track the download in the backend
+        try {
+          await downloadIssuance(issuance.IssuanceID, userRecipient.RecordID, username);
+        } catch (trackError) {
+          console.warn('Failed to track download:', trackError);
+          // Don't fail the download if tracking fails
+        }
+
         updateUploadToast(toastId, {
           status: 'success',
           title: 'Download Complete',
@@ -235,67 +317,101 @@ function MemberIssuanceModal({
 
   return (
     <div
-      className="w-full max-w-md mx-auto overflow-hidden rounded-2xl border-2 flex flex-col"
+      className="w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-2xl border-2 flex flex-col"
       style={{
         ...glassStyle,
         borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
         background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
-        maxHeight: 'calc(100vh - 2rem)',
       }}
     >
-      {/* Modal Header - Compact */}
+      {/* Modal Header */}
       <div 
-        className="px-4 py-3 border-b relative flex-shrink-0"
+        className="px-5 py-4 border-b relative flex-shrink-0"
         style={{ 
           borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
           background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange}15 0%, rgba(246, 66, 31, 0.1) 100%)`
         }}
       >
-        {/* Close Button - Fixed top right */}
+        {/* Close Button - Single one at top right */}
         <button
           onClick={onClose}
-          className="absolute right-2 top-2 p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors z-10"
-          style={{ lineHeight: 0 }}
+          className="absolute right-3 top-3 p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors z-10"
         >
-          <X className="w-4 h-4" />
+          <X className="w-5 h-5" />
         </button>
         
         {/* Centered Content */}
-        <div className="text-center">
-          {/* Certificate Icon - Smaller */}
+        <div className="text-center pr-8">
+          {/* Certificate Icon */}
           <div 
-            className="w-10 h-10 mx-auto mb-1.5 rounded-full flex items-center justify-center"
+            className="w-12 h-12 mx-auto mb-2 rounded-full flex items-center justify-center"
             style={{ 
               background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange} 0%, #f6421f 100%)`,
-              boxShadow: '0 3px 12px rgba(246, 66, 31, 0.25)'
+              boxShadow: '0 4px 16px rgba(246, 66, 31, 0.3)'
             }}
           >
-            <FileCheck className="w-5 h-5 text-white" />
+            <FileCheck className="w-6 h-6 text-white" />
           </div>
           
-          <h2 className="text-base sm:text-lg font-bold mb-0 px-6" style={{ color: isDark ? '#fff' : '#000' }}>
+          <h2 className="text-lg sm:text-xl font-bold mb-1" style={{ color: isDark ? '#fff' : '#000' }}>
             {issuance.Title}
           </h2>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Certificate issued to you
           </p>
         </div>
       </div>
       
       {/* Modal Content */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 sm:space-y-4">
-        {/* Recipient Name */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        {/* Recipient Card with Profile Picture */}
         <div 
-          className="p-3 sm:p-4 rounded-xl"
+          className="p-4 rounded-xl flex items-center gap-4"
           style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
         >
-          <div className="flex items-center gap-2 sm:gap-3 mb-1.5">
-            <User className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
-            <span className="text-xs sm:text-sm font-medium text-muted-foreground">Recipient Name</span>
+          {/* Profile Picture or Initials */}
+          <div className="relative w-14 h-14 flex-shrink-0">
+            {profilePicture ? (
+              <>
+                <img
+                  src={profilePicture}
+                  alt={userRecipient?.RecipientName || username}
+                  className="w-14 h-14 rounded-full object-cover absolute inset-0"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                  }}
+                />
+                {/* Fallback initials shown behind the image */}
+                <div
+                  className="w-14 h-14 rounded-full flex items-center justify-center text-white text-lg font-bold"
+                  style={{ background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange} 0%, #f6421f 100%)` }}
+                >
+                  {getInitials(displayName)}
+                </div>
+              </>
+            ) : (
+              <div
+                className="w-14 h-14 rounded-full flex items-center justify-center text-white text-lg font-bold"
+                style={{ background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange} 0%, #f6421f 100%)` }}
+              >
+                {getInitials(displayName)}
+              </div>
+            )}
           </div>
-          <p className="text-base sm:text-lg font-semibold pl-6 sm:pl-8" style={{ color: isDark ? '#fff' : '#000' }}>
-            {userRecipient?.RecipientName || username || 'N/A'}
-          </p>
+          
+          {/* Name and Label */}
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-muted-foreground mb-0.5">Recipient Name</p>
+            <p className="text-lg font-semibold truncate" style={{ color: isDark ? '#fff' : '#000' }}>
+              {displayName}
+              {customNameToShow && (
+                <span className="text-sm font-normal text-muted-foreground ml-1">
+                  (as {customNameToShow})
+                </span>
+              )}
+            </p>
+          </div>
         </div>
 
         {/* Email Details Section */}
@@ -321,8 +437,8 @@ function MemberIssuanceModal({
             {issuance.EmailMessage && (
               <div className="pl-6 sm:pl-8">
                 <p className="text-xs text-muted-foreground mb-0.5">Message</p>
-                <p 
-                  className="text-xs sm:text-sm leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap" 
+                <div 
+                  className="text-xs sm:text-sm leading-relaxed max-h-32 overflow-y-auto" 
                   style={{ 
                     color: isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
                     textAlign: 'justify',
@@ -330,37 +446,56 @@ function MemberIssuanceModal({
                     hyphens: 'auto'
                   }}
                 >
-                  {issuance.EmailMessage}
-                </p>
+                  <FormattedText text={issuance.EmailMessage} />
+                </div>
               </div>
             )}
           </div>
         )}
 
-        {/* Status Info */}
+        {/* Notes Section - Only shown if notes exist */}
+        {issuance.Notes && (
+          <div 
+            className="p-4 rounded-xl"
+            style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <FileText className="w-5 h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              <span className="text-sm font-medium text-muted-foreground">Document Notes</span>
+            </div>
+            <p 
+              className="text-sm leading-relaxed pl-8 whitespace-pre-wrap" 
+              style={{ color: isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)' }}
+            >
+              {issuance.Notes}
+            </p>
+          </div>
+        )}
+
+        {/* Issued On Info */}
         <div 
-          className="p-3 sm:p-4 rounded-xl"
+          className="p-4 rounded-xl"
           style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
         >
-          <div className="flex items-center gap-2 sm:gap-3 mb-1.5">
-            <Calendar className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
-            <span className="text-xs sm:text-sm font-medium text-muted-foreground">Issued On</span>
+          <div className="flex items-center gap-3 mb-2">
+            <Calendar className="w-5 h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+            <span className="text-sm font-medium text-muted-foreground">Issued On</span>
           </div>
-          <p className="text-sm pl-6 sm:pl-8" style={{ color: isDark ? '#fff' : '#000' }}>
+          <p className="text-sm pl-8" style={{ color: isDark ? '#fff' : '#000' }}>
             {formatIssuanceDate(issuance.SentAt || issuance.CreatedAt)}
           </p>
         </div>
       </div>
       
-      {/* Modal Footer - Download Button */}
+      {/* Modal Footer - Download Button Only */}
       <div 
-        className="p-4 sm:p-5 border-t flex-shrink-0"
+        className="p-5 border-t flex-shrink-0"
         style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}
       >
         <button
           onClick={handleDownloadCertificate}
           disabled={isDownloading || !userRecipient}
-          className="w-full py-3 sm:py-3.5 px-4 sm:px-6 rounded-xl text-sm sm:text-base font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 sm:gap-3"
+          className="w-full py-3.5 px-6 rounded-xl text-base font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
           style={{
             background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange} 0%, #f6421f 100%)`,
             color: '#fff',
@@ -369,23 +504,15 @@ function MemberIssuanceModal({
         >
           {isDownloading ? (
             <>
-              <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+              <Loader2 className="w-5 h-5 animate-spin" />
               <span>Preparing...</span>
             </>
           ) : (
             <>
-              <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+              <Download className="w-5 h-5" />
               <span>Download Certificate</span>
             </>
           )}
-        </button>
-        
-        <button
-          onClick={onClose}
-          className="w-full mt-2 py-2 sm:py-2.5 px-4 rounded-xl text-xs sm:text-sm font-medium transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
-          style={{ color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)' }}
-        >
-          Close
         </button>
       </div>
     </div>
@@ -402,6 +529,8 @@ export default function IssuanceCenterPage({
   userRole,
   username = "admin",
   userEmail = "",
+  userProfilePicture,
+  onModalStateChange,
 }: IssuanceCenterPageProps) {
   const glassStyle = getGlassStyle(isDark);
   
@@ -413,17 +542,29 @@ export default function IssuanceCenterPage({
   // ============= STATE =============
   // List state
   const [issuances, setIssuances] = useState<Issuance[]>([]);
+  const [archivedIssuances, setArchivedIssuances] = useState<Issuance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   
+  // Archive section state
+  const [showArchiveSection, setShowArchiveSection] = useState(false);
+  const [isArchiveSearch, setIsArchiveSearch] = useState(false);
+  
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [showMemberPreviewMode, setShowMemberPreviewMode] = useState(false);
+  const [issuanceToDelete, setIssuanceToDelete] = useState<Issuance | null>(null);
   const [selectedIssuance, setSelectedIssuance] = useState<Issuance | null>(null);
   const [createModalTab, setCreateModalTab] = useState<CreateModalTab>('recipients');
   const [detailModalTab, setDetailModalTab] = useState<DetailModalTab>('info');
+  
+  // Edit mode state for Draft issuances
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editingIssuanceId, setEditingIssuanceId] = useState<string | null>(null);
   
   // Create form state
   const [templates, setTemplates] = useState<IssuanceTemplate[]>([]);
@@ -449,8 +590,8 @@ export default function IssuanceCenterPage({
   const [externalName, setExternalName] = useState("");
   const [externalEmail, setExternalEmail] = useState("");
   
-  // Universal search command state
-  type SearchCommand = '@Person' | '@Event' | '@Committee' | '@All' | '@External' | null;
+  // Universal search command state - extended with @archive
+  type SearchCommand = '@Person' | '@Event' | '@Committee' | '@All' | '@External' | '@archive' | null;
   const [activeCommand, setActiveCommand] = useState<SearchCommand>(null);
   const [commandSearchQuery, setCommandSearchQuery] = useState("");
   const [showAllRecipients, setShowAllRecipients] = useState(false);
@@ -463,9 +604,24 @@ export default function IssuanceCenterPage({
   const [newTemplateFields, setNewTemplateFields] = useState<string[]>(["{NAME}"]);
   const [newFieldInput, setNewFieldInput] = useState("");
   
+  // Template editing state
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [editTemplateName, setEditTemplateName] = useState("");
+  const [editTemplateType, setEditTemplateType] = useState("Custom");
+  const [editTemplateDocsUrl, setEditTemplateDocsUrl] = useState("");
+  const [editTemplateFields, setEditTemplateFields] = useState<string[]>([]);
+  const [editFieldInput, setEditFieldInput] = useState("");
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  
+  // Dynamic field addition state (for adding fields while creating issuance)
+  const [showAddFieldInput, setShowAddFieldInput] = useState(false);
+  const [dynamicFieldInput, setDynamicFieldInput] = useState("");
+  
   // Sending state
   const [isSending, setIsSending] = useState(false);
   const [sendProgress, setSendProgress] = useState<SendResult | null>(null);
+  const [resendingRecipientId, setResendingRecipientId] = useState<string | null>(null);
+  const [sendCancelled, setSendCancelled] = useState(false); // Track if user wants to cancel sending
   
   // PDF Preview state
   const [previewPdfUrl, setPreviewPdfUrl] = useState("");
@@ -481,6 +637,13 @@ export default function IssuanceCenterPage({
   const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
   
   const recipientSearchRef = useRef<HTMLDivElement>(null);
+
+  // ============= MODAL STATE TRACKING FOR CHATBOT VISIBILITY =============
+  // Track when any modal is open and notify parent to hide chatbot
+  useEffect(() => {
+    const anyModalOpen = showCreateModal || showDetailModal || showDeleteConfirmModal || showMemberPreviewMode;
+    onModalStateChange?.(anyModalOpen);
+  }, [showCreateModal, showDetailModal, showDeleteConfirmModal, showMemberPreviewMode, onModalStateChange]);
 
   // ============= UPLOAD TOAST HELPERS =============
   const addUploadToast = (message: UploadToastMessage) => {
@@ -558,6 +721,19 @@ export default function IssuanceCenterPage({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
   
+  // Handle @archive search command in main search bar
+  useEffect(() => {
+    if (searchQuery.toLowerCase().startsWith('@archive ')) {
+      setIsArchiveSearch(true);
+      setShowArchiveSection(true);
+    } else if (searchQuery.toLowerCase() === '@archive') {
+      setIsArchiveSearch(true);
+      setShowArchiveSection(true);
+    } else {
+      setIsArchiveSearch(false);
+    }
+  }, [searchQuery]);
+  
   // ============= DATA LOADERS (with localStorage caching) =============
   
   const loadIssuances = async () => {
@@ -568,7 +744,13 @@ export default function IssuanceCenterPage({
       const data = isMemberView && (userEmail || username)
         ? await getIssuancesByRecipient(userEmail || '', username)
         : await getIssuances();
-      setIssuances(data);
+      
+      // Separate active and archived issuances
+      const active = data.filter((i: Issuance) => i.Status !== 'Archived');
+      const archived = data.filter((i: Issuance) => i.Status === 'Archived');
+      
+      setIssuances(active);
+      setArchivedIssuances(archived);
     } catch (error) {
       console.error("Error loading issuances:", error);
       toast.error("Failed to load issuances");
@@ -634,7 +816,8 @@ export default function IssuanceCenterPage({
         const cached = getCachedData<MemberWithEmail[]>(CACHE_KEYS.members);
         if (cached && cached.length > 0) {
           setMembers(cached);
-          console.log(`[Issuance] Loaded ${cached.length} members from cache`);
+          // Silenced: repetitive cache hit log
+          // console.log(`[Issuance] Loaded ${cached.length} members from cache`);
           setIsLoadingMembers(false);
           return;
         }
@@ -676,7 +859,6 @@ export default function IssuanceCenterPage({
       } else {
         setMembers(uniqueMembers);
         setCachedData(CACHE_KEYS.members, uniqueMembers);
-        console.log(`[Issuance] Fetched ${uniqueMembers.length} members from Directory service`);
       }
     } catch (error) {
       console.error("Error loading members from Directory:", error);
@@ -693,6 +875,30 @@ export default function IssuanceCenterPage({
       setSettings(data);
     } catch (error) {
       console.error("Error loading settings:", error);
+    }
+  };
+  
+  // ============= DATABASE MIGRATION =============
+  
+  const handleMigrateColumns = async () => {
+    try {
+      toast.loading("Running database migration...");
+      const result = await migrateColumns();
+      toast.dismiss();
+      if (result.success) {
+        if ((result as { noChanges?: boolean }).noChanges) {
+          toast.success("Database columns are already aligned correctly!");
+        } else {
+          toast.success("Database migration completed successfully! Please reload the page.");
+          // Reload issuances
+          await loadIssuances();
+        }
+      } else {
+        toast.error(`Migration failed: ${result.error}`);
+      }
+    } catch (error) {
+      toast.dismiss();
+      toast.error(`Migration error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
   
@@ -724,8 +930,8 @@ export default function IssuanceCenterPage({
       });
     }
     
-    // Filter by search query
-    if (searchQuery.trim()) {
+    // Filter by search query (exclude @archive command from the search query)
+    if (searchQuery.trim() && !isArchiveSearch) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(i =>
         i.Title.toLowerCase().includes(query) ||
@@ -735,7 +941,43 @@ export default function IssuanceCenterPage({
     }
     
     return filtered;
-  }, [issuances, typeFilter, searchQuery, templates]);
+  }, [issuances, typeFilter, searchQuery, templates, isArchiveSearch]);
+  
+  // Filter archived issuances
+  const filteredArchivedIssuances = useMemo(() => {
+    let filtered = archivedIssuances;
+    
+    // If @archive search, extract the search query after @archive
+    if (isArchiveSearch && searchQuery.toLowerCase().startsWith('@archive ')) {
+      const archiveQuery = searchQuery.slice(9).toLowerCase().trim();
+      if (archiveQuery) {
+        filtered = filtered.filter(i =>
+          i.Title.toLowerCase().includes(archiveQuery) ||
+          i.TemplateName.toLowerCase().includes(archiveQuery) ||
+          i.CreatedBy.toLowerCase().includes(archiveQuery)
+        );
+      }
+    }
+    
+    // Also apply type filter to archived
+    if (typeFilter !== "all") {
+      filtered = filtered.filter(i => {
+        const template = templates.find(t => t.TemplateID === i.TemplateID);
+        if (template?.Type === typeFilter) return true;
+        const templateNameLower = i.TemplateName?.toLowerCase() || '';
+        const filterLower = typeFilter.toLowerCase();
+        if (typeFilter === 'Digital Certificate') {
+          return templateNameLower.includes('certificate') || templateNameLower.includes('e-certificate');
+        }
+        if (typeFilter === 'Memo') {
+          return templateNameLower.includes('memo') || templateNameLower.includes('memorandum');
+        }
+        return templateNameLower.includes(filterLower);
+      });
+    }
+    
+    return filtered;
+  }, [archivedIssuances, searchQuery, isArchiveSearch, typeFilter, templates]);
   
   // Command suggestions for universal search
   const SEARCH_COMMANDS = [
@@ -801,6 +1043,7 @@ export default function IssuanceCenterPage({
     setPreviewImageUrl("");
     setPreviewPdfList([]);
     setCurrentPreviewIndex(0);
+    setShowMemberPreviewMode(false);
     
     setSelectedIssuance(issuance);
     setDetailModalTab('info');
@@ -811,28 +1054,182 @@ export default function IssuanceCenterPage({
       const fullData = await getIssuanceById(issuance.IssuanceID);
       setSelectedIssuance(fullData);
       
-      // Debug log to check if Recipients are loaded
-      console.log('[Issuance Debug] Full data loaded:', {
-        issuanceId: fullData.IssuanceID,
-        title: fullData.Title,
-        recipientsCount: fullData.Recipients?.length || 0,
-        recipients: fullData.Recipients
-      });
+      // Debug log silenced for production
+      // console.log('[Issuance Debug] Full data loaded:', {
+      //   issuanceId: fullData.IssuanceID,
+      //   title: fullData.Title,
+      //   recipientsCount: fullData.Recipients?.length || 0,
+      //   recipients: fullData.Recipients
+      // });
     } catch (error) {
       console.error("Error loading issuance details:", error);
     }
   };
   
-  const handleDeleteIssuance = async (id: string) => {
-    if (!confirm("Are you sure you want to archive this issuance?")) return;
+  // Open delete confirmation modal
+  const handleOpenDeleteConfirm = (issuance: Issuance) => {
+    setIssuanceToDelete(issuance);
+    setShowDeleteConfirmModal(true);
+  };
+  
+  // Archive issuance (soft delete)
+  const handleArchiveIssuance = async (id: string) => {
+    const toastId = `archive-${Date.now()}`;
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Archiving Issuance',
+      message: 'Moving issuance to archive...',
+      status: 'loading',
+      progress: 30
+    });
     
     try {
       await deleteIssuance(id);
-      toast.success("Issuance archived");
-      logDelete(username, "Issuance", id);
+      
+      updateUploadToast(toastId, {
+        status: 'success',
+        title: 'Archived Successfully',
+        message: 'Issuance has been moved to archive',
+        progress: 100
+      });
+      
+      logDelete(username, "Issuance (Archived)", id);
       loadIssuances();
+      
+      setTimeout(() => removeUploadToast(toastId), 3000);
     } catch (error) {
-      toast.error("Failed to archive issuance");
+      updateUploadToast(toastId, {
+        status: 'error',
+        title: 'Archive Failed',
+        message: error instanceof Error ? error.message : 'Failed to archive issuance'
+      });
+      setTimeout(() => removeUploadToast(toastId), 5000);
+    }
+  };
+  
+  // Permanently delete issuance (hard delete)
+  const handlePermanentDelete = async () => {
+    if (!issuanceToDelete) return;
+    
+    const toastId = `delete-${Date.now()}`;
+    const issuanceTitle = issuanceToDelete.Title;
+    const id = issuanceToDelete.IssuanceID;
+    
+    setShowDeleteConfirmModal(false);
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Deleting Issuance',
+      message: 'Permanently removing issuance and all associated data...',
+      status: 'loading',
+      progress: 20
+    });
+    
+    try {
+      updateUploadToast(toastId, { progress: 50, message: 'Deleting recipients...' });
+      
+      await permanentDeleteIssuance(id);
+      
+      updateUploadToast(toastId, {
+        status: 'success',
+        title: 'Deleted Successfully',
+        message: `"${issuanceTitle}" has been permanently deleted`,
+        progress: 100
+      });
+      
+      logDelete(username, "Issuance (Permanent)", `${id} - ${issuanceTitle}`);
+      loadIssuances();
+      setIssuanceToDelete(null);
+      
+      setTimeout(() => removeUploadToast(toastId), 4000);
+    } catch (error) {
+      updateUploadToast(toastId, {
+        status: 'error',
+        title: 'Delete Failed',
+        message: error instanceof Error ? error.message : 'Failed to permanently delete issuance'
+      });
+      setTimeout(() => removeUploadToast(toastId), 5000);
+    }
+  };
+  
+  // Resend email to a failed recipient
+  const handleResendToRecipient = async (issuanceId: string, recipientId: string, recipientName: string) => {
+    const toastId = `resend-${Date.now()}`;
+    setResendingRecipientId(recipientId);
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Resending Email',
+      message: `Sending email to ${recipientName}...`,
+      status: 'loading',
+      progress: 30
+    });
+    
+    try {
+      const result = await resendToRecipient(issuanceId, recipientId, username);
+      
+      updateUploadToast(toastId, {
+        status: 'success',
+        title: 'Email Sent',
+        message: `Successfully sent email to ${result.name}`,
+        progress: 100
+      });
+      
+      // Refresh the issuance details to update the recipients list
+      if (selectedIssuance) {
+        const updatedIssuance = await getIssuanceById(issuanceId);
+        setSelectedIssuance(updatedIssuance);
+      }
+      
+      // Also refresh the main list
+      loadIssuances();
+      
+      setTimeout(() => removeUploadToast(toastId), 3000);
+    } catch (error) {
+      updateUploadToast(toastId, {
+        status: 'error',
+        title: 'Send Failed',
+        message: error instanceof Error ? error.message : 'Failed to send email'
+      });
+      setTimeout(() => removeUploadToast(toastId), 5000);
+    } finally {
+      setResendingRecipientId(null);
+    }
+  };
+  
+  // Restore archived issuance
+  const handleRestoreIssuance = async (id: string) => {
+    const toastId = `restore-${Date.now()}`;
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Restoring Issuance',
+      message: 'Restoring issuance from archive...',
+      status: 'loading',
+      progress: 30
+    });
+    
+    try {
+      await updateIssuance({ id, Status: 'Sent' });
+      
+      updateUploadToast(toastId, {
+        status: 'success',
+        title: 'Restored Successfully',
+        message: 'Issuance has been restored',
+        progress: 100
+      });
+      
+      loadIssuances();
+      
+      setTimeout(() => removeUploadToast(toastId), 3000);
+    } catch (error) {
+      updateUploadToast(toastId, {
+        status: 'error',
+        title: 'Restore Failed',
+        message: error instanceof Error ? error.message : 'Failed to restore issuance'
+      });
+      setTimeout(() => removeUploadToast(toastId), 5000);
     }
   };
   
@@ -875,6 +1272,100 @@ export default function IssuanceCenterPage({
     setShowRecipientDropdown(false);
     setExternalName('');
     setExternalEmail('');
+    // Reset dynamic field state
+    setShowAddFieldInput(false);
+    setDynamicFieldInput('');
+    // Reset edit mode
+    setIsEditMode(false);
+    setEditingIssuanceId(null);
+    setShowCreateModal(true);
+  };
+
+  // Handle editing a draft issuance
+  const handleEditDraftIssuance = async (issuance: Issuance) => {
+    // Only allow editing Draft issuances
+    if (issuance.Status !== 'Draft') {
+      toast.error('Only draft issuances can be edited');
+      return;
+    }
+    
+    // Cleanup any existing preview URL
+    cleanupPreviewUrl();
+    
+    // Close detail modal if open
+    setShowDetailModal(false);
+    
+    // Set edit mode
+    setIsEditMode(true);
+    setEditingIssuanceId(issuance.IssuanceID);
+    
+    // Populate form with existing data
+    setIssuanceTitle(issuance.Title);
+    setEmailTitle(issuance.EmailTitle || '');
+    setEmailMessage(issuance.EmailMessage || '');
+    setCustomTemplateUrl(issuance.CustomTemplateUrl || '');
+    setSendToEmail(issuance.DeliveryMethod !== 'DownloadOnly');
+    
+    // Find and set the template
+    const template = templates.find(t => t.TemplateID === issuance.TemplateID);
+    if (template) {
+      setSelectedTemplate(template);
+      
+      // Parse and set field inputs from the issuance
+      try {
+        const savedFieldInputs = JSON.parse(issuance.FieldInputs || '{}');
+        const templateFields = template.FieldsParsed || [];
+        const newFieldInputs: FieldInput[] = templateFields.map(placeholder => ({
+          placeholder,
+          value: savedFieldInputs[placeholder] || '',
+          enabled: true,
+          isCustomName: placeholder === '{NAME}' && !!savedFieldInputs['{NAME}']
+        }));
+        setFieldInputs(newFieldInputs);
+      } catch {
+        // If parsing fails, use default field inputs
+        const templateFields = template.FieldsParsed || [];
+        setFieldInputs(templateFields.map(placeholder => ({
+          placeholder,
+          value: '',
+          enabled: true,
+          isCustomName: false
+        })));
+      }
+    }
+    
+    // Parse and set recipients
+    try {
+      const recipientDetails = JSON.parse(issuance.RecipientDetails || '[]');
+      const recipients: SelectedRecipient[] = recipientDetails.map((r: { name: string; email: string; source?: string }, index: number) => ({
+        id: `edit-${index}`,
+        name: r.name,
+        email: r.email,
+        type: r.email ? 'Member' : 'External' as 'Member' | 'External',
+        source: r.source,
+        hasEmail: !!r.email
+      }));
+      setSelectedRecipients(recipients);
+    } catch {
+      setSelectedRecipients([]);
+    }
+    
+    // Reset other states
+    setCreateModalTab('recipients');
+    setPreviewPdfUrl("");
+    setPreviewImageUrl("");
+    setPreviewPdfList([]);
+    setCurrentPreviewIndex(0);
+    setActiveCommand(null);
+    setCommandSearchQuery('');
+    setRecipientSearchQuery('');
+    setShowRecipientDropdown(false);
+    setExternalName('');
+    setExternalEmail('');
+    setShowAddFieldInput(false);
+    setDynamicFieldInput('');
+    
+    // Open modal
     setShowCreateModal(true);
   };
   
@@ -917,7 +1408,8 @@ export default function IssuanceCenterPage({
     setFieldInputs(fields.map(f => ({
       placeholder: f,
       value: "",
-      enabled: true
+      enabled: true,
+      isCustomName: f === '{NAME}' ? false : undefined // NAME field defaults to auto-fill
     })));
     
     // Set default email title
@@ -930,17 +1422,25 @@ export default function IssuanceCenterPage({
     }
   };
   
+  // Check if a recipient is already in the selected list (for duplicate detection)
+  const isRecipientAlreadyAdded = (email?: string, name?: string, id?: string): boolean => {
+    if (!email && !name) return false;
+    const recipientKey = email || `${id}-${name}`;
+    return selectedRecipients.some(r => (r.email || `${r.id}-${r.name}`) === recipientKey);
+  };
+  
   const handleAddRecipient = (recipient: SelectedRecipient) => {
     // Use id or email+name as unique identifier (for recipients without email)
     const recipientKey = recipient.email || `${recipient.id}-${recipient.name}`;
     if (selectedRecipients.find(r => (r.email || `${r.id}-${r.name}`) === recipientKey)) {
-      toast.error("Recipient already added");
+      toast.info(`${recipient.name} is already in the list`, { duration: 2000 });
       return;
     }
     setSelectedRecipients(prev => [...prev, recipient]);
     setRecipientSearchQuery("");
     setCommandSearchQuery("");
-    setShowRecipientDropdown(false);
+    // Don't close dropdown - allow combining sources
+    // setShowRecipientDropdown(false);
     toast.success(`Added: ${recipient.name}`);
   };
   
@@ -1015,21 +1515,25 @@ export default function IssuanceCenterPage({
             hasEmail: a.hasEmail !== undefined ? a.hasEmail : !!a.email
           }));
           
+          // Track how many were added vs skipped (duplicates)
+          let addedCount = 0;
           setSelectedRecipients(prev => {
             // Use id+name as key for recipients without email
             const existing = new Set(prev.map(r => r.email || `${r.id}-${r.name}`));
             const toAdd = newRecipients.filter(r => !existing.has(r.email || `${r.id}-${r.name}`));
+            addedCount = toAdd.length;
             return [...prev, ...toAdd];
           });
           
-          // Show detailed toast with email status
+          const skipped = newRecipients.length - addedCount;
+          
+          // Show detailed toast with email status and duplicate info
           const withEmail = newRecipients.filter(r => r.hasEmail).length;
           const withoutEmail = newRecipients.length - withEmail;
-          if (withoutEmail > 0) {
-            toast.success(`Added ${newRecipients.length} attendees from ${event.Title} (${withoutEmail} without email - shown in red)`);
-          } else {
-            toast.success(`Added ${newRecipients.length} attendees from ${event.Title}`);
-          }
+          let message = `Added ${addedCount} attendees from ${event.Title}`;
+          if (skipped > 0) message += ` (${skipped} duplicates skipped)`;
+          if (withoutEmail > 0) message += ` • ${withoutEmail} without email`;
+          toast.success(message);
         } catch {
           toast.error("Failed to load event attendees");
         } finally {
@@ -1051,12 +1555,22 @@ export default function IssuanceCenterPage({
             type: 'Member' as const,
             source: committee.name
           })).filter(r => r.email);
+          
+          // Track how many were added vs skipped (duplicates)
+          let addedCount = 0;
           setSelectedRecipients(prev => {
             const existing = new Set(prev.map(r => r.email));
             const toAdd = newRecipients.filter(r => !existing.has(r.email));
+            addedCount = toAdd.length;
             return [...prev, ...toAdd];
           });
-          toast.success(`Added ${newRecipients.length} members from ${committee.name}`);
+          
+          const skipped = newRecipients.length - addedCount;
+          if (skipped > 0) {
+            toast.success(`Added ${addedCount} members from ${committee.name} (${skipped} duplicates skipped)`);
+          } else {
+            toast.success(`Added ${addedCount} members from ${committee.name}`);
+          }
         } catch {
           toast.error("Failed to load committee members");
         } finally {
@@ -1091,6 +1605,12 @@ export default function IssuanceCenterPage({
       return;
     }
     
+    // Check for duplicate by email
+    if (isRecipientAlreadyAdded(externalEmail.trim())) {
+      toast.info(`A recipient with this email is already added`, { duration: 2000 });
+      return;
+    }
+    
     handleAddRecipient({
       id: `ext-${Date.now()}`,
       name: externalName.trim(),
@@ -1101,6 +1621,7 @@ export default function IssuanceCenterPage({
     
     setExternalName("");
     setExternalEmail("");
+    // Keep dropdown open for more additions
   };
   
   const handleLoadAllDirectory = async () => {
@@ -1116,8 +1637,18 @@ export default function IssuanceCenterPage({
         source: 'Directory'
       }));
       
-      setSelectedRecipients(newRecipients);
-      toast.success(`Added ${newRecipients.length} members from directory`);
+      // Filter out duplicates when combining with existing recipients
+      const existingEmails = new Set(selectedRecipients.map(r => r.email?.toLowerCase()).filter(Boolean));
+      const toAdd = newRecipients.filter(r => !existingEmails.has(r.email.toLowerCase()));
+      const skipped = newRecipients.length - toAdd.length;
+      
+      setSelectedRecipients(prev => [...prev, ...toAdd]);
+      
+      if (skipped > 0) {
+        toast.success(`Added ${toAdd.length} members from directory (${skipped} duplicates skipped)`);
+      } else {
+        toast.success(`Added ${toAdd.length} members from directory`);
+      }
     } catch (error) {
       toast.error("Failed to load directory");
     } finally {
@@ -1157,31 +1688,44 @@ export default function IssuanceCenterPage({
       updateUploadToast(toastId, { progress: 30, progressLabel: 'Processing template...' });
       
       const fieldValues: Record<string, string> = {};
+      const nameField = fieldInputs.find(f => f.placeholder === '{NAME}');
+      const useCustomName = nameField?.isCustomName && nameField?.value?.trim();
+      
       fieldInputs.forEach(f => {
         if (f.enabled) {
-          fieldValues[f.placeholder] = f.value || `[${f.placeholder}]`;
+          // For {NAME} field with custom value enabled, use the custom value
+          if (f.placeholder === '{NAME}' && f.isCustomName && f.value?.trim()) {
+            fieldValues[f.placeholder] = f.value.trim();
+          } else {
+            fieldValues[f.placeholder] = f.value || `[${f.placeholder}]`;
+          }
         }
       });
       
-      // Auto-fill {NAME} with first recipient's name for preview
-      const previewName = selectedRecipients.length > 0 
-        ? selectedRecipients[0].name 
-        : "Sample Recipient Name";
+      // Auto-fill {NAME} with first recipient's name for preview (only if not using custom name)
+      const previewName = useCustomName 
+        ? nameField!.value.trim()
+        : (selectedRecipients.length > 0 
+          ? selectedRecipients[0].name 
+          : "Sample Recipient Name");
       
-      // Override {NAME} if it exists in fields (for preview purposes)
-      if (fieldValues['{NAME}'] === '' || fieldValues['{NAME}'] === '[{NAME}]') {
+      // Override {NAME} if it exists in fields and not using custom name (for preview purposes)
+      if (!useCustomName && (fieldValues['{NAME}'] === '' || fieldValues['{NAME}'] === '[{NAME}]')) {
         fieldValues['{NAME}'] = previewName;
       }
       
       updateUploadToast(toastId, { progress: 50, progressLabel: 'Generating PDF...' });
       
       // Pass all recipients for combined multi-page preview
-      // Each recipient will get their own page in the preview PDF
-      const recipientsForPreview = selectedRecipients.length > 0 
+      // If using custom name, modify recipients to all use the same name for preview
+      let recipientsForPreview = selectedRecipients.length > 0 
         ? selectedRecipients 
         : undefined;
       
-      const result = await generatePdfPreview(templateUrl, fieldValues, previewName, recipientsForPreview);
+      // If using custom name override, pass that info to the preview generator
+      const customNameForPreview = useCustomName ? nameField!.value.trim() : undefined;
+      
+      const result = await generatePdfPreview(templateUrl, fieldValues, previewName, recipientsForPreview, customNameForPreview);
       
       updateUploadToast(toastId, { progress: 90, progressLabel: 'Finalizing...' });
       
@@ -1248,12 +1792,13 @@ export default function IssuanceCenterPage({
     }
     
     const toastId = `issuance-${Date.now()}`;
+    const isUpdating = isEditMode && editingIssuanceId;
     
     // Add debug toast
     addUploadToast({
       id: toastId,
-      title: sendToEmail ? 'Sending Issuance' : 'Creating Issuance',
-      message: 'Preparing issuance...',
+      title: isUpdating ? 'Updating Draft' : (sendToEmail ? 'Sending Issuance' : 'Creating Issuance'),
+      message: isUpdating ? 'Updating issuance...' : 'Preparing issuance...',
       status: 'loading',
       progress: 5,
       progressLabel: 'Initializing...'
@@ -1262,11 +1807,22 @@ export default function IssuanceCenterPage({
     try {
       // Prepare field inputs
       const fieldValues: Record<string, string> = {};
+      const nameField = fieldInputs.find(f => f.placeholder === '{NAME}');
+      const useCustomName = nameField?.isCustomName && nameField?.value?.trim();
+      
       fieldInputs.forEach(f => {
         if (f.enabled) {
-          fieldValues[f.placeholder] = f.value;
+          // For {NAME} field with custom value enabled, use the custom value
+          if (f.placeholder === '{NAME}' && f.isCustomName && f.value?.trim()) {
+            fieldValues[f.placeholder] = f.value.trim();
+          } else {
+            fieldValues[f.placeholder] = f.value;
+          }
         }
       });
+      
+      // Store custom name value if using custom name for all recipients
+      const customNameValue = useCustomName ? nameField!.value.trim() : undefined;
       
       // Determine recipient type based on sources
       const determineRecipientType = (): RecipientType => {
@@ -1281,121 +1837,222 @@ export default function IssuanceCenterPage({
         return 'Person';
       };
       
-      updateUploadToast(toastId, { progress: 15, progressLabel: 'Creating issuance record...' });
+      updateUploadToast(toastId, { progress: 15, progressLabel: isUpdating ? 'Updating issuance record...' : 'Creating issuance record...' });
       
-      const issuanceData: CreateIssuanceData = {
-        title: issuanceTitle,
-        templateId: selectedTemplate.TemplateID,
-        templateName: selectedTemplate.Name,
-        createdBy: username,
-        recipientType: determineRecipientType(),
-        recipientDetails: selectedRecipients.map(r => ({
-          name: r.name,
-          email: r.email,
-          source: r.source
-        })),
-        totalRecipients: selectedRecipients.length,
-        fieldInputs: fieldValues,
-        emailTitle: sendToEmail ? emailTitle : undefined,
-        emailMessage: sendToEmail ? emailMessage : undefined,
-        customTemplateUrl: customTemplateUrl || undefined,
-        recipients: selectedRecipients.map(r => ({
-          name: r.name,
-          email: r.email,
-          type: r.type
-        }))
-      };
-      
-      const issuanceId = await createIssuance(issuanceData);
-      
-      updateUploadToast(toastId, { progress: 30, progressLabel: 'Issuance created...' });
-      
-      logCreate(username, "Issuance", issuanceTitle);
-      
-      // If sending to email, trigger send immediately
-      if (sendToEmail) {
-        setIsSending(true);
-        
-        updateUploadToast(toastId, { 
-          progress: 35, 
-          progressLabel: `Sending to ${selectedRecipients.length} recipients...`,
-          message: `Sending emails to ${selectedRecipients.length} recipients...`
+      if (isUpdating) {
+        // UPDATE existing draft issuance
+        await updateIssuance({
+          id: editingIssuanceId!,
+          Title: issuanceTitle,
+          TemplateID: selectedTemplate.TemplateID,
+          TemplateName: selectedTemplate.Name,
+          RecipientType: determineRecipientType(),
+          RecipientDetails: JSON.stringify(selectedRecipients.map(r => ({
+            name: r.name,
+            email: r.email,
+            source: r.source
+          }))),
+          TotalRecipients: selectedRecipients.length,
+          FieldInputs: JSON.stringify(fieldValues),
+          EmailTitle: sendToEmail ? emailTitle : '',
+          EmailMessage: sendToEmail ? emailMessage : '',
+          CustomTemplateUrl: customTemplateUrl || '',
+          DeliveryMethod: sendToEmail ? 'Email' : 'DownloadOnly'
         });
         
-        try {
-          const result = await sendIssuance(issuanceId, username, (progress) => {
-            setSendProgress(progress);
-            const percent = Math.round(35 + (progress.sent / progress.total) * 60);
-            updateUploadToast(toastId, { 
-              progress: percent, 
-              progressLabel: `Sent ${progress.sent}/${progress.total}...`,
-              message: `Sent ${progress.sent} of ${progress.total} emails${progress.failed > 0 ? ` (${progress.failed} failed)` : ''}`
-            });
-          });
-          
-          setSendProgress(result);
-          
-          // Final result
-          if (result.failed > 0) {
-            // Show which recipients failed
-            const failedRecipients = result.details
-              .filter(d => d.status === 'failed')
-              .map(d => d.name)
-              .slice(0, 3);
-            const failedMsg = failedRecipients.length > 3 
-              ? `${failedRecipients.join(', ')} and ${result.failed - 3} more`
-              : failedRecipients.join(', ');
-            
-            updateUploadToast(toastId, {
-              status: 'error',
-              title: 'Partially Sent',
-              message: `Sent: ${result.sent} | Failed: ${result.failed}\nFailed: ${failedMsg}`,
-              progress: 100
-            });
-            setTimeout(() => removeUploadToast(toastId), 8000);
-          } else {
-            updateUploadToast(toastId, {
-              status: 'success',
-              title: 'Emails Sent Successfully',
-              message: `All ${result.sent} emails sent successfully!`,
-              progress: 100
-            });
-            setTimeout(() => removeUploadToast(toastId), 4000);
-          }
-        } catch (error) {
-          updateUploadToast(toastId, {
-            status: 'error',
-            title: 'Sending Failed',
-            message: error instanceof Error ? error.message : 'Failed to send emails'
-          });
-          setTimeout(() => removeUploadToast(toastId), 6000);
-        } finally {
-          setIsSending(false);
-        }
-      } else {
-        // Download only - no email sending
+        updateUploadToast(toastId, { progress: 80, progressLabel: 'Draft updated...' });
+        
+        logEdit(username, "Issuance", issuanceTitle);
+        
         updateUploadToast(toastId, {
           status: 'success',
-          title: 'Issuance Created',
-          message: 'Issuance saved successfully (download only mode)',
+          title: 'Draft Updated',
+          message: `Issuance draft updated successfully with ${selectedRecipients.length} recipients.`,
           progress: 100
         });
         setTimeout(() => removeUploadToast(toastId), 3000);
+      } else {
+        // CREATE new issuance
+        const issuanceData: CreateIssuanceData = {
+          title: issuanceTitle,
+          templateId: selectedTemplate.TemplateID,
+          templateName: selectedTemplate.Name,
+          createdBy: username,
+          recipientType: determineRecipientType(),
+          recipientDetails: selectedRecipients.map(r => ({
+            name: r.name, // Always store the actual registered name
+            email: r.email,
+            source: r.source
+          })),
+          totalRecipients: selectedRecipients.length,
+          fieldInputs: fieldValues, // Custom {NAME} value is already in fieldValues if set
+          emailTitle: sendToEmail ? emailTitle : undefined,
+          emailMessage: sendToEmail ? emailMessage : undefined,
+          customTemplateUrl: customTemplateUrl || undefined,
+          recipients: selectedRecipients.map(r => ({
+            name: r.name, // Always store the actual registered name
+            email: r.email,
+            type: r.type
+          })),
+          downloadOnly: !sendToEmail, // Mark as downloadOnly if not sending to email
+          customNameOverride: customNameValue // Pass custom name override for backend processing
+        };
+        
+        await createIssuance(issuanceData);
+        
+        updateUploadToast(toastId, { progress: 80, progressLabel: 'Issuance created...' });
+        
+        logCreate(username, "Issuance", issuanceTitle);
+        
+        // Always save as draft first - don't send immediately
+        // User must click Send button from the issuance detail view to send emails
+        if (sendToEmail) {
+          // Email mode - saved as draft, user needs to send manually
+          updateUploadToast(toastId, {
+            status: 'success',
+            title: 'Draft Created',
+            message: `Issuance saved as draft. Open it and click Send to deliver to ${selectedRecipients.length} recipients.`,
+            progress: 100
+          });
+          setTimeout(() => removeUploadToast(toastId), 4000);
+        } else {
+          // Download only - no email sending
+          updateUploadToast(toastId, {
+            status: 'success',
+            title: 'Issuance Created',
+            message: 'Issuance saved successfully (download only mode)',
+            progress: 100
+          });
+          setTimeout(() => removeUploadToast(toastId), 3000);
+        }
       }
       
       // Refresh list and close modal
       loadIssuances();
       setShowCreateModal(false);
+      // Reset edit mode
+      setIsEditMode(false);
+      setEditingIssuanceId(null);
       
     } catch (error) {
-      console.error('Create issuance error:', error);
+      console.error(isUpdating ? 'Update issuance error:' : 'Create issuance error:', error);
       updateUploadToast(toastId, {
         status: 'error',
-        title: 'Creation Failed',
-        message: error instanceof Error ? error.message : 'Failed to create issuance'
+        title: isUpdating ? 'Update Failed' : 'Creation Failed',
+        message: error instanceof Error ? error.message : (isUpdating ? 'Failed to update issuance' : 'Failed to create issuance')
       });
       setTimeout(() => removeUploadToast(toastId), 5000);
     }
+  };
+  
+  // Handle sending emails from the detail view for Draft issuances
+  const handleSendFromDetail = async () => {
+    if (!selectedIssuance) return;
+    
+    const toastId = `send-${Date.now()}`;
+    setIsSending(true);
+    setSendCancelled(false); // Reset cancel flag
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Sending Emails',
+      message: `Preparing to send to ${selectedIssuance.TotalRecipients} recipients...`,
+      status: 'loading',
+      progress: 10,
+      progressLabel: 'Starting...'
+    });
+    
+    try {
+      const result = await sendIssuance(selectedIssuance.IssuanceID, username, (progress) => {
+        setSendProgress(progress);
+        const percent = Math.round(10 + (progress.sent / progress.total) * 85);
+        updateUploadToast(toastId, { 
+          progress: percent, 
+          progressLabel: `Sent ${progress.sent}/${progress.total}...`,
+          message: `Sent ${progress.sent} of ${progress.total} emails${progress.failed > 0 ? ` (${progress.failed} failed)` : ''}`
+        });
+      });
+      
+      setSendProgress(result);
+      
+      // Check if sending was cancelled
+      if (result.cancelled) {
+        updateUploadToast(toastId, {
+          status: 'error',
+          title: 'Sending Cancelled',
+          message: result.message || `Cancelled. ${result.sent} emails were sent before cancellation.`,
+          progress: 100
+        });
+        setTimeout(() => removeUploadToast(toastId), 6000);
+      } else if (result.failed > 0) {
+        // Final result - some failed
+        const failedRecipients = result.details
+          .filter(d => d.status === 'failed')
+          .map(d => d.name)
+          .slice(0, 3);
+        const failedMsg = failedRecipients.length > 3 
+          ? `${failedRecipients.join(', ')} and ${result.failed - 3} more`
+          : failedRecipients.join(', ');
+        
+        updateUploadToast(toastId, {
+          status: 'error',
+          title: 'Partially Sent',
+          message: `Sent: ${result.sent} | Failed: ${result.failed}\nFailed: ${failedMsg}`,
+          progress: 100
+        });
+        setTimeout(() => removeUploadToast(toastId), 8000);
+      } else {
+        updateUploadToast(toastId, {
+          status: 'success',
+          title: 'Emails Sent Successfully',
+          message: `All ${result.sent} emails sent successfully!`,
+          progress: 100
+        });
+        setTimeout(() => removeUploadToast(toastId), 4000);
+      }
+      
+      // Refresh the issuance data
+      loadIssuances();
+      // Refresh selected issuance detail
+      const refreshedIssuances = await getIssuances();
+      const updated = refreshedIssuances.find(i => i.IssuanceID === selectedIssuance.IssuanceID);
+      if (updated) {
+        setSelectedIssuance(updated);
+      }
+      
+    } catch (error) {
+      updateUploadToast(toastId, {
+        status: 'error',
+        title: 'Sending Failed',
+        message: error instanceof Error ? error.message : 'Failed to send emails'
+      });
+      setTimeout(() => removeUploadToast(toastId), 6000);
+    } finally {
+      setIsSending(false);
+      setSendCancelled(false);
+    }
+  };
+
+  // Handle stopping the send process - calls backend to set cancel flag
+  const handleStopSending = async () => {
+    if (!selectedIssuance) return;
+    
+    setSendCancelled(true);
+    
+    try {
+      // Call backend to set cancel flag
+      await cancelSending(selectedIssuance.IssuanceID);
+      toast.warning('Cancellation requested. Waiting for current email to finish...', {
+        description: 'Some emails may have already been sent.',
+        duration: 5000,
+      });
+    } catch (error) {
+      console.error('Failed to cancel sending:', error);
+      toast.error('Failed to request cancellation, but sending will stop on frontend.');
+    }
+    
+    // Note: We don't set isSending to false immediately - the sendIssuance promise 
+    // will complete and handle the cancelled state from the backend response
   };
   
   const handleCreateTemplate = async () => {
@@ -1453,14 +2110,149 @@ export default function IssuanceCenterPage({
     setNewTemplateFields(prev => [...prev, field]);
     setNewFieldInput("");
   };
+
+  // ============= TEMPLATE EDITING HANDLERS =============
   
-  const getInitials = (name: string) => {
-    return name
-      .split(" ")
-      .map(n => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
+  const handleStartEditTemplate = (template: IssuanceTemplate) => {
+    setEditingTemplateId(template.TemplateID);
+    setEditTemplateName(template.Name);
+    setEditTemplateType(template.Type);
+    setEditTemplateDocsUrl(template.DocsUrl || "");
+    setEditTemplateFields(template.FieldsParsed || []);
+    setEditFieldInput("");
+  };
+  
+  const handleCancelEditTemplate = () => {
+    setEditingTemplateId(null);
+    setEditTemplateName("");
+    setEditTemplateType("Custom");
+    setEditTemplateDocsUrl("");
+    setEditTemplateFields([]);
+    setEditFieldInput("");
+  };
+  
+  const handleAddEditFieldPlaceholder = () => {
+    if (!editFieldInput.trim()) return;
+    
+    let field = editFieldInput.trim().toUpperCase();
+    if (!field.startsWith("{")) field = "{" + field;
+    if (!field.endsWith("}")) field = field + "}";
+    
+    if (editTemplateFields.includes(field)) {
+      toast.error("Field already exists");
+      return;
+    }
+    
+    setEditTemplateFields(prev => [...prev, field]);
+    setEditFieldInput("");
+  };
+  
+  const handleSaveTemplate = async () => {
+    if (!editingTemplateId) return;
+    
+    if (!editTemplateName.trim()) {
+      toast.error("Please enter a template name");
+      return;
+    }
+    if (!editTemplateDocsUrl.trim()) {
+      toast.error("Please enter the Google Docs URL");
+      return;
+    }
+    if (editTemplateFields.length === 0) {
+      toast.error("Please add at least one field placeholder");
+      return;
+    }
+    
+    const toastId = `save-template-${Date.now()}`;
+    setIsSavingTemplate(true);
+    
+    try {
+      // Show progress toast
+      addUploadToast({
+        id: toastId,
+        title: "Saving Template",
+        message: "Connecting to backend...",
+        status: "loading",
+        progress: 10,
+      });
+      
+      // Update progress - sending data
+      updateUploadToast(toastId, {
+        message: "Updating template data...",
+        progress: 40,
+      });
+      
+      await updateTemplate({
+        id: editingTemplateId,
+        name: editTemplateName,
+        type: editTemplateType,
+        docsUrl: editTemplateDocsUrl,
+        fields: editTemplateFields,
+      });
+      
+      // Update progress - finalizing
+      updateUploadToast(toastId, {
+        message: "Refreshing templates list...",
+        progress: 80,
+      });
+      
+      // Reload templates
+      await loadTemplates();
+      
+      // Success
+      updateUploadToast(toastId, {
+        title: "Template Saved",
+        message: `"${editTemplateName}" has been updated successfully`,
+        status: "success",
+        progress: 100,
+      });
+      
+      logEdit(username, "Issuance Template", editTemplateName);
+      
+      // Reset editing state
+      handleCancelEditTemplate();
+      
+    } catch (error) {
+      updateUploadToast(toastId, {
+        title: "Save Failed",
+        message: error instanceof Error ? error.message : "Failed to save template",
+        status: "error",
+        progress: 0,
+      });
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  };
+
+  // Helper to find profile picture by email or name from the members list
+  const findProfilePicture = (email?: string, name?: string): string | undefined => {
+    if (!members || members.length === 0) return undefined;
+    
+    const emailLower = email?.toLowerCase().trim() || '';
+    const nameLower = name?.toLowerCase().trim() || '';
+    
+    // First try to match by email (most reliable)
+    if (emailLower) {
+      const memberByEmail = members.find(m => m.email?.toLowerCase().trim() === emailLower);
+      if (memberByEmail?.profilePicture) return memberByEmail.profilePicture;
+    }
+    
+    // Then try to match by name
+    if (nameLower) {
+      const memberByName = members.find(m => m.name?.toLowerCase().trim() === nameLower);
+      if (memberByName?.profilePicture) return memberByName.profilePicture;
+    }
+    
+    return undefined;
+  };
+
+  // Helper to find the real registered name by email from the members list
+  const findMemberName = (email?: string): string | undefined => {
+    if (!members || members.length === 0 || !email) return undefined;
+    
+    const emailLower = email.toLowerCase().trim();
+    const member = members.find(m => m.email?.toLowerCase().trim() === emailLower);
+    return member?.name;
   };
 
   // ============= RENDER =============
@@ -1483,9 +2275,14 @@ export default function IssuanceCenterPage({
           <SearchInput
             value={searchQuery}
             onChange={setSearchQuery}
-            placeholder="Search issuances..."
+            placeholder="Search issuances... (use @archive to search archived)"
             isDark={isDark}
           />
+          {isArchiveSearch && (
+            <p className="text-xs mt-1 text-amber-600 dark:text-amber-400">
+              Searching in archived issuances
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* View Toggle - Single button that switches */}
@@ -1590,11 +2387,31 @@ export default function IssuanceCenterPage({
                     {issuance.TemplateName}
                   </p>
                 </div>
-                <StatusChip
-                  status={issuance.Status.toLowerCase() as 'draft' | 'sent'}
-                  label={issuance.Status}
-                  customColor={getIssuanceStatusColor(issuance.Status)}
-                />
+                <div className="flex flex-col items-end gap-1">
+                  <StatusChip
+                    status={issuance.Status.toLowerCase() as 'draft' | 'sent'}
+                    label={issuance.Status}
+                    customColor={getIssuanceStatusColor(issuance.Status)}
+                  />
+                  {/* Delivery Method Badge */}
+                  <span 
+                    className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1"
+                    style={{ 
+                      background: issuance.DeliveryMethod === 'DownloadOnly' 
+                        ? `${DESIGN_TOKENS.colors.brand.orange}20` 
+                        : 'rgba(59, 130, 246, 0.15)',
+                      color: issuance.DeliveryMethod === 'DownloadOnly'
+                        ? DESIGN_TOKENS.colors.brand.orange
+                        : '#3b82f6'
+                    }}
+                  >
+                    {issuance.DeliveryMethod === 'DownloadOnly' ? (
+                      <><Download className="w-3 h-3" /> Download</>
+                    ) : (
+                      <><Mail className="w-3 h-3" /> Email</>
+                    )}
+                  </span>
+                </div>
               </div>
               
               <div className="space-y-2 mb-4">
@@ -1630,12 +2447,32 @@ export default function IssuanceCenterPage({
                   View
                 </button>
                 {canCreate && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDeleteIssuance(issuance.IssuanceID); }}
-                    className="py-2 px-3 rounded-lg text-sm font-medium transition-all bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <>
+                    {/* Edit button - only for Draft issuances */}
+                    {issuance.Status === 'Draft' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleEditDraftIssuance(issuance); }}
+                        className="py-2 px-3 rounded-lg text-sm font-medium transition-all bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500/20"
+                        title="Edit Draft"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleArchiveIssuance(issuance.IssuanceID); }}
+                      className="py-2 px-3 rounded-lg text-sm font-medium transition-all bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+                      title="Archive"
+                    >
+                      <Archive className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleOpenDeleteConfirm(issuance); }}
+                      className="py-2 px-3 rounded-lg text-sm font-medium transition-all bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
+                      title="Delete Permanently"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -1651,6 +2488,7 @@ export default function IssuanceCenterPage({
                 <th className="text-left p-4 font-semibold">Template</th>
                 <th className="text-left p-4 font-semibold">Recipients</th>
                 <th className="text-left p-4 font-semibold">Status</th>
+                <th className="text-left p-4 font-semibold">Delivery</th>
                 <th className="text-left p-4 font-semibold">Created</th>
                 <th className="text-left p-4 font-semibold">Actions</th>
               </tr>
@@ -1686,6 +2524,25 @@ export default function IssuanceCenterPage({
                       customColor={getIssuanceStatusColor(issuance.Status)}
                     />
                   </td>
+                  <td className="p-4">
+                    <span 
+                      className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1 w-fit"
+                      style={{ 
+                        background: issuance.DeliveryMethod === 'DownloadOnly' 
+                          ? `${DESIGN_TOKENS.colors.brand.orange}20` 
+                          : 'rgba(59, 130, 246, 0.15)',
+                        color: issuance.DeliveryMethod === 'DownloadOnly'
+                          ? DESIGN_TOKENS.colors.brand.orange
+                          : '#3b82f6'
+                      }}
+                    >
+                      {issuance.DeliveryMethod === 'DownloadOnly' ? (
+                        <><Download className="w-3 h-3" /> Download</>
+                      ) : (
+                        <><Mail className="w-3 h-3" /> Email</>
+                      )}
+                    </span>
+                  </td>
                   <td className="p-4 text-sm text-muted-foreground">
                     {formatIssuanceDate(issuance.CreatedAt)}
                   </td>
@@ -1699,13 +2556,32 @@ export default function IssuanceCenterPage({
                         <Eye className="w-4 h-4" />
                       </button>
                       {canCreate && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteIssuance(issuance.IssuanceID); }}
-                          className="p-2 rounded-lg hover:bg-red-500/20 text-red-600 dark:text-red-400 transition-colors"
-                          title="Archive"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <>
+                          {/* Edit button - only for Draft issuances */}
+                          {issuance.Status === 'Draft' && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleEditDraftIssuance(issuance); }}
+                              className="p-2 rounded-lg hover:bg-green-500/20 text-green-600 dark:text-green-400 transition-colors"
+                              title="Edit Draft"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleArchiveIssuance(issuance.IssuanceID); }}
+                            className="p-2 rounded-lg hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 transition-colors"
+                            title="Archive"
+                          >
+                            <Archive className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleOpenDeleteConfirm(issuance); }}
+                            className="p-2 rounded-lg hover:bg-red-500/20 text-red-600 dark:text-red-400 transition-colors"
+                            title="Delete Permanently"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                     </div>
                   </td>
@@ -1713,6 +2589,104 @@ export default function IssuanceCenterPage({
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      
+      {/* ============= ARCHIVED ISSUANCES SECTION ============= */}
+      {canCreate && (archivedIssuances.length > 0 || isArchiveSearch) && (
+        <div className="mt-8">
+          <button
+            onClick={() => setShowArchiveSection(!showArchiveSection)}
+            className="w-full flex items-center justify-between p-4 rounded-xl border transition-all hover:bg-gray-50 dark:hover:bg-gray-800/50"
+            style={{
+              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+              background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <Archive className="w-5 h-5 text-amber-500" />
+              <span className="font-semibold" style={{ color: isDark ? '#fff' : '#000' }}>
+                Archived Issuances ({archivedIssuances.length})
+              </span>
+              {isArchiveSearch && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                  Searching archives
+                </span>
+              )}
+            </div>
+            {showArchiveSection ? (
+              <ChevronUp className="w-5 h-5 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="w-5 h-5 text-muted-foreground" />
+            )}
+          </button>
+          
+          {showArchiveSection && (
+            <div className="mt-4 space-y-3">
+              {filteredArchivedIssuances.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Archive className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                  <p>No archived issuances found</p>
+                  {isArchiveSearch && (
+                    <p className="text-xs mt-1">Try a different search term after @archive</p>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredArchivedIssuances.map((issuance) => (
+                    <div
+                      key={issuance.IssuanceID}
+                      className="p-4 rounded-xl border-2 cursor-pointer hover:shadow-lg transition-all"
+                      style={{
+                        ...glassStyle,
+                        borderColor: isDark ? 'rgba(245,158,11,0.3)' : 'rgba(245,158,11,0.3)',
+                        background: isDark ? 'rgba(245,158,11,0.05)' : 'rgba(245,158,11,0.05)',
+                      }}
+                      onClick={() => handleViewIssuance(issuance)}
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1">
+                          <h3 className="font-medium text-sm truncate" style={{ color: isDark ? '#fff' : '#000' }}>
+                            {issuance.Title}
+                          </h3>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {issuance.TemplateName}
+                          </p>
+                        </div>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-600 dark:text-gray-400">
+                          Archived
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
+                        <Users className="w-3 h-3" />
+                        <span>{issuance.TotalRecipients} recipients</span>
+                        <span>•</span>
+                        <span>{formatIssuanceDate(issuance.CreatedAt)}</span>
+                      </div>
+                      
+                      <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => handleRestoreIssuance(issuance.IssuanceID)}
+                          className="flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-all bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500/20"
+                        >
+                          <RefreshCw className="w-3 h-3 inline mr-1" />
+                          Restore
+                        </button>
+                        <button
+                          onClick={() => handleOpenDeleteConfirm(issuance)}
+                          className="py-1.5 px-2 rounded-lg text-xs font-medium transition-all bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
+                          title="Delete Permanently"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1732,11 +2706,18 @@ export default function IssuanceCenterPage({
           >
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
-              <h2 className="text-xl font-bold" style={{ color: isDark ? '#fff' : '#000' }}>
-                Create New Issuance
-              </h2>
+              <div>
+                <h2 className="text-xl font-bold" style={{ color: isDark ? '#fff' : '#000' }}>
+                  {isEditMode ? 'Edit Draft Issuance' : 'Create New Issuance'}
+                </h2>
+                {isEditMode && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Editing draft - changes will update the existing issuance
+                  </p>
+                )}
+              </div>
               <button
-                onClick={() => { cleanupPreviewUrl(); setShowCreateModal(false); }}
+                onClick={() => { cleanupPreviewUrl(); setShowCreateModal(false); setIsEditMode(false); setEditingIssuanceId(null); }}
                 className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -2303,6 +3284,42 @@ export default function IssuanceCenterPage({
                                 No results found for "{commandSearchQuery}"
                               </div>
                             )}
+                            
+                            {/* Quick Actions - Always visible to combine sources */}
+                            {(activeCommand && activeCommand !== '@External') && (
+                              <div 
+                                className="border-t px-3 py-2"
+                                style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-xs text-muted-foreground">
+                                    Combine with other sources:
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {SEARCH_COMMANDS.filter(c => c.command !== activeCommand).map((cmd) => (
+                                    <button
+                                      key={cmd.command}
+                                      onClick={() => handleSelectCommand(cmd.command)}
+                                      className="px-2 py-1 rounded-md text-xs font-medium transition-all hover:scale-105 flex items-center gap-1"
+                                      style={{
+                                        background: cmd.color + '15',
+                                        color: cmd.color,
+                                        border: `1px solid ${cmd.color}30`,
+                                      }}
+                                    >
+                                      <cmd.icon className="w-3 h-3" />
+                                      {cmd.command.replace('@', '')}
+                                    </button>
+                                  ))}
+                                </div>
+                                {selectedRecipients.length > 0 && (
+                                  <p className="text-[10px] text-muted-foreground mt-1.5">
+                                    💡 Duplicates are automatically prevented
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -2313,12 +3330,116 @@ export default function IssuanceCenterPage({
                   {/* Field Inputs */}
                   {selectedTemplate && fieldInputs.length > 0 && (
                     <div>
-                      <label className="block text-sm font-semibold mb-2" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
-                        Template Fields
-                      </label>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                          Template Fields
+                        </label>
+                        <button
+                          onClick={() => setShowAddFieldInput(!showAddFieldInput)}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-all hover:scale-105"
+                          style={{
+                            background: showAddFieldInput 
+                              ? (isDark ? 'rgba(239, 68, 68, 0.2)' : 'rgba(239, 68, 68, 0.1)')
+                              : (isDark ? 'rgba(246, 66, 31, 0.2)' : 'rgba(246, 66, 31, 0.1)'),
+                            color: showAddFieldInput ? '#ef4444' : DESIGN_TOKENS.colors.brand.orange,
+                          }}
+                          title={showAddFieldInput ? 'Cancel' : 'Add new field'}
+                        >
+                          {showAddFieldInput ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                          <span>{showAddFieldInput ? 'Cancel' : 'Add Field'}</span>
+                        </button>
+                      </div>
+                      
+                      {/* Add New Field Input */}
+                      {showAddFieldInput && (
+                        <div 
+                          className="flex gap-2 mb-3 p-3 rounded-lg"
+                          style={{
+                            background: isDark ? 'rgba(246, 66, 31, 0.1)' : 'rgba(246, 66, 31, 0.05)',
+                            border: `1px dashed ${DESIGN_TOKENS.colors.brand.orange}50`,
+                          }}
+                        >
+                          <input
+                            type="text"
+                            value={dynamicFieldInput}
+                            onChange={(e) => setDynamicFieldInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && dynamicFieldInput.trim()) {
+                                e.preventDefault();
+                                // Format field name
+                                let fieldName = dynamicFieldInput.trim().toUpperCase();
+                                if (!fieldName.startsWith('{')) fieldName = '{' + fieldName;
+                                if (!fieldName.endsWith('}')) fieldName = fieldName + '}';
+                                
+                                // Check if already exists
+                                if (fieldInputs.some(f => f.placeholder === fieldName)) {
+                                  toast.error('Field already exists');
+                                  return;
+                                }
+                                
+                                // Add to fieldInputs
+                                setFieldInputs(prev => [...prev, {
+                                  placeholder: fieldName,
+                                  value: '',
+                                  enabled: true
+                                }]);
+                                setDynamicFieldInput('');
+                                setShowAddFieldInput(false);
+                                toast.success(`Added field: ${fieldName}`);
+                              }
+                              if (e.key === 'Escape') {
+                                setShowAddFieldInput(false);
+                                setDynamicFieldInput('');
+                              }
+                            }}
+                            placeholder="Enter field name (e.g., POSITION)"
+                            className="flex-1 p-2 rounded-lg border transition-all focus:outline-none focus:border-[#f6421f]"
+                            style={{
+                              background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                              color: isDark ? '#fff' : '#000',
+                            }}
+                            autoFocus
+                          />
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => {
+                              if (!dynamicFieldInput.trim()) return;
+                              // Format field name
+                              let fieldName = dynamicFieldInput.trim().toUpperCase();
+                              if (!fieldName.startsWith('{')) fieldName = '{' + fieldName;
+                              if (!fieldName.endsWith('}')) fieldName = fieldName + '}';
+                              
+                              // Check if already exists
+                              if (fieldInputs.some(f => f.placeholder === fieldName)) {
+                                toast.error('Field already exists');
+                                return;
+                              }
+                              
+                              // Add to fieldInputs
+                              setFieldInputs(prev => [...prev, {
+                                placeholder: fieldName,
+                                value: '',
+                                enabled: true
+                              }]);
+                              setDynamicFieldInput('');
+                              setShowAddFieldInput(false);
+                              toast.success(`Added field: ${fieldName}`);
+                            }}
+                            disabled={!dynamicFieldInput.trim()}
+                            icon={<Plus className="w-4 h-4" />}
+                          >
+                            Add
+                          </Button>
+                        </div>
+                      )}
+                      
                       <div className="space-y-3">
                         {fieldInputs.map((field, index) => {
                           const isNameField = field.placeholder === '{NAME}';
+                          const isDynamicField = !selectedTemplate.FieldsParsed?.includes(field.placeholder);
+                          
                           return (
                             <div key={field.placeholder} className="flex items-center gap-3">
                               <input
@@ -2327,24 +3448,100 @@ export default function IssuanceCenterPage({
                                 onChange={(e) => {
                                   const updated = [...fieldInputs];
                                   updated[index].enabled = e.target.checked;
+                                  // For NAME field, if disabling, also reset custom name
+                                  if (isNameField && !e.target.checked) {
+                                    updated[index].isCustomName = false;
+                                    updated[index].value = '';
+                                  }
                                   setFieldInputs(updated);
                                 }}
                                 className="w-5 h-5 rounded border-2 accent-[#f6421f]"
-                                disabled={isNameField}
                               />
-                              <span className="w-28 text-sm font-mono" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                              <span 
+                                className="w-28 text-sm font-mono flex items-center gap-1" 
+                                style={{ color: isDynamicField ? '#8b5cf6' : DESIGN_TOKENS.colors.brand.orange }}
+                                title={isDynamicField ? 'Dynamically added field' : 'Template field'}
+                              >
                                 {field.placeholder}
+                                {isDynamicField && (
+                                  <button
+                                    onClick={() => {
+                                      setFieldInputs(prev => prev.filter((_, i) => i !== index));
+                                      toast.success(`Removed field: ${field.placeholder}`);
+                                    }}
+                                    className="p-0.5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30"
+                                    title="Remove field"
+                                  >
+                                    <X className="w-3 h-3 text-red-500" />
+                                  </button>
+                                )}
                               </span>
                               {isNameField ? (
-                                <div 
-                                  className="flex-1 p-2 rounded-lg border text-sm"
-                                  style={{
-                                    background: isDark ? 'rgba(34, 197, 94, 0.1)' : 'rgba(34, 197, 94, 0.05)',
-                                    borderColor: 'rgba(34, 197, 94, 0.3)',
-                                    color: isDark ? 'rgba(134, 239, 172, 1)' : 'rgba(22, 163, 74, 1)',
-                                  }}
-                                >
-                                  ✓ Auto-filled from recipients ({selectedRecipients.length > 0 ? selectedRecipients[0].name : 'Add recipients first'})
+                                <div className="flex-1 flex flex-col gap-2">
+                                  {/* Toggle between auto-fill and custom value */}
+                                  <div className="flex items-center gap-3">
+                                    <label className="flex items-center gap-2 cursor-pointer text-xs">
+                                      <input
+                                        type="radio"
+                                        checked={!field.isCustomName}
+                                        onChange={() => {
+                                          const updated = [...fieldInputs];
+                                          updated[index].isCustomName = false;
+                                          updated[index].value = '';
+                                          setFieldInputs(updated);
+                                        }}
+                                        disabled={!field.enabled}
+                                        className="accent-[#22c55e]"
+                                      />
+                                      <span className={!field.enabled ? 'opacity-50' : ''}>Auto-fill from recipients</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer text-xs">
+                                      <input
+                                        type="radio"
+                                        checked={field.isCustomName === true}
+                                        onChange={() => {
+                                          const updated = [...fieldInputs];
+                                          updated[index].isCustomName = true;
+                                          setFieldInputs(updated);
+                                        }}
+                                        disabled={!field.enabled}
+                                        className="accent-[#f6421f]"
+                                      />
+                                      <span className={!field.enabled ? 'opacity-50' : ''}>Custom value</span>
+                                    </label>
+                                  </div>
+                                  
+                                  {/* Show input or auto-fill indicator based on toggle */}
+                                  {field.isCustomName ? (
+                                    <input
+                                      type="text"
+                                      value={field.value}
+                                      onChange={(e) => {
+                                        const updated = [...fieldInputs];
+                                        updated[index].value = e.target.value;
+                                        setFieldInputs(updated);
+                                      }}
+                                      disabled={!field.enabled}
+                                      placeholder="e.g., To all Members, Dear Team, etc."
+                                      className="w-full p-2 rounded-lg border transition-all focus:outline-none focus:border-[#f6421f] disabled:opacity-50"
+                                      style={{
+                                        background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                        color: isDark ? '#fff' : '#000',
+                                      }}
+                                    />
+                                  ) : (
+                                    <div 
+                                      className={`p-2 rounded-lg border text-sm ${!field.enabled ? 'opacity-50' : ''}`}
+                                      style={{
+                                        background: isDark ? 'rgba(34, 197, 94, 0.1)' : 'rgba(34, 197, 94, 0.05)',
+                                        borderColor: 'rgba(34, 197, 94, 0.3)',
+                                        color: isDark ? 'rgba(134, 239, 172, 1)' : 'rgba(22, 163, 74, 1)',
+                                      }}
+                                    >
+                                      ✓ Auto-filled from recipients ({selectedRecipients.length > 0 ? selectedRecipients[0].name : 'Add recipients first'})
+                                    </div>
+                                  )}
                                 </div>
                               ) : (
                                 <input
@@ -2370,8 +3567,13 @@ export default function IssuanceCenterPage({
                         })}
                       </div>
                       <p className="text-xs text-muted-foreground mt-2">
-                        💡 {'{NAME}'} is automatically replaced with each recipient's name when sending
+                        💡 {'{NAME}'} can be set to auto-fill each recipient's name, or use a custom value like "To all Members" for everyone
                       </p>
+                      {fieldInputs.some(f => !selectedTemplate.FieldsParsed?.includes(f.placeholder)) && (
+                        <p className="text-xs mt-1" style={{ color: '#8b5cf6' }}>
+                          ⚡ Purple fields are dynamically added - make sure the placeholder exists in your Google Docs template
+                        </p>
+                      )}
                     </div>
                   )}
                   
@@ -2436,6 +3638,28 @@ export default function IssuanceCenterPage({
                             color: isDark ? '#fff' : '#000',
                           }}
                         />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          <span className="font-medium">Formatting:</span> Use **text** for <strong>bold</strong>, line breaks preserved
+                        </p>
+                        {/* Real-time Preview */}
+                        {emailMessage && (
+                          <div className="mt-3">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                              <Eye className="w-3 h-3" />
+                              <span>Preview</span>
+                            </div>
+                            <div 
+                              className="p-3 rounded-lg text-sm leading-relaxed"
+                              style={{ 
+                                background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
+                                border: `1px dashed ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+                                color: isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
+                              }}
+                            >
+                              <FormattedText text={emailMessage} />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -2476,6 +3700,28 @@ export default function IssuanceCenterPage({
                             color: isDark ? '#fff' : '#000',
                           }}
                         />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          <span className="font-medium">Formatting:</span> Use **text** for <strong>bold</strong>, line breaks preserved
+                        </p>
+                        {/* Real-time Preview */}
+                        {emailMessage && (
+                          <div className="mt-3">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                              <Eye className="w-3 h-3" />
+                              <span>Preview</span>
+                            </div>
+                            <div 
+                              className="p-3 rounded-lg text-sm leading-relaxed"
+                              style={{ 
+                                background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
+                                border: `1px dashed ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+                                color: isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
+                              }}
+                            >
+                              <FormattedText text={emailMessage} />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -2661,7 +3907,8 @@ export default function IssuanceCenterPage({
                         onClick={() => setShowTemplateForm(!showTemplateForm)}
                         icon={showTemplateForm ? <ChevronUp className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
                       >
-                        {showTemplateForm ? 'Cancel' : 'New Template'}
+                        <span className="hidden sm:inline">{showTemplateForm ? 'Cancel' : 'New'}</span>
+                        <span className="sm:hidden">{showTemplateForm ? '' : ''}</span>
                       </Button>
                     </div>
                     
@@ -2685,23 +3932,20 @@ export default function IssuanceCenterPage({
                         
                         <div>
                           <label className="block text-sm font-medium mb-1">Template Type</label>
-                          <select
+                          <CustomDropdown
                             value={newTemplateType}
-                            onChange={(e) => setNewTemplateType(e.target.value)}
-                            className="w-full p-3 rounded-xl border transition-all focus:outline-none focus:border-[#f6421f]"
-                            style={{
-                              background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
-                              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-                              color: isDark ? '#fff' : '#000',
-                            }}
-                          >
-                            <option value="Digital Certificate">Digital Certificate</option>
-                            <option value="Meeting Notice">Meeting Notice</option>
-                            <option value="Notice">Notice</option>
-                            <option value="Letter">Letter</option>
-                            <option value="Memo">Memo</option>
-                            <option value="Custom">Custom</option>
-                          </select>
+                            onChange={(val) => setNewTemplateType(val)}
+                            options={[
+                              { value: 'Digital Certificate', label: 'Digital Certificate' },
+                              { value: 'Meeting Notice', label: 'Meeting Notice' },
+                              { value: 'Notice', label: 'Notice' },
+                              { value: 'Letter', label: 'Letter' },
+                              { value: 'Memo', label: 'Memo' },
+                              { value: 'Custom', label: 'Custom' },
+                            ]}
+                            isDark={isDark}
+                            size="md"
+                          />
                         </div>
                         
                         <div>
@@ -2783,46 +4027,227 @@ export default function IssuanceCenterPage({
                     )}
                   </div>
                   
+                  {/* Database Maintenance - Hidden for non-admins or show only to Auditor */}
+                  {userRole === 'Auditor' && (
+                    <div className="border-t pt-6" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                      <h3 className="text-lg font-semibold mb-2" style={{ color: isDark ? '#fff' : '#000' }}>
+                        Database Maintenance
+                      </h3>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        If issuances display incorrectly (showing raw JSON), run this migration to fix column alignment.
+                      </p>
+                      <button
+                        onClick={handleMigrateColumns}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:scale-105"
+                        style={{
+                          background: isDark ? 'rgba(246, 66, 31, 0.2)' : 'rgba(246, 66, 31, 0.1)',
+                          color: DESIGN_TOKENS.colors.brand.orange,
+                          border: `1px solid ${DESIGN_TOKENS.colors.brand.orange}40`,
+                        }}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        Run Column Migration
+                      </button>
+                    </div>
+                  )}
+                  
                   {/* Existing Templates List */}
                   <div>
                     <h3 className="text-lg font-semibold mb-4" style={{ color: isDark ? '#fff' : '#000' }}>
                       Available Templates
                     </h3>
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       {templates.map((template) => (
                         <div
                           key={template.TemplateID}
-                          className="p-4 rounded-xl border flex items-center justify-between"
+                          className="rounded-xl border overflow-hidden"
                           style={{
-                            borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                            borderColor: editingTemplateId === template.TemplateID 
+                              ? DESIGN_TOKENS.colors.brand.orange 
+                              : isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
                             background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
                           }}
                         >
-                          <div>
-                            <p className="font-medium" style={{ color: isDark ? '#fff' : '#000' }}>
-                              {template.Name}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {template.Type} • {template.FieldsParsed?.length || 0} fields
-                            </p>
+                          {/* Template header - always visible */}
+                          <div className="p-4 flex items-center justify-between">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate" style={{ color: isDark ? '#fff' : '#000' }}>
+                                {template.Name}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                {template.Type} • {template.FieldsParsed?.length || 0} fields
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 ml-2">
+                              {template.DocsUrl ? (
+                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                              ) : (
+                                <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0" />
+                              )}
+                              {template.DocsUrl && (
+                                <a
+                                  href={template.DocsUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-shrink-0"
+                                  title="Open template"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </a>
+                              )}
+                              {editingTemplateId === template.TemplateID ? (
+                                <button
+                                  onClick={handleCancelEditTemplate}
+                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-shrink-0"
+                                  title="Cancel editing"
+                                >
+                                  <X className="w-4 h-4 text-gray-500" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleStartEditTemplate(template)}
+                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-shrink-0"
+                                  title="Edit template"
+                                >
+                                  <Edit2 className="w-4 h-4 text-gray-500 hover:text-[#f6421f]" />
+                                </button>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            {template.DocsUrl ? (
-                              <CheckCircle className="w-5 h-5 text-green-500" />
-                            ) : (
-                              <AlertCircle className="w-5 h-5 text-amber-500" />
-                            )}
-                            {template.DocsUrl && (
-                              <a
-                                href={template.DocsUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                              </a>
-                            )}
-                          </div>
+                          
+                          {/* Edit form - shown when editing this template */}
+                          {editingTemplateId === template.TemplateID && (
+                            <div 
+                              className="p-4 border-t space-y-4"
+                              style={{ 
+                                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.01)',
+                              }}
+                            >
+                              <div>
+                                <label className="block text-sm font-medium mb-1">Template Name *</label>
+                                <input
+                                  type="text"
+                                  value={editTemplateName}
+                                  onChange={(e) => setEditTemplateName(e.target.value)}
+                                  placeholder="e.g., Event Certificate 2025"
+                                  className="w-full p-3 rounded-xl border transition-all focus:outline-none focus:border-[#f6421f]"
+                                  style={{
+                                    background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                    color: isDark ? '#fff' : '#000',
+                                  }}
+                                />
+                              </div>
+                              
+                              <div>
+                                <label className="block text-sm font-medium mb-1">Template Type</label>
+                                <CustomDropdown
+                                  value={editTemplateType}
+                                  onChange={(val) => setEditTemplateType(val)}
+                                  options={[
+                                    { value: 'Digital Certificate', label: 'Digital Certificate' },
+                                    { value: 'Meeting Notice', label: 'Meeting Notice' },
+                                    { value: 'Notice', label: 'Notice' },
+                                    { value: 'Letter', label: 'Letter' },
+                                    { value: 'Memo', label: 'Memo' },
+                                    { value: 'Custom', label: 'Custom' },
+                                  ]}
+                                  isDark={isDark}
+                                  size="md"
+                                />
+                              </div>
+                              
+                              <div>
+                                <label className="block text-sm font-medium mb-1">Google Docs URL *</label>
+                                <input
+                                  type="url"
+                                  value={editTemplateDocsUrl}
+                                  onChange={(e) => setEditTemplateDocsUrl(e.target.value)}
+                                  placeholder="https://docs.google.com/document/d/..."
+                                  className="w-full p-3 rounded-xl border transition-all focus:outline-none focus:border-[#f6421f]"
+                                  style={{
+                                    background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                    color: isDark ? '#fff' : '#000',
+                                  }}
+                                />
+                              </div>
+                              
+                              <div>
+                                <label className="block text-sm font-medium mb-1">Field Placeholders</label>
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                  {editTemplateFields.map((field) => (
+                                    <span
+                                      key={field}
+                                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-mono"
+                                      style={{
+                                        background: isDark ? 'rgba(246, 66, 31, 0.2)' : 'rgba(246, 66, 31, 0.1)',
+                                        color: DESIGN_TOKENS.colors.brand.orange,
+                                      }}
+                                    >
+                                      {field}
+                                      <button
+                                        onClick={() => setEditTemplateFields(prev => prev.filter(f => f !== field))}
+                                        className="p-0.5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30"
+                                      >
+                                        <X className="w-3 h-3 text-red-500" />
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="text"
+                                    value={editFieldInput}
+                                    onChange={(e) => setEditFieldInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleAddEditFieldPlaceholder();
+                                      }
+                                    }}
+                                    placeholder="Add field (e.g., EVENT)"
+                                    className="flex-1 p-2 rounded-lg border transition-all focus:outline-none focus:border-[#f6421f]"
+                                    style={{
+                                      background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                      color: isDark ? '#fff' : '#000',
+                                    }}
+                                  />
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={handleAddEditFieldPlaceholder}
+                                    icon={<Plus className="w-4 h-4" />}
+                                  >
+                                    Add
+                                  </Button>
+                                </div>
+                              </div>
+                              
+                              <div className="flex gap-2 pt-2">
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={handleCancelEditTemplate}
+                                  className="flex-1"
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={handleSaveTemplate}
+                                  disabled={isSavingTemplate}
+                                  icon={isSavingTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                                  className="flex-1"
+                                >
+                                  {isSavingTemplate ? 'Saving...' : 'Save Changes'}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -2859,9 +4284,9 @@ export default function IssuanceCenterPage({
                 variant="primary"
                 onClick={handleCreateIssuance}
                 disabled={isSending || !issuanceTitle || !selectedTemplate || selectedRecipients.length === 0}
-                icon={sendToEmail ? <Send className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+                icon={isEditMode ? <Edit2 className="w-4 h-4" /> : (sendToEmail ? <Send className="w-4 h-4" /> : <Download className="w-4 h-4" />)}
               >
-                {sendToEmail ? 'Create & Send' : 'Create Issuance'}
+                {isEditMode ? 'Update Draft' : (sendToEmail ? 'Create & Send' : 'Create Issuance')}
               </Button>
             </div>
           </div>
@@ -2882,6 +4307,8 @@ export default function IssuanceCenterPage({
               glassStyle={glassStyle}
               userEmail={userEmail}
               username={username}
+              profilePicture={userProfilePicture}
+              members={members}
               onClose={() => setShowDetailModal(false)}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
@@ -2956,6 +4383,26 @@ export default function IssuanceCenterPage({
                       </p>
                     </div>
                     <div className="p-4 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}>
+                      <p className="text-sm text-muted-foreground mb-1">Delivery Method</p>
+                      <div className="flex items-center gap-2">
+                        {selectedIssuance.DeliveryMethod === 'DownloadOnly' ? (
+                          <>
+                            <Download className="w-4 h-4" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                            <span className="font-medium" style={{ color: isDark ? '#fff' : '#000' }}>
+                              Download Only
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <Mail className="w-4 h-4" style={{ color: '#3b82f6' }} />
+                            <span className="font-medium" style={{ color: isDark ? '#fff' : '#000' }}>
+                              Email Delivery
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}>
                       <p className="text-sm text-muted-foreground mb-1">Created By</p>
                       <p className="font-medium" style={{ color: isDark ? '#fff' : '#000' }}>
                         {selectedIssuance.CreatedBy}
@@ -3003,44 +4450,198 @@ export default function IssuanceCenterPage({
                   {/* Recipients List */}
                   {selectedIssuance.Recipients && selectedIssuance.Recipients.length > 0 && (
                     <div>
-                      <h4 className="text-sm font-semibold mb-2" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
-                        Recipients ({selectedIssuance.Recipients.length})
-                      </h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                          Recipients ({selectedIssuance.Recipients.length})
+                        </h4>
+                        {/* Status summary */}
+                        <div className="flex items-center gap-3 text-xs flex-wrap justify-end">
+                          {selectedIssuance.DeliveryMethod === 'DownloadOnly' ? (
+                            <>
+                              <span className="flex items-center gap-1">
+                                <Download className="w-3 h-3 text-blue-500" />
+                                {selectedIssuance.Recipients.filter(r => r.DownloadedAt).length} downloaded
+                              </span>
+                              {selectedIssuance.Recipients.filter(r => !r.DownloadedAt).length > 0 && (
+                                <span className="flex items-center gap-1 text-amber-500">
+                                  <Clock className="w-3 h-3" />
+                                  {selectedIssuance.Recipients.filter(r => !r.DownloadedAt).length} awaiting
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              {selectedIssuance.SentCount > 0 && (
+                                <span className="flex items-center gap-1 text-green-500">
+                                  <CheckCircle className="w-3 h-3" />
+                                  {selectedIssuance.SentCount} sent
+                                </span>
+                              )}
+                              {selectedIssuance.Recipients.filter(r => r.Status === 'Pending').length > 0 && (
+                                <span className="flex items-center gap-1 text-amber-500">
+                                  <Clock className="w-3 h-3" />
+                                  {selectedIssuance.Recipients.filter(r => r.Status === 'Pending').length} pending
+                                </span>
+                              )}
+                              {selectedIssuance.FailedCount > 0 && (
+                                <span className="flex items-center gap-1 text-red-500">
+                                  <XCircle className="w-3 h-3" />
+                                  {selectedIssuance.FailedCount} failed
+                                </span>
+                              )}
+                              {selectedIssuance.Recipients.filter(r => r.DownloadedAt).length > 0 && (
+                                <span className="flex items-center gap-1 text-blue-500">
+                                  <Download className="w-3 h-3" />
+                                  {selectedIssuance.Recipients.filter(r => r.DownloadedAt).length} downloaded
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
                       <div className="space-y-2 max-h-60 overflow-y-auto">
-                        {selectedIssuance.Recipients.map((recipient) => (
+                        {selectedIssuance.Recipients.map((recipient) => {
+                          const recipientProfilePic = findProfilePicture(recipient.RecipientEmail, recipient.RecipientName);
+                          const isDownloadOnly = selectedIssuance.DeliveryMethod === 'DownloadOnly';
+                          const isResending = resendingRecipientId === recipient.RecordID;
+                          
+                          // Check if custom name was used
+                          const fieldValues = parseFieldInputs(selectedIssuance.FieldInputs);
+                          const nameFieldValue = fieldValues['{NAME}'];
+                          
+                          // Try to get the real registered name from members list by email
+                          const realNameFromMembers = findMemberName(recipient.RecipientEmail);
+                          
+                          // Determine the display name and custom name indicator
+                          // If we found a real name in members and it differs from stored name, use it
+                          const displayName = realNameFromMembers || recipient.RecipientName;
+                          const storedNameIsCustom = realNameFromMembers && realNameFromMembers !== recipient.RecipientName;
+                          const customNameToShow = storedNameIsCustom ? recipient.RecipientName : (nameFieldValue && nameFieldValue !== displayName ? nameFieldValue : null);
+                          
+                          // Calculate time since issuance was created for pending status
+                          const issuanceCreatedAt = new Date(selectedIssuance.CreatedAt);
+                          const now = new Date();
+                          const minutesSinceCreated = Math.floor((now.getTime() - issuanceCreatedAt.getTime()) / (1000 * 60));
+                          const isPendingTooLong = recipient.Status === 'Pending' && minutesSinceCreated > 5; // 5 minutes threshold
+                          
+                          // Determine display status
+                          const getStatusDisplay = () => {
+                            if (isDownloadOnly) {
+                              // For download-only issuances
+                              if (recipient.DownloadedAt) {
+                                return { icon: <CheckCircle className="w-4 h-4 text-green-500" />, text: 'Downloaded', color: 'text-green-500' };
+                              }
+                              return { icon: <Clock className="w-4 h-4 text-amber-500" />, text: 'Awaiting Download', color: 'text-amber-500' };
+                            }
+                            // For email delivery
+                            switch (recipient.Status) {
+                              case 'Sent':
+                                if (recipient.DownloadedAt) {
+                                  return { icon: <CheckCircle className="w-4 h-4 text-green-500" />, text: 'Sent & Downloaded', color: 'text-green-500' };
+                                }
+                                return { icon: <CheckCircle className="w-4 h-4 text-green-500" />, text: 'Email Sent', color: 'text-green-500' };
+                              case 'Failed':
+                                return { icon: <XCircle className="w-4 h-4 text-red-500" />, text: 'Failed', color: 'text-red-500' };
+                              case 'Downloaded':
+                                return { icon: <Download className="w-4 h-4 text-blue-500" />, text: 'Downloaded', color: 'text-blue-500' };
+                              default: // Pending
+                                if (isPendingTooLong) {
+                                  return { icon: <AlertTriangle className="w-4 h-4 text-amber-600" />, text: `Pending (${minutesSinceCreated}m)`, color: 'text-amber-600' };
+                                }
+                                return { icon: <Clock className="w-4 h-4 text-amber-500" />, text: 'Pending', color: 'text-amber-500' };
+                            }
+                          };
+                          
+                          const statusDisplay = getStatusDisplay();
+                          const showResendButton = !isDownloadOnly && (recipient.Status === 'Failed' || recipient.Status === 'Pending');
+                          
+                          return (
                           <div
                             key={recipient.RecordID}
                             className="flex items-center justify-between p-3 rounded-lg"
                             style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
                           >
                             <div className="flex items-center gap-3">
+                              {recipientProfilePic ? (
+                                <img
+                                  src={recipientProfilePic}
+                                  alt={recipient.RecipientName}
+                                  className="w-8 h-8 rounded-full object-cover"
+                                  onError={(e) => {
+                                    // Fallback to initials if image fails to load
+                                    const target = e.target as HTMLImageElement;
+                                    target.style.display = 'none';
+                                    target.nextElementSibling?.classList.remove('hidden');
+                                  }}
+                                />
+                              ) : null}
                               <div
-                                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                                className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold ${recipientProfilePic ? 'hidden' : ''}`}
                                 style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
                               >
-                                {getInitials(recipient.RecipientName)}
+                                {getInitials(displayName)}
                               </div>
-                              <div>
-                                <p className="text-sm font-medium" style={{ color: isDark ? '#fff' : '#000' }}>
-                                  {recipient.RecipientName}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium truncate" style={{ color: isDark ? '#fff' : '#000' }}>
+                                  {displayName}
+                                  {customNameToShow && (
+                                    <span className="text-xs font-normal text-muted-foreground ml-1">
+                                      (as {customNameToShow})
+                                    </span>
+                                  )}
                                 </p>
-                                <p className="text-xs text-muted-foreground">{recipient.RecipientEmail}</p>
+                                <p className="text-xs text-muted-foreground truncate">{recipient.RecipientEmail}</p>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              {recipient.Status === 'Sent' && (
-                                <CheckCircle className="w-4 h-4 text-green-500" />
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {/* Status indicator */}
+                              <div className="flex items-center gap-1.5" title={recipient.FailedReason || statusDisplay.text}>
+                                {statusDisplay.icon}
+                                <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.text}</span>
+                              </div>
+                              
+                              {/* Resend/Send button for failed or pending emails (only for email delivery method) */}
+                              {showResendButton && (
+                                <button
+                                  onClick={() => handleResendToRecipient(selectedIssuance.IssuanceID, recipient.RecordID, recipient.RecipientName)}
+                                  disabled={isResending}
+                                  className="ml-2 px-2 py-1 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                  style={{
+                                    background: recipient.Status === 'Failed' 
+                                      ? 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)'
+                                      : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                                    color: '#fff',
+                                  }}
+                                  title={recipient.Status === 'Failed' 
+                                    ? (recipient.FailedReason ? `Failed: ${recipient.FailedReason}` : 'Resend email')
+                                    : 'Send email now'
+                                  }
+                                >
+                                  {isResending ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : recipient.Status === 'Failed' ? (
+                                    <RefreshCw className="w-3 h-3" />
+                                  ) : (
+                                    <Send className="w-3 h-3" />
+                                  )}
+                                  <span>{isResending ? 'Sending...' : (recipient.Status === 'Failed' ? 'Resend' : 'Send')}</span>
+                                </button>
                               )}
-                              {recipient.Status === 'Failed' && (
-                                <XCircle className="w-4 h-4 text-red-500" />
+                              
+                              {/* Download indicator badge */}
+                              {recipient.DownloadedAt && (
+                                <div 
+                                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs"
+                                  style={{ background: isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)' }}
+                                  title={`Downloaded on ${formatIssuanceDate(recipient.DownloadedAt)}`}
+                                >
+                                  <Download className="w-3 h-3 text-blue-500" />
+                                </div>
                               )}
-                              {recipient.Status === 'Pending' && (
-                                <Clock className="w-4 h-4 text-amber-500" />
-                              )}
-                              <span className="text-xs text-muted-foreground">{recipient.Status}</span>
                             </div>
                           </div>
-                        ))}
+                        );
+                        })}
                       </div>
                     </div>
                   )}
@@ -3057,10 +4658,12 @@ export default function IssuanceCenterPage({
                           <span style={{ color: isDark ? '#fff' : '#000' }}>{selectedIssuance.EmailTitle}</span>
                         </p>
                         {selectedIssuance.EmailMessage && (
-                          <p className="text-sm">
+                          <div className="text-sm">
                             <span className="text-muted-foreground">Message: </span>
-                            <span style={{ color: isDark ? '#fff' : '#000' }}>{selectedIssuance.EmailMessage}</span>
-                          </p>
+                            <div style={{ color: isDark ? '#fff' : '#000', marginTop: '4px' }}>
+                              <FormattedText text={selectedIssuance.EmailMessage} />
+                            </div>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -3175,7 +4778,10 @@ export default function IssuanceCenterPage({
                                   : selectedIssuance.Recipients[0];
                                 
                                 const fieldValues = parseFieldInputs(selectedIssuance.FieldInputs);
-                                fieldValues['{NAME}'] = recipientForPreview.RecipientName;
+                                // Only use recipient name as fallback if no custom {NAME} value was set
+                                if (!fieldValues['{NAME}'] || fieldValues['{NAME}'].trim() === '') {
+                                  fieldValues['{NAME}'] = recipientForPreview.RecipientName;
+                                }
                                 
                                 updateUploadToast(toastId, { progress: 50, message: 'Fetching template...' });
                                 
@@ -3275,16 +4881,238 @@ export default function IssuanceCenterPage({
             </div>
             
             {/* Modal Footer */}
-            <div className="flex items-center justify-end gap-2 p-4 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
-              <Button
-                variant="secondary"
-                onClick={() => setShowDetailModal(false)}
-              >
-                Close
-              </Button>
+            <div className="flex items-center justify-between gap-2 p-4 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+              {/* Left side: Send button or Stop button */}
+              <div className="flex items-center gap-2">
+                {/* Send button for Draft email issuances */}
+                {canCreate && selectedIssuance && selectedIssuance.Status === 'Draft' && selectedIssuance.DeliveryMethod === 'Email' && !isSending && (() => {
+                  // Calculate unsent recipients count
+                  const unsentCount = selectedIssuance.Recipients 
+                    ? selectedIssuance.Recipients.filter(r => r.Status !== 'Sent').length
+                    : selectedIssuance.TotalRecipients - (selectedIssuance.SentCount || 0);
+                  
+                  // Don't show send button if all are already sent
+                  if (unsentCount <= 0) return null;
+                  
+                  return (
+                    <button
+                      onClick={handleSendFromDetail}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:scale-[1.02]"
+                      style={{
+                        background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange} 0%, #f6421f 100%)`,
+                        color: '#fff',
+                        boxShadow: '0 4px 12px rgba(246, 66, 31, 0.3)',
+                      }}
+                      title={`Send emails to ${unsentCount} unsent recipient${unsentCount > 1 ? 's' : ''}`}
+                    >
+                      <Send className="w-4 h-4" />
+                      <span>Send ({unsentCount})</span>
+                    </button>
+                  );
+                })()}
+                {/* Stop button - shows when sending */}
+                {isSending && (
+                  <button
+                    onClick={handleStopSending}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:scale-[1.02]"
+                    style={{
+                      background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                      color: '#fff',
+                      boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)',
+                    }}
+                    title="Stop sending"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>Stop ({sendProgress?.sent || 0}/{sendProgress?.total || selectedIssuance?.TotalRecipients || 0})</span>
+                  </button>
+                )}
+                {/* Sending progress indicator */}
+                {isSending && sendProgress && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin text-[#f6421f]" />
+                    <span>Sending {sendProgress.sent}/{sendProgress.total}...</span>
+                  </div>
+                )}
+              </div>
+              
+              {/* Member View Preview Toggle - Only for Admin/Auditor when issuance is sent/downloaded */}
+              {canCreate && selectedIssuance && (selectedIssuance.Status === 'Sent' || selectedIssuance.Status === 'Downloaded') && (
+                <button
+                  onClick={() => setShowMemberPreviewMode(!showMemberPreviewMode)}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                  style={{
+                    background: showMemberPreviewMode 
+                      ? DESIGN_TOKENS.colors.brand.orange + '20'
+                      : (isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'),
+                    color: showMemberPreviewMode 
+                      ? DESIGN_TOKENS.colors.brand.orange
+                      : (isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)'),
+                  }}
+                  title="Preview how members see this issuance"
+                >
+                  <User className="w-4 h-4" />
+                  <span>{showMemberPreviewMode ? 'Exit Member Preview' : 'Preview as Member'}</span>
+                </button>
+              )}
+              
+              <div className="flex-1" />
+              
+              {/* Right side: Edit button (for drafts) and Close button */}
+              <div className="flex items-center gap-2">
+                {/* Edit button for Draft issuances - icon only, beside Close */}
+                {canCreate && selectedIssuance && selectedIssuance.Status === 'Draft' && !isSending && (
+                  <button
+                    onClick={() => handleEditDraftIssuance(selectedIssuance)}
+                    className="p-2.5 rounded-xl transition-all hover:scale-[1.02]"
+                    style={{
+                      background: isDark ? 'rgba(34, 197, 94, 0.15)' : 'rgba(34, 197, 94, 0.1)',
+                      color: '#22c55e',
+                      border: '1px solid rgba(34, 197, 94, 0.3)',
+                    }}
+                    title="Edit Draft"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                )}
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowDetailModal(false)}
+                >
+                  Close
+                </Button>
+              </div>
             </div>
           </div>
           )}
+        </div>
+      )}
+      
+      {/* ============= DELETE CONFIRMATION MODAL ============= */}
+      {showDeleteConfirmModal && issuanceToDelete && (
+        <div 
+          className="fixed inset-0 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          style={{ zIndex: 9999998 }}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl border-2"
+            style={{
+              ...glassStyle,
+              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+              background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+            }}
+          >
+            {/* Modal Header */}
+            <div 
+              className="p-5 border-b flex items-center gap-4"
+              style={{ 
+                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)'
+              }}
+            >
+              <div 
+                className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(239, 68, 68, 0.2)' }}
+              >
+                <AlertTriangle className="w-6 h-6 text-red-500" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold" style={{ color: isDark ? '#fff' : '#000' }}>
+                  Delete Issuance Permanently?
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  This action cannot be undone
+                </p>
+              </div>
+            </div>
+            
+            {/* Modal Content */}
+            <div className="p-5 space-y-4">
+              <div 
+                className="p-4 rounded-xl"
+                style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }}
+              >
+                <p className="text-sm font-medium mb-1" style={{ color: isDark ? '#fff' : '#000' }}>
+                  {issuanceToDelete.Title}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {issuanceToDelete.TemplateName} • {issuanceToDelete.TotalRecipients} recipients
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Created: {formatIssuanceDate(issuanceToDelete.CreatedAt)}
+                </p>
+              </div>
+              
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  <strong>Warning:</strong> This will permanently delete the issuance, all recipient records, 
+                  and send logs. Recipients will no longer be able to access or download their certificates.
+                </p>
+              </div>
+            </div>
+            
+            {/* Modal Footer */}
+            <div className="p-4 border-t flex justify-end gap-3" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+              <Button
+                variant="secondary"
+                onClick={() => { setShowDeleteConfirmModal(false); setIssuanceToDelete(null); }}
+              >
+                Cancel
+              </Button>
+              <button
+                onClick={handlePermanentDelete}
+                className="px-4 py-2 rounded-lg text-sm font-semibold transition-all hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                  color: '#fff',
+                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)',
+                }}
+              >
+                <Trash2 className="w-4 h-4 inline mr-2" />
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* ============= MEMBER PREVIEW MODAL (for Admin/Auditor to see member view) ============= */}
+      {showMemberPreviewMode && selectedIssuance && canCreate && (
+        <div 
+          className="fixed inset-0 flex items-center justify-center p-4 py-8 bg-black/60 backdrop-blur-sm"
+          style={{ zIndex: 9999997 }}
+        >
+          <div className="relative w-full max-w-3xl mx-auto max-h-[calc(100vh-4rem)]">
+            {/* Preview Badge - More visible */}
+            <div className="mb-3 text-center">
+              <span 
+                className="px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2 justify-center w-fit mx-auto shadow-lg"
+                style={{
+                  background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                  color: '#fff',
+                  border: '2px solid rgba(255,255,255,0.2)'
+                }}
+              >
+                <Eye className="w-4 h-4" />
+                Member View Preview
+              </span>
+            </div>
+            <MemberIssuanceModal
+              issuance={selectedIssuance}
+              isDark={isDark}
+              glassStyle={glassStyle}
+              userEmail={selectedIssuance.Recipients?.[0]?.RecipientEmail || ''}
+              username={selectedIssuance.Recipients?.[0]?.RecipientName || 'Member'}
+              profilePicture={findProfilePicture(
+                selectedIssuance.Recipients?.[0]?.RecipientEmail,
+                selectedIssuance.Recipients?.[0]?.RecipientName
+              )}
+              members={members}
+              onClose={() => setShowMemberPreviewMode(false)}
+              addUploadToast={addUploadToast}
+              updateUploadToast={updateUploadToast}
+              removeUploadToast={removeUploadToast}
+            />
+          </div>
         </div>
       )}
       

@@ -58,6 +58,7 @@ import {
   CheckCircle,
   AlertTriangle,
   Trash2,
+  Mail,
   Download,
   Wrench,
   Power,
@@ -184,7 +185,7 @@ export function CacheRefreshModal({ isOpen, isDark, onConfirm, onClose }: CacheR
       style={{
         background: modalStyles.overlay.background,
         backdropFilter: modalStyles.overlay.backdropFilter,
-        zIndex: 9999,
+        zIndex: 99999999, // Above everything including chatbot
       }}
       onClick={onClose}
     >
@@ -324,42 +325,42 @@ function getRoleChangeContent(changeType: RoleChangeType, oldRole: string, newRo
   
   const contents: Record<RoleChangeType, { icon: string; title: string; message: string; warning: string; color: string }> = {
     promoted: {
-      icon: '🎉',
+      icon: '',
       title: 'Congratulations! You\'ve Been Promoted',
       message: `Great news, ${name}! Your role has been upgraded from ${oldRoleDisplay} to ${newRoleDisplay}. You now have access to additional features and responsibilities.`,
       warning: 'Please refresh to access your new permissions.',
       color: '#22c55e', // Green
     },
     demoted: {
-      icon: '📋',
+      icon: '',
       title: 'Your Role Has Been Updated',
       message: `Hello ${name}, your role has been changed from ${oldRoleDisplay} to ${newRoleDisplay}. Some features you previously had access to may no longer be available.`,
       warning: 'Please refresh to update your access level.',
       color: '#f59e0b', // Amber
     },
     suspended: {
-      icon: '⚠️',
+      icon: '',
       title: 'Account Suspended',
       message: `${name}, your account has been temporarily suspended. You will have limited access to the platform until this is resolved.`,
       warning: 'Please contact an administrator for more information about your suspension.',
       color: '#ef4444', // Red
     },
     banned: {
-      icon: '🚫',
+      icon: '',
       title: 'Account Access Revoked',
       message: `${name}, your account access has been revoked. You will be logged out of the system.`,
       warning: 'If you believe this is an error, please contact the administrator.',
       color: '#dc2626', // Darker Red
     },
     reactivated: {
-      icon: '✅',
-      title: 'Welcome Back!',
+      icon: '',
+      title: 'Welcome Back',
       message: `Good news, ${name}! Your account has been reactivated. Your role is now ${newRoleDisplay}. You can continue using the platform as normal.`,
       warning: 'Please refresh to restore your full access.',
       color: '#22c55e', // Green
     },
     changed: {
-      icon: '🔄',
+      icon: '',
       title: 'Your Role Has Changed',
       message: `Hello ${name}, your role has been updated from ${oldRoleDisplay} to ${newRoleDisplay}. Your permissions and access levels have been adjusted accordingly.`,
       warning: 'Please refresh to apply the changes to your session.',
@@ -427,7 +428,7 @@ export function RoleChangeModal({
       style={{
         background: modalStyles.overlay.background,
         backdropFilter: modalStyles.overlay.backdropFilter,
-        zIndex: 10000, // Higher than other modals
+        zIndex: 99999999, // Above everything including chatbot
       }}
       onClick={isBanned ? undefined : onClose}
     >
@@ -455,14 +456,6 @@ export function RoleChangeModal({
           }}
         >
           <div className="flex items-center gap-3">
-            <div
-              className="p-2 rounded-lg text-2xl"
-              style={{
-                backgroundColor: `${content.color}20`,
-              }}
-            >
-              {content.icon}
-            </div>
             <h2
               className="text-base md:text-lg"
               style={{
@@ -537,13 +530,14 @@ export function RoleChangeModal({
           </div>
 
           <p
-            className="mt-4 text-xs md:text-sm font-medium"
+            className="mt-4 text-xs md:text-sm font-medium flex items-center gap-1"
             style={{
               fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
               color: content.color,
             }}
           >
-            ⚠️ {content.warning}
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            {content.warning}
           </p>
           
           <p
@@ -649,6 +643,14 @@ export default function SystemToolsPage({
         lastExport: 'Error',
         cacheVersion: 0,
         timestamp: new Date().toISOString(),
+        emailQuota: {
+          remaining: null,
+          dailyLimit: null,
+          percentageUsed: null,
+          status: 'error',
+          refreshTime: new Date().toISOString(),
+          lastChecked: new Date().toISOString(),
+        },
       });
     } finally {
       setIsLoadingHealth(false);
@@ -1173,13 +1175,13 @@ export default function SystemToolsPage({
         </div>
 
         {isLoadingHealth ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1, 2, 3, 4].map((i) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            {[1, 2, 3, 4, 5].map((i) => (
               <HealthCardSkeleton key={i} isDark={isDark} />
             ))}
           </div>
         ) : systemHealth && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* Database Status */}
           <div
             className="p-6 rounded-xl border"
@@ -1365,6 +1367,94 @@ export default function SystemToolsPage({
             >
               Export: {formatDate(systemHealth.lastExport || 'Never')}
             </div>
+          </div>
+
+          {/* Email Quota Status */}
+          <div
+            className="p-6 rounded-xl border"
+            style={{
+              background: isDark
+                ? "rgba(255, 255, 255, 0.05)"
+                : "rgba(255, 255, 255, 0.7)",
+              backdropFilter: "blur(12px)",
+              borderColor: isDark
+                ? "rgba(255, 255, 255, 0.1)"
+                : "rgba(0, 0, 0, 0.1)",
+            }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <Mail className="w-8 h-8" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              {getHealthIcon(
+                systemHealth.emailQuota?.status === 'unavailable' || systemHealth.emailQuota?.status === 'error' ? 'warning' :
+                systemHealth.emailQuota?.status === 'critical' ? 'error' :
+                systemHealth.emailQuota?.status === 'warning' ? 'warning' : 'healthy'
+              )}
+            </div>
+            <div
+              className="mb-1"
+              style={{
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                color: isDark ? "#9ca3af" : "#6b7280",
+              }}
+            >
+              Email Quota
+            </div>
+            {systemHealth.emailQuota?.status === 'unavailable' || systemHealth.emailQuota?.status === 'error' ? (
+              <>
+                <div
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: "#f59e0b",
+                  }}
+                >
+                  Not Available
+                </div>
+                <div
+                  className="mt-1"
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    color: isDark ? "#9ca3af" : "#6b7280",
+                  }}
+                >
+                  Run forceEmailAuthorization() in GAS
+                </div>
+              </>
+            ) : (
+              <>
+                <div
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: systemHealth.emailQuota?.status === 'critical' ? "#ef4444" :
+                           systemHealth.emailQuota?.status === 'warning' ? "#f59e0b" : "#10b981",
+                  }}
+                >
+                  {systemHealth.emailQuota?.remaining ?? 0} left
+                </div>
+                <div
+                  className="mt-1"
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    color: isDark ? "#9ca3af" : "#6b7280",
+                  }}
+                >
+                  {systemHealth.emailQuota?.percentageUsed?.toFixed(1) ?? 0}% used of {systemHealth.emailQuota?.dailyLimit ?? 100}
+                </div>
+                <div
+                  className="mt-1 flex items-center gap-1"
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    color: isDark ? "#9ca3af" : "#6b7280",
+                  }}
+                >
+                  <Clock className="w-3 h-3" />
+                  Resets: {systemHealth.emailQuota?.refreshTime ? 
+                    new Date(systemHealth.emailQuota.refreshTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+                    'Midnight PT'}
+                </div>
+              </>
+            )}
           </div>
         </div>
         )}

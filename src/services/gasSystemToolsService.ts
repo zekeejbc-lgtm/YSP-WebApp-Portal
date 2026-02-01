@@ -24,6 +24,17 @@ export interface SystemHealthData {
   lastExport: string;
   cacheVersion: number;
   timestamp: string;
+  // Email quota tracking
+  emailQuota: {
+    remaining: number | null;
+    dailyLimit: number | null;
+    percentageUsed: number | null;
+    status: 'healthy' | 'warning' | 'critical' | 'unavailable' | 'error';
+    refreshTime: string; // When quota resets (Pacific Time)
+    lastChecked: string;
+    message?: string; // Optional message when unavailable
+    error?: string; // Optional error message
+  };
 }
 
 export interface BackupResult {
@@ -89,8 +100,8 @@ const GAS_API_URL =
   import.meta.env.VITE_GAS_LOGIN_API_URL ||
   '';
 
-// Debug: Log API URL on load (remove in production)
-console.log('[SystemTools] API URL configured:', GAS_API_URL ? GAS_API_URL.substring(0, 60) + '...' : 'NOT SET');
+// Debug: Log API URL on load (silenced in production)
+// console.log('[SystemTools] API URL configured:', GAS_API_URL ? GAS_API_URL.substring(0, 60) + '...' : 'NOT SET');
 
 // Cache keys
 const CACHE_VERSION_KEY = 'ysp_cache_version';
@@ -133,12 +144,8 @@ async function callSystemToolsAPI<T>(
     );
   }
 
-  // Suppress verbose logging for frequent polling actions
+  // Suppress verbose logging - only log errors in production
   const isSilentAction = action === 'getCacheVersion';
-
-  if (!isSilentAction) {
-    console.log('[SystemTools] Calling API:', action, { url: GAS_API_URL.substring(0, 60) });
-  }
 
   try {
     const response = await fetch(GAS_API_URL, {
@@ -150,10 +157,6 @@ async function callSystemToolsAPI<T>(
       signal,
     });
 
-    if (!isSilentAction) {
-      console.log('[SystemTools] Response status:', response.status, response.statusText);
-    }
-
     if (!response.ok) {
       throw new SystemToolsAPIError(
         `HTTP error: ${response.status}`,
@@ -162,10 +165,6 @@ async function callSystemToolsAPI<T>(
     }
 
     const result: SystemToolsResponse<T> = await response.json();
-    
-    if (!isSilentAction) {
-      console.log('[SystemTools] Response data:', result.success ? 'success' : 'failed', result);
-    }
 
     if (!result.success) {
       throw new SystemToolsAPIError(
@@ -176,8 +175,10 @@ async function callSystemToolsAPI<T>(
 
     return result.data as T;
   } catch (error) {
-    // Always log errors, even for silent actions
-    console.error('[SystemTools] API Error:', error);
+    // Only log errors for non-silent actions to reduce noise
+    if (!isSilentAction) {
+      console.error('[SystemTools] API Error:', error);
+    }
     if (error instanceof SystemToolsAPIError) {
       throw error;
     }
@@ -544,7 +545,8 @@ export function startCacheVersionPolling(intervalMs = 10000): void {
         }));
       }
     } catch (error) {
-      console.error('Cache version polling error:', error);
+      // Silenced: polling errors are expected when offline
+      // console.error('Cache version polling error:', error);
     }
   }, intervalMs);
 }
@@ -577,6 +579,7 @@ export const AVAILABLE_PAGES_BACKEND = [
   { id: 'my-profile', name: 'My Profile' },
   { id: 'access-logs', name: 'Access Logs' },
   { id: 'system-tools', name: 'System Tools' },
+  { id: 'issuance', name: 'Issuance Center' },
 ];
 
 // =================== ACCESS LOGGING ===================
@@ -665,7 +668,6 @@ export async function logAccess(params: LogAccessParams): Promise<boolean> {
       device,
     });
     
-    console.log('[AccessLog] Logged:', params.action, 'by', params.username);
     return true;
   } catch (error) {
     // Silently fail - access logging should not block user actions
