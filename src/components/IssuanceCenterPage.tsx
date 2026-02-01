@@ -40,6 +40,7 @@ import {
   createTemplate,
   updateTemplate,
   sendIssuance,
+  publishIssuance,
   cancelSending,
   resendToRecipient,
   downloadIssuance,
@@ -1702,16 +1703,22 @@ export default function IssuanceCenterPage({
         }
       });
       
-      // Auto-fill {NAME} with first recipient's name for preview (only if not using custom name)
+      // Determine preview name for single recipient or fallback
       const previewName = useCustomName 
         ? nameField!.value.trim()
         : (selectedRecipients.length > 0 
           ? selectedRecipients[0].name 
           : "Sample Recipient Name");
       
-      // Override {NAME} if it exists in fields and not using custom name (for preview purposes)
-      if (!useCustomName && (fieldValues['{NAME}'] === '' || fieldValues['{NAME}'] === '[{NAME}]')) {
+      // For multi-recipient previews WITHOUT custom name, leave {NAME} empty 
+      // so the backend can fill each recipient's name individually.
+      // Only pre-fill {NAME} for single recipient preview or when using custom name.
+      const isMultiRecipientPreview = selectedRecipients.length > 1 && !useCustomName;
+      if (!isMultiRecipientPreview && !useCustomName && (fieldValues['{NAME}'] === '' || fieldValues['{NAME}'] === '[{NAME}]')) {
         fieldValues['{NAME}'] = previewName;
+      } else if (isMultiRecipientPreview) {
+        // Clear {NAME} for multi-recipient preview so backend uses each recipient's name
+        fieldValues['{NAME}'] = '';
       }
       
       updateUploadToast(toastId, { progress: 50, progressLabel: 'Generating PDF...' });
@@ -2053,6 +2060,51 @@ export default function IssuanceCenterPage({
     
     // Note: We don't set isSending to false immediately - the sendIssuance promise 
     // will complete and handle the cancelled state from the backend response
+  };
+  
+  // Handle publishing a Download-Only issuance (makes it visible to members)
+  const handlePublishFromDetail = async () => {
+    if (!selectedIssuance) return;
+    
+    const toastId = `publish-${Date.now()}`;
+    
+    addUploadToast({
+      id: toastId,
+      title: 'Publishing Issuance',
+      message: `Making issuance visible to ${selectedIssuance.TotalRecipients} recipients...`,
+      status: 'loading',
+      progress: 30,
+      progressLabel: 'Publishing...'
+    });
+    
+    try {
+      const result = await publishIssuance(selectedIssuance.IssuanceID, username);
+      
+      updateUploadToast(toastId, {
+        status: 'success',
+        title: 'Published Successfully',
+        message: result.message || `Issuance is now visible to ${result.recipientCount} recipients`,
+        progress: 100
+      });
+      setTimeout(() => removeUploadToast(toastId), 4000);
+      
+      // Refresh the issuance data
+      loadIssuances();
+      // Refresh selected issuance detail
+      const refreshedIssuances = await getIssuances();
+      const updated = refreshedIssuances.find(i => i.IssuanceID === selectedIssuance.IssuanceID);
+      if (updated) {
+        setSelectedIssuance(updated);
+      }
+      
+    } catch (error) {
+      updateUploadToast(toastId, {
+        status: 'error',
+        title: 'Publish Failed',
+        message: error instanceof Error ? error.message : 'Failed to publish issuance'
+      });
+      setTimeout(() => removeUploadToast(toastId), 6000);
+    }
   };
   
   const handleCreateTemplate = async () => {
@@ -2717,7 +2769,7 @@ export default function IssuanceCenterPage({
                 )}
               </div>
               <button
-                onClick={() => { cleanupPreviewUrl(); setShowCreateModal(false); setIsEditMode(false); setEditingIssuanceId(null); }}
+                onClick={() => { cleanupPreviewUrl(); setShowCreateModal(false); }}
                 className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -3539,7 +3591,9 @@ export default function IssuanceCenterPage({
                                         color: isDark ? 'rgba(134, 239, 172, 1)' : 'rgba(22, 163, 74, 1)',
                                       }}
                                     >
-                                      ✓ Auto-filled from recipients ({selectedRecipients.length > 0 ? selectedRecipients[0].name : 'Add recipients first'})
+                                      ✓ Auto-filled for each recipient {selectedRecipients.length > 0 
+                                        ? `(${selectedRecipients.length} recipient${selectedRecipients.length > 1 ? 's' : ''}: ${selectedRecipients[0].name}${selectedRecipients.length > 1 ? `, ${selectedRecipients[1].name}${selectedRecipients.length > 2 ? ', ...' : ''}` : ''})` 
+                                        : '(Add recipients first)'}
                                     </div>
                                   )}
                                 </div>
@@ -4260,7 +4314,34 @@ export default function IssuanceCenterPage({
             <div className="flex items-center justify-between p-4 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
               <Button
                 variant="secondary"
-                onClick={() => { cleanupPreviewUrl(); setShowCreateModal(false); }}
+                onClick={() => { 
+                  cleanupPreviewUrl(); 
+                  // Reset all form inputs
+                  setSelectedTemplate(null);
+                  setSelectedRecipients([]);
+                  setFieldInputs([]);
+                  setEmailTitle("");
+                  setEmailMessage("");
+                  setCustomTemplateUrl("");
+                  setIssuanceTitle("");
+                  setSendToEmail(true);
+                  setCreateModalTab('recipients');
+                  setPreviewPdfUrl("");
+                  setPreviewImageUrl("");
+                  setPreviewPdfList([]);
+                  setCurrentPreviewIndex(0);
+                  setActiveCommand(null);
+                  setCommandSearchQuery('');
+                  setRecipientSearchQuery('');
+                  setShowRecipientDropdown(false);
+                  setExternalName('');
+                  setExternalEmail('');
+                  setShowAddFieldInput(false);
+                  setDynamicFieldInput('');
+                  setIsEditMode(false);
+                  setEditingIssuanceId(null);
+                  setShowCreateModal(false); 
+                }}
               >
                 Cancel
               </Button>
@@ -4286,7 +4367,7 @@ export default function IssuanceCenterPage({
                 disabled={isSending || !issuanceTitle || !selectedTemplate || selectedRecipients.length === 0}
                 icon={isEditMode ? <Edit2 className="w-4 h-4" /> : (sendToEmail ? <Send className="w-4 h-4" /> : <Download className="w-4 h-4" />)}
               >
-                {isEditMode ? 'Update Draft' : (sendToEmail ? 'Create & Send' : 'Create Issuance')}
+                {isEditMode ? 'Update Draft' : 'Create'}
               </Button>
             </div>
           </div>
@@ -4910,6 +4991,22 @@ export default function IssuanceCenterPage({
                     </button>
                   );
                 })()}
+                {/* Publish button for Draft Download-Only issuances */}
+                {canCreate && selectedIssuance && selectedIssuance.Status === 'Draft' && selectedIssuance.DeliveryMethod === 'DownloadOnly' && !isSending && (
+                  <button
+                    onClick={handlePublishFromDetail}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:scale-[1.02]"
+                    style={{
+                      background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                      color: '#fff',
+                      boxShadow: '0 4px 12px rgba(34, 197, 94, 0.3)',
+                    }}
+                    title={`Publish to ${selectedIssuance.TotalRecipients} recipient${selectedIssuance.TotalRecipients > 1 ? 's' : ''} (no email will be sent)`}
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Publish ({selectedIssuance.TotalRecipients})</span>
+                  </button>
+                )}
                 {/* Stop button - shows when sending */}
                 {isSending && (
                   <button

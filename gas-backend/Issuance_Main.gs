@@ -452,6 +452,9 @@
         case 'sendIssuance':
           return jsonResponse(sendIssuance(data));
         
+        case 'publishIssuance':
+          return jsonResponse(publishIssuance(data));
+        
         case 'cancelSending':
           return jsonResponse(cancelSending(data));
         
@@ -586,7 +589,9 @@
       issuanceHeaders.forEach((header, i) => {
         obj[header] = row[i];
       });
-      if (issuanceIds.has(obj.IssuanceID) && obj.Status !== 'Archived') {
+      // Only show Sent issuances to members (hide Draft and Archived)
+      // Drafts should only be visible to Admin and Auditor roles
+      if (issuanceIds.has(obj.IssuanceID) && obj.Status === 'Sent') {
         issuances.push(obj);
       }
     });
@@ -643,10 +648,10 @@
     
     const now = new Date().toISOString();
     
-    // Determine initial status - if downloadOnly mode, mark as Sent (issued) immediately
-    const initialStatus = data.downloadOnly ? 'Sent' : 'Draft';
-    const sentAt = data.downloadOnly ? now : '';
-    const sentBy = data.downloadOnly ? (data.createdBy || '') : '';
+    // All issuances start as Draft - user must manually publish/send
+    const initialStatus = 'Draft';
+    const sentAt = '';
+    const sentBy = '';
     
     // Delivery method: 'DownloadOnly' or 'Email'
     const deliveryMethod = data.downloadOnly ? 'DownloadOnly' : 'Email';
@@ -660,12 +665,12 @@
       deliveryMethod, // DeliveryMethod column
       data.createdBy || '',
       now,
-      sentAt, // SentAt - set if downloadOnly
-      sentBy, // SentBy - set if downloadOnly
+      sentAt, // SentAt - set when published/sent
+      sentBy, // SentBy - set when published/sent
       data.recipientType || '',
       JSON.stringify(data.recipientDetails || []),
       data.totalRecipients || 0,
-      data.downloadOnly ? (data.totalRecipients || 0) : 0, // SentCount - set if downloadOnly
+      0, // SentCount - starts at 0, updated when published/sent
       0, // FailedCount
       JSON.stringify(data.fieldInputs || {}),
       data.emailTitle || '',
@@ -676,10 +681,9 @@
     
     sheet.appendRow(row);
     
-    // Add recipients to Recipients sheet
-    // If downloadOnly, mark recipients as Downloaded status
+    // Add recipients to Recipients sheet - all start as Pending
     if (data.recipients && data.recipients.length > 0) {
-      addRecipients(id, data.recipients, data.downloadOnly);
+      addRecipients(id, data.recipients, false);
     }
     
     return { 
@@ -1291,12 +1295,18 @@
       const pdfDataArray = [];
       const tempFiles = [];
       
+      // Check if a custom name override was provided (applies to ALL recipients)
+      const hasCustomNameOverride = data.customNameOverride && data.customNameOverride.trim() !== '';
+      
       // Generate PDF for each recipient
       for (const recipient of data.recipients) {
         // Prepare field values for this recipient
         const recipientFieldValues = { ...data.fieldValues };
-        // Only use recipient name if no custom {NAME} value was provided
-        if (!recipientFieldValues['{NAME}'] || recipientFieldValues['{NAME}'].trim() === '') {
+        // Use custom name override if provided, otherwise use each recipient's own name
+        if (hasCustomNameOverride) {
+          recipientFieldValues['{NAME}'] = data.customNameOverride.trim();
+        } else {
+          // Always use the recipient's name for multi-recipient previews (not custom name mode)
           recipientFieldValues['{NAME}'] = recipient.name;
         }
         
@@ -1445,6 +1455,81 @@
         break;
       }
     }
+  }
+
+  /**
+  * Publish a Download-Only issuance (makes it visible to members without sending emails)
+  * Changes status from Draft to Sent and marks all recipients as Sent
+  */
+  function publishIssuance(data) {
+    const ss = SpreadsheetApp.openById(ISSUANCE_CONFIG.SPREADSHEET_ID);
+    
+    // Get the issuance
+    const issuanceResult = getIssuanceById(data.issuanceId);
+    if (!issuanceResult.success) {
+      return issuanceResult;
+    }
+    const issuance = issuanceResult.data;
+    
+    // Verify it's a Draft
+    if (issuance.Status !== 'Draft') {
+      return { success: false, error: 'Only draft issuances can be published' };
+    }
+    
+    // Verify it's Download Only
+    if (issuance.DeliveryMethod !== 'DownloadOnly') {
+      return { success: false, error: 'This issuance is set to send via Email. Use the Send button instead.' };
+    }
+    
+    const now = new Date().toISOString();
+    const publishedBy = data.publishedBy || '';
+    
+    // Update issuance status to Sent
+    const issuancesSheet = ss.getSheetByName(ISSUANCE_CONFIG.SHEETS.ISSUANCES);
+    const issuancesData = issuancesSheet.getDataRange().getValues();
+    const issuanceHeaders = issuancesData[0];
+    
+    // Find column indices
+    const statusCol = issuanceHeaders.indexOf('Status');
+    const sentAtCol = issuanceHeaders.indexOf('SentAt');
+    const sentByCol = issuanceHeaders.indexOf('SentBy');
+    const sentCountCol = issuanceHeaders.indexOf('SentCount');
+    
+    // Find the issuance row
+    for (let i = 1; i < issuancesData.length; i++) {
+      if (issuancesData[i][0] === data.issuanceId) {
+        issuancesSheet.getRange(i + 1, statusCol + 1).setValue('Sent');
+        issuancesSheet.getRange(i + 1, sentAtCol + 1).setValue(now);
+        issuancesSheet.getRange(i + 1, sentByCol + 1).setValue(publishedBy);
+        issuancesSheet.getRange(i + 1, sentCountCol + 1).setValue(issuance.TotalRecipients || 0);
+        break;
+      }
+    }
+    
+    // Update all recipients to Sent status
+    const recipientsSheet = ss.getSheetByName(ISSUANCE_CONFIG.SHEETS.RECIPIENTS);
+    if (recipientsSheet && recipientsSheet.getLastRow() > 1) {
+      const recipientsData = recipientsSheet.getDataRange().getValues();
+      const recipientHeaders = recipientsData[0];
+      
+      const recipientStatusCol = recipientHeaders.indexOf('Status');
+      const recipientSentAtCol = recipientHeaders.indexOf('SentAt');
+      
+      for (let i = 1; i < recipientsData.length; i++) {
+        if (recipientsData[i][recipientHeaders.indexOf('IssuanceID')] === data.issuanceId) {
+          recipientsSheet.getRange(i + 1, recipientStatusCol + 1).setValue('Sent');
+          recipientsSheet.getRange(i + 1, recipientSentAtCol + 1).setValue(now);
+        }
+      }
+    }
+    
+    return { 
+      success: true, 
+      message: 'Issuance published successfully. It is now visible to all recipients.',
+      publishedAt: now,
+      publishedBy: publishedBy,
+      recipientCount: issuance.TotalRecipients || 0
+    };
   }
 
   /**

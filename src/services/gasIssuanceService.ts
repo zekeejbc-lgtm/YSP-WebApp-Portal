@@ -716,6 +716,40 @@ export async function sendIssuance(
 }
 
 /**
+ * Publish a Download-Only issuance (makes it visible to members without sending emails)
+ * Changes status from Draft to Sent
+ */
+export async function publishIssuance(
+  issuanceId: string,
+  publishedBy: string
+): Promise<{ publishedAt: string; publishedBy: string; recipientCount: number; message: string }> {
+  const response = await postToGAS({
+    action: 'publishIssuance',
+    issuanceId,
+    publishedBy,
+  });
+  
+  if (response.success) {
+    clearIssuanceCache();
+    // Backend returns these fields at root level
+    const result = response as unknown as { 
+      publishedAt?: string; 
+      publishedBy?: string; 
+      recipientCount?: number; 
+      message?: string; 
+    };
+    return {
+      publishedAt: result.publishedAt || '',
+      publishedBy: result.publishedBy || publishedBy,
+      recipientCount: result.recipientCount || 0,
+      message: result.message || 'Published successfully',
+    };
+  }
+  
+  throw new Error(response.error || 'Failed to publish issuance');
+}
+
+/**
  * Cancel sending for a specific issuance
  * Sets a flag that the backend checks between each recipient
  */
