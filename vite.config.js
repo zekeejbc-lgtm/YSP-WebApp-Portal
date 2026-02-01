@@ -36,7 +36,7 @@ export default defineConfig({
                 launch_handler: {
                     client_mode: ['navigate-existing', 'auto'],
                 },
-                capture_links: 'existing-client',
+                // NOTE: Removed capture_links: 'existing-client' as it blocks mailto: and tel: links
                 icons: [
                     {
                         src: '/icons/pwa-192x192.png',

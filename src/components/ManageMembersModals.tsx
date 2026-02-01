@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { X, Save, Edit, Loader2, Mail, Phone, Calendar, User as UserIcon, Hash, Briefcase, Users, Facebook, Instagram, Twitter, Globe, MapPin, CheckCircle } from "lucide-react";
 import { DESIGN_TOKENS } from "./design-system";
+import { openEmailApp } from "../utils/externalLinks";
 import CustomDropdown from "./CustomDropdown";
 import { type UploadToastMessage } from "./UploadToast";
 
@@ -712,7 +713,12 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
                   displayEmail ? (
                     <div className="flex items-center justify-between gap-3">
                       <a
-                        href={`mailto:${displayEmail}`}
+                        href={`mailto:${displayEmail?.replace(/\+/g, '%2B')}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          console.log('[Email Debug] ManageMembers email link clicked:', displayEmail);
+                          if (displayEmail) openEmailApp(displayEmail);
+                        }}
                         className={`text-sm ${isDark ? "text-white" : "text-gray-900"} hover:underline underline-offset-2 break-all`}
                       >
                         {displayEmail}

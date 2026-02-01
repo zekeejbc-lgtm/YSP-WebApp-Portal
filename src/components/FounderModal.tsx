@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Mail, Phone, MapPin, Award, Edit2, Save, Upload, Trash2, Plus, Loader2 } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { openEmailApp } from '../utils/externalLinks';
 import { type UploadToastMessage } from './UploadToast';
 import {
   fetchFounderInfoContent,
@@ -167,6 +168,199 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
   return icons[platform] || icons.link;
 };
 
+// Shared shimmer styles - matches SkeletonCard.tsx pattern
+const ShimmerStyles = () => (
+  <style>{`
+    .skeleton-shimmer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.4) 50%,
+        transparent 100%
+      );
+      animation: shimmer 1.5s infinite;
+    }
+
+    .dark .skeleton-shimmer {
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        transparent 100%
+      );
+    }
+
+    @keyframes shimmer {
+      0% {
+        transform: translateX(-100%);
+      }
+      100% {
+        transform: translateX(100%);
+      }
+    }
+  `}</style>
+);
+
+// Skeleton Loading Component for Founder Modal
+function FounderSkeletonLoader({ isDark }: { isDark: boolean }) {
+  return (
+    <div className={isDark ? 'dark' : ''}>
+      <ShimmerStyles />
+      <div className="p-6 space-y-6">
+        {/* Profile Header Skeleton */}
+        <div className="flex flex-col md:flex-row gap-6 items-start">
+          {/* Profile Image Skeleton */}
+          <div className="shrink-0">
+            <div 
+              className={`w-32 h-32 md:w-40 md:h-40 rounded-xl border-4 border-[#f6421f]/30 relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+          {/* Basic Info Skeleton */}
+          <div className="flex-1 space-y-3 pt-2">
+            {/* Name */}
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '32px', width: '70%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            {/* Nickname */}
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '20px', width: '40%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            {/* Position */}
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '24px', width: '55%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+
+        {/* About Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '120px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="space-y-2">
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '100%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '95%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '85%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+
+        {/* Background Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '140px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="space-y-2">
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '100%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '90%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+
+        {/* Achievements Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '160px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[1, 2, 3].map((i) => (
+              <div 
+                key={i}
+                className={`rounded-full relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+                style={{ height: '32px', width: `${100 + i * 20}px` }}
+              >
+                <div className="skeleton-shimmer" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Contact Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '100px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {[1, 2, 3].map((i) => (
+              <div 
+                key={i}
+                className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+                style={{ height: '48px' }}
+              >
+                <div className="skeleton-shimmer" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Social Links Skeleton */}
+        <div className="flex gap-2 justify-center pt-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div 
+              key={i}
+              className={`rounded-full relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '40px', width: '40px' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FounderModal({ 
   isOpen, 
   onClose, 
@@ -237,7 +431,6 @@ export default function FounderModal({
       const data = await fetchFounderInfoContent();
       
       updateToastRef.current(toastId, { progress: 70, message: 'Processing data...' });
-      console.log('[FounderModal] Raw data from backend:', data);
       
       // Transform backend data to component format
       const transformedData = {
@@ -261,8 +454,6 @@ export default function FounderModal({
       setFounderData(transformedData);
       setSavedData(transformedData);
       setImagePreview(transformedData.profileImage); // Set initial image preview from backend
-      
-      console.log('[FounderModal] Transformed data:', transformedData);
       
       updateToastRef.current(toastId, {
         status: 'success',
@@ -616,10 +807,7 @@ export default function FounderModal({
 
         {/* Content */}
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center p-6" style={{ minHeight: '500px' }}>
-            <div className="w-12 h-12 border-4 border-[#f6421f] border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-4 text-gray-600 dark:text-gray-400">Loading founder profile...</p>
-          </div>
+          <FounderSkeletonLoader isDark={isDark} />
         ) : (
         <div className="p-6 space-y-6">
           {/* Profile Header */}
@@ -952,7 +1140,12 @@ export default function FounderModal({
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-gray-600 dark:text-gray-400">Email</p>
                       <a 
-                        href={`mailto:${founderData.contact.email}`}
+                        href={`mailto:${founderData.contact.email?.replace(/\+/g, '%2B')}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          console.log('[Email Debug] FounderModal email link clicked:', founderData.contact.email);
+                          if (founderData.contact.email) openEmailApp(founderData.contact.email);
+                        }}
                         className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] transition-colors truncate block"
                       >
                         {founderData.contact.email}

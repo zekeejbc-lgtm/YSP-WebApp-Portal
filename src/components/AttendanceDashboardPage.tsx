@@ -228,6 +228,7 @@ interface AttendanceDashboardPageProps {
   updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number }>) => void;
   removeUploadToast?: (id: string) => void;
   onDashboardContextUpdate?: (context: AttendanceDashboardContext | null) => void;
+  onModalStateChange?: (isOpen: boolean) => void; // Callback when any modal opens/closes (to hide chatbot)
 }
 
 // Event selection mode types
@@ -374,6 +375,7 @@ export default function AttendanceDashboardPage({
   updateUploadToast,
   removeUploadToast,
   onDashboardContextUpdate,
+  onModalStateChange,
 }: AttendanceDashboardPageProps) {
   // Mobile detection for PDF preview fallback
   const isMobile = useIsMobile();
@@ -412,6 +414,13 @@ export default function AttendanceDashboardPage({
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [multiEventRecords, setMultiEventRecords] = useState<Map<string, AttendanceRecord[]>>(new Map());
   const [allMembers, setAllMembers] = useState<MemberForAttendance[]>([]);
+
+  // ============= MODAL STATE TRACKING FOR CHATBOT VISIBILITY =============
+  // Track when any modal is open and notify parent to hide chatbot
+  useEffect(() => {
+    const isAnyModalOpen = showModal || showExportPreview;
+    onModalStateChange?.(isAnyModalOpen);
+  }, [showModal, showExportPreview, onModalStateChange]);
 
   // Fetch events on mount
   useEffect(() => {
@@ -471,12 +480,17 @@ export default function AttendanceDashboardPage({
           setAttendanceRecords(records);
           setMultiEventRecords(new Map([[effectiveEvents[0], records]]));
         } else {
-          // Load attendance for multiple events
+          // Load attendance for multiple events in PARALLEL for better performance
+          const recordsPromises = effectiveEvents.map(eventId => 
+            getEventAttendanceRecords(eventId).then(records => ({ eventId, records }))
+          );
+          
+          const results = await Promise.all(recordsPromises);
+          
           const recordsMap = new Map<string, AttendanceRecord[]>();
           const allRecords: AttendanceRecord[] = [];
           
-          for (const eventId of effectiveEvents) {
-            const records = await getEventAttendanceRecords(eventId);
+          for (const { eventId, records } of results) {
             recordsMap.set(eventId, records);
             allRecords.push(...records);
           }
@@ -507,119 +521,113 @@ export default function AttendanceDashboardPage({
     return 'line'; // Many events: line chart for trends
   }, [getEffectiveSelectedEvents]);
 
-  // Update chatbot context when data changes
+  // Update chatbot context when data changes - debounced for performance
   useEffect(() => {
     if (!onDashboardContextUpdate) return;
     
-    const effectiveEvents = getEffectiveSelectedEvents();
-    if (effectiveEvents.length === 0) {
-      onDashboardContextUpdate(null);
-      return;
-    }
+    // Debounce context updates to prevent excessive re-renders
+    const timeoutId = setTimeout(() => {
+      const currentEffectiveEvents = getEffectiveSelectedEvents();
+      if (currentEffectiveEvents.length === 0) {
+        onDashboardContextUpdate(null);
+        return;
+      }
 
-    const filtered = getFilteredAttendance();
-    const notRecordedMembers = getNotRecordedMembers();
-    const present = filtered.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
-    const late = filtered.filter(r => r.status === 'Late').length;
-    const excused = filtered.filter(r => r.status === 'Excused').length;
-    const absent = filtered.filter(r => r.status === 'Absent').length;
-    const totalRecorded = present + late + excused + absent;
+      const filtered = getFilteredAttendance();
+      const currentNotRecordedMembers = getNotRecordedMembers();
+      const present = filtered.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
+      const late = filtered.filter(r => r.status === 'Late').length;
+      const excused = filtered.filter(r => r.status === 'Excused').length;
+      const absent = filtered.filter(r => r.status === 'Absent').length;
+      const totalRecorded = present + late + excused + absent;
 
-    const context: AttendanceDashboardContext = {
-      mode: selectedEventIds.length <= 1 ? 'single' : 'multiple',
-      selectedEvents: effectiveEvents,
-      dateRange: null,
-      totalEvents: events.length,
-      statistics: {
-        totalRecords: totalRecorded,
-        present,
-        late,
-        excused,
-        absent,
-        notRecorded: notRecordedMembers.length,
-        attendanceRate: allMembers.length > 0 ? Math.round(((present + late) / allMembers.length) * 100) : 0,
-      },
-      eventDetails: effectiveEvents.map(eventId => {
-        const event = events.find(e => e.EventID === eventId);
-        const eventRecords = multiEventRecords.get(eventId) || [];
-        return {
-          id: eventId,
-          title: event?.Title || 'Unknown',
-          date: event?.StartDate ? formatDateValue(event.StartDate) : '-',
-          status: event?.Status || '-',
-          present: eventRecords.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length,
-          late: eventRecords.filter(r => r.status === 'Late').length,
-          excused: eventRecords.filter(r => r.status === 'Excused').length,
-          absent: eventRecords.filter(r => r.status === 'Absent').length,
-        };
-      }),
-      recommendedChartType: getRecommendedChartType(),
-    };
+      const context: AttendanceDashboardContext = {
+        mode: selectedEventIds.length <= 1 ? 'single' : 'multiple',
+        selectedEvents: currentEffectiveEvents,
+        dateRange: null,
+        totalEvents: events.length,
+        statistics: {
+          totalRecords: totalRecorded,
+          present,
+          late,
+          excused,
+          absent,
+          notRecorded: currentNotRecordedMembers.length,
+          attendanceRate: allMembers.length > 0 ? Math.round(((present + late) / allMembers.length) * 100) : 0,
+        },
+        eventDetails: currentEffectiveEvents.map(eventId => {
+          const event = events.find(e => e.EventID === eventId);
+          const eventRecords = multiEventRecords.get(eventId) || [];
+          return {
+            id: eventId,
+            title: event?.Title || 'Unknown',
+            date: event?.StartDate ? formatDateValue(event.StartDate) : '-',
+            status: event?.Status || '-',
+            present: eventRecords.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length,
+            late: eventRecords.filter(r => r.status === 'Late').length,
+            excused: eventRecords.filter(r => r.status === 'Excused').length,
+            absent: eventRecords.filter(r => r.status === 'Absent').length,
+          };
+        }),
+        recommendedChartType: getRecommendedChartType(),
+      };
 
-    onDashboardContextUpdate(context);
+      onDashboardContextUpdate(context);
+    }, 150); // 150ms debounce
+
+    return () => clearTimeout(timeoutId);
   }, [selectedEventIds, events, attendanceRecords, multiEventRecords, allMembers, onDashboardContextUpdate, getEffectiveSelectedEvents, getRecommendedChartType]);
+
+  // Create a Map for O(1) member lookups instead of O(n) find() calls
+  const memberLookupMap = useMemo(() => {
+    const map = new Map<string, MemberForAttendance>();
+    allMembers.forEach(member => map.set(member.id, member));
+    return map;
+  }, [allMembers]);
+
+  // Helper to check if member matches committee filter - memoized for reuse
+  const matchesCommitteeFilter = useCallback((member: MemberForAttendance | undefined): boolean => {
+    if (!member) return false;
+    if (selectedCommittee === "All") return true;
+    
+    switch (selectedCommittee) {
+      case "Executive Board (only heads/Officers)":
+        return member.position?.toLowerCase().includes('head') || 
+               member.position?.toLowerCase().includes('officer') ||
+               member.position?.toLowerCase().includes('president') ||
+               member.position?.toLowerCase().includes('vice') ||
+               member.position?.toLowerCase().includes('secretary') ||
+               member.position?.toLowerCase().includes('treasurer');
+      case "Only Members":
+        return member.position?.toLowerCase() === 'member' || 
+               member.position?.toLowerCase().includes('member');
+      case "Only Volunteers":
+        return member.position?.toLowerCase().includes('volunteer');
+      default:
+        return member.committee === selectedCommittee;
+    }
+  }, [selectedCommittee]);
 
   // Get members who were not recorded in attendance
   const getNotRecordedMembers = useCallback((): MemberForAttendance[] => {
     const recordedMemberIds = new Set(attendanceRecords.map(r => r.memberId));
     
-    let filteredMembers = allMembers.filter(member => !recordedMemberIds.has(member.id));
-    
-    // Apply committee filter if needed
-    if (selectedCommittee !== "All") {
-      filteredMembers = filteredMembers.filter((member) => {
-        switch (selectedCommittee) {
-          case "Executive Board (only heads/Officers)":
-            return member.position?.toLowerCase().includes('head') || 
-                   member.position?.toLowerCase().includes('officer') ||
-                   member.position?.toLowerCase().includes('president') ||
-                   member.position?.toLowerCase().includes('vice') ||
-                   member.position?.toLowerCase().includes('secretary') ||
-                   member.position?.toLowerCase().includes('treasurer');
-          case "Only Members":
-            return member.position?.toLowerCase() === 'member' || 
-                   member.position?.toLowerCase().includes('member');
-          case "Only Volunteers":
-            return member.position?.toLowerCase().includes('volunteer');
-          default:
-            return member.committee === selectedCommittee;
-        }
-      });
-    }
-    
-    return filteredMembers;
-  }, [attendanceRecords, allMembers, selectedCommittee]);
+    return allMembers.filter(member => 
+      !recordedMemberIds.has(member.id) && matchesCommitteeFilter(member)
+    );
+  }, [attendanceRecords, allMembers, matchesCommitteeFilter]);
 
-  // Filter attendance by committee
+  // Filter attendance by committee - optimized with Map lookup
   const getFilteredAttendance = useCallback(() => {
     if (selectedCommittee === "All") {
       return attendanceRecords;
     }
 
-    // Map committee filter to actual member data
     return attendanceRecords.filter((record) => {
-      const member = allMembers.find((m) => m.id === record.memberId);
-      if (!member) return false;
-
-      switch (selectedCommittee) {
-        case "Executive Board (only heads/Officers)":
-          return member.position?.toLowerCase().includes('head') || 
-                 member.position?.toLowerCase().includes('officer') ||
-                 member.position?.toLowerCase().includes('president') ||
-                 member.position?.toLowerCase().includes('vice') ||
-                 member.position?.toLowerCase().includes('secretary') ||
-                 member.position?.toLowerCase().includes('treasurer');
-        case "Only Members":
-          return member.position?.toLowerCase() === 'member' || 
-                 member.position?.toLowerCase().includes('member');
-        case "Only Volunteers":
-          return member.position?.toLowerCase().includes('volunteer');
-        default:
-          // Committee-based filter
-          return member.committee === selectedCommittee;
-      }
+      const member = memberLookupMap.get(record.memberId);
+      return matchesCommitteeFilter(member);
     });
-  }, [attendanceRecords, allMembers, selectedCommittee]);
+  }, [attendanceRecords, memberLookupMap, selectedCommittee, matchesCommitteeFilter]);
 
   // Calculate attendance data for charts
   const getAttendanceData = useCallback(() => {
@@ -637,12 +645,12 @@ export default function AttendanceDashboardPage({
     ].filter((item) => item.value > 0); // Only show categories with values
   }, [getFilteredAttendance]);
 
-  // Calculate bar chart data by committee
+  // Calculate bar chart data by committee - optimized with Map lookup
   const getBarChartData = useCallback(() => {
     const committeeData: Record<string, { Present: number; Late: number; Excused: number; Absent: number }> = {};
 
     attendanceRecords.forEach((record) => {
-      const member = allMembers.find((m) => m.id === record.memberId);
+      const member = memberLookupMap.get(record.memberId);
       const committee = member?.committee || 'Unknown';
       
       // Abbreviate committee name for chart
@@ -667,7 +675,7 @@ export default function AttendanceDashboardPage({
       committee,
       ...data,
     }));
-  }, [attendanceRecords, allMembers]);
+  }, [attendanceRecords, memberLookupMap]);
 
   // Calculate multi-event chart data (for line/bar across events)
   const getMultiEventChartData = useCallback(() => {
@@ -711,7 +719,7 @@ export default function AttendanceDashboardPage({
     ];
   }, [getFilteredAttendance]);
 
-  // Get members by status for modal
+  // Get members by status for modal - optimized with Map lookup
   const getMembersByStatus = useCallback((status: string): MemberForAttendance[] => {
     if (status === 'Not Recorded') {
       return getNotRecordedMembers();
@@ -726,17 +734,25 @@ export default function AttendanceDashboardPage({
     });
 
     return statusMembers.map((r) => {
-      const member = allMembers.find((m) => m.id === r.memberId);
+      const member = memberLookupMap.get(r.memberId);
       return member || { id: r.memberId, name: r.memberName, committee: '', position: '' };
     });
-  }, [getFilteredAttendance, allMembers, getNotRecordedMembers]);
+  }, [getFilteredAttendance, memberLookupMap, getNotRecordedMembers]);
 
-  const handleChartClick = (data: any) => {
+  // Memoized chart click handler
+  const handleChartClick = useCallback((data: any) => {
     const status = data.name || data.status;
     const members = getMembersByStatus(status);
     setModalData({ status, members });
     setShowModal(true);
-  };
+  }, [getMembersByStatus]);
+
+  // Memoized stat card click handlers for performance
+  const handleStatCardClick = useCallback((status: string) => {
+    const members = getMembersByStatus(status);
+    setModalData({ status, members });
+    setShowModal(true);
+  }, [getMembersByStatus]);
 
   // Handle export with preview
   const handleExportWithPreview = (format: 'pdf' | 'spreadsheet') => {
@@ -2248,16 +2264,29 @@ export default function AttendanceDashboardPage({
     });
   };
 
-  const attendanceData = getAttendanceData();
-  const barChartData = getBarChartData();
-  const multiEventChartData = getMultiEventChartData();
-  const columnChartData = getColumnChartData();
-  const notRecordedMembers = getNotRecordedMembers();
-  const totalRecords = getFilteredAttendance().length;
-  const effectiveEvents = getEffectiveSelectedEvents();
-  const recommendedChart = getRecommendedChartType();
+  // Memoize expensive calculations to prevent recalculation on every render
+  const attendanceData = useMemo(() => getAttendanceData(), [getAttendanceData]);
+  const barChartData = useMemo(() => getBarChartData(), [getBarChartData]);
+  const multiEventChartData = useMemo(() => getMultiEventChartData(), [getMultiEventChartData]);
+  const columnChartData = useMemo(() => getColumnChartData(), [getColumnChartData]);
+  const notRecordedMembers = useMemo(() => getNotRecordedMembers(), [getNotRecordedMembers]);
+  const filteredAttendance = useMemo(() => getFilteredAttendance(), [getFilteredAttendance]);
+  const totalRecords = filteredAttendance.length;
+  const effectiveEvents = useMemo(() => getEffectiveSelectedEvents(), [getEffectiveSelectedEvents]);
+  const recommendedChart = useMemo(() => getRecommendedChartType(), [getRecommendedChartType]);
 
-  const renderChart = () => {
+  // Memoize whether to use multi-event data
+  const useMultiEventData = effectiveEvents.length > 1;
+
+  // Memoize tooltip styles to prevent recreation
+  const tooltipStyle = useMemo(() => ({
+    background: isDark ? '#1e293b' : '#fff',
+    border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+    borderRadius: 8,
+  }), [isDark]);
+
+  // Memoized chart components to prevent unnecessary re-renders
+  const chartContent = useMemo(() => {
     if (isLoadingAttendance) {
       return <ChartSkeleton isDark={isDark} />;
     }
@@ -2275,9 +2304,6 @@ export default function AttendanceDashboardPage({
       );
     }
 
-    // For multiple events, use multi-event data
-    const useMultiEventData = effectiveEvents.length > 1;
-
     switch (chartType) {
       case "pie":
         return (
@@ -2293,6 +2319,7 @@ export default function AttendanceDashboardPage({
                 fill="#8884d8"
                 dataKey="value"
                 onClick={handleChartClick}
+                isAnimationActive={false}
               >
                 {attendanceData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={entry.color} className="cursor-pointer hover:opacity-80" />
@@ -2319,6 +2346,7 @@ export default function AttendanceDashboardPage({
                 fill="#8884d8"
                 dataKey="value"
                 onClick={handleChartClick}
+                isAnimationActive={false}
               >
                 {attendanceData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={entry.color} className="cursor-pointer hover:opacity-80" />
@@ -2331,7 +2359,6 @@ export default function AttendanceDashboardPage({
         );
 
       case "column":
-        // Single event column chart showing status distribution
         return (
           <ResponsiveContainer width="100%" height={400}>
             <BarChart data={columnChartData} layout="horizontal">
@@ -2339,17 +2366,14 @@ export default function AttendanceDashboardPage({
               <XAxis dataKey="status" />
               <YAxis />
               <Tooltip 
-                formatter={(value: number, name: string) => [value, 'Count']}
-                contentStyle={{
-                  background: isDark ? '#1e293b' : '#fff',
-                  border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
-                  borderRadius: 8,
-                }}
+                formatter={(value: number) => [value, 'Count']}
+                contentStyle={tooltipStyle}
               />
               <Bar 
                 dataKey="count" 
                 onClick={(data: any) => handleChartClick({ name: data.status })}
                 cursor="pointer"
+                isAnimationActive={false}
               >
                 {columnChartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={entry.color} className="hover:opacity-80" />
@@ -2360,49 +2384,35 @@ export default function AttendanceDashboardPage({
         );
 
       case "bar":
-        // For multiple events, show events comparison; for single event, show committee breakdown
         return (
           <ResponsiveContainer width="100%" height={400}>
             <BarChart data={useMultiEventData ? multiEventChartData : barChartData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={useMultiEventData ? "event" : "committee"} />
               <YAxis />
-              <Tooltip 
-                contentStyle={{
-                  background: isDark ? '#1e293b' : '#fff',
-                  border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
-                  borderRadius: 8,
-                }}
-              />
+              <Tooltip contentStyle={tooltipStyle} />
               <Legend />
-              <Bar dataKey="Present" fill="#10b981" />
-              <Bar dataKey="Late" fill="#f59e0b" />
-              <Bar dataKey="Excused" fill="#3b82f6" />
-              <Bar dataKey="Absent" fill="#ef4444" />
+              <Bar dataKey="Present" fill="#10b981" isAnimationActive={false} />
+              <Bar dataKey="Late" fill="#f59e0b" isAnimationActive={false} />
+              <Bar dataKey="Excused" fill="#3b82f6" isAnimationActive={false} />
+              <Bar dataKey="Absent" fill="#ef4444" isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         );
 
       case "line":
-        // For multiple events, show trend across events; for single event, show committee trend
         return (
           <ResponsiveContainer width="100%" height={400}>
             <LineChart data={useMultiEventData ? multiEventChartData : barChartData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={useMultiEventData ? "event" : "committee"} />
               <YAxis />
-              <Tooltip 
-                contentStyle={{
-                  background: isDark ? '#1e293b' : '#fff',
-                  border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
-                  borderRadius: 8,
-                }}
-              />
+              <Tooltip contentStyle={tooltipStyle} />
               <Legend />
-              <Line type="monotone" dataKey="Present" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="Late" stroke="#f59e0b" strokeWidth={2} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="Excused" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="Absent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} />
+              <Line type="monotone" dataKey="Present" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
+              <Line type="monotone" dataKey="Late" stroke="#f59e0b" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
+              <Line type="monotone" dataKey="Excused" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
+              <Line type="monotone" dataKey="Absent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         );
@@ -2410,7 +2420,10 @@ export default function AttendanceDashboardPage({
       default:
         return null;
     }
-  };
+  }, [isLoadingAttendance, isDark, attendanceData, chartType, columnChartData, barChartData, multiEventChartData, useMultiEventData, tooltipStyle, selectedCommittee, handleChartClick]);
+
+  // Keep renderChart as a function that returns memoized content for compatibility
+  const renderChart = () => chartContent;
 
   return (
     <PageLayout
@@ -2500,11 +2513,7 @@ export default function AttendanceDashboardPage({
                 background: isDark ? 'rgba(16, 185, 129, 0.15)' : 'rgba(16, 185, 129, 0.1)',
                 borderColor: '#10b981',
               }}
-              onClick={() => {
-                const members = getMembersByStatus('Present');
-                setModalData({ status: 'Present', members });
-                setShowModal(true);
-              }}
+              onClick={() => handleStatCardClick('Present')}
             >
               <p className="text-sm text-muted-foreground mb-1">Present</p>
               <p className="text-2xl font-bold" style={{ color: '#10b981' }}>
@@ -2517,11 +2526,7 @@ export default function AttendanceDashboardPage({
                 background: isDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.1)',
                 borderColor: '#f59e0b',
               }}
-              onClick={() => {
-                const members = getMembersByStatus('Late');
-                setModalData({ status: 'Late', members });
-                setShowModal(true);
-              }}
+              onClick={() => handleStatCardClick('Late')}
             >
               <p className="text-sm text-muted-foreground mb-1">Late</p>
               <p className="text-2xl font-bold" style={{ color: '#f59e0b' }}>
@@ -2534,11 +2539,7 @@ export default function AttendanceDashboardPage({
                 background: isDark ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)',
                 borderColor: '#3b82f6',
               }}
-              onClick={() => {
-                const members = getMembersByStatus('Excused');
-                setModalData({ status: 'Excused', members });
-                setShowModal(true);
-              }}
+              onClick={() => handleStatCardClick('Excused')}
             >
               <p className="text-sm text-muted-foreground mb-1">Excused</p>
               <p className="text-2xl font-bold" style={{ color: '#3b82f6' }}>
@@ -2551,11 +2552,7 @@ export default function AttendanceDashboardPage({
                 background: isDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.1)',
                 borderColor: '#ef4444',
               }}
-              onClick={() => {
-                const members = getMembersByStatus('Absent');
-                setModalData({ status: 'Absent', members });
-                setShowModal(true);
-              }}
+              onClick={() => handleStatCardClick('Absent')}
             >
               <p className="text-sm text-muted-foreground mb-1">Absent</p>
               <p className="text-2xl font-bold" style={{ color: '#ef4444' }}>
@@ -2569,11 +2566,7 @@ export default function AttendanceDashboardPage({
                 background: isDark ? 'rgba(107, 114, 128, 0.15)' : 'rgba(107, 114, 128, 0.1)',
                 borderColor: '#6b7280',
               }}
-              onClick={() => {
-                const members = getNotRecordedMembers();
-                setModalData({ status: 'Not Recorded', members });
-                setShowModal(true);
-              }}
+              onClick={() => handleStatCardClick('Not Recorded')}
             >
               <p className="text-sm text-muted-foreground mb-1">Not Recorded</p>
               <p className="text-2xl font-bold" style={{ color: '#6b7280' }}>

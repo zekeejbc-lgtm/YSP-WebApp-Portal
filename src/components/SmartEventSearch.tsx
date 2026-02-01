@@ -3,6 +3,18 @@ import { Search, X, Calendar, ChevronDown } from 'lucide-react';
 import { DESIGN_TOKENS } from './design-system';
 import { EventData } from '../services/gasEventsService';
 
+// Debounce hook for search input performance
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
 interface SmartEventSearchProps {
   events: EventData[];
   selectedEventIds: string[];
@@ -146,9 +158,12 @@ export default function SmartEventSearch({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Get suggestions based on input
+  // Debounce search input to reduce computation frequency
+  const debouncedInputValue = useDebounce(inputValue, 100);
+
+  // Get suggestions based on debounced input for performance
   const suggestions = useMemo(() => {
-    if (!inputValue.trim()) {
+    if (!debouncedInputValue.trim()) {
       // Show all events when empty, sorted by date (newest first)
       return events
         .slice()
@@ -156,7 +171,7 @@ export default function SmartEventSearch({
         .slice(0, 10);
     }
     
-    const searchTerms = inputValue.toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+    const searchTerms = debouncedInputValue.toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
     const lastTerm = searchTerms[searchTerms.length - 1] || '';
     
     // Check if it's a date-based search
@@ -199,22 +214,22 @@ export default function SmartEventSearch({
         title.includes(word) || status.includes(word)
       );
     }).slice(0, 10);
-  }, [inputValue, events]);
+  }, [debouncedInputValue, events]);
 
-  // Selected events data
+  // Selected events data - memoized for performance
   const selectedEvents = useMemo(() => {
     return events.filter(e => selectedEventIds.includes(e.EventID));
   }, [events, selectedEventIds]);
 
-  // Handle input change
-  const handleInputChange = (value: string) => {
+  // Handle input change - memoized
+  const handleInputChange = useCallback((value: string) => {
     setInputValue(value);
     setIsOpen(true);
     setHighlightedIndex(-1);
-  };
+  }, []);
 
-  // Handle selecting an event
-  const handleSelectEvent = (event: EventData) => {
+  // Handle selecting an event - memoized
+  const handleSelectEvent = useCallback((event: EventData) => {
     if (selectedEventIds.includes(event.EventID)) {
       // Deselect if already selected
       onSelectionChange(selectedEventIds.filter(id => id !== event.EventID));
@@ -227,16 +242,16 @@ export default function SmartEventSearch({
     setInputValue('');
     setHighlightedIndex(-1);
     setIsOpen(false);  // Close dropdown after selection
-  };
+  }, [selectedEventIds, onSelectionChange]);
 
-  // Handle removing a selected event
-  const handleRemoveEvent = (eventId: string) => {
+  // Handle removing a selected event - memoized
+  const handleRemoveEvent = useCallback((eventId: string) => {
     onSelectionChange(selectedEventIds.filter(id => id !== eventId));
     inputRef.current?.focus();
-  };
+  }, [selectedEventIds, onSelectionChange]);
 
-  // Handle keyboard navigation
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  // Handle keyboard navigation - memoized
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!isOpen && e.key === 'ArrowDown') {
       setIsOpen(true);
       return;
@@ -272,7 +287,7 @@ export default function SmartEventSearch({
         }
         break;
     }
-  };
+  }, [isOpen, suggestions, highlightedIndex, handleSelectEvent, inputValue, selectedEventIds, onSelectionChange]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

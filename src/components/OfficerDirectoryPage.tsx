@@ -17,7 +17,15 @@
  */
 
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
-import { Mail, Phone, Calendar, User as UserIcon, Hash, Briefcase, Users, AlertCircle, RefreshCw, Facebook, Instagram, Twitter, Globe, CheckCircle, XCircle } from "lucide-react";
+import { Mail, Phone, Calendar, User as UserIcon, Hash, Briefcase, Users, AlertCircle, RefreshCw, Facebook, Instagram, Globe, CheckCircle, XCircle } from "lucide-react";
+import { openEmailApp } from "../utils/externalLinks";
+
+// Custom X (formerly Twitter) logo component
+const XIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+  </svg>
+);
 import { PageLayout, SearchInput, Button } from "./design-system";
 import { 
   searchOfficers, 
@@ -196,7 +204,7 @@ function getSocialMeta(url: string): SocialMeta {
   if (normalized.includes("twitter.com") || normalized.includes("x.com")) {
     return {
       label: "X (Twitter)",
-      icon: <Twitter className="w-4 h-4" />,
+      icon: <XIcon className="w-4 h-4" />,
       color: "#111827",
       background: "rgba(17, 24, 39, 0.12)",
     };
@@ -230,6 +238,46 @@ function SocialButton({ url, isDark }: { url: string; isDark: boolean }) {
   );
 }
 
+function getSocialIcon(label: string): { icon: ReactNode; color: string; background: string } {
+  const labelLower = label.toLowerCase();
+  if (labelLower === "facebook") {
+    return {
+      icon: <Facebook className="w-4 h-4" />,
+      color: "#1877f2",
+      background: "rgba(24, 119, 242, 0.12)",
+    };
+  }
+  if (labelLower === "instagram") {
+    return {
+      icon: <Instagram className="w-4 h-4" />,
+      color: "#e4405f",
+      background: "rgba(228, 64, 95, 0.12)",
+    };
+  }
+  if (labelLower === "twitter" || labelLower === "x") {
+    return {
+      icon: <XIcon className="w-4 h-4" />,
+      color: "#000000",
+      background: "rgba(0, 0, 0, 0.08)",
+    };
+  }
+  return {
+    icon: <Globe className="w-4 h-4" />,
+    color: "#6b7280",
+    background: "rgba(107, 114, 128, 0.12)",
+  };
+}
+
+function isValidUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value) || 
+         /^(www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/i.test(value) ||
+         value.includes("facebook.com") ||
+         value.includes("fb.com") ||
+         value.includes("instagram.com") ||
+         value.includes("twitter.com") ||
+         value.includes("x.com");
+}
+
 function SocialLinkRow({
   label,
   url,
@@ -239,25 +287,35 @@ function SocialLinkRow({
   url?: string;
   isDark: boolean;
 }) {
+  const socialMeta = getSocialIcon(label);
+  const hasValue = url && url.trim().length > 0;
+  const valueIsUrl = hasValue && isValidUrl(url);
+
   return (
     <div className="flex items-start gap-3">
       <div
         className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-lg"
         style={{
-          background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(0, 0, 0, 0.05)",
-          color: isDark ? "rgba(255, 255, 255, 0.8)" : "rgba(0, 0, 0, 0.7)",
+          background: isDark ? "rgba(255, 255, 255, 0.06)" : socialMeta.background,
+          color: socialMeta.color,
         }}
       >
-        <Globe className="w-4 h-4" />
+        {socialMeta.icon}
       </div>
-      <div>
+      <div className="flex-1 min-w-0">
         <p className={`text-xs uppercase tracking-wide ${isDark ? "text-white/50" : "text-gray-500"}`}>
           {label}
         </p>
-        {url ? (
-          <SocialButton url={url} isDark={isDark} />
+        {hasValue ? (
+          valueIsUrl ? (
+            <SocialButton url={url} isDark={isDark} />
+          ) : (
+            <p className={`text-sm ${isDark ? "text-white" : "text-gray-900"} break-all`}>
+              {url}
+            </p>
+          )
         ) : (
-          <p className={`text-sm ${isDark ? "text-white" : "text-gray-900"}`}>N/A</p>
+          <p className={`text-sm ${isDark ? "text-white/50" : "text-gray-400"}`}>N/A</p>
         )}
       </div>
     </div>
@@ -760,7 +818,12 @@ export default function OfficerDirectoryPage({
                     displayEmail ? (
                       <div className="flex items-center justify-between gap-3">
                         <a
-                          href={`mailto:${displayEmail}`}
+                          href={`mailto:${displayEmail?.replace(/\+/g, '%2B')}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            console.log('[Email Debug] OfficerDirectory email link clicked:', displayEmail);
+                            if (displayEmail) openEmailApp(displayEmail);
+                          }}
                           className={`text-sm ${isDark ? "text-white" : "text-gray-900"} hover:underline underline-offset-2 break-all`}
                         >
                           {displayEmail}
@@ -768,7 +831,7 @@ export default function OfficerDirectoryPage({
                         <span
                           className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] whitespace-nowrap font-semibold ${
                             isEmailVerified
-                              ? "bg-emerald-500/15 text-emerald-500"
+                              ? "bg-emerald-500/15 text-green-500"
                               : "bg-red-500/15 text-red-500"
                           }`}
                         >
@@ -815,7 +878,8 @@ export default function OfficerDirectoryPage({
               <Button
                 variant="primary"
                 onClick={() => {
-                  window.location.href = `mailto:${displayEmail}`;
+                  console.log('[Email Debug] OfficerDirectory Send Email button clicked:', displayEmail);
+                  openEmailApp(displayEmail);
                 }}
               >
                 Send Email

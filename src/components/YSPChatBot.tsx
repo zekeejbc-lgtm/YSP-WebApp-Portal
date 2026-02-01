@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Send, MessageSquare, X, Minimize2, Loader2, User } from "lucide-react";
+import { openEmailApp } from "../utils/externalLinks";
 import { getAllOfficers, searchOfficers, type DirectoryOfficer } from "../services/gasDirectoryService";
 import { fetchEvents, formatEventDate } from "../services/gasEventsService";
-import { fetchAllProjects } from "../services/projectsService";
+import { fetchAllProjects, type Project } from "../services/projectsService";
 import { getStoredUser, fetchUserProfile, type UserProfile } from "../services/gasLoginService";
 import type { AttendanceDashboardContext } from "./AttendanceDashboardPage";
 
@@ -2422,7 +2423,12 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
         return (
           <a
             key={i}
-            href={`mailto:${part}`}
+            href={`mailto:${part.replace(/\+/g, '%2B')}`}
+            onClick={(e) => {
+              e.preventDefault();
+              console.log('[Email Debug] ChatBot email link clicked:', part);
+              openEmailApp(part);
+            }}
             style={{
               color: isUser ? "#ffffff" : "#ea580c", // Orange for Bot, White for User
               textDecoration: "underline",

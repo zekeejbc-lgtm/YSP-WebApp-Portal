@@ -38,7 +38,7 @@ export default defineConfig({
         launch_handler: {
           client_mode: ['navigate-existing', 'auto'],
         },
-        capture_links: 'existing-client',
+        // NOTE: Removed capture_links: 'existing-client' as it blocks mailto: and tel: links
         icons: [
           {
             src: '/icons/pwa-192x192.png',
@@ -157,6 +157,38 @@ export default defineConfig({
     build: {
       target: 'esnext',
       outDir: 'build',
+      // Increase the chunk size warning limit since we're already code-splitting
+      // The main index chunk contains core React + main App logic which is hard to split further
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        output: {
+          manualChunks: (id) => {
+            // Vendor chunks - split large libraries into separate chunks
+            if (id.includes('node_modules')) {
+              // React core
+              if (id.includes('react-dom') || id.includes('/react/')) {
+                return 'vendor-react';
+              }
+              // Radix UI components
+              if (id.includes('@radix-ui')) {
+                return 'vendor-radix';
+              }
+              // Lucide icons
+              if (id.includes('lucide-react')) {
+                return 'vendor-icons';
+              }
+              // Recharts and D3
+              if (id.includes('recharts') || id.includes('d3-')) {
+                return 'vendor-charts';
+              }
+              // QR code libraries
+              if (id.includes('qr') || id.includes('jsqr') || id.includes('qrcode')) {
+                return 'vendor-qr';
+              }
+            }
+          },
+        },
+      },
     },
     server: {
       port: 3000,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Mail, Phone, MapPin, Code2, Edit2, Save, Upload, Trash2, Plus, Link, Loader2, LifeBuoy } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { openEmailApp } from '../utils/externalLinks';
 import { type UploadToastMessage } from './UploadToast';
 import {
   fetchDevInfoContent,
@@ -167,6 +168,230 @@ const SocialIcon = ({ platform, className = "w-5 h-5" }: { platform: string; cla
   return icons[platform] || icons.link;
 };
 
+// Shared shimmer styles - matches SkeletonCard.tsx pattern
+const ShimmerStyles = () => (
+  <style>{`
+    .skeleton-shimmer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.4) 50%,
+        transparent 100%
+      );
+      animation: shimmer 1.5s infinite;
+    }
+
+    .dark .skeleton-shimmer {
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        transparent 100%
+      );
+    }
+
+    @keyframes shimmer {
+      0% {
+        transform: translateX(-100%);
+      }
+      100% {
+        transform: translateX(100%);
+      }
+    }
+  `}</style>
+);
+
+// Skeleton Loading Component for Developer Modal
+function DeveloperSkeletonLoader({ isDark }: { isDark: boolean }) {
+  return (
+    <div className={isDark ? 'dark' : ''}>
+      <ShimmerStyles />
+      <div className="p-6 space-y-6">
+        {/* Profile Header Skeleton */}
+        <div className="flex flex-col md:flex-row gap-6 items-start">
+          {/* Profile Image Skeleton */}
+          <div className="shrink-0">
+            <div 
+              className={`w-32 h-32 md:w-40 md:h-40 rounded-xl border-4 border-[#3b82f6]/30 relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+          {/* Basic Info Skeleton */}
+          <div className="flex-1 space-y-3 pt-2">
+            {/* Name */}
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '32px', width: '70%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            {/* Nickname */}
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '20px', width: '35%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            {/* Position */}
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '22px', width: '50%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            {/* Organization */}
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '18px', width: '45%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+
+        {/* About Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '100px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="space-y-2">
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '100%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '92%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '78%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+
+        {/* Background Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '130px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="space-y-2">
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '100%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '88%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+
+        {/* Philosophy Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '180px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="space-y-2">
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '100%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+            <div 
+              className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '16px', width: '75%' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+
+        {/* Affiliations Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '120px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[1, 2, 3].map((i) => (
+              <div 
+                key={i}
+                className={`rounded-full relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+                style={{ height: '32px', width: `${90 + i * 25}px` }}
+              >
+                <div className="skeleton-shimmer" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Contact Section Skeleton */}
+        <div className="space-y-3">
+          <div 
+            className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+            style={{ height: '24px', width: '100px' }}
+          >
+            <div className="skeleton-shimmer" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {[1, 2, 3].map((i) => (
+              <div 
+                key={i}
+                className={`rounded-lg relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+                style={{ height: '48px' }}
+              >
+                <div className="skeleton-shimmer" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Social Links Skeleton */}
+        <div className="flex gap-2 justify-center pt-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div 
+              key={i}
+              className={`rounded-full relative overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}
+              style={{ height: '40px', width: '40px' }}
+            >
+              <div className="skeleton-shimmer" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DeveloperModal({ 
   isOpen, 
   onClose, 
@@ -237,7 +462,6 @@ export default function DeveloperModal({
       const data = await fetchDevInfoContent();
       
       updateToastRef.current(toastId, { progress: 70, message: 'Processing data...' });
-      console.log('[DevModal] Raw data from backend:', data);
       
       // Transform backend data to component format
       const transformedData = {
@@ -264,9 +488,6 @@ export default function DeveloperModal({
       setDeveloperData(transformedData);
       setSavedData(transformedData);
       setImagePreview(transformedData.profileImage); // Set initial image preview from backend
-      
-      console.log('[DevModal] Transformed data:', transformedData);
-      console.log('[DevModal] Profile image URL:', transformedData.profileImage);
       
       updateToastRef.current(toastId, {
         status: 'success',
@@ -321,15 +542,12 @@ export default function DeveloperModal({
       },
     });
     
-    console.log('[DevModal] Starting save process...');
-    
     try {
       let finalProfileUrl = developerData.profileImage;
       
       // If there's a pending image file, upload it first
       if (pendingImageFile) {
         updateUploadToast(toastId, { progress: 10, message: 'Uploading profile image to Google Drive...' });
-        console.log('[DevModal] Uploading pending image file:', pendingImageFile.name);
         
         const uploadResult = await uploadDevProfile(pendingImageFile, signal);
 
@@ -339,7 +557,6 @@ export default function DeveloperModal({
         
         if (uploadResult.success && uploadResult.imageUrl) {
           finalProfileUrl = uploadResult.imageUrl;
-          console.log('[DevModal] Image uploaded successfully:', finalProfileUrl);
           updateUploadToast(toastId, { progress: 40, message: 'Image uploaded! Saving profile data...' });
         } else {
           updateUploadToast(toastId, {
@@ -380,7 +597,6 @@ export default function DeveloperModal({
       };
       
       updateUploadToast(toastId, { progress: 60, message: 'Sending to Google Sheets API...' });
-      console.log('[DevModal] Saving data to backend:', backendData);
       
       const success = await updateDevInfoContent(backendData, signal);
 
@@ -405,7 +621,6 @@ export default function DeveloperModal({
           title: 'Profile Saved!',
           message: 'Developer profile saved to backend successfully',
         });
-        console.log('[DevModal] Save successful, final profile URL:', finalProfileUrl);
       } else {
         updateUploadToast(toastId, {
           status: 'error',
@@ -472,7 +687,6 @@ export default function DeveloperModal({
     reader.onload = (event) => {
       const previewUrl = event.target?.result as string;
       setImagePreview(previewUrl);
-      console.log('[DevModal] Image preview created locally (not uploaded yet)');
     };
     reader.readAsDataURL(file);
     
@@ -630,10 +844,7 @@ export default function DeveloperModal({
 
         {/* Content */}
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center p-6" style={{ minHeight: '500px' }}>
-            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-4 text-gray-600 dark:text-gray-400">Loading developer profile...</p>
-          </div>
+          <DeveloperSkeletonLoader isDark={isDark} />
         ) : (
         <div className="p-6 space-y-6">
           {/* Profile Header */}
@@ -1017,7 +1228,12 @@ export default function DeveloperModal({
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-gray-600 dark:text-gray-400">Email</p>
                     <a 
-                      href={`mailto:${developerData.contact.email}`}
+                      href={`mailto:${developerData.contact.email?.replace(/\+/g, '%2B')}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        console.log('[Email Debug] DeveloperModal email link clicked:', developerData.contact.email);
+                        if (developerData.contact.email) openEmailApp(developerData.contact.email);
+                      }}
                       className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] dark:hover:text-[#f6421f] transition-colors truncate block"
                     >
                       {developerData.contact.email}

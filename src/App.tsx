@@ -75,7 +75,7 @@
   stopCacheVersionPolling,
 } from "./services/gasSystemToolsService";
   // 👈 ADD THIS IMPORT
-import { CacheRefreshModal, RoleChangeModal, determineRoleChangeType, type RoleChangeType } from "./components/SystemToolsPage";
+import { CacheRefreshModal, RoleChangeModal, determineRoleChangeType, type RoleChangeType } from "./components/CacheRefreshModals";
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
@@ -895,6 +895,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     
     // Issuance Center Modal State (to hide chatbot when modals are open)
     const [issuanceModalOpen, setIssuanceModalOpen] = useState(false);
+    
+    // Attendance Dashboard Modal State (to hide chatbot when modals are open)
+    const [attendanceDashboardModalOpen, setAttendanceDashboardModalOpen] = useState(false);
     
     // Homepage Content - Fetched from GAS Backend
     const [homepageContent, setHomepageContent] = useState<HomepageMainContent & {
@@ -2756,7 +2759,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || !!modalProject || showLoginPanel}
+        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
       />
@@ -2996,6 +2999,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               updateUploadToast={updateUploadToast}
               removeUploadToast={removeUploadToast}
               onDashboardContextUpdate={setAttendanceDashboardContext}
+              onModalStateChange={setAttendanceDashboardModalOpen}
             />
           </Suspense>
           {/* Upload Toast Container for export progress */}

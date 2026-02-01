@@ -1,5 +1,6 @@
 import { Wrench, Clock, AlertCircle, ArrowLeft, Facebook, Instagram, Settings, Hammer, Mail, User } from "lucide-react";
 import { DESIGN_TOKENS } from "./design-system";
+import { openEmailApp } from "../utils/externalLinks";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { useState, useEffect } from "react";
 import { CustomToast } from "./CustomToast";
@@ -917,9 +918,14 @@ export default function MaintenanceScreen({
                 <Instagram className="w-6 h-6 text-white" />
               </a>
               
-              {/* FIXED: Updated mail link with +maintenance tag */}
+              {/* FIXED: Updated mail link with +maintenance tag - properly encoded */}
               <a
-                href="mailto:ysptagumchapter+maintenance@gmail.com"
+                href="mailto:ysptagumchapter%2Bmaintenance@gmail.com"
+                onClick={(e) => {
+                  e.preventDefault();
+                  console.log('[Email Debug] MaintenanceScreen email clicked: ysptagumchapter+maintenance@gmail.com');
+                  openEmailApp('ysptagumchapter+maintenance@gmail.com');
+                }}
                 className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110 active:scale-95 shadow-md"
                 style={{
                   background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.yellow}, ${DESIGN_TOKENS.colors.brand.orange})`,
