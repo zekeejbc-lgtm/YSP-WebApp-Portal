@@ -4977,9 +4977,11 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                   </a>{" "}
                   or send us an Email:{" "}
                   <a
-                    href="https://mail.google.com/mail/u/0/?fs=1&to=ysptagumchapter%2Bportal@gmail.com&tf=cm"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href={`mailto:${"ysptagumchapter+portal@gmail.com".replace(/\+/g, '%2B')}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openEmailApp("ysptagumchapter+portal@gmail.com");
+                    }}
                     className="text-[#f6421f] dark:text-[#ee8724] hover:underline transition-colors"
                     style={{ fontWeight: "500" }}
                   >

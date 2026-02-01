@@ -61,6 +61,8 @@ const LazyProjectCard = memo(function LazyProjectCard({
         marginRight: 24, 
         width: 350, 
         maxWidth: '90vw',
+        // CSS containment for better scroll performance
+        contain: 'layout style paint',
         ...style 
       }}
       className={className}
