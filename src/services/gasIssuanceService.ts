@@ -32,6 +32,7 @@ export interface Issuance {
   RecipientDetails: string; // JSON string
   TotalRecipients: number;
   SentCount: number;
+  ResentCount: number;  // Separate count for resent emails
   FailedCount: number;
   FieldInputs: string; // JSON string
   EmailTitle: string;

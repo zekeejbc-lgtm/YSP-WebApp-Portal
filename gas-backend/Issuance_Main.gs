@@ -66,6 +66,7 @@
       'RecipientDetails', // JSON string with recipient info
       'TotalRecipients',
       'SentCount',
+      'ResentCount',       // Separate count for resent emails
       'FailedCount',
       'FieldInputs',      // JSON string with field values
       'EmailTitle',
@@ -215,8 +216,8 @@
 
   /**
   * Migration function to fix column alignment in Issuances sheet
-  * This adds the DeliveryMethod column if missing and realigns all data
-  * Run this once if your spreadsheet was created before DeliveryMethod was added
+  * This adds missing columns (DeliveryMethod, ResentCount) and realigns all data
+  * Run this once if your spreadsheet was created before these columns were added
   */
   function migrateIssuanceColumns() {
     const ss = SpreadsheetApp.openById(ISSUANCE_CONFIG.SPREADSHEET_ID);
@@ -231,23 +232,19 @@
       return { success: false, error: 'Sheet is empty' };
     }
     
-    const currentHeaders = data[0];
+    let currentHeaders = data[0];
     const expectedHeaders = SHEET_HEADERS.Issuances;
-    
-    // Check if DeliveryMethod column exists
-    const hasDeliveryMethod = currentHeaders.includes('DeliveryMethod');
-    
-    if (hasDeliveryMethod && currentHeaders.length === expectedHeaders.length) {
-      return { success: true, message: 'Columns already aligned correctly', noChanges: true };
-    }
     
     // Build migration results
     const results = {
-      originalHeaders: currentHeaders,
+      originalHeaders: [...currentHeaders],
       expectedHeaders: expectedHeaders,
       rowsProcessed: 0,
       changes: []
     };
+    
+    // Check if DeliveryMethod column exists
+    const hasDeliveryMethod = currentHeaders.includes('DeliveryMethod');
     
     // If DeliveryMethod is missing, we need to insert it at position 5
     if (!hasDeliveryMethod) {
@@ -259,7 +256,7 @@
       // Set the header
       sheet.getRange(1, 6).setValue('DeliveryMethod');
       
-      // For each existing data row, shift values and add default DeliveryMethod
+      // For each existing data row, add default DeliveryMethod
       const lastRow = sheet.getLastRow();
       if (lastRow > 1) {
         // Set default value 'Email' for all existing rows (since they were created before this feature)
@@ -268,11 +265,46 @@
         }
         results.rowsProcessed = lastRow - 1;
       }
+      
+      // Refresh headers after insertion
+      currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     }
     
-    // Verify and fix headers to match expected
-    const newData = sheet.getDataRange().getValues();
-    const newHeaders = newData[0];
+    // Check if ResentCount column exists
+    const hasResentCount = currentHeaders.includes('ResentCount');
+    
+    // If ResentCount is missing, we need to insert it after SentCount
+    if (!hasResentCount) {
+      // Find the position of SentCount
+      const sentCountIndex = currentHeaders.indexOf('SentCount');
+      
+      if (sentCountIndex !== -1) {
+        const insertAfterCol = sentCountIndex + 1; // 0-indexed to 1-indexed
+        
+        results.changes.push(`Added ResentCount column at position ${insertAfterCol + 1}`);
+        
+        // Insert the column after SentCount
+        sheet.insertColumnAfter(insertAfterCol);
+        
+        // Set the header
+        sheet.getRange(1, insertAfterCol + 1).setValue('ResentCount');
+        
+        // For each existing data row, add default ResentCount of 0
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          for (let i = 2; i <= lastRow; i++) {
+            sheet.getRange(i, insertAfterCol + 1).setValue(0);
+          }
+          results.rowsProcessed = Math.max(results.rowsProcessed, lastRow - 1);
+        }
+      }
+    }
+    
+    // Check if columns are already aligned
+    const updatedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (results.changes.length === 0 && updatedHeaders.length === expectedHeaders.length) {
+      return { success: true, message: 'Columns already aligned correctly', noChanges: true };
+    }
     
     // Update headers to match expected
     sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
@@ -671,6 +703,7 @@
       JSON.stringify(data.recipientDetails || []),
       data.totalRecipients || 0,
       0, // SentCount - starts at 0, updated when published/sent
+      0, // ResentCount - starts at 0, incremented when resending
       0, // FailedCount
       JSON.stringify(data.fieldInputs || {}),
       data.emailTitle || '',
@@ -752,6 +785,7 @@
         if (data.sentAt) values[i][colMap['SentAt']] = data.sentAt;
         if (data.sentBy) values[i][colMap['SentBy']] = data.sentBy;
         if (data.sentCount !== undefined) values[i][colMap['SentCount']] = data.sentCount;
+        if (data.resentCount !== undefined) values[i][colMap['ResentCount']] = data.resentCount;
         if (data.failedCount !== undefined) values[i][colMap['FailedCount']] = data.failedCount;
         
         dataRange.setValues(values);
@@ -1825,7 +1859,7 @@
         // Ignore deletion errors
       }
       
-      // Update issuance sent count
+      // Update issuance resent count (separate from sent count)
       const ss = SpreadsheetApp.openById(ISSUANCE_CONFIG.SPREADSHEET_ID);
       const issuanceSheet = ss.getSheetByName(ISSUANCE_CONFIG.SHEETS.ISSUANCES);
       const dataRange = issuanceSheet.getDataRange();
@@ -1834,9 +1868,9 @@
       
       for (let i = 1; i < values.length; i++) {
         if (values[i][0] === issuanceId) {
-          const sentCountIdx = headers.indexOf('SentCount');
+          const resentCountIdx = headers.indexOf('ResentCount');
           const failedCountIdx = headers.indexOf('FailedCount');
-          values[i][sentCountIdx] = (parseInt(values[i][sentCountIdx]) || 0) + 1;
+          values[i][resentCountIdx] = (parseInt(values[i][resentCountIdx]) || 0) + 1;
           values[i][failedCountIdx] = Math.max(0, (parseInt(values[i][failedCountIdx]) || 0) - 1);
           dataRange.setValues(values);
           break;

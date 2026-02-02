@@ -2481,6 +2481,12 @@ export default function IssuanceCenterPage({
                     <span className="text-green-600 dark:text-green-400">
                       {issuance.SentCount} sent
                     </span>
+                    {(issuance.ResentCount || 0) > 0 && (
+                      <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                        <RefreshCw className="w-3 h-3" />
+                        {issuance.ResentCount} resent
+                      </span>
+                    )}
                     {issuance.FailedCount > 0 && (
                       <span className="text-red-600 dark:text-red-400">
                         ({issuance.FailedCount} failed)
@@ -2566,6 +2572,11 @@ export default function IssuanceCenterPage({
                     {issuance.SentCount > 0 && (
                       <span className="text-xs text-green-600 dark:text-green-400 ml-2">
                         ({issuance.SentCount} sent)
+                      </span>
+                    )}
+                    {(issuance.ResentCount || 0) > 0 && (
+                      <span className="text-xs text-blue-600 dark:text-blue-400 ml-1">
+                        ({issuance.ResentCount} resent)
                       </span>
                     )}
                   </td>
@@ -4513,6 +4524,11 @@ export default function IssuanceCenterPage({
                             ({selectedIssuance.SentCount} sent)
                           </span>
                         )}
+                        {(selectedIssuance.ResentCount || 0) > 0 && (
+                          <span className="text-blue-500 ml-2">
+                            ({selectedIssuance.ResentCount} resent)
+                          </span>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -4565,6 +4581,12 @@ export default function IssuanceCenterPage({
                                 <span className="flex items-center gap-1 text-green-500">
                                   <CheckCircle className="w-3 h-3" />
                                   {selectedIssuance.SentCount} sent
+                                </span>
+                              )}
+                              {(selectedIssuance.ResentCount || 0) > 0 && (
+                                <span className="flex items-center gap-1 text-blue-500">
+                                  <RefreshCw className="w-3 h-3" />
+                                  {selectedIssuance.ResentCount} resent
                                 </span>
                               )}
                               {selectedIssuance.Recipients.filter(r => r.Status === 'Pending').length > 0 && (
