@@ -31,6 +31,13 @@ const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
 const ORG_NAME = "Youth Service Philippines";
 const ORG_CHAPTER = "Tagum Chapter";
 
+// Extended member type that includes attendance flags for modal display
+interface ModalMemberData extends MemberForAttendance {
+  isExternal?: boolean;
+  lateTimeIn?: boolean;
+  lateTimeOut?: boolean;
+}
+
 // Helper function to format time values properly (converts UTC to Manila time)
 function formatTimeValue(timeValue: any): string {
   if (!timeValue) return '-';
@@ -386,7 +393,7 @@ export default function AttendanceDashboardPage({
   const [selectedCommittee, setSelectedCommittee] = useState("All");
   const [chartType, setChartType] = useState<"pie" | "donut" | "bar" | "line" | "column">("pie");
   const [showModal, setShowModal] = useState(false);
-  const [modalData, setModalData] = useState<{ status: string; members: MemberForAttendance[] } | null>(null);
+  const [modalData, setModalData] = useState<{ status: string; members: ModalMemberData[] } | null>(null);
   const [exportType, setExportType] = useState("");
   const [showExportDropdown, setShowExportDropdown] = useState(false);
 
@@ -719,8 +726,8 @@ export default function AttendanceDashboardPage({
     ];
   }, [getFilteredAttendance]);
 
-  // Get members by status for modal - optimized with Map lookup
-  const getMembersByStatus = useCallback((status: string): MemberForAttendance[] => {
+  // Get members by status for modal - optimized with Map lookup, includes external/late flags
+  const getMembersByStatus = useCallback((status: string): ModalMemberData[] => {
     if (status === 'Not Recorded') {
       return getNotRecordedMembers();
     }
@@ -735,7 +742,13 @@ export default function AttendanceDashboardPage({
 
     return statusMembers.map((r) => {
       const member = memberLookupMap.get(r.memberId);
-      return member || { id: r.memberId, name: r.memberName, committee: '', position: '' };
+      const baseMember = member || { id: r.memberId, name: r.memberName, committee: '', position: '' };
+      return {
+        ...baseMember,
+        isExternal: r.isExternal,
+        lateTimeIn: r.lateTimeIn,
+        lateTimeOut: r.lateTimeOut,
+      };
     });
   }, [getFilteredAttendance, memberLookupMap, getNotRecordedMembers]);
 
@@ -982,18 +995,30 @@ export default function AttendanceDashboardPage({
             const member = allMembers.find(m => m.id === record.memberId);
             const noLogout = hasNoLogout(record.timeIn, record.timeOut, record.status);
             const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
+            
+            // Build status with indicators
+            let statusDisplay = record.status;
+            const indicators: string[] = [];
+            if (record.isExternal) indicators.push('EXT');
+            if (record.lateTimeIn) indicators.push('LATE-IN');
+            if (record.lateTimeOut) indicators.push('LATE-OUT');
+            if (indicators.length > 0) {
+              statusDisplay = `${record.status} [${indicators.join(', ')}]`;
+            }
+            
             return {
               data: [
                 String(startIndex + index),
                 record.memberName || member?.name || 'Unknown',
                 member?.committee || '-',
                 member?.position || '-',
-                record.status,
+                statusDisplay,
                 formatTimeValue(record.timeIn),
                 noLogout ? 'NO LOGOUT ⚠️' : formatTimeValue(record.timeOut),
                 duration,
               ],
               noLogout,
+              isExternal: record.isExternal || false,
             };
           });
         };
@@ -1026,6 +1051,7 @@ export default function AttendanceDashboardPage({
 
           const tableData = createPreviewTableData(config.records);
           const noLogoutRows = new Set(tableData.map((row, idx) => row.noLogout ? idx : -1).filter(idx => idx >= 0));
+          const externalRows = new Set(tableData.map((row, idx) => row.isExternal ? idx : -1).filter(idx => idx >= 0));
 
           autoTable(doc, {
             startY: yPosition,
@@ -1056,6 +1082,14 @@ export default function AttendanceDashboardPage({
                 data.cell.styles.fillColor = [255, 243, 205]; // Light yellow/amber background
                 data.cell.styles.textColor = [180, 83, 9]; // Amber text for visibility
                 if (data.column.index === 6) { // Time Out column
+                  data.cell.styles.fontStyle = 'bold';
+                }
+              }
+              // Highlight external attendee rows with light purple
+              if (data.section === 'body' && externalRows.has(data.row.index)) {
+                data.cell.styles.fillColor = [243, 232, 255]; // Light purple background
+                data.cell.styles.textColor = [124, 58, 237]; // Purple text
+                if (data.column.index === 4) { // Status column
                   data.cell.styles.fontStyle = 'bold';
                 }
               }
@@ -1566,19 +1600,30 @@ export default function AttendanceDashboardPage({
       await new Promise(resolve => setTimeout(resolve, 100));
       if (cancelled) return;
 
-      // Helper function to create table data for a set of records (with no-logout marking)
+      // Helper function to create table data for a set of records (with no-logout and external marking)
       const createTableData = (records: typeof filteredRecords, startIndex: number = 1) => {
         return records.map((record, index) => {
           const member = allMembers.find(m => m.id === record.memberId);
           const noLogout = hasNoLogout(record.timeIn, record.timeOut, record.status);
           const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
+          
+          // Build status with indicators
+          let statusDisplay = record.status;
+          const indicators: string[] = [];
+          if (record.isExternal) indicators.push('EXT');
+          if (record.lateTimeIn) indicators.push('LATE-IN');
+          if (record.lateTimeOut) indicators.push('LATE-OUT');
+          if (indicators.length > 0) {
+            statusDisplay = `${record.status} [${indicators.join(', ')}]`;
+          }
+          
           return {
             data: [
               String(startIndex + index),
               record.memberName || member?.name || 'Unknown',
               member?.committee || '-',
               member?.position || '-',
-              record.status,
+              statusDisplay,
               formatTimeValue(record.timeIn),
               noLogout ? 'NO LOGOUT ⚠️' : formatTimeValue(record.timeOut),
               duration,
@@ -1586,6 +1631,7 @@ export default function AttendanceDashboardPage({
               record.recordedByTimeOut || '-',
             ],
             noLogout,
+            isExternal: record.isExternal || false,
           };
         });
       };
@@ -1673,8 +1719,9 @@ export default function AttendanceDashboardPage({
 
         const tableData = createTableData(config.records);
         const noLogoutRows = new Set(tableData.map((row, idx) => row.noLogout ? idx : -1).filter(idx => idx >= 0));
+        const externalRows = new Set(tableData.map((row, idx) => row.isExternal ? idx : -1).filter(idx => idx >= 0));
 
-        // Create table with autoTable - now includes Duration column and no-logout highlighting
+        // Create table with autoTable - now includes Duration column, no-logout and external highlighting
         autoTable(doc, {
           startY: yPosition,
           head: [['#', 'Name', 'Committee', 'Position', 'Status', 'Time In', 'Time Out', 'Duration', 'Rec. By (In)', 'Rec. By (Out)']],
@@ -1719,6 +1766,14 @@ export default function AttendanceDashboardPage({
               data.cell.styles.fillColor = [255, 243, 205]; // Light yellow/amber background
               data.cell.styles.textColor = [180, 83, 9]; // Amber text for visibility
               if (data.column.index === 6) { // Time Out column
+                data.cell.styles.fontStyle = 'bold';
+              }
+            }
+            // Highlight external attendee rows with light purple
+            if (data.section === 'body' && externalRows.has(data.row.index)) {
+              data.cell.styles.fillColor = [243, 232, 255]; // Light purple background
+              data.cell.styles.textColor = [124, 58, 237]; // Purple text
+              if (data.column.index === 4) { // Status column
                 data.cell.styles.fontStyle = 'bold';
               }
             }
@@ -2154,12 +2209,23 @@ export default function AttendanceDashboardPage({
         const member = allMembers.find(m => m.id === record.memberId);
         const noLogout = hasNoLogout(record.timeIn, record.timeOut, record.status);
         const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
+        
+        // Build status with indicators
+        let statusDisplay = record.status;
+        const indicators: string[] = [];
+        if (record.isExternal) indicators.push('EXT');
+        if (record.lateTimeIn) indicators.push('LATE-IN');
+        if (record.lateTimeOut) indicators.push('LATE-OUT');
+        if (indicators.length > 0) {
+          statusDisplay = `${record.status} [${indicators.join(', ')}]`;
+        }
+        
         headerData.push([
           index + 1,
           record.memberName || member?.name || 'Unknown',
           member?.committee || '-',
           member?.position || '-',
-          record.status,
+          statusDisplay,
           formatTimeValue(record.timeIn),
           noLogout ? 'NO LOGOUT' : formatTimeValue(record.timeOut),
           duration,
@@ -3490,7 +3556,43 @@ export default function AttendanceDashboardPage({
                       
                       {/* Member Info */}
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{member.name || 'Unknown'}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold truncate">{member.name || 'Unknown'}</p>
+                          {/* External/Late Badges */}
+                          {member.isExternal && (
+                            <span 
+                              className="px-1.5 py-0.5 text-[10px] font-semibold rounded shrink-0"
+                              style={{ 
+                                background: 'rgba(124, 58, 237, 0.15)', 
+                                color: '#7c3aed' 
+                              }}
+                            >
+                              EXT
+                            </span>
+                          )}
+                          {member.lateTimeIn && (
+                            <span 
+                              className="px-1.5 py-0.5 text-[10px] font-semibold rounded shrink-0"
+                              style={{ 
+                                background: 'rgba(245, 158, 11, 0.15)', 
+                                color: '#d97706' 
+                              }}
+                            >
+                              LATE-IN
+                            </span>
+                          )}
+                          {member.lateTimeOut && (
+                            <span 
+                              className="px-1.5 py-0.5 text-[10px] font-semibold rounded shrink-0"
+                              style={{ 
+                                background: 'rgba(239, 68, 68, 0.15)', 
+                                color: '#dc2626' 
+                              }}
+                            >
+                              LATE-OUT
+                            </span>
+                          )}
+                        </div>
                         {member.committee && (
                           <p className="text-xs text-muted-foreground truncate">
                             {member.committee}

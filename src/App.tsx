@@ -899,6 +899,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     // Attendance Dashboard Modal State (to hide chatbot when modals are open)
     const [attendanceDashboardModalOpen, setAttendanceDashboardModalOpen] = useState(false);
     
+    // Manage Events Modal State (to hide chatbot when modals are open)
+    const [manageEventsModalOpen, setManageEventsModalOpen] = useState(false);
+    
     // Homepage Content - Fetched from GAS Backend
     const [homepageContent, setHomepageContent] = useState<HomepageMainContent & {
       projects: { title: string };
@@ -973,47 +976,98 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     useEffect(() => {
       const loadHomepageContent = async () => {
         const toastId = `homepage-sync-${Date.now()}`;
-        addUploadToast({
-          id: toastId,
-          title: 'Syncing Homepage',
-          message: 'Connecting to backend...',
-          status: 'loading',
-          progress: 0,
-          progressLabel: 'Starting...',
-        });
-        setIsLoadingHomepage(true);
-        setHomepageError(null);
+        const MAX_RETRIES = 3;
+        const BASE_RETRY_DELAY = 1000; // 1 second
+        let retryCount = 0;
+        
+        const attemptLoad = async (): Promise<boolean> => {
+          try {
+            addUploadToast({
+              id: toastId,
+              title: 'Syncing Homepage',
+              message: retryCount > 0 ? `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})` : 'Connecting to backend...',
+              status: 'loading',
+              progress: 30,
+              progressLabel: 'Starting...',
+            });
+            setIsLoadingHomepage(true);
+            setHomepageError(null);
+            
+            updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
+            const content = await fetchHomepageContent();
+            updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
+            setHomepageContent(prev => {
+              const updated = {
+                ...prev,
+                hero: content.hero,
+                about: content.about,
+                mission: content.mission,
+                vision: content.vision,
+                advocacyPillars: content.advocacyPillars,
+                themeSong: content.themeSong,
+              };
+              try {
+                localStorage.setItem('YSP_HOMEPAGE_CONTENT', JSON.stringify(updated));
+              } catch (e) {
+                console.error('Failed to save homepage content to storage', e);
+              }
+              return updated;
+            });
+            updateUploadToast(toastId, {
+              status: 'success',
+              progress: 100,
+              title: 'Homepage Synced',
+              message: 'Content loaded from backend.',
+            });
+            setTimeout(() => removeUploadToast(toastId), 3000);
+            return true;
+          } catch (error) {
+            console.error(`[App] Error loading homepage content (attempt ${retryCount + 1}/${MAX_RETRIES}):`, error);
+            
+            // Attempt retry if under max retries
+            if (retryCount < MAX_RETRIES) {
+              retryCount++;
+              const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount - 1); // Exponential backoff
+              console.log(`[App] Retrying homepage load in ${delay}ms...`);
+              
+              updateUploadToast(toastId, {
+                status: 'loading',
+                progress: 30 + (retryCount * 10),
+                message: `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`,
+              });
+              
+              // Wait before retrying
+              await new Promise(resolve => setTimeout(resolve, delay));
+              return attemptLoad();
+            }
+            
+            // All retries failed
+            return false;
+          }
+        };
         
         try {
-          updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
-          const content = await fetchHomepageContent();
-          updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
-          setHomepageContent(prev => {
-            const updated = {
-              ...prev,
-              hero: content.hero,
-              about: content.about,
-              mission: content.mission,
-              vision: content.vision,
-              advocacyPillars: content.advocacyPillars,
-              themeSong: content.themeSong,
-            };
-            try {
-              localStorage.setItem('YSP_HOMEPAGE_CONTENT', JSON.stringify(updated));
-            } catch (e) {
-              console.error('Failed to save homepage content to storage', e);
-            }
-            return updated;
-          });
-          updateUploadToast(toastId, {
-            status: 'success',
-            progress: 100,
-            title: 'Homepage Synced',
-            message: 'Content loaded from backend.',
-          });
-          setTimeout(() => removeUploadToast(toastId), 3000);
+          setIsLoadingHomepage(true);
+          const success = await attemptLoad();
+          
+          if (!success) {
+            setIsLoadingHomepage(false);
+            setHomepageError('Failed to load homepage content. Using cached data.');
+            updateUploadToast(toastId, {
+              status: 'error',
+              progress: 100,
+              title: 'Sync Failed',
+              message: 'Homepage content failed to load after retries. Tap reload to try again.',
+              actionLabel: 'Reload',
+              onAction: () => {
+                removeUploadToast(toastId);
+                retryLoadHomepage();
+              },
+            });
+          }
         } catch (error) {
-          console.error('[App] Error loading homepage content:', error);
+          console.error('[App] Unexpected error in homepage load:', error);
+          setIsLoadingHomepage(false);
           setHomepageError('Failed to load homepage content. Using cached data.');
           updateUploadToast(toastId, {
             status: 'error',
@@ -1026,8 +1080,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               retryLoadHomepage();
             },
           });
-        } finally {
-          setIsLoadingHomepage(false);
         }
       };
 
@@ -1106,39 +1158,88 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     // Retry loading homepage content
     const retryLoadHomepage = async () => {
       const toastId = `homepage-retry-${Date.now()}`;
-      addUploadToast({
-        id: toastId,
-        title: 'Reloading Homepage',
-        message: 'Connecting to backend...',
-        status: 'loading',
-        progress: 0,
-        progressLabel: 'Starting...',
-      });
-      setIsLoadingHomepage(true);
-      setHomepageError(null);
+      const MAX_RETRIES = 3;
+      const BASE_RETRY_DELAY = 1000;
+      let retryCount = 0;
+      
+      const attemptLoad = async (): Promise<boolean> => {
+        try {
+          addUploadToast({
+            id: toastId,
+            title: 'Reloading Homepage',
+            message: retryCount > 0 ? `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})` : 'Connecting to backend...',
+            status: 'loading',
+            progress: 30,
+            progressLabel: 'Starting...',
+          });
+          setIsLoadingHomepage(true);
+          setHomepageError(null);
+          
+          updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
+          const content = await fetchHomepageContent();
+          updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
+          setHomepageContent(prev => ({
+            ...prev,
+            hero: content.hero,
+            about: content.about,
+            mission: content.mission,
+            vision: content.vision,
+            advocacyPillars: content.advocacyPillars,
+            themeSong: content.themeSong,
+          }));
+          updateUploadToast(toastId, {
+            status: 'success',
+            progress: 100,
+            title: 'Homepage Refreshed',
+            message: 'Homepage content updated.',
+          });
+          setTimeout(() => removeUploadToast(toastId), 3000);
+          return true;
+        } catch (error) {
+          console.error(`[App] Error retrying homepage content (attempt ${retryCount + 1}/${MAX_RETRIES}):`, error);
+          
+          // Attempt retry if under max retries
+          if (retryCount < MAX_RETRIES) {
+            retryCount++;
+            const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount - 1);
+            console.log(`[App] Retrying homepage load in ${delay}ms...`);
+            
+            updateUploadToast(toastId, {
+              status: 'loading',
+              progress: 30 + (retryCount * 10),
+              message: `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`,
+            });
+            
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return attemptLoad();
+          }
+          
+          return false;
+        }
+      };
       
       try {
-        updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
-        const content = await fetchHomepageContent();
-        updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
-        setHomepageContent(prev => ({
-          ...prev,
-          hero: content.hero,
-          about: content.about,
-          mission: content.mission,
-          vision: content.vision,
-          advocacyPillars: content.advocacyPillars,
-          themeSong: content.themeSong,
-        }));
-        updateUploadToast(toastId, {
-          status: 'success',
-          progress: 100,
-          title: 'Homepage Refreshed',
-          message: 'Homepage content updated.',
-        });
-        setTimeout(() => removeUploadToast(toastId), 3000);
+        setIsLoadingHomepage(true);
+        const success = await attemptLoad();
+        
+        if (!success) {
+          setIsLoadingHomepage(false);
+          setHomepageError('Failed to load homepage content.');
+          updateUploadToast(toastId, {
+            status: 'error',
+            progress: 100,
+            title: 'Sync Failed',
+            message: 'Homepage content failed to load after retries. Tap reload to try again.',
+            actionLabel: 'Reload',
+            onAction: () => {
+              removeUploadToast(toastId);
+              retryLoadHomepage();
+            },
+          });
+        }
       } catch (error) {
-        console.error('[App] Error retrying homepage content:', error);
+        console.error('[App] Unexpected error in retry homepage load:', error);
+        setIsLoadingHomepage(false);
         setHomepageError('Failed to load homepage content.');
         updateUploadToast(toastId, {
           status: 'error',
@@ -1151,8 +1252,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             retryLoadHomepage();
           },
         });
-      } finally {
-        setIsLoadingHomepage(false);
       }
     };
 
@@ -2759,7 +2858,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal}
+        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
         isDark={isDark}
@@ -3058,7 +3157,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading events..." />}>
-            <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} username={userName || 'admin'} />
+            <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} username={userName || 'admin'} onModalStateChange={setManageEventsModalOpen} />
           </Suspense>
           {chatbot}
         </>

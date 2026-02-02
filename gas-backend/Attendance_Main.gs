@@ -146,11 +146,12 @@ function doPostAttendance(e) {
 
 /**
  * Record Time In for a member
- * @param {Object} params - { eventId, memberId, memberName, status, location: { lat, lng }, recordedBy }
+ * Extended with external attendee detection and late tracking
+ * @param {Object} params - { eventId, memberId, memberName, status, location: { lat, lng }, recordedBy, isExternal }
  */
 function recordTimeIn(params) {
   try {
-    const { eventId, memberId, memberName, status, location, recordedBy } = params;
+    const { eventId, memberId, memberName, status, location, recordedBy, isExternal } = params;
     
     if (!eventId || !memberId) {
       return { success: false, error: 'Event ID and Member ID are required' };
@@ -212,13 +213,36 @@ function recordTimeIn(params) {
       geofenceMessage = geofenceResult.message;
     }
     
-    // Prepare new row
+    // Check if time is late based on event time windows
+    let isLateTimeIn = false;
+    try {
+      const timeWindows = getEventTimeWindows(eventId);
+      if (timeWindows.success && timeWindows.timeWindows.timeInEnd) {
+        isLateTimeIn = isTimeLate(timeString, timeWindows.timeWindows.timeInEnd);
+      }
+    } catch (e) {
+      Logger.log('Error checking late status: ' + e.toString());
+    }
+    
+    // Determine if external attendee (if not explicitly set, check against recipients)
+    let externalFlag = isExternal === true || isExternal === 'true';
+    if (!externalFlag && isExternal !== false && isExternal !== 'false') {
+      // Check if member is a target recipient
+      try {
+        const recipientCheck = checkIsTargetRecipient(eventId, memberId);
+        externalFlag = !recipientCheck.isRecipient;
+      } catch (e) {
+        Logger.log('Error checking recipient status: ' + e.toString());
+      }
+    }
+    
+    // Prepare new row - with new columns at the end
     const newRow = [
       attendanceId,                    // AttendanceID
       eventId,                         // EventID
       memberId,                        // MemberID
       memberName || '',                // MemberName
-      status || 'Present',             // Status
+      isLateTimeIn ? 'Late' : (status || 'Present'), // Status - auto-set to Late if after time window
       timeString,                      // TimeIn
       '',                              // TimeOut
       dateString,                      // AttendanceDate
@@ -227,7 +251,10 @@ function recordTimeIn(params) {
       '',                              // Notes
       recordedBy || '',                // RecordedByTimeIn
       '',                              // RecordedByTimeOut
-      nowISO                           // RecordedAt
+      nowISO,                          // RecordedAt
+      externalFlag ? 'TRUE' : 'FALSE', // IsExternal
+      isLateTimeIn ? 'TRUE' : 'FALSE', // LateTimeIn
+      'FALSE'                          // LateTimeOut (not applicable for Time In)
     ];
     
     sheet.appendRow(newRow);
@@ -237,12 +264,14 @@ function recordTimeIn(params) {
     
     return {
       success: true,
-      message: 'Time In recorded successfully',
+      message: isLateTimeIn ? 'Time In recorded (Late)' : 'Time In recorded successfully',
       attendanceId: attendanceId,
       timeIn: timeString,
       date: dateString,
       geofenceValid: geofenceValid,
-      geofenceMessage: geofenceMessage
+      geofenceMessage: geofenceMessage,
+      isExternal: externalFlag,
+      isLate: isLateTimeIn
     };
   } catch (error) {
     return { success: false, error: error.toString() };
@@ -251,6 +280,7 @@ function recordTimeIn(params) {
 
 /**
  * Record Time Out for a member
+ * Extended with late Time Out detection
  * @param {Object} params - { eventId, memberId, location: { lat, lng }, recordedBy }
  */
 function recordTimeOut(params) {
@@ -271,6 +301,17 @@ function recordTimeOut(params) {
     const now = new Date();
     const timeString = Utilities.formatDate(now, 'Asia/Manila', 'hh:mm a');
     const dateString = Utilities.formatDate(now, 'Asia/Manila', 'yyyy-MM-dd');
+    
+    // Check if time is late for Time Out based on event time windows
+    let isLateTimeOut = false;
+    try {
+      const timeWindows = getEventTimeWindows(eventId);
+      if (timeWindows.success && timeWindows.timeWindows.timeOutEnd) {
+        isLateTimeOut = isTimeLate(timeString, timeWindows.timeWindows.timeOutEnd);
+      }
+    } catch (e) {
+      Logger.log('Error checking late Time Out status: ' + e.toString());
+    }
     
     // Find existing Time In record for today
     const data = sheet.getDataRange().getValues();
@@ -305,6 +346,12 @@ function recordTimeOut(params) {
             sheet.getRange(rowIndex, headers.indexOf('RecordedByTimeOut') + 1).setValue(recordedBy);
           }
           
+          // Update LateTimeOut column if it exists
+          const lateTimeOutColIdx = headers.indexOf('LateTimeOut');
+          if (lateTimeOutColIdx >= 0) {
+            sheet.getRange(rowIndex, lateTimeOutColIdx + 1).setValue(isLateTimeOut ? 'TRUE' : 'FALSE');
+          }
+          
           // Update location if provided
           if (location && location.lat && location.lng) {
             const existingLocation = data[i][headers.indexOf('Location')] || '';
@@ -314,11 +361,12 @@ function recordTimeOut(params) {
           
           return {
             success: true,
-            message: 'Time Out recorded successfully',
+            message: isLateTimeOut ? 'Time Out recorded (Late)' : 'Time Out recorded successfully',
             attendanceId: data[i][headers.indexOf('AttendanceID')],
             timeIn: data[i][headers.indexOf('TimeIn')],
             timeOut: timeString,
-            date: dateString
+            date: dateString,
+            isLateTimeOut: isLateTimeOut
           };
         }
       }
@@ -518,7 +566,11 @@ function getEventAttendanceRecords(eventId) {
           notes: data[i][headers.indexOf('Notes')],
           recordedByTimeIn: data[i][headers.indexOf('RecordedByTimeIn')] || '',
           recordedByTimeOut: data[i][headers.indexOf('RecordedByTimeOut')] || '',
-          recordedAt: data[i][headers.indexOf('RecordedAt')]
+          recordedAt: data[i][headers.indexOf('RecordedAt')],
+          // New fields for external attendee and late tracking
+          isExternal: data[i][headers.indexOf('IsExternal')] === 'TRUE' || data[i][headers.indexOf('IsExternal')] === true,
+          lateTimeIn: data[i][headers.indexOf('LateTimeIn')] === 'TRUE' || data[i][headers.indexOf('LateTimeIn')] === true,
+          lateTimeOut: data[i][headers.indexOf('LateTimeOut')] === 'TRUE' || data[i][headers.indexOf('LateTimeOut')] === true
         });
       }
     }
@@ -938,7 +990,7 @@ function updateAttendanceStatus(attendanceId, status, notes) {
 
 /**
  * Initialize EventAttendance sheet with proper headers
- * (Call this if the sheet doesn't have the right columns)
+ * Extended with IsExternal, LateTimeIn, LateTimeOut columns
  */
 function initializeAttendanceSheet() {
   try {
@@ -949,7 +1001,7 @@ function initializeAttendanceSheet() {
       sheet = ss.insertSheet('EventAttendance');
     }
     
-    // Set headers
+    // Extended headers with external attendee and late tracking
     const headers = [
       'AttendanceID',
       'EventID',
@@ -964,14 +1016,79 @@ function initializeAttendanceSheet() {
       'Notes',
       'RecordedByTimeIn',
       'RecordedByTimeOut',
-      'RecordedAt'
+      'RecordedAt',
+      // New fields
+      'IsExternal',        // TRUE if person is not a target recipient
+      'LateTimeIn',        // TRUE if Time In was after TimeInEnd
+      'LateTimeOut'        // TRUE if Time Out was after TimeOutEnd
     ];
     
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+    sheet.getRange(1, 1, 1, headers.length)
+      .setFontWeight('bold')
+      .setBackground('#FF6600')
+      .setFontColor('#FFFFFF');
     sheet.setFrozenRows(1);
     
-    return { success: true, message: 'EventAttendance sheet initialized' };
+    return { success: true, message: 'EventAttendance sheet initialized with extended schema' };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Migrate EventAttendance sheet to add new columns
+ * Safe to run multiple times
+ */
+function migrateAttendanceSchema() {
+  const columns = [
+    { name: 'IsExternal', defaultValue: 'FALSE' },
+    { name: 'LateTimeIn', defaultValue: 'FALSE' },
+    { name: 'LateTimeOut', defaultValue: 'FALSE' }
+  ];
+  
+  const results = [];
+  
+  for (const col of columns) {
+    const result = safeAddAttendanceColumn(col.name, col.defaultValue);
+    results.push({ column: col.name, ...result });
+  }
+  
+  return { success: true, message: 'Attendance schema migration completed', results };
+}
+
+/**
+ * Safely add a column to EventAttendance sheet
+ */
+function safeAddAttendanceColumn(columnName, defaultValue) {
+  try {
+    const ss = SpreadsheetApp.openById(getAttendanceSpreadsheetId());
+    const sheet = ss.getSheetByName('EventAttendance');
+    
+    if (!sheet) {
+      return { success: false, error: 'EventAttendance sheet not found' };
+    }
+    
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    if (headers.includes(columnName)) {
+      return { success: true, message: `Column "${columnName}" already exists`, alreadyExists: true };
+    }
+    
+    const newColIndex = sheet.getLastColumn() + 1;
+    sheet.getRange(1, newColIndex).setValue(columnName);
+    sheet.getRange(1, newColIndex)
+      .setBackground('#FF6600')
+      .setFontColor('#FFFFFF')
+      .setFontWeight('bold');
+    
+    if (defaultValue !== undefined && sheet.getLastRow() > 1) {
+      const numRows = sheet.getLastRow() - 1;
+      const defaultValues = Array(numRows).fill([defaultValue]);
+      sheet.getRange(2, newColIndex, numRows, 1).setValues(defaultValues);
+    }
+    
+    return { success: true, message: `Column "${columnName}" added`, columnIndex: newColIndex };
   } catch (error) {
     return { success: false, error: error.toString() };
   }

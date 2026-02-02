@@ -31,6 +31,10 @@ export interface AttendanceRecord {
   recordedByTimeIn?: string;
   recordedByTimeOut?: string;
   recordedAt?: string;
+  // New fields for external attendee and late tracking
+  isExternal?: boolean;
+  lateTimeIn?: boolean;
+  lateTimeOut?: boolean;
 }
 
 export interface MemberForAttendance {
@@ -51,6 +55,7 @@ export interface RecordTimeInParams {
     lng: number;
   };
   recordedBy?: string;
+  isExternal?: boolean; // NEW: Mark as external attendee
 }
 
 export interface RecordTimeOutParams {
@@ -84,6 +89,9 @@ export interface TimeInResponse {
   geofenceMessage?: string;
   error?: string;
   existingRecord?: AttendanceRecord;
+  // NEW: External and late tracking
+  isExternal?: boolean;
+  isLate?: boolean;
 }
 
 export interface TimeOutResponse {
@@ -95,6 +103,8 @@ export interface TimeOutResponse {
   date?: string;
   error?: string;
   existingTimeOut?: string;
+  // NEW: Late Time Out tracking
+  isLateTimeOut?: boolean;
 }
 
 export interface ManualAttendanceResponse {

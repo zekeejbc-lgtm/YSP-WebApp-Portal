@@ -102,6 +102,19 @@ function doGet(e) {
       case 'validateGeofence':
         result = validateGeofence(params.eventId, params.lat, params.lng);
         break;
+      // New actions for recipient-based event filtering
+      case 'getEventsForMember':
+        result = getEventsForMember(params.memberId, params.includeArchived);
+        break;
+      case 'checkIsTargetRecipient':
+        result = checkIsTargetRecipient(params.eventId, params.memberId);
+        break;
+      case 'getEventTimeWindows':
+        result = getEventTimeWindows(params.eventId);
+        break;
+      case 'migrateEventsSchema':
+        result = migrateEventsSchema();
+        break;
       default:
         result = { success: false, error: 'Invalid action' };
     }
@@ -236,6 +249,7 @@ function initializeEventSheets() {
 
 /**
  * Create the main Events sheet
+ * Extended with Recipients and Time In/Out window fields
  */
 function createEventsSheet(ss) {
   let sheet = ss.getSheetByName('Events');
@@ -244,7 +258,7 @@ function createEventsSheet(ss) {
     sheet = ss.insertSheet('Events');
   }
   
-  // Set headers
+  // Set headers - Extended schema with recipients and time windows
   const headers = [
     'EventID',
     'Title',
@@ -263,7 +277,15 @@ function createEventsSheet(ss) {
     'CreatedBy',
     'CreatedAt',
     'UpdatedAt',
-    'Notes'
+    'Notes',
+    // New fields for recipient targeting
+    'Recipients',           // JSON: { type: 'All' | 'Committee' | 'Person', ids: string[], names: string[] }
+    // Time In window (for late detection)
+    'TimeInStart',          // Time when Time In opens (e.g., "8:00 AM")
+    'TimeInEnd',            // Time when Time In closes - after this = Late (e.g., "9:00 AM")
+    // Time Out window
+    'TimeOutStart',         // Time when Time Out opens (e.g., "5:00 PM")
+    'TimeOutEnd'            // Time when Time Out closes - after this = Late Time Out (e.g., "6:00 PM")
   ];
   
   // Check if headers already exist
@@ -302,6 +324,7 @@ function createEventsSheet(ss) {
  */
 /**
  * Create the EventAttendance sheet
+ * Extended with IsExternal and Late status fields
  */
 function createEventAttendanceSheet(ss) {
   let sheet = ss.getSheetByName('EventAttendance');
@@ -310,6 +333,7 @@ function createEventAttendanceSheet(ss) {
     sheet = ss.insertSheet('EventAttendance');
   }
   
+  // Extended headers with external attendee and late tracking
   const headers = [
     'AttendanceID',
     'EventID',
@@ -320,7 +344,11 @@ function createEventAttendanceSheet(ss) {
     'CheckOutTime',
     'Notes',
     'RecordedBy',
-    'RecordedAt'
+    'RecordedAt',
+    // New fields
+    'IsExternal',        // TRUE if person is not a target recipient (external attendee)
+    'LateTimeIn',        // TRUE if Time In was after TimeInEnd
+    'LateTimeOut'        // TRUE if Time Out was after TimeOutEnd
   ];
   
   const existingHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
@@ -831,7 +859,13 @@ function createEvent(eventData) {
       eventData.createdBy || '',
       now,
       now,
-      eventData.notes || ''
+      eventData.notes || '',
+      // New fields for recipient targeting and time windows
+      eventData.recipients || '',           // Recipients (JSON string)
+      eventData.timeInStart || '',          // TimeInStart
+      eventData.timeInEnd || '',            // TimeInEnd
+      eventData.timeOutStart || '',         // TimeOutStart
+      eventData.timeOutEnd || ''            // TimeOutEnd
     ];
     
     sheet.appendRow(newRow);
@@ -843,8 +877,8 @@ function createEvent(eventData) {
       event: {
         EventID: eventId,
         Title: eventData.title,
-        StartDate: startParsed.date,
-        StartTime: startParsed.time,
+        StartDate: startDateFormatted,
+        StartTime: startTimeFormatted,
         Status: 'Scheduled'
       }
     };
@@ -929,6 +963,13 @@ function updateEvent(eventId, eventData) {
         if (eventData.geofenceEnabled !== undefined) sheet.getRange(rowIndex, 12).setValue(eventData.geofenceEnabled ? 'TRUE' : 'FALSE');
         if (eventData.status !== undefined) sheet.getRange(rowIndex, 14).setValue(eventData.status);
         if (eventData.notes !== undefined) sheet.getRange(rowIndex, 18).setValue(eventData.notes);
+        
+        // New fields for recipient targeting and time windows (columns 19-23)
+        if (eventData.recipients !== undefined) sheet.getRange(rowIndex, 19).setValue(eventData.recipients);
+        if (eventData.timeInStart !== undefined) sheet.getRange(rowIndex, 20).setValue(parseTime(eventData.timeInStart));
+        if (eventData.timeInEnd !== undefined) sheet.getRange(rowIndex, 21).setValue(parseTime(eventData.timeInEnd));
+        if (eventData.timeOutStart !== undefined) sheet.getRange(rowIndex, 22).setValue(parseTime(eventData.timeOutStart));
+        if (eventData.timeOutEnd !== undefined) sheet.getRange(rowIndex, 23).setValue(parseTime(eventData.timeOutEnd));
         
         // Always update UpdatedAt (column 17)
         sheet.getRange(rowIndex, 17).setValue(now);
@@ -1478,6 +1519,397 @@ function searchEvents(searchTerm) {
 // =====================================================
 // TESTING & DEBUG FUNCTIONS
 // =====================================================
+
+/**
+ * Safely add a new column to an existing sheet if it doesn't exist
+ * This prevents breaking existing data when adding new columns
+ * @param {string} sheetName - Name of the sheet to modify
+ * @param {string} columnName - Name of the new column header
+ * @param {string} defaultValue - Optional default value for existing rows
+ * @returns {Object} Result with success status and message
+ */
+function safeAddColumn(sheetName, columnName, defaultValue) {
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName(sheetName);
+    
+    if (!sheet) {
+      return { success: false, error: `Sheet "${sheetName}" not found` };
+    }
+    
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    // Check if column already exists
+    if (headers.includes(columnName)) {
+      return { success: true, message: `Column "${columnName}" already exists`, alreadyExists: true };
+    }
+    
+    // Add new column at the end
+    const newColIndex = sheet.getLastColumn() + 1;
+    sheet.getRange(1, newColIndex).setValue(columnName);
+    
+    // Apply header styling
+    sheet.getRange(1, newColIndex)
+      .setBackground('#FF6600')
+      .setFontColor('#FFFFFF')
+      .setFontWeight('bold');
+    
+    // Set default value for existing rows if provided
+    if (defaultValue !== undefined && defaultValue !== null && sheet.getLastRow() > 1) {
+      const numRows = sheet.getLastRow() - 1;
+      const defaultValues = Array(numRows).fill([defaultValue]);
+      sheet.getRange(2, newColIndex, numRows, 1).setValues(defaultValues);
+    }
+    
+    Logger.log(`Added column "${columnName}" to sheet "${sheetName}" at position ${newColIndex}`);
+    
+    return { 
+      success: true, 
+      message: `Column "${columnName}" added successfully`,
+      columnIndex: newColIndex
+    };
+  } catch (error) {
+    Logger.log(`Error adding column: ${error.toString()}`);
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Migrate existing sheets to add new columns for recipients and time windows
+ * Safe to run multiple times - will skip columns that already exist
+ */
+function migrateEventsSchema() {
+  const results = {
+    events: [],
+    attendance: []
+  };
+  
+  // Add new columns to Events sheet
+  const eventColumns = [
+    { name: 'Recipients', defaultValue: '' },
+    { name: 'TimeInStart', defaultValue: '' },
+    { name: 'TimeInEnd', defaultValue: '' },
+    { name: 'TimeOutStart', defaultValue: '' },
+    { name: 'TimeOutEnd', defaultValue: '' }
+  ];
+  
+  for (const col of eventColumns) {
+    const result = safeAddColumn('Events', col.name, col.defaultValue);
+    results.events.push({ column: col.name, ...result });
+  }
+  
+  // Add new columns to EventAttendance sheet
+  const attendanceColumns = [
+    { name: 'IsExternal', defaultValue: 'FALSE' },
+    { name: 'LateTimeIn', defaultValue: 'FALSE' },
+    { name: 'LateTimeOut', defaultValue: 'FALSE' }
+  ];
+  
+  for (const col of attendanceColumns) {
+    const result = safeAddColumn('EventAttendance', col.name, col.defaultValue);
+    results.attendance.push({ column: col.name, ...result });
+  }
+  
+  return {
+    success: true,
+    message: 'Schema migration completed',
+    results: results
+  };
+}
+
+/**
+ * Get column index by header name (1-indexed for sheet operations)
+ * @param {Sheet} sheet - The sheet to search
+ * @param {string} columnName - The header name to find
+ * @returns {number} Column index (1-indexed) or -1 if not found
+ */
+function getColumnIndex(sheet, columnName) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const index = headers.indexOf(columnName);
+  return index >= 0 ? index + 1 : -1; // Convert to 1-indexed
+}
+
+/**
+ * Check if a member is a target recipient for an event
+ * @param {string} eventId - The event ID
+ * @param {string} memberId - The member ID to check
+ * @returns {Object} { isRecipient: boolean, recipientType: string }
+ */
+function checkIsTargetRecipient(eventId, memberId) {
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const eventsSheet = ss.getSheetByName('Events');
+    
+    if (!eventsSheet || eventsSheet.getLastRow() < 2) {
+      return { isRecipient: true, recipientType: 'Unknown' }; // Allow if no event data
+    }
+    
+    const data = eventsSheet.getDataRange().getValues();
+    const headers = data[0];
+    const recipientsColIdx = headers.indexOf('Recipients');
+    
+    // If Recipients column doesn't exist, everyone is a recipient (backward compatibility)
+    if (recipientsColIdx < 0) {
+      return { isRecipient: true, recipientType: 'All' };
+    }
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === eventId) {
+        const recipientsJson = data[i][recipientsColIdx];
+        
+        // If no recipients defined, everyone is a recipient
+        if (!recipientsJson || recipientsJson === '') {
+          return { isRecipient: true, recipientType: 'All' };
+        }
+        
+        try {
+          const recipients = JSON.parse(recipientsJson);
+          
+          // If type is 'All', everyone is a recipient
+          if (recipients.type === 'All') {
+            return { isRecipient: true, recipientType: 'All' };
+          }
+          
+          // Check if member ID is in the recipients list
+          if (recipients.ids && recipients.ids.includes(memberId)) {
+            return { isRecipient: true, recipientType: recipients.type };
+          }
+          
+          // If type is Committee, need to check member's committee
+          if (recipients.type === 'Committee' && recipients.committees) {
+            const memberCommittee = getMemberCommittee(memberId);
+            if (memberCommittee && recipients.committees.includes(memberCommittee)) {
+              return { isRecipient: true, recipientType: 'Committee' };
+            }
+          }
+          
+          return { isRecipient: false, recipientType: recipients.type };
+        } catch (parseError) {
+          Logger.log('Error parsing recipients JSON: ' + parseError.toString());
+          return { isRecipient: true, recipientType: 'All' }; // Allow on error
+        }
+      }
+    }
+    
+    return { isRecipient: true, recipientType: 'Unknown' }; // Event not found, allow
+  } catch (error) {
+    Logger.log('checkIsTargetRecipient error: ' + error.toString());
+    return { isRecipient: true, recipientType: 'Unknown' };
+  }
+}
+
+/**
+ * Get member's committee from User Profiles
+ * @param {string} memberId - The member ID
+ * @returns {string|null} Committee name or null
+ */
+function getMemberCommittee(memberId) {
+  try {
+    const ss = SpreadsheetApp.openById(getLoginSpreadsheetId());
+    const sheet = ss.getSheetByName('User Profiles');
+    
+    if (!sheet || sheet.getLastRow() < 2) return null;
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const idCodeIdx = headers.indexOf('ID Code');
+    const committeeIdx = headers.indexOf('Committee');
+    
+    if (idCodeIdx < 0 || committeeIdx < 0) return null;
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][idCodeIdx] === memberId) {
+        return data[i][committeeIdx] || null;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    Logger.log('getMemberCommittee error: ' + error.toString());
+    return null;
+  }
+}
+
+/**
+ * Get event time windows for late detection
+ * @param {string} eventId - The event ID
+ * @returns {Object} Time window configuration
+ */
+function getEventTimeWindows(eventId) {
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName('Events');
+    
+    if (!sheet || sheet.getLastRow() < 2) {
+      return { success: false, error: 'No events found' };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === eventId) {
+        const getColValue = (colName) => {
+          const idx = headers.indexOf(colName);
+          return idx >= 0 ? data[i][idx] : null;
+        };
+        
+        return {
+          success: true,
+          timeWindows: {
+            timeInStart: getColValue('TimeInStart') || getColValue('StartTime'),
+            timeInEnd: getColValue('TimeInEnd'),
+            timeOutStart: getColValue('TimeOutStart'),
+            timeOutEnd: getColValue('TimeOutEnd') || getColValue('EndTime')
+          }
+        };
+      }
+    }
+    
+    return { success: false, error: 'Event not found' };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Check if a time is late based on the time window end
+ * @param {string} currentTimeStr - Current time as string (e.g., "9:30 AM")
+ * @param {string} windowEndStr - Window end time as string (e.g., "9:00 AM")
+ * @returns {boolean} True if current time is after window end
+ */
+function isTimeLate(currentTimeStr, windowEndStr) {
+  if (!windowEndStr) return false; // No window set, not late
+  
+  const parseTimeToMinutes = (timeStr) => {
+    if (!timeStr) return null;
+    const parsed = parseEventTime(timeStr);
+    if (!parsed) return null;
+    return parsed.hours * 60 + parsed.minutes;
+  };
+  
+  const currentMinutes = parseTimeToMinutes(currentTimeStr);
+  const windowEndMinutes = parseTimeToMinutes(windowEndStr);
+  
+  if (currentMinutes === null || windowEndMinutes === null) return false;
+  
+  return currentMinutes > windowEndMinutes;
+}
+
+/**
+ * Get Login Spreadsheet ID (for member lookup)
+ */
+function getLoginSpreadsheetId() {
+  return '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
+}
+
+/**
+ * Get events that a specific member is a target recipient for
+ * Used by Attendance Transparency page to show scheduled events
+ * @param {string} memberId - The member ID to filter for
+ * @param {boolean} includeArchived - Whether to include completed events
+ * @returns {Object} { success, scheduled: [], active: [], completed: [] }
+ */
+function getEventsForMember(memberId, includeArchived) {
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName('Events');
+    
+    if (!sheet || sheet.getLastRow() < 2) {
+      return { success: true, scheduled: [], active: [], completed: [], total: 0 };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const recipientsColIdx = headers.indexOf('Recipients');
+    
+    // Get member's committee for committee-based filtering
+    const memberCommittee = getMemberCommittee(memberId);
+    
+    const scheduled = [];
+    const active = [];
+    const completed = [];
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (!row[0]) continue; // Skip empty rows
+      
+      // Build event object
+      const event = {};
+      headers.forEach((header, index) => {
+        event[header] = formatCellValue(header, row[index]);
+      });
+      
+      // Calculate dynamic status
+      event.StoredStatus = event.Status;
+      event.Status = calculateEventStatus(event);
+      
+      // Skip cancelled/disabled events
+      if (event.Status === 'Cancelled' || event.Status === 'Disabled') {
+        continue;
+      }
+      
+      // Check if member is a target recipient
+      let isRecipient = true;
+      if (recipientsColIdx >= 0 && row[recipientsColIdx]) {
+        try {
+          const recipients = JSON.parse(row[recipientsColIdx]);
+          
+          if (recipients.type !== 'All') {
+            isRecipient = false;
+            
+            // Check if member ID is in the recipients list
+            if (recipients.ids && recipients.ids.includes(memberId)) {
+              isRecipient = true;
+            }
+            
+            // Check committee-based targeting
+            if (!isRecipient && recipients.type === 'Committee' && recipients.committees) {
+              if (memberCommittee && recipients.committees.includes(memberCommittee)) {
+                isRecipient = true;
+              }
+            }
+          }
+        } catch (parseError) {
+          // If parsing fails, include the event (backward compatibility)
+          isRecipient = true;
+        }
+      }
+      
+      if (!isRecipient) continue;
+      
+      // Add time window info to event
+      event.TimeInStart = row[headers.indexOf('TimeInStart')] || '';
+      event.TimeInEnd = row[headers.indexOf('TimeInEnd')] || '';
+      event.TimeOutStart = row[headers.indexOf('TimeOutStart')] || '';
+      event.TimeOutEnd = row[headers.indexOf('TimeOutEnd')] || '';
+      
+      // Categorize by status
+      if (event.Status === 'Active') {
+        active.push(event);
+      } else if (event.Status === 'Scheduled') {
+        scheduled.push(event);
+      } else if (event.Status === 'Completed' && includeArchived) {
+        completed.push(event);
+      }
+    }
+    
+    // Sort: scheduled by start date ascending, active by start date, completed by date descending
+    scheduled.sort((a, b) => new Date(a.StartDate) - new Date(b.StartDate));
+    active.sort((a, b) => new Date(a.StartDate) - new Date(b.StartDate));
+    completed.sort((a, b) => new Date(b.StartDate) - new Date(a.StartDate));
+    
+    return {
+      success: true,
+      scheduled: scheduled,
+      active: active,
+      completed: completed,
+      total: scheduled.length + active.length + completed.length
+    };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
 
 /**
  * Test function to verify the script is working

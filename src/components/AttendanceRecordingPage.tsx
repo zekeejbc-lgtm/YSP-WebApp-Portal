@@ -58,11 +58,15 @@ import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import CustomDropdown from "./CustomDropdown";
-import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle, Search, User } from "lucide-react";
+import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle, Search, User, UserX, Users } from "lucide-react";
 import {
   fetchEvents,
   clearEventsCache,
+  checkIsTargetRecipient,
+  parseEventRecipients,
+  loadEventsFromLocalStorage,
   type EventData,
+  type EventRecipients,
 } from "../services/gasEventsService";
 import {
   recordTimeIn,
@@ -125,6 +129,7 @@ interface Event {
   status: EventStatus;
   backendStatus: string;
   currentAttendees?: number;
+  recipients?: EventRecipients | null;
 }
 
 // Calculate distance between two points using Haversine formula
@@ -287,6 +292,7 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
     status: eventStatus,
     backendStatus: backendEvent.Status,
     currentAttendees: backendEvent.CurrentAttendees || 0,
+    recipients: parseEventRecipients(backendEvent.Recipients),
   };
 }
 
@@ -933,6 +939,22 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
   const [previousRecord, setPreviousRecord] = useState<any>(null);
   const [pendingRecord, setPendingRecord] = useState<any>(null);
+  
+  // External attendee confirmation state
+  const [showExternalConfirmModal, setShowExternalConfirmModal] = useState(false);
+  const [pendingExternalRecord, setPendingExternalRecord] = useState<{
+    member: MemberForAttendance;
+    timestamp: string;
+    fullDate: string;
+  } | null>(null);
+  const [isCheckingRecipient, setIsCheckingRecipient] = useState(false);
+  
+  // @recipients command state - for showing expected participants
+  const [showRecipientsMode, setShowRecipientsMode] = useState(false);
+  const [recipientMembers, setRecipientMembers] = useState<MemberForAttendance[]>([]);
+  const [isLoadingRecipients, setIsLoadingRecipients] = useState(false);
+  const [recipientSearchFilter, setRecipientSearchFilter] = useState("");
+  
   const memberCacheRef = useRef<Map<string, MemberForAttendance>>(new Map());
   const isProcessingScanRef = useRef(false);
   const isStartingScannerRef = useRef(false);
@@ -1111,17 +1133,30 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     setUploadToastMessages(prev => prev.filter(m => m.id !== id));
   };
 
-  // Load events from backend
+  // Load events from backend (with localStorage cache fallback for speed)
   const loadEvents = useCallback(async (showToast: boolean = false) => {
     const toastId = `load-events-${Date.now()}`;
     const controller = new AbortController();
     const signal = showToast ? controller.signal : undefined;
     
+    // First, try to load from localStorage for instant display
+    const cachedEvents = loadEventsFromLocalStorage();
+    if (cachedEvents && cachedEvents.length > 0) {
+      const relevantCached = cachedEvents.filter(event => {
+        const status = event.Status;
+        return status === 'Active' || status === 'Scheduled';
+      });
+      const frontendCached = relevantCached.map(convertToFrontendEvent);
+      const sortedCached = sortEventsByPriority(frontendCached);
+      setEvents(sortedCached);
+      console.log(`📦 Loaded ${sortedCached.length} events from localStorage cache`);
+    }
+    
     if (showToast) {
       addUploadToast({
         id: toastId,
         title: 'Loading Events',
-        message: 'Fetching available events...',
+        message: cachedEvents ? 'Refreshing events...' : 'Fetching available events...',
         status: 'loading',
         progress: 10,
         onCancel: () => {
@@ -1141,7 +1176,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         updateUploadToast(toastId, { progress: 30, message: 'Connecting to server...' });
       }
       
-      // Always clear cache to get fresh status calculation from backend
+      // Always clear in-memory cache to get fresh status calculation from backend
       clearEventsCache();
       
       // Fetch events from backend - only active/scheduled events for recording
@@ -1181,6 +1216,19 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         return;
       }
       console.error("Failed to load events:", error);
+      
+      // If we have cached events, use them silently (offline mode)
+      if (cachedEvents && cachedEvents.length > 0) {
+        if (showToast) {
+          updateUploadToast(toastId, {
+            status: 'info',
+            progress: 100,
+            title: 'Using Cached Events',
+            message: 'Network unavailable - showing cached data',
+          });
+        }
+        return; // Keep using the cached events we already set
+      }
       
       if (showToast) {
         updateUploadToast(toastId, {
@@ -1545,6 +1593,93 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       }
     }
   }, [isOnline]);
+
+  // Load recipients for the selected event when @recipients command is triggered
+  const loadEventRecipients = useCallback(async () => {
+    if (!selectedEvent?.recipients) {
+      // No recipients defined, show all members
+      setRecipientMembers(members);
+      toast.info("This event is open to all members", { duration: 3000 });
+      return;
+    }
+
+    const recipients = selectedEvent.recipients;
+    setIsLoadingRecipients(true);
+
+    try {
+      // Handle different recipient types
+      if (recipients.type === 'All') {
+        // All members are recipients
+        setRecipientMembers(members);
+        toast.info("This event is open to all members", { duration: 3000 });
+      } else if (recipients.type === 'Person') {
+        // Filter members by recipient IDs
+        const recipientIds = new Set(recipients.ids || []);
+        const recipientNames = new Set((recipients.names || []).map(n => n.toLowerCase()));
+        
+        // First try to filter from existing members list
+        let filteredRecipients = members.filter(m => 
+          recipientIds.has(m.id) || recipientNames.has(m.name.toLowerCase())
+        );
+
+        // If we don't have all recipients in the current members list, try to fetch them
+        if (filteredRecipients.length < (recipients.ids?.length || 0) && isOnline) {
+          try {
+            // Fetch all members to ensure we have the complete list
+            const allMembers = await getMembersForAttendance(undefined, 1000);
+            allMembers.forEach(cacheMember);
+            filteredRecipients = allMembers.filter(m => 
+              recipientIds.has(m.id) || recipientNames.has(m.name.toLowerCase())
+            );
+          } catch (error) {
+            console.error("Failed to fetch complete members list:", error);
+          }
+        }
+
+        setRecipientMembers(filteredRecipients);
+        if (filteredRecipients.length === 0) {
+          toast.warning("No recipients found for this event", { duration: 3000 });
+        } else {
+          toast.success(`Showing ${filteredRecipients.length} expected participant(s)`, { duration: 3000 });
+        }
+      } else if (recipients.type === 'Committee') {
+        // Filter members by committee
+        const recipientCommittees = new Set((recipients.committees || []).map(c => c.toLowerCase()));
+        
+        // First try to filter from existing members list
+        let filteredRecipients = members.filter(m => 
+          recipientCommittees.has(m.committee?.toLowerCase() || '')
+        );
+
+        // If we don't have many members, try to fetch more
+        if (filteredRecipients.length < 5 && isOnline) {
+          try {
+            const allMembers = await getMembersForAttendance(undefined, 1000);
+            allMembers.forEach(cacheMember);
+            filteredRecipients = allMembers.filter(m => 
+              recipientCommittees.has(m.committee?.toLowerCase() || '')
+            );
+          } catch (error) {
+            console.error("Failed to fetch complete members list:", error);
+          }
+        }
+
+        setRecipientMembers(filteredRecipients);
+        const committees = recipients.committees?.join(', ') || '';
+        if (filteredRecipients.length === 0) {
+          toast.warning(`No members found for committees: ${committees}`, { duration: 3000 });
+        } else {
+          toast.success(`Showing ${filteredRecipients.length} members from ${committees}`, { duration: 3000 });
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load recipients:", error);
+      toast.error("Failed to load recipients");
+      setRecipientMembers([]);
+    } finally {
+      setIsLoadingRecipients(false);
+    }
+  }, [selectedEvent, members, isOnline, cacheMember]);
 
   // Load members when entering recording step
   useEffect(() => {
@@ -1927,6 +2062,36 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         day: 'numeric'
       });
 
+      // Check if member is a target recipient (only when online)
+      let isTargetRecipient = true; // Default to true for offline or if check fails
+      if (isOnline && selectedEvent) {
+        setIsCheckingRecipient(true);
+        try {
+          const recipientCheck = await checkIsTargetRecipient(selectedEvent.id, member.id);
+          isTargetRecipient = recipientCheck.isTarget;
+        } catch (error) {
+          console.error("Failed to check target recipient status:", error);
+          // Default to true if check fails - allow recording
+          isTargetRecipient = true;
+        } finally {
+          setIsCheckingRecipient(false);
+        }
+      }
+
+      // If not a target recipient, show external attendee confirmation modal
+      if (!isTargetRecipient) {
+        setPendingExternalRecord({
+          member,
+          timestamp,
+          fullDate,
+        });
+        scanPauseRef.current = true;
+        setShowExternalConfirmModal(true);
+        setIsRecordingAttendance(false);
+        isProcessingScanRef.current = false;
+        return;
+      }
+
       // Show verification modal FIRST - record only after user confirms
       // This allows user to verify the person's identity before recording
       setPendingRecord({
@@ -1940,6 +2105,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
         date: fullDate,
         needsConfirmation: true, // Flag to indicate recording hasn't happened yet
         isOffline: !isOnline,
+        isExternal: false, // Target recipient - not external
       });
       scanPauseRef.current = true;
       setShowVerificationModal(true);
@@ -2026,10 +2192,13 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
           status: pendingRecord.status as 'Present' | 'Late' || 'Present',
           location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
           recordedBy: getCurrentUserName(),
+          isExternal: pendingRecord.isExternal || false,
         });
 
         // Success!
-        toast.success(`${pendingRecord.status} - ${member.name}`, {
+        const externalLabel = pendingRecord.isExternal ? ' (External)' : '';
+        const lateLabel = response.isLate ? ' [LATE]' : '';
+        toast.success(`${pendingRecord.status}${lateLabel}${externalLabel} - ${member.name}`, {
           description: `${pendingRecord.timeType} recorded at ${formatTimeDisplay(response.timeIn) || timestamp}`,
         });
         
@@ -2109,6 +2278,63 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       }
     } finally {
       setIsRecordingAttendance(false);
+    }
+  };
+
+  // Handle external attendee confirmation - user confirms to record as external
+  const handleConfirmExternalAttendee = async () => {
+    if (!pendingExternalRecord || !selectedEvent) return;
+    
+    const { member, timestamp, fullDate } = pendingExternalRecord;
+    
+    setShowExternalConfirmModal(false);
+    setPendingExternalRecord(null);
+    
+    // For QR mode, show verification modal with external flag
+    if (selectedMode === "qr") {
+      setPendingRecord({
+        memberData: member,
+        member: member.name,
+        event: selectedEvent.name,
+        eventId: selectedEvent.id,
+        timeType: timeType === "in" ? "Time In" : "Time Out",
+        status: "Present",
+        timestamp: timestamp,
+        date: fullDate,
+        needsConfirmation: true,
+        isOffline: !isOnline,
+        isExternal: true, // Mark as external attendee
+      });
+      setShowVerificationModal(true);
+    } else {
+      // For manual mode, record directly with external flag
+      setIsRecordingAttendance(true);
+      try {
+        await submitAttendanceRecord(member, timestamp, fullDate, false, true);
+        toast.success(`External Attendee Recorded - ${member.name}`, {
+          description: `${timeType === "in" ? "Time In" : "Time Out"} recorded as external attendee`,
+        });
+      } catch (error) {
+        console.error("External attendance recording error:", error);
+        toast.error("Failed to record external attendance", {
+          description: error instanceof Error ? error.message : "Unknown error",
+        });
+      } finally {
+        setIsRecordingAttendance(false);
+      }
+    }
+  };
+
+  // Handle external attendee rejection - user chooses not to record
+  const handleRejectExternalAttendee = () => {
+    setShowExternalConfirmModal(false);
+    setPendingExternalRecord(null);
+    scanPauseRef.current = false;
+    isProcessingScanRef.current = false;
+    
+    // Resume scanner if in QR mode
+    if (selectedMode === "qr") {
+      toast.info("Attendance not recorded. Ready for next scan.", { duration: 3000 });
     }
   };
 
@@ -2313,6 +2539,33 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     });
 
     try {
+      // Check if member is a target recipient (only when online)
+      let isTargetRecipient = true;
+      if (isOnline && selectedEvent) {
+        setIsCheckingRecipient(true);
+        try {
+          const recipientCheck = await checkIsTargetRecipient(selectedEvent.id, member.id);
+          isTargetRecipient = recipientCheck.isTarget;
+        } catch (error) {
+          console.error("Failed to check target recipient status:", error);
+          isTargetRecipient = true; // Default to true if check fails
+        } finally {
+          setIsCheckingRecipient(false);
+        }
+      }
+
+      // If not a target recipient, show external attendee confirmation
+      if (!isTargetRecipient) {
+        setPendingExternalRecord({
+          member,
+          timestamp,
+          fullDate,
+        });
+        setShowExternalConfirmModal(true);
+        setIsRecordingAttendance(false);
+        return;
+      }
+
       // First check if there's an existing record
       const existingCheck = await checkExistingAttendance(selectedEvent.id, member.id);
       
@@ -2336,11 +2589,12 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
           status: status,
           timestamp: timestamp,
           date: fullDate,
+          isExternal: false,
         });
         setShowOverwriteWarning(true);
       } else {
         // No existing record - record directly
-        await submitAttendanceRecord(member, timestamp, fullDate, false);
+        await submitAttendanceRecord(member, timestamp, fullDate, false, false);
       }
     } catch (error) {
       console.error("Attendance recording error:", error);
@@ -2357,7 +2611,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     member: MemberForAttendance, 
     timestamp: string, 
     fullDate: string, 
-    overwrite: boolean
+    overwrite: boolean,
+    isExternal: boolean = false
   ) => {
     if (!selectedEvent) return;
 
@@ -2371,7 +2626,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             memberName: member.name,
             status: status,
             timeType: 'in',
-            notes: `Manually marked as ${status}`,
+            notes: `Manually marked as ${status}${isExternal ? ' (External Attendee)' : ''}`,
             recordedBy: getCurrentUserName(),
             overwrite: overwrite,
           });
@@ -2385,6 +2640,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             timestamp: timestamp,
             date: fullDate,
             attendanceId: response.attendanceId,
+            isExternal: isExternal,
           });
         } else {
           // Regular Time In
@@ -2395,17 +2651,22 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
             status: status as 'Present' | 'Late',
             location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
             recordedBy: getCurrentUserName(),
+            isExternal: isExternal,
           });
 
+          const externalLabel = isExternal ? ' (External)' : '';
+          const lateLabel = response.isLate ? ' [LATE]' : '';
+          
           setPendingRecord({
             memberData: member,
             member: member.name,
             event: selectedEvent.name,
             timeType: "Time In",
-            status: status,
+            status: `${status}${lateLabel}${externalLabel}`,
             timestamp: formatTimeDisplay(response.timeIn) || timestamp,
             date: fullDate,
             attendanceId: response.attendanceId,
+            isExternal: isExternal,
           });
         }
       } else {
@@ -3516,6 +3777,20 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                     setMemberSearchInput(value);
                     setShowMemberDropdown(true);
                     
+                    // Check for @recipients command
+                    if (value.toLowerCase() === '@recipients' || value.toLowerCase() === '@recipient') {
+                      setMemberSearchInput('');
+                      setShowRecipientsMode(true);
+                      setRecipientSearchFilter('');
+                      loadEventRecipients();
+                      return;
+                    }
+                    
+                    // Exit recipients mode if user clears or types something else after being in recipients mode
+                    if (showRecipientsMode && !value.startsWith('@')) {
+                      setRecipientSearchFilter(value);
+                    }
+                    
                     // Check if user typed a comma - try to add the previous term as a member
                     if (value.endsWith(',')) {
                       const searchTerm = value.slice(0, -1).trim();
@@ -3577,7 +3852,9 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                   }}
                   placeholder={selectedMembers.length > 0 
                     ? "Add more members (type and press Enter or comma)..." 
-                    : "Type to search members (use comma for batch)..."}
+                    : showRecipientsMode 
+                    ? "Filter recipients..." 
+                    : "Search members or type @recipients to see expected participants..."}
                   className="w-full pl-10 pr-10 py-3 rounded-xl border-2 transition-all focus:outline-none"
                   style={{
                     background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
@@ -3592,6 +3869,8 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                     onClick={() => {
                       setMemberSearchInput("");
                       setShowMemberDropdown(true);
+                      setShowRecipientsMode(false);
+                      setRecipientSearchFilter('');
                     }}
                     className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
                   >
@@ -3602,7 +3881,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
               {/* Hint text */}
               <p className="text-xs text-muted-foreground mt-1">
-                💡 Tip: Type a name and press <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">Enter</kbd> or <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">,</kbd> to add multiple members for batch recording
+                💡 Tip: Type <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">@recipients</kbd> to see expected participants, or use <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">,</kbd> for batch recording
               </p>
 
               {/* Batch Results - show during/after batch recording */}
@@ -3631,8 +3910,136 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 </div>
               )}
 
+              {/* Recipients Mode - shows expected participants for the event */}
+              {showRecipientsMode && (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                      <span className="text-sm font-medium" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                        Expected Participants ({recipientMembers.length})
+                      </span>
+                      {selectedEvent?.recipients?.type && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400">
+                          {selectedEvent.recipients.type === 'All' 
+                            ? 'All Members' 
+                            : selectedEvent.recipients.type === 'Committee' 
+                            ? `Committees: ${selectedEvent.recipients.committees?.join(', ') || 'N/A'}`
+                            : 'Specific Persons'}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowRecipientsMode(false);
+                        setRecipientMembers([]);
+                        setRecipientSearchFilter('');
+                      }}
+                      className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
+                    >
+                      <X className="w-3 h-3" />
+                      Close
+                    </button>
+                  </div>
+
+                  {/* Filter input for recipients */}
+                  <div className="relative mb-2">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={recipientSearchFilter}
+                      onChange={(e) => setRecipientSearchFilter(e.target.value)}
+                      placeholder="Filter recipients by name or committee..."
+                      className="w-full pl-9 pr-4 py-2 rounded-lg border text-sm transition-all focus:outline-none"
+                      style={{
+                        background: isDark ? 'rgba(30, 41, 59, 0.6)' : 'rgba(255, 255, 255, 0.8)',
+                        borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                        color: isDark ? '#ffffff' : '#000000',
+                      }}
+                    />
+                  </div>
+
+                  {/* Recipients list */}
+                  <div 
+                    className="rounded-xl border shadow-lg max-h-64 overflow-y-auto"
+                    style={{
+                      background: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+                      backdropFilter: 'blur(20px)',
+                      borderColor: DESIGN_TOKENS.colors.brand.orange + '40',
+                    }}
+                  >
+                    {isLoadingRecipients ? (
+                      <div className="p-4 text-center text-muted-foreground flex items-center justify-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Loading recipients...
+                      </div>
+                    ) : recipientMembers.length > 0 ? (
+                      recipientMembers
+                        .filter(m => 
+                          !recipientSearchFilter || 
+                          m.name.toLowerCase().includes(recipientSearchFilter.toLowerCase()) ||
+                          m.committee?.toLowerCase().includes(recipientSearchFilter.toLowerCase()) ||
+                          m.id.toLowerCase().includes(recipientSearchFilter.toLowerCase())
+                        )
+                        .map((member) => (
+                          <button
+                            key={member.id}
+                            onClick={() => {
+                              // Select this recipient
+                              handleMemberSelect(member);
+                              setShowRecipientsMode(false);
+                              setRecipientSearchFilter('');
+                            }}
+                            className="w-full p-3 flex items-center gap-3 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors text-left border-b last:border-b-0"
+                            style={{
+                              borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                            }}
+                          >
+                            {member.profilePicture ? (
+                              <img 
+                                src={member.profilePicture}
+                                alt={member.name}
+                                className="w-10 h-10 rounded-full object-cover flex-shrink-0 ring-2 ring-orange-300 dark:ring-orange-600"
+                              />
+                            ) : (
+                              <div 
+                                className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0 ring-2 ring-orange-300 dark:ring-orange-600"
+                                style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
+                              >
+                                {getInitials(member.name)}
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p 
+                                className="font-medium truncate"
+                                style={{ color: isDark ? '#fff' : '#000' }}
+                              >
+                                {member.name}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {member.position} • {member.committee}
+                              </p>
+                            </div>
+                            <div className="flex-shrink-0">
+                              <span className="text-xs px-2 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
+                                Expected
+                              </span>
+                            </div>
+                          </button>
+                        ))
+                    ) : (
+                      <div className="p-4 text-center text-muted-foreground">
+                        <User className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        <p>No recipients found</p>
+                        <p className="text-xs mt-1">This event may be open to everyone</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Autosuggest Dropdown - shows when no single selection and members.length === 0 or searching */}
-              {showMemberDropdown && selectedMembers.length === 0 && !selectedMember && (
+              {showMemberDropdown && selectedMembers.length === 0 && !selectedMember && !showRecipientsMode && (
                 <div 
                   className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl z-50 max-h-64 overflow-y-auto"
                   style={{
@@ -4700,7 +5107,7 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 </div>
 
                 {/* Status Badge */}
-                <div className="flex justify-center">
+                <div className="flex justify-center gap-2 flex-wrap">
                   <div
                     className="inline-block px-4 py-2 rounded-full text-sm md:text-base"
                     style={{
@@ -4719,6 +5126,19 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                   >
                     {pendingRecord.status}
                   </div>
+                  {pendingRecord.isExternal && (
+                    <div
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-sm md:text-base"
+                      style={{
+                        backgroundColor: '#f59e0b20',
+                        color: '#f59e0b',
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                      }}
+                    >
+                      <UserX className="w-4 h-4" />
+                      External
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -4801,6 +5221,141 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                   Done
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* External Attendee Confirmation Modal */}
+      {showExternalConfirmModal && pendingExternalRecord && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6 md:p-8"
+          onClick={handleRejectExternalAttendee}
+        >
+          <div
+            className="rounded-xl w-full max-w-md md:max-w-lg border max-h-[85vh] flex flex-col overflow-hidden relative"
+            style={{
+              background: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+              backdropFilter: 'blur(20px)',
+              borderColor: 'rgba(251, 191, 36, 0.5)',
+              boxShadow: '0 20px 60px rgba(251, 191, 36, 0.2), 0 0 0 2px rgba(251, 191, 36, 0.3)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Warning Banner */}
+            <div className="bg-amber-500/20 border-b border-amber-500/30 px-4 py-2.5 flex items-center justify-center gap-2">
+              <UserX className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+              <span className="text-amber-600 dark:text-amber-400 text-sm font-medium">
+                Not a Target Recipient
+              </span>
+            </div>
+            
+            {/* Close Button */}
+            <button
+              onClick={handleRejectExternalAttendee}
+              className="absolute top-3 right-3 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors z-10"
+              title="Close"
+            >
+              <X className="w-5 h-5 text-gray-500" />
+            </button>
+            
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-5 md:p-7">
+              {/* Warning Icon Header */}
+              <div className="text-center mb-5">
+                <div 
+                  className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-full mb-3"
+                  style={{
+                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                    boxShadow: '0 8px 16px rgba(245, 158, 11, 0.3)',
+                  }}
+                >
+                  <UserX className="w-9 h-9 md:w-11 md:h-11 text-white" />
+                </div>
+                <h3
+                  className="mb-1"
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: '#f59e0b',
+                  }}
+                >
+                  External Attendee
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  This member is not on the target recipient list for this event.
+                </p>
+              </div>
+
+              {/* Member Info */}
+              <div className="mb-5 p-4 rounded-xl" style={{ background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.02)', border: isDark ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(0, 0, 0, 0.1)' }}>
+                <div className="flex items-center gap-3">
+                  <div 
+                    className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ 
+                      background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+                      boxShadow: '0 4px 8px rgba(245, 158, 11, 0.3)',
+                    }}
+                  >
+                    <User className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p 
+                      className="text-base md:text-lg truncate"
+                      style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+                    >
+                      {pendingExternalRecord.member.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {pendingExternalRecord.member.committee || 'General Committee'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Question */}
+              <div className="text-center p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                <p className="text-sm font-medium text-amber-700 dark:text-amber-300 mb-1">
+                  Record as External Attendee?
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Their attendance will be marked as "External" in the records.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div 
+              className="flex-shrink-0 p-5 md:p-7 pt-4 border-t space-y-3"
+              style={{
+                background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              }}
+            >
+              <button
+                onClick={handleConfirmExternalAttendee}
+                className="w-full px-4 py-3 rounded-xl text-white transition-all hover:shadow-lg text-sm md:text-base flex items-center justify-center gap-2"
+                style={{
+                  background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                }}
+              >
+                <CheckCircle className="w-5 h-5" />
+                Yes, Record as External
+              </button>
+              <button
+                onClick={handleRejectExternalAttendee}
+                className="w-full px-4 py-3 rounded-xl transition-all text-sm md:text-base flex items-center justify-center gap-2"
+                style={{
+                  background: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                  color: isDark ? '#e5e7eb' : '#374151',
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                }}
+              >
+                <X className="w-5 h-5" />
+                Cancel
+              </button>
             </div>
           </div>
         </div>

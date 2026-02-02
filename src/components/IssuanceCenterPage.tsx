@@ -1546,9 +1546,10 @@ export default function IssuanceCenterPage({
         const committee = item as Committee;
         setIsLoadingRecipients(true);
         try {
-          const committeeMembers = members.filter(m => 
-            m.committee?.toLowerCase().includes(committee.name.toLowerCase())
-          );
+          // For "General Members Committee", include members with no committee assigned
+          const committeeMembers = committee.id === 'general' 
+            ? members.filter(m => !m.committee || m.committee.trim() === '' || m.committee.toLowerCase().includes('general'))
+            : members.filter(m => m.committee?.toLowerCase().includes(committee.name.toLowerCase()));
           const newRecipients: SelectedRecipient[] = committeeMembers.map(m => ({
             id: m.id,
             name: m.name,
@@ -1556,16 +1557,13 @@ export default function IssuanceCenterPage({
             type: 'Member' as const,
             source: committee.name
           })).filter(r => r.email);
-          
+
           // Track how many were added vs skipped (duplicates)
-          let addedCount = 0;
-          setSelectedRecipients(prev => {
-            const existing = new Set(prev.map(r => r.email));
-            const toAdd = newRecipients.filter(r => !existing.has(r.email));
-            addedCount = toAdd.length;
-            return [...prev, ...toAdd];
-          });
-          
+          const existing = new Set(selectedRecipients.map(r => r.email));
+          const toAdd = newRecipients.filter(r => !existing.has(r.email));
+          const addedCount = toAdd.length;
+          setSelectedRecipients(prev => [...prev, ...toAdd]);
+
           const skipped = newRecipients.length - addedCount;
           if (skipped > 0) {
             toast.success(`Added ${addedCount} members from ${committee.name} (${skipped} duplicates skipped)`);

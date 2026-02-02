@@ -15,12 +15,12 @@
  * =============================================================================
  */
 
-import { useState, useEffect, useCallback } from "react";
-import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle, ChevronDown, ChevronUp, MapPin, Loader2, Timer, CheckCircle2, PlayCircle, Archive } from "lucide-react";
 import { PageLayout, StatusChip, DESIGN_TOKENS, getGlassStyle, Button } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import { getMemberAttendanceHistory, type AttendanceRecord as BackendAttendanceRecord } from "../services/gasAttendanceService";
-import { fetchEvents, type EventData } from "../services/gasEventsService";
+import { fetchEvents, fetchEventsForMember, type EventData, type MemberEventsResponse } from "../services/gasEventsService";
 import { toast } from "sonner";
 
 const ITEMS_PER_PAGE = 10;
@@ -40,6 +40,10 @@ interface AttendanceRecord {
   scannedByTimeIn: string;
   scannedByTimeOut: string;
   notes?: string;
+  // External attendee and late tracking
+  isExternal?: boolean;
+  lateTimeIn?: boolean;
+  lateTimeOut?: boolean;
 }
 
 interface AttendanceTransparencyPageProps {
@@ -205,6 +209,74 @@ function formatDisplayDate(dateStr: string): string {
     });
   } catch {
     return dateStr;
+  }
+}
+
+/**
+ * Calculate countdown to event start/end
+ */
+function getCountdown(targetDateStr: string, targetTimeStr: string): { text: string; isNegative: boolean; totalSeconds: number } {
+  const now = new Date();
+  
+  try {
+    const [year, month, day] = targetDateStr.split('-').map(Number);
+    let hours = 0, minutes = 0;
+    
+    if (targetTimeStr) {
+      const timeParts = targetTimeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+      if (timeParts) {
+        hours = parseInt(timeParts[1]);
+        minutes = parseInt(timeParts[2]);
+        const period = timeParts[3]?.toUpperCase();
+        if (period === 'PM' && hours !== 12) hours += 12;
+        if (period === 'AM' && hours === 12) hours = 0;
+      }
+    }
+    
+    const target = new Date(year, month - 1, day, hours, minutes);
+    const diffMs = target.getTime() - now.getTime();
+    const isNegative = diffMs < 0;
+    const absDiffMs = Math.abs(diffMs);
+    const totalSeconds = Math.floor(absDiffMs / 1000);
+    
+    const days = Math.floor(totalSeconds / 86400);
+    const hrs = Math.floor((totalSeconds % 86400) / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    
+    let text = '';
+    if (days > 0) {
+      text = `${days}d ${hrs}h ${mins}m`;
+    } else if (hrs > 0) {
+      text = `${hrs}h ${mins}m ${secs}s`;
+    } else if (mins > 0) {
+      text = `${mins}m ${secs}s`;
+    } else {
+      text = `${secs}s`;
+    }
+    
+    return { text, isNegative, totalSeconds };
+  } catch {
+    return { text: 'N/A', isNegative: false, totalSeconds: 0 };
+  }
+}
+
+/**
+ * Get event status color and label
+ */
+function getEventStatusStyle(status: string): { bg: string; color: string; label: string } {
+  switch (status?.toLowerCase()) {
+    case 'active':
+    case 'ongoing':
+      return { bg: 'rgba(34, 197, 94, 0.15)', color: '#22c55e', label: '● Live Now' };
+    case 'scheduled':
+      return { bg: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', label: 'Scheduled' };
+    case 'completed':
+      return { bg: 'rgba(107, 114, 128, 0.15)', color: '#6b7280', label: 'Completed' };
+    case 'cancelled':
+      return { bg: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', label: 'Cancelled' };
+    default:
+      return { bg: 'rgba(107, 114, 128, 0.15)', color: '#6b7280', label: status || 'Unknown' };
   }
 }
 
@@ -397,9 +469,32 @@ export default function AttendanceTransparencyPage({
   const [error, setError] = useState<string | null>(null);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
 
+  // Member events state (scheduled/active events for this member)
+  const [memberEvents, setMemberEvents] = useState<MemberEventsResponse | null>(null);
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+  const [showArchive, setShowArchive] = useState(false);
+  const [, forceUpdate] = useState(0); // For countdown re-renders
+
   // =====================================================
   // DATA FETCHING
   // =====================================================
+
+  // Fetch member-specific events
+  const fetchMemberEvents = useCallback(async () => {
+    if (!memberId) return;
+    
+    setIsLoadingEvents(true);
+    try {
+      // Pass includeArchived=true to get completed events for archive section
+      const events = await fetchEventsForMember(memberId, true);
+      setMemberEvents(events);
+    } catch (err) {
+      console.error("Failed to fetch member events:", err);
+      // Don't show error toast - events section is optional
+    } finally {
+      setIsLoadingEvents(false);
+    }
+  }, [memberId]);
 
   const fetchAttendanceData = useCallback(async () => {
     if (!memberId) {
@@ -440,6 +535,10 @@ export default function AttendanceTransparencyPage({
           scannedByTimeIn: record.recordedByTimeIn || "",
           scannedByTimeOut: record.recordedByTimeOut || "",
           notes: record.notes,
+          // External attendee and late tracking
+          isExternal: record.isExternal || false,
+          lateTimeIn: record.lateTimeIn || false,
+          lateTimeOut: record.lateTimeOut || false,
         };
       });
 
@@ -457,7 +556,16 @@ export default function AttendanceTransparencyPage({
 
   useEffect(() => {
     fetchAttendanceData();
-  }, [fetchAttendanceData]);
+    fetchMemberEvents();
+  }, [fetchAttendanceData, fetchMemberEvents]);
+
+  // Countdown timer - update every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      forceUpdate(n => n + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // =====================================================
   // FILTERING & SORTING
@@ -538,7 +646,7 @@ export default function AttendanceTransparencyPage({
             Last updated: {lastFetchTime.toLocaleTimeString()}
           </span>
           <button 
-            onClick={fetchAttendanceData} 
+            onClick={() => { fetchAttendanceData(); fetchMemberEvents(); }} 
             className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" 
             title="Refresh data"
           >
@@ -546,6 +654,285 @@ export default function AttendanceTransparencyPage({
           </button>
         </div>
       )}
+
+      {/* =====================================================
+          YOUR EVENTS SECTION
+          ===================================================== */}
+      <div className="mb-6">
+        {/* Section Header */}
+        <div className="flex items-center gap-2 mb-4">
+          <Calendar className="w-5 h-5 text-[#f6421f]" />
+          <h2 
+            className="text-lg"
+            style={{ 
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            }}
+          >
+            Your Events
+          </h2>
+        </div>
+
+        {/* Loading State */}
+        {isLoadingEvents && (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <div 
+                key={i}
+                className="rounded-xl p-4 animate-pulse"
+                style={{
+                  background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                  border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+                }}
+              >
+                <div className="h-5 w-3/4 rounded bg-gray-300 dark:bg-gray-700 mb-3" />
+                <div className="h-4 w-1/2 rounded bg-gray-200 dark:bg-gray-800 mb-2" />
+                <div className="h-4 w-2/3 rounded bg-gray-200 dark:bg-gray-800" />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Events Loaded */}
+        {!isLoadingEvents && memberEvents && (
+          <>
+            {/* Active & Scheduled Events */}
+            {((memberEvents.activeEvents?.length || 0) + (memberEvents.scheduledEvents?.length || 0)) > 0 ? (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Active Events First */}
+                {memberEvents.activeEvents?.map((event) => {
+                  const statusStyle = getEventStatusStyle('active');
+                  const countdown = getCountdown(event.EndDate, event.EndTime);
+                  
+                  return (
+                    <div
+                      key={event.EventID}
+                      className="rounded-xl p-4 relative overflow-hidden"
+                      style={{
+                        background: isDark 
+                          ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%)' 
+                          : 'linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(255, 255, 255, 0.9) 100%)',
+                        border: '1px solid rgba(34, 197, 94, 0.3)',
+                        boxShadow: '0 0 20px rgba(34, 197, 94, 0.1)',
+                      }}
+                    >
+                      {/* Live Indicator */}
+                      <div className="absolute top-3 right-3">
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+                          style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
+                          Live Now
+                        </div>
+                      </div>
+                      
+                      <h3 
+                        className="pr-20 mb-2 truncate"
+                        style={{ 
+                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                          fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                        }}
+                      >
+                        {event.Title}
+                      </h3>
+                      
+                      <div className="space-y-1.5 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4" />
+                          <span>{formatDisplayDate(event.StartDate)}</span>
+                          {event.StartTime && <span>• {event.StartTime}</span>}
+                        </div>
+                        {event.LocationName && (
+                          <div className="flex items-center gap-2">
+                            <MapPin className="w-4 h-4" />
+                            <span className="truncate">{event.LocationName}</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="mt-3 pt-3 border-t" style={{ borderColor: 'rgba(34, 197, 94, 0.2)' }}>
+                        <div className="flex items-center gap-2 text-sm">
+                          <Timer className="w-4 h-4 text-green-500" />
+                          <span className="text-green-600 dark:text-green-400 font-medium">
+                            Ends in {countdown.text}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Scheduled Events */}
+                {memberEvents.scheduledEvents?.map((event) => {
+                  const statusStyle = getEventStatusStyle('scheduled');
+                  const countdown = getCountdown(event.StartDate, event.StartTime);
+                  const isStartingSoon = countdown.totalSeconds < 3600 && !countdown.isNegative; // Less than 1 hour
+                  
+                  return (
+                    <div
+                      key={event.EventID}
+                      className="rounded-xl p-4 relative"
+                      style={{
+                        background: isDark 
+                          ? 'rgba(255, 255, 255, 0.05)' 
+                          : 'rgba(255, 255, 255, 0.9)',
+                        border: isStartingSoon 
+                          ? '1px solid rgba(246, 66, 31, 0.4)' 
+                          : `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+                        boxShadow: isStartingSoon ? '0 0 15px rgba(246, 66, 31, 0.15)' : undefined,
+                      }}
+                    >
+                      {/* Status Badge */}
+                      <div className="absolute top-3 right-3">
+                        <div 
+                          className="px-2.5 py-1 rounded-full text-xs font-semibold"
+                          style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
+                        >
+                          {isStartingSoon ? '⏰ Starting Soon' : statusStyle.label}
+                        </div>
+                      </div>
+                      
+                      <h3 
+                        className="pr-24 mb-2 truncate"
+                        style={{ 
+                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                          fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                        }}
+                      >
+                        {event.Title}
+                      </h3>
+                      
+                      <div className="space-y-1.5 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4" />
+                          <span>{formatDisplayDate(event.StartDate)}</span>
+                          {event.StartTime && <span>• {event.StartTime}</span>}
+                        </div>
+                        {event.LocationName && (
+                          <div className="flex items-center gap-2">
+                            <MapPin className="w-4 h-4" />
+                            <span className="truncate">{event.LocationName}</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="mt-3 pt-3 border-t" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
+                        <div className="flex items-center gap-2 text-sm">
+                          <Clock className="w-4 h-4" />
+                          <span className={isStartingSoon ? 'text-[#f6421f] font-medium' : 'text-muted-foreground'}>
+                            Starts in {countdown.text}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div 
+                className="rounded-xl p-6 text-center"
+                style={{
+                  background: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
+                  border: `1px dashed ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+                }}
+              >
+                <Calendar className="w-10 h-10 mx-auto text-gray-400 mb-2" />
+                <p className="text-sm text-muted-foreground">No upcoming events scheduled for you</p>
+              </div>
+            )}
+
+            {/* Archive Section - Completed Events */}
+            {(memberEvents.completed?.length || 0) > 0 && (
+              <div className="mt-4">
+                <button
+                  onClick={() => setShowArchive(!showArchive)}
+                  className="w-full flex items-center justify-between p-3 rounded-xl transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+                  style={{
+                    background: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
+                    border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <Archive className="w-4 h-4 text-gray-400" />
+                    <span className="text-sm font-medium text-muted-foreground">
+                      Past Events ({memberEvents.completed?.length || 0})
+                    </span>
+                  </div>
+                  {showArchive ? (
+                    <ChevronUp className="w-4 h-4 text-gray-400" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                  )}
+                </button>
+                
+                {showArchive && (
+                  <div className="mt-3 grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {memberEvents.completed?.slice(0, 6).map((event) => {
+                      const statusStyle = getEventStatusStyle('completed');
+                      
+                      return (
+                        <div
+                          key={event.EventID}
+                          className="rounded-xl p-3 opacity-75"
+                          style={{
+                            background: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
+                            border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="text-sm font-medium truncate flex-1">{event.Title}</h4>
+                            <div 
+                              className="px-2 py-0.5 rounded-full text-xs flex-shrink-0"
+                              style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
+                            >
+                              <CheckCircle2 className="w-3 h-3 inline mr-1" />
+                              Done
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
+                            <Calendar className="w-3 h-3" />
+                            <span>{formatDisplayDate(event.StartDate)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* No events at all */}
+        {!isLoadingEvents && !memberEvents && (
+          <div 
+            className="rounded-xl p-6 text-center"
+            style={{
+              background: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
+              border: `1px dashed ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+            }}
+          >
+            <Calendar className="w-10 h-10 mx-auto text-gray-400 mb-2" />
+            <p className="text-sm text-muted-foreground">No events available</p>
+          </div>
+        )}
+      </div>
+
+      {/* =====================================================
+          ATTENDANCE HISTORY SECTION
+          ===================================================== */}
+      <div className="flex items-center gap-2 mb-4">
+        <FileText className="w-5 h-5 text-[#f6421f]" />
+        <h2 
+          className="text-lg"
+          style={{ 
+            fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+          }}
+        >
+          Attendance History
+        </h2>
+      </div>
 
       {/* Summary Cards */}
       <div
@@ -793,7 +1180,7 @@ export default function AttendanceTransparencyPage({
       {/* Search and Filter Bar - Only show if we have records or are loading */}
       {(isLoading || attendanceRecords.length > 0) && !error && (
         <div
-          className="border rounded-lg mb-6 relative z-10"
+          className="border rounded-lg mb-6"
           style={{
             borderRadius: `${DESIGN_TOKENS.radius.card}px`,
             padding: `${DESIGN_TOKENS.spacing.scale.lg}px`,
@@ -1032,9 +1419,33 @@ export default function AttendanceTransparencyPage({
                 </div>
               </div>
 
-              {/* Status */}
-              <div className="flex justify-end">
+              {/* Status with External/Late indicators */}
+              <div className="flex flex-wrap justify-end items-center gap-1.5">
                 <StatusChip status={record.status} size="sm" />
+                {record.isExternal && (
+                  <span 
+                    className="px-1.5 py-0.5 text-[10px] font-semibold rounded"
+                    style={{ background: 'rgba(124, 58, 237, 0.15)', color: '#7c3aed' }}
+                  >
+                    EXT
+                  </span>
+                )}
+                {record.lateTimeIn && (
+                  <span 
+                    className="px-1.5 py-0.5 text-[10px] font-semibold rounded"
+                    style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#d97706' }}
+                  >
+                    LATE-IN
+                  </span>
+                )}
+                {record.lateTimeOut && (
+                  <span 
+                    className="px-1.5 py-0.5 text-[10px] font-semibold rounded"
+                    style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}
+                  >
+                    LATE-OUT
+                  </span>
+                )}
               </div>
             </div>
           ))}
@@ -1299,7 +1710,33 @@ export default function AttendanceTransparencyPage({
                       {duration}
                     </td>
                     <td className="px-6 py-4">
-                      <StatusChip status={record.status} size="sm" />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <StatusChip status={record.status} size="sm" />
+                        {record.isExternal && (
+                          <span 
+                            className="px-1.5 py-0.5 text-[10px] font-semibold rounded"
+                            style={{ background: 'rgba(124, 58, 237, 0.15)', color: '#7c3aed' }}
+                          >
+                            EXT
+                          </span>
+                        )}
+                        {record.lateTimeIn && (
+                          <span 
+                            className="px-1.5 py-0.5 text-[10px] font-semibold rounded"
+                            style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#d97706' }}
+                          >
+                            LATE-IN
+                          </span>
+                        )}
+                        {record.lateTimeOut && (
+                          <span 
+                            className="px-1.5 py-0.5 text-[10px] font-semibold rounded"
+                            style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}
+                          >
+                            LATE-OUT
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                   );
