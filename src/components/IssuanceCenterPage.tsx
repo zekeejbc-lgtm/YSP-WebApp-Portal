@@ -4311,9 +4311,8 @@ export default function IssuanceCenterPage({
             </div>
             
             {/* Modal Footer */}
-            <div className="flex items-center justify-between p-4 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
-              <Button
-                variant="secondary"
+            <div className="flex items-center justify-between gap-2 p-3 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+              <button
                 onClick={() => { 
                   cleanupPreviewUrl(); 
                   // Reset all form inputs
@@ -4342,15 +4341,20 @@ export default function IssuanceCenterPage({
                   setEditingIssuanceId(null);
                   setShowCreateModal(false); 
                 }}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
+                style={{
+                  background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
+                  color: isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
+                }}
               >
                 Cancel
-              </Button>
+              </button>
               
               {/* Sending Progress */}
               {isSending && sendProgress && (
-                <div className="flex-1 mx-4">
-                  <div className="flex items-center gap-2 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin text-[#f6421f]" />
+                <div className="flex-1 mx-2">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#f6421f]" />
                     <span>
                       Sending: {sendProgress.sent}/{sendProgress.total}
                     </span>
@@ -4361,14 +4365,19 @@ export default function IssuanceCenterPage({
                 </div>
               )}
               
-              <Button
-                variant="primary"
+              <button
                 onClick={handleCreateIssuance}
                 disabled={isSending || !issuanceTitle || !selectedTemplate || selectedRecipients.length === 0}
-                icon={isEditMode ? <Edit2 className="w-4 h-4" /> : (sendToEmail ? <Send className="w-4 h-4" /> : <Download className="w-4 h-4" />)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                style={{
+                  background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange} 0%, #f6421f 100%)`,
+                  color: '#fff',
+                  boxShadow: '0 2px 8px rgba(246, 66, 31, 0.25)',
+                }}
               >
-                {isEditMode ? 'Update Draft' : 'Create'}
-              </Button>
+                {isEditMode ? <Edit2 className="w-3.5 h-3.5" /> : (sendToEmail ? <Send className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />)}
+                <span>{isEditMode ? 'Update Draft' : 'Create'}</span>
+              </button>
             </div>
           </div>
         </div>
@@ -4528,7 +4537,7 @@ export default function IssuanceCenterPage({
                     </div>
                   )}
                   
-                  {/* Recipients List */}
+                  {/* Recipients List - Table View */}
                   {selectedIssuance.Recipients && selectedIssuance.Recipients.length > 0 && (
                     <div>
                       <div className="flex items-center justify-between mb-2">
@@ -4580,150 +4589,235 @@ export default function IssuanceCenterPage({
                           )}
                         </div>
                       </div>
-                      <div className="space-y-2 max-h-60 overflow-y-auto">
-                        {selectedIssuance.Recipients.map((recipient) => {
-                          const recipientProfilePic = findProfilePicture(recipient.RecipientEmail, recipient.RecipientName);
-                          const isDownloadOnly = selectedIssuance.DeliveryMethod === 'DownloadOnly';
-                          const isResending = resendingRecipientId === recipient.RecordID;
-                          
-                          // Check if custom name was used
-                          const fieldValues = parseFieldInputs(selectedIssuance.FieldInputs);
-                          const nameFieldValue = fieldValues['{NAME}'];
-                          
-                          // Try to get the real registered name from members list by email
-                          const realNameFromMembers = findMemberName(recipient.RecipientEmail);
-                          
-                          // Determine the display name and custom name indicator
-                          // If we found a real name in members and it differs from stored name, use it
-                          const displayName = realNameFromMembers || recipient.RecipientName;
-                          const storedNameIsCustom = realNameFromMembers && realNameFromMembers !== recipient.RecipientName;
-                          const customNameToShow = storedNameIsCustom ? recipient.RecipientName : (nameFieldValue && nameFieldValue !== displayName ? nameFieldValue : null);
-                          
-                          // Calculate time since issuance was created for pending status
-                          const issuanceCreatedAt = new Date(selectedIssuance.CreatedAt);
-                          const now = new Date();
-                          const minutesSinceCreated = Math.floor((now.getTime() - issuanceCreatedAt.getTime()) / (1000 * 60));
-                          const isPendingTooLong = recipient.Status === 'Pending' && minutesSinceCreated > 5; // 5 minutes threshold
-                          
-                          // Determine display status
-                          const getStatusDisplay = () => {
-                            if (isDownloadOnly) {
-                              // For download-only issuances
-                              if (recipient.DownloadedAt) {
-                                return { icon: <CheckCircle className="w-4 h-4 text-green-500" />, text: 'Downloaded', color: 'text-green-500' };
-                              }
-                              return { icon: <Clock className="w-4 h-4 text-amber-500" />, text: 'Awaiting Download', color: 'text-amber-500' };
-                            }
-                            // For email delivery
-                            switch (recipient.Status) {
-                              case 'Sent':
-                                if (recipient.DownloadedAt) {
-                                  return { icon: <CheckCircle className="w-4 h-4 text-green-500" />, text: 'Sent & Downloaded', color: 'text-green-500' };
-                                }
-                                return { icon: <CheckCircle className="w-4 h-4 text-green-500" />, text: 'Email Sent', color: 'text-green-500' };
-                              case 'Failed':
-                                return { icon: <XCircle className="w-4 h-4 text-red-500" />, text: 'Failed', color: 'text-red-500' };
-                              case 'Downloaded':
-                                return { icon: <Download className="w-4 h-4 text-blue-500" />, text: 'Downloaded', color: 'text-blue-500' };
-                              default: // Pending
-                                if (isPendingTooLong) {
-                                  return { icon: <AlertTriangle className="w-4 h-4 text-amber-600" />, text: `Pending (${minutesSinceCreated}m)`, color: 'text-amber-600' };
-                                }
-                                return { icon: <Clock className="w-4 h-4 text-amber-500" />, text: 'Pending', color: 'text-amber-500' };
-                            }
-                          };
-                          
-                          const statusDisplay = getStatusDisplay();
-                          const showResendButton = !isDownloadOnly && (recipient.Status === 'Failed' || recipient.Status === 'Pending');
-                          
-                          return (
-                          <div
-                            key={recipient.RecordID}
-                            className="flex items-center justify-between p-3 rounded-lg"
-                            style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
-                          >
-                            <div className="flex items-center gap-3">
-                              {recipientProfilePic ? (
-                                <img
-                                  src={recipientProfilePic}
-                                  alt={recipient.RecipientName}
-                                  className="w-8 h-8 rounded-full object-cover"
-                                  onError={(e) => {
-                                    // Fallback to initials if image fails to load
-                                    const target = e.target as HTMLImageElement;
-                                    target.style.display = 'none';
-                                    target.nextElementSibling?.classList.remove('hidden');
-                                  }}
-                                />
-                              ) : null}
-                              <div
-                                className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold ${recipientProfilePic ? 'hidden' : ''}`}
-                                style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
+                      {/* Scrollable Table Container */}
+                      {(() => {
+                        // Check if custom name field was used (has a value in FieldInputs for {NAME})
+                        const fieldValues = parseFieldInputs(selectedIssuance.FieldInputs);
+                        const hasCustomNameField = fieldValues['{NAME}'] && fieldValues['{NAME}'].trim() !== '';
+                        
+                        return (
+                      <div 
+                        className="rounded-lg border overflow-hidden"
+                        style={{ 
+                          borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                          background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)'
+                        }}
+                      >
+                        <div className="overflow-x-auto max-h-60 overflow-y-auto">
+                          <table className={`w-full ${hasCustomNameField ? 'min-w-[700px]' : 'min-w-[600px]'}`}>
+                            <thead>
+                              <tr 
+                                className="border-b text-left text-xs font-semibold sticky top-0"
+                                style={{ 
+                                  borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                  background: isDark ? 'rgba(30,30,30,0.98)' : 'rgba(250,250,250,0.98)'
+                                }}
                               >
-                                {getInitials(displayName)}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium truncate" style={{ color: isDark ? '#fff' : '#000' }}>
-                                  {displayName}
-                                  {customNameToShow && (
-                                    <span className="text-xs font-normal text-muted-foreground ml-1">
-                                      (as {customNameToShow})
-                                    </span>
-                                  )}
-                                </p>
-                                <p className="text-xs text-muted-foreground truncate">{recipient.RecipientEmail}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              {/* Status indicator */}
-                              <div className="flex items-center gap-1.5" title={recipient.FailedReason || statusDisplay.text}>
-                                {statusDisplay.icon}
-                                <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.text}</span>
-                              </div>
-                              
-                              {/* Resend/Send button for failed or pending emails (only for email delivery method) */}
-                              {showResendButton && (
-                                <button
-                                  onClick={() => handleResendToRecipient(selectedIssuance.IssuanceID, recipient.RecordID, recipient.RecipientName)}
-                                  disabled={isResending}
-                                  className="ml-2 px-2 py-1 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                                  style={{
-                                    background: recipient.Status === 'Failed' 
-                                      ? 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)'
-                                      : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                                    color: '#fff',
-                                  }}
-                                  title={recipient.Status === 'Failed' 
-                                    ? (recipient.FailedReason ? `Failed: ${recipient.FailedReason}` : 'Resend email')
-                                    : 'Send email now'
+                                <th className="px-2 py-2 text-muted-foreground text-center" style={{ width: '44px', minWidth: '44px' }}></th>
+                                <th className="px-2 py-2 text-muted-foreground whitespace-nowrap">Recipient Name</th>
+                                {hasCustomNameField && (
+                                  <th className="px-2 py-2 text-muted-foreground whitespace-nowrap">Custom Name</th>
+                                )}
+                                <th className="px-2 py-2 text-muted-foreground whitespace-nowrap">Email</th>
+                                <th className="px-2 py-2 text-muted-foreground whitespace-nowrap">Status</th>
+                                <th className="px-2 py-2 text-muted-foreground whitespace-nowrap text-center">Downloaded</th>
+                                <th className="px-2 py-2 text-muted-foreground whitespace-nowrap text-center">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {selectedIssuance.Recipients.map((recipient, index) => {
+                                const recipientProfilePic = findProfilePicture(recipient.RecipientEmail, recipient.RecipientName);
+                                const isDownloadOnly = selectedIssuance.DeliveryMethod === 'DownloadOnly';
+                                const isResending = resendingRecipientId === recipient.RecordID;
+                                
+                                // Try to get the real registered name from members list by email
+                                const realNameFromMembers = findMemberName(recipient.RecipientEmail);
+                                
+                                // Determine the display name
+                                const displayName = realNameFromMembers || recipient.RecipientName;
+                                
+                                // Custom name is the value from the {NAME} field input
+                                const customNameValue = fieldValues['{NAME}'] || null;
+                                
+                                // Calculate time since issuance was created for pending status
+                                const issuanceCreatedAt = new Date(selectedIssuance.CreatedAt);
+                                const now = new Date();
+                                const minutesSinceCreated = Math.floor((now.getTime() - issuanceCreatedAt.getTime()) / (1000 * 60));
+                                const isPendingTooLong = recipient.Status === 'Pending' && minutesSinceCreated > 5;
+                                
+                                // Determine display status
+                                const getStatusDisplay = () => {
+                                  if (isDownloadOnly) {
+                                    if (recipient.DownloadedAt) {
+                                      return { icon: <CheckCircle className="w-4 h-4 text-green-500" />, text: 'Downloaded', color: 'text-green-500' };
+                                    }
+                                    return { icon: <Clock className="w-4 h-4 text-amber-500" />, text: 'Awaiting', color: 'text-amber-500' };
                                   }
-                                >
-                                  {isResending ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : recipient.Status === 'Failed' ? (
-                                    <RefreshCw className="w-3 h-3" />
-                                  ) : (
-                                    <Send className="w-3 h-3" />
-                                  )}
-                                  <span>{isResending ? 'Sending...' : (recipient.Status === 'Failed' ? 'Resend' : 'Send')}</span>
-                                </button>
-                              )}
-                              
-                              {/* Download indicator badge */}
-                              {recipient.DownloadedAt && (
-                                <div 
-                                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs"
-                                  style={{ background: isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)' }}
-                                  title={`Downloaded on ${formatIssuanceDate(recipient.DownloadedAt)}`}
-                                >
-                                  <Download className="w-3 h-3 text-blue-500" />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                        })}
+                                  switch (recipient.Status) {
+                                    case 'Sent':
+                                      return { icon: <CheckCircle className="w-4 h-4 text-green-500" />, text: 'Sent', color: 'text-green-500' };
+                                    case 'Failed':
+                                      return { icon: <XCircle className="w-4 h-4 text-red-500" />, text: 'Failed', color: 'text-red-500' };
+                                    case 'Downloaded':
+                                      return { icon: <Download className="w-4 h-4 text-blue-500" />, text: 'Downloaded', color: 'text-blue-500' };
+                                    default:
+                                      if (isPendingTooLong) {
+                                        return { icon: <AlertTriangle className="w-4 h-4 text-amber-600" />, text: `Pending (${minutesSinceCreated}m)`, color: 'text-amber-600' };
+                                      }
+                                      return { icon: <Clock className="w-4 h-4 text-amber-500" />, text: 'Pending', color: 'text-amber-500' };
+                                  }
+                                };
+                                
+                                const statusDisplay = getStatusDisplay();
+                                // Show action button for Pending (Send), Failed (Resend), and Sent (Resend)
+                                const showActionButton = !isDownloadOnly && (recipient.Status === 'Failed' || recipient.Status === 'Pending' || recipient.Status === 'Sent');
+                                const isResendAction = recipient.Status === 'Failed' || recipient.Status === 'Sent';
+                                
+                                return (
+                                  <tr 
+                                    key={recipient.RecordID}
+                                    className="border-b last:border-b-0 hover:bg-opacity-50 transition-colors"
+                                    style={{ 
+                                      borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+                                      background: index % 2 === 0 
+                                        ? 'transparent' 
+                                        : (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)')
+                                    }}
+                                  >
+                                    {/* Profile Picture Column */}
+                                    <td className="px-2 py-2" style={{ width: '44px', minWidth: '44px' }}>
+                                      <div className="flex justify-center items-center" style={{ width: '28px', height: '28px', margin: '0 auto' }}>
+                                        {recipientProfilePic ? (
+                                          <img
+                                            src={recipientProfilePic}
+                                            alt={recipient.RecipientName}
+                                            className="rounded-full object-cover"
+                                            style={{ width: '28px', height: '28px', minWidth: '28px', minHeight: '28px' }}
+                                            onError={(e) => {
+                                              const target = e.target as HTMLImageElement;
+                                              target.style.display = 'none';
+                                              target.nextElementSibling?.classList.remove('hidden');
+                                            }}
+                                          />
+                                        ) : null}
+                                        <div
+                                          className={`rounded-full flex items-center justify-center text-white text-[10px] font-bold ${recipientProfilePic ? 'hidden' : ''}`}
+                                          style={{ 
+                                            background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)',
+                                            width: '28px', 
+                                            height: '28px',
+                                            minWidth: '28px',
+                                            minHeight: '28px'
+                                          }}
+                                        >
+                                          {getInitials(displayName)}
+                                        </div>
+                                      </div>
+                                    </td>
+                                    
+                                    {/* Recipient Name Column */}
+                                    <td className="px-2 py-2">
+                                      <p 
+                                        className="text-sm font-medium truncate max-w-[160px]" 
+                                        style={{ color: isDark ? '#fff' : '#000' }}
+                                        title={displayName}
+                                      >
+                                        {displayName}
+                                      </p>
+                                    </td>
+                                    
+                                    {/* Custom Name Column - only shown if custom name field was used */}
+                                    {hasCustomNameField && (
+                                      <td className="px-2 py-2">
+                                        <p 
+                                          className="text-sm truncate max-w-[140px]" 
+                                          style={{ color: isDark ? '#fff' : '#000' }}
+                                          title={customNameValue || ''}
+                                        >
+                                          {customNameValue}
+                                        </p>
+                                      </td>
+                                    )}
+                                    
+                                    {/* Email Column */}
+                                    <td className="px-2 py-2">
+                                      <p 
+                                        className="text-xs text-muted-foreground truncate max-w-[180px]" 
+                                        title={recipient.RecipientEmail}
+                                      >
+                                        {recipient.RecipientEmail}
+                                      </p>
+                                    </td>
+                                    
+                                    {/* Status Column */}
+                                    <td className="px-2 py-2">
+                                      <div 
+                                        className="flex items-center gap-1.5 whitespace-nowrap" 
+                                        title={recipient.FailedReason || statusDisplay.text}
+                                      >
+                                        {statusDisplay.icon}
+                                        <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.text}</span>
+                                      </div>
+                                    </td>
+                                    
+                                    {/* Downloaded Column */}
+                                    <td className="px-2 py-2 text-center">
+                                      {recipient.DownloadedAt ? (
+                                        <div 
+                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs"
+                                          style={{ background: isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)' }}
+                                          title={`Downloaded on ${formatIssuanceDate(recipient.DownloadedAt)}`}
+                                        >
+                                          <Download className="w-3 h-3 text-blue-500" />
+                                          <span className="text-blue-500">Yes</span>
+                                        </div>
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">—</span>
+                                      )}
+                                    </td>
+                                    
+                                    {/* Actions Column */}
+                                    <td className="px-2 py-2">
+                                      <div className="flex items-center gap-2 justify-center">
+                                        {showActionButton ? (
+                                          <button
+                                            onClick={() => handleResendToRecipient(selectedIssuance.IssuanceID, recipient.RecordID, recipient.RecipientName)}
+                                            disabled={isResending}
+                                            className="px-2 py-1 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                                            style={{
+                                              background: isResendAction 
+                                                ? 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)'
+                                                : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                                              color: '#fff',
+                                            }}
+                                            title={recipient.Status === 'Failed' 
+                                              ? (recipient.FailedReason ? `Failed: ${recipient.FailedReason}` : 'Resend email')
+                                              : (recipient.Status === 'Sent' ? 'Resend email to this recipient' : 'Send email now')
+                                            }
+                                          >
+                                            {isResending ? (
+                                              <Loader2 className="w-3 h-3 animate-spin" />
+                                            ) : isResendAction ? (
+                                              <RefreshCw className="w-3 h-3" />
+                                            ) : (
+                                              <Send className="w-3 h-3" />
+                                            )}
+                                            <span>{isResending ? '...' : (isResendAction ? 'Resend' : 'Send')}</span>
+                                          </button>
+                                        ) : (
+                                          <span className="text-xs text-muted-foreground">—</span>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
+                        );
+                      })()}
                     </div>
                   )}
                   
@@ -4962,32 +5056,32 @@ export default function IssuanceCenterPage({
             </div>
             
             {/* Modal Footer */}
-            <div className="flex items-center justify-between gap-2 p-4 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+            <div className="flex items-center justify-between gap-2 p-3 border-t flex-wrap sm:flex-nowrap" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
               {/* Left side: Send button or Stop button */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
                 {/* Send button for Draft email issuances */}
                 {canCreate && selectedIssuance && selectedIssuance.Status === 'Draft' && selectedIssuance.DeliveryMethod === 'Email' && !isSending && (() => {
-                  // Calculate unsent recipients count
-                  const unsentCount = selectedIssuance.Recipients 
-                    ? selectedIssuance.Recipients.filter(r => r.Status !== 'Sent').length
+                  // Calculate pending recipients count (only Pending status, not Sent or Failed)
+                  const pendingCount = selectedIssuance.Recipients 
+                    ? selectedIssuance.Recipients.filter(r => r.Status === 'Pending').length
                     : selectedIssuance.TotalRecipients - (selectedIssuance.SentCount || 0);
                   
-                  // Don't show send button if all are already sent
-                  if (unsentCount <= 0) return null;
+                  // Don't show send button if no pending recipients
+                  if (pendingCount <= 0) return null;
                   
                   return (
                     <button
                       onClick={handleSendFromDetail}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:scale-[1.02]"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02] whitespace-nowrap"
                       style={{
                         background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange} 0%, #f6421f 100%)`,
                         color: '#fff',
-                        boxShadow: '0 4px 12px rgba(246, 66, 31, 0.3)',
+                        boxShadow: '0 2px 8px rgba(246, 66, 31, 0.25)',
                       }}
-                      title={`Send emails to ${unsentCount} unsent recipient${unsentCount > 1 ? 's' : ''}`}
+                      title={`Send emails to ${pendingCount} pending recipient${pendingCount > 1 ? 's' : ''} (excludes already sent)`}
                     >
-                      <Send className="w-4 h-4" />
-                      <span>Send ({unsentCount})</span>
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Send ({pendingCount})</span>
                     </button>
                   );
                 })()}
@@ -4995,15 +5089,15 @@ export default function IssuanceCenterPage({
                 {canCreate && selectedIssuance && selectedIssuance.Status === 'Draft' && selectedIssuance.DeliveryMethod === 'DownloadOnly' && !isSending && (
                   <button
                     onClick={handlePublishFromDetail}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:scale-[1.02]"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02] whitespace-nowrap"
                     style={{
                       background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
                       color: '#fff',
-                      boxShadow: '0 4px 12px rgba(34, 197, 94, 0.3)',
+                      boxShadow: '0 2px 8px rgba(34, 197, 94, 0.25)',
                     }}
                     title={`Publish to ${selectedIssuance.TotalRecipients} recipient${selectedIssuance.TotalRecipients > 1 ? 's' : ''} (no email will be sent)`}
                   >
-                    <CheckCircle className="w-4 h-4" />
+                    <CheckCircle className="w-3.5 h-3.5" />
                     <span>Publish ({selectedIssuance.TotalRecipients})</span>
                   </button>
                 )}
@@ -5011,22 +5105,22 @@ export default function IssuanceCenterPage({
                 {isSending && (
                   <button
                     onClick={handleStopSending}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:scale-[1.02]"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02] whitespace-nowrap"
                     style={{
                       background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
                       color: '#fff',
-                      boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)',
+                      boxShadow: '0 2px 8px rgba(239, 68, 68, 0.25)',
                     }}
                     title="Stop sending"
                   >
-                    <XCircle className="w-4 h-4" />
+                    <XCircle className="w-3.5 h-3.5" />
                     <span>Stop ({sendProgress?.sent || 0}/{sendProgress?.total || selectedIssuance?.TotalRecipients || 0})</span>
                   </button>
                 )}
                 {/* Sending progress indicator */}
                 {isSending && sendProgress && (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="w-4 h-4 animate-spin text-[#f6421f]" />
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#f6421f]" />
                     <span>Sending {sendProgress.sent}/{sendProgress.total}...</span>
                   </div>
                 )}
@@ -5036,7 +5130,7 @@ export default function IssuanceCenterPage({
               {canCreate && selectedIssuance && (selectedIssuance.Status === 'Sent' || selectedIssuance.Status === 'Downloaded') && (
                 <button
                   onClick={() => setShowMemberPreviewMode(!showMemberPreviewMode)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
                   style={{
                     background: showMemberPreviewMode 
                       ? DESIGN_TOKENS.colors.brand.orange + '20'
@@ -5047,20 +5141,20 @@ export default function IssuanceCenterPage({
                   }}
                   title="Preview how members see this issuance"
                 >
-                  <User className="w-4 h-4" />
-                  <span>{showMemberPreviewMode ? 'Exit Member Preview' : 'Preview as Member'}</span>
+                  <User className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{showMemberPreviewMode ? 'Exit Preview' : 'Member View'}</span>
                 </button>
               )}
               
-              <div className="flex-1" />
+              <div className="flex-1 min-w-0" />
               
               {/* Right side: Edit button (for drafts) and Close button */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
                 {/* Edit button for Draft issuances - icon only, beside Close */}
                 {canCreate && selectedIssuance && selectedIssuance.Status === 'Draft' && !isSending && (
                   <button
                     onClick={() => handleEditDraftIssuance(selectedIssuance)}
-                    className="p-2.5 rounded-xl transition-all hover:scale-[1.02]"
+                    className="p-1.5 rounded-lg transition-all hover:scale-[1.02]"
                     style={{
                       background: isDark ? 'rgba(34, 197, 94, 0.15)' : 'rgba(34, 197, 94, 0.1)',
                       color: '#22c55e',
@@ -5068,15 +5162,19 @@ export default function IssuanceCenterPage({
                     }}
                     title="Edit Draft"
                   >
-                    <Edit2 className="w-4 h-4" />
+                    <Edit2 className="w-3.5 h-3.5" />
                   </button>
                 )}
-                <Button
-                  variant="secondary"
+                <button
                   onClick={() => setShowDetailModal(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
+                  style={{
+                    background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
+                    color: isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
+                  }}
                 >
                   Close
-                </Button>
+                </button>
               </div>
             </div>
           </div>
