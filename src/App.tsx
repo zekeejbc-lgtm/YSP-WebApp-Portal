@@ -1013,6 +1013,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               }
               return updated;
             });
+            setIsLoadingHomepage(false); // Clear loading state on success
             updateUploadToast(toastId, {
               status: 'success',
               progress: 100,
@@ -1187,6 +1188,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             advocacyPillars: content.advocacyPillars,
             themeSong: content.themeSong,
           }));
+          setIsLoadingHomepage(false); // Clear loading state on success
           updateUploadToast(toastId, {
             status: 'success',
             progress: 100,
