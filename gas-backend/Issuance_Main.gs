@@ -42,7 +42,7 @@
     },
     // Branding - Use Imgur URL for email compatibility (same as OTP emails)
     LOGO_URL: 'https://i.imgur.com/J4wddTW.png',
-    WEB_APP_URL: 'https://ysptagum.vercel.app',
+    WEB_APP_URL: 'https://www.youthservicephilippinestagum.me',
     FB_PAGE_URL: 'https://www.facebook.com/YSPTagumChapter'
   };
 
