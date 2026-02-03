@@ -46,6 +46,21 @@
     type HomepageMainContent,
   } from "./services/gasHomepageService";
   import {
+    saveHomepageContentToCache,
+    loadHomepageContentFromCache,
+    saveHomepageOtherToCache,
+    loadHomepageOtherFromCache,
+    hasHomepageContentChanged,
+    hasHomepageOtherChanged,
+    saveProjectsToCache,
+    loadProjectsFromCache,
+    getProjectChanges,
+    clearUserProfileCache,
+    type CachedHomepageContent,
+    type CachedHomepageOther,
+    type CachedProject,
+  } from "./services/localStorageCache";
+  import {
     fetchAllProjects,
     addProject,
     updateProject,
@@ -682,6 +697,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     setShowRoleChangeModal(false);
     // For banned users, force logout
     if (roleChangeInfo?.newRole === 'banned') {
+      // Clear profile cache before logout
+      const storedUser = getStoredUser();
+      if (storedUser?.username) {
+        clearUserProfileCache(storedUser.username);
+        console.log('[App] Cleared profile cache on ban');
+      }
+      
       clearSession();
       setIsAdmin(false);
       setUserRole("guest");
@@ -972,55 +994,123 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       setSessionChecked(true);
     }, []);
 
-    // Fetch homepage content from GAS backend on mount
+    // Fetch homepage content from GAS backend on mount - with cache-first for instant loading
     useEffect(() => {
       const loadHomepageContent = async () => {
         const toastId = `homepage-sync-${Date.now()}`;
         const MAX_RETRIES = 3;
         const BASE_RETRY_DELAY = 1000; // 1 second
         let retryCount = 0;
+        let loadedFromCache = false;
+        
+        // ===== STEP 1: Try to load from cache for instant display =====
+        const cachedData = loadHomepageContentFromCache();
+        if (cachedData) {
+          console.log('[App] Loading homepage from cache (instant)');
+          const { data: cached, isStale } = cachedData;
+          
+          // Apply cached data immediately
+          setHomepageContent(prev => ({
+            ...prev,
+            hero: cached.hero,
+            about: cached.about,
+            mission: cached.mission,
+            vision: cached.vision,
+            advocacyPillars: cached.advocacyPillars,
+            themeSong: cached.themeSong,
+          }));
+          
+          loadedFromCache = true;
+          
+          if (!isStale) {
+            // Cache is fresh, perform silent background sync
+            setIsLoadingHomepage(false);
+            console.log('[App] Homepage cache is fresh, performing background sync');
+          } else {
+            console.log('[App] Homepage cache is stale, refreshing...');
+          }
+        }
+        
+        // If we have cache, skip showing loading toast for faster perceived performance
+        const shouldShowToast = !loadedFromCache;
         
         const attemptLoad = async (): Promise<boolean> => {
           try {
-            addUploadToast({
-              id: toastId,
-              title: 'Syncing Homepage',
-              message: retryCount > 0 ? `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})` : 'Connecting to backend...',
-              status: 'loading',
-              progress: 30,
-              progressLabel: 'Starting...',
-            });
-            setIsLoadingHomepage(true);
+            if (shouldShowToast) {
+              addUploadToast({
+                id: toastId,
+                title: 'Syncing Homepage',
+                message: retryCount > 0 ? `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})` : 'Connecting to backend...',
+                status: 'loading',
+                progress: 30,
+                progressLabel: 'Starting...',
+              });
+            }
+            if (!loadedFromCache) {
+              setIsLoadingHomepage(true);
+            }
             setHomepageError(null);
             
-            updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
+            if (shouldShowToast) {
+              updateUploadToast(toastId, { progress: 30, message: 'Fetching homepage content...' });
+            }
             const content = await fetchHomepageContent();
-            updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
-            setHomepageContent(prev => {
-              const updated = {
-                ...prev,
-                hero: content.hero,
-                about: content.about,
-                mission: content.mission,
-                vision: content.vision,
-                advocacyPillars: content.advocacyPillars,
-                themeSong: content.themeSong,
-              };
-              try {
-                localStorage.setItem('YSP_HOMEPAGE_CONTENT', JSON.stringify(updated));
-              } catch (e) {
-                console.error('Failed to save homepage content to storage', e);
-              }
-              return updated;
-            });
-            setIsLoadingHomepage(false); // Clear loading state on success
-            updateUploadToast(toastId, {
-              status: 'success',
-              progress: 100,
-              title: 'Homepage Synced',
-              message: 'Content loaded from backend.',
-            });
-            setTimeout(() => removeUploadToast(toastId), 3000);
+            if (shouldShowToast) {
+              updateUploadToast(toastId, { progress: 80, message: 'Applying homepage updates...' });
+            }
+            
+            // Check if content has actually changed
+            const newCacheData: CachedHomepageContent = {
+              hero: content.hero,
+              about: content.about,
+              mission: content.mission,
+              vision: content.vision,
+              advocacyPillars: content.advocacyPillars,
+              themeSong: content.themeSong,
+            };
+            
+            const hasChanged = hasHomepageContentChanged(newCacheData);
+            
+            if (hasChanged || !loadedFromCache) {
+              console.log('[App] Homepage content changed, updating state');
+              setHomepageContent(prev => {
+                const updated = {
+                  ...prev,
+                  hero: content.hero,
+                  about: content.about,
+                  mission: content.mission,
+                  vision: content.vision,
+                  advocacyPillars: content.advocacyPillars,
+                  themeSong: content.themeSong,
+                };
+                try {
+                  localStorage.setItem('YSP_HOMEPAGE_CONTENT', JSON.stringify(updated));
+                } catch (e) {
+                  console.error('Failed to save homepage content to storage', e);
+                }
+                return updated;
+              });
+              
+              // Save to enhanced cache
+              saveHomepageContentToCache(newCacheData);
+            } else {
+              console.log('[App] Homepage content unchanged, skipping update');
+            }
+            
+            setIsLoadingHomepage(false);
+            
+            if (shouldShowToast) {
+              updateUploadToast(toastId, {
+                status: 'success',
+                progress: 100,
+                title: 'Homepage Synced',
+                message: 'Content loaded from backend.',
+              });
+              setTimeout(() => removeUploadToast(toastId), 3000);
+            } else if (loadedFromCache && hasChanged) {
+              // Silent update completed with changes
+              console.log('[App] Background sync completed - homepage updated');
+            }
             return true;
           } catch (error) {
             console.error(`[App] Error loading homepage content (attempt ${retryCount + 1}/${MAX_RETRIES}):`, error);
@@ -1031,11 +1121,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount - 1); // Exponential backoff
               console.log(`[App] Retrying homepage load in ${delay}ms...`);
               
-              updateUploadToast(toastId, {
-                status: 'loading',
-                progress: 30 + (retryCount * 10),
-                message: `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`,
-              });
+              if (shouldShowToast) {
+                updateUploadToast(toastId, {
+                  status: 'loading',
+                  progress: 30 + (retryCount * 10),
+                  message: `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`,
+                });
+              }
               
               // Wait before retrying
               await new Promise(resolve => setTimeout(resolve, delay));
@@ -1048,17 +1140,40 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         };
         
         try {
-          setIsLoadingHomepage(true);
+          if (!loadedFromCache) {
+            setIsLoadingHomepage(true);
+          }
           const success = await attemptLoad();
           
           if (!success) {
             setIsLoadingHomepage(false);
+            if (!loadedFromCache) {
+              setHomepageError('Failed to load homepage content. Using cached data.');
+              updateUploadToast(toastId, {
+                status: 'error',
+                progress: 100,
+                title: 'Sync Failed',
+                message: 'Homepage content failed to load after retries. Tap reload to try again.',
+                actionLabel: 'Reload',
+                onAction: () => {
+                  removeUploadToast(toastId);
+                  retryLoadHomepage();
+                },
+              });
+            } else {
+              console.warn('[App] Backend sync failed, using cached homepage data');
+            }
+          }
+        } catch (error) {
+          console.error('[App] Unexpected error in homepage load:', error);
+          setIsLoadingHomepage(false);
+          if (!loadedFromCache) {
             setHomepageError('Failed to load homepage content. Using cached data.');
             updateUploadToast(toastId, {
               status: 'error',
               progress: 100,
               title: 'Sync Failed',
-              message: 'Homepage content failed to load after retries. Tap reload to try again.',
+              message: 'Homepage content failed to load. Tap reload to try again.',
               actionLabel: 'Reload',
               onAction: () => {
                 removeUploadToast(toastId);
@@ -1066,43 +1181,91 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               },
             });
           }
-        } catch (error) {
-          console.error('[App] Unexpected error in homepage load:', error);
-          setIsLoadingHomepage(false);
-          setHomepageError('Failed to load homepage content. Using cached data.');
-          updateUploadToast(toastId, {
-            status: 'error',
-            progress: 100,
-            title: 'Sync Failed',
-            message: 'Homepage content failed to load. Tap reload to try again.',
-            actionLabel: 'Reload',
-            onAction: () => {
-              removeUploadToast(toastId);
-              retryLoadHomepage();
-            },
-          });
         }
       };
 
       loadHomepageContent();
     }, []);
 
-    // Fetch projects from backend on mount
+    // Fetch projects from backend on mount - with cache-first and deletion detection
     useEffect(() => {
       const loadProjects = async () => {
-        setIsLoadingProjects(true);
+        // ===== STEP 1: Try to load from cache for instant display =====
+        const cachedData = loadProjectsFromCache();
+        let loadedFromCache = false;
+        
+        if (cachedData) {
+          console.log('[App] Loading projects from cache (instant)');
+          const { data: cachedProjects, isStale } = cachedData;
+          
+          // Apply cached data immediately
+          setProjects(cachedProjects as Project[]);
+          loadedFromCache = true;
+          
+          if (!isStale) {
+            setIsLoadingProjects(false);
+            console.log('[App] Projects cache is fresh, performing background sync');
+          } else {
+            console.log('[App] Projects cache is stale, refreshing...');
+          }
+        }
+        
+        if (!loadedFromCache) {
+          setIsLoadingProjects(true);
+        }
+        
+        // ===== STEP 2: Fetch from backend =====
         try {
           const result = await fetchAllProjects();
           
           if (result.error) {
             console.error('[App] Error loading projects:', result.error);
-            toast.error('Failed to load projects');
+            if (!loadedFromCache) {
+              toast.error('Failed to load projects');
+            }
           } else {
-            setProjects(result.projects);
+            // ===== STEP 3: Detect changes and deletions =====
+            const newProjects = result.projects.map(p => ({
+              id: p.id,
+              title: p.title,
+              description: p.description,
+              imageUrl: p.imageUrl,
+              category: p.category,
+              status: p.status,
+              date: p.date,
+              location: p.location,
+              participants: p.participants,
+              featured: p.featured,
+            })) as CachedProject[];
+            
+            const changes = getProjectChanges(newProjects);
+            
+            if (changes.hasChanges) {
+              console.log('[App] Projects changed:', {
+                added: changes.added.length,
+                updated: changes.updated.length,
+                deleted: changes.deleted.length,
+              });
+              
+              // Log deleted projects for debugging
+              if (changes.deleted.length > 0) {
+                console.log('[App] Deleted project IDs:', changes.deleted);
+              }
+              
+              // Update state with fresh data
+              setProjects(result.projects);
+              
+              // Save to cache
+              saveProjectsToCache(newProjects);
+            } else {
+              console.log('[App] Projects unchanged, skipping update');
+            }
           }
         } catch (error) {
           console.error('[App] Error loading projects:', error);
-          toast.error('Failed to load projects');
+          if (!loadedFromCache) {
+            toast.error('Failed to load projects');
+          }
         } finally {
           setIsLoadingProjects(false);
         }
@@ -1111,45 +1274,111 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       loadProjects();
     }, []);
 
-    // Fetch org chart URL AND Contact Info from backend on mount
+    // Fetch org chart URL AND Contact Info from backend on mount - with cache-first
     useEffect(() => {
       const loadOtherContent = async () => {
+        // ===== STEP 1: Try to load from cache for instant display =====
+        const cachedData = loadHomepageOtherFromCache();
+        let loadedFromCache = false;
+        
+        if (cachedData) {
+          console.log('[App] Loading other content from cache (instant)');
+          const { data: cached, isStale } = cachedData;
+          
+          // Apply cached data immediately
+          if (cached.orgChartUrl && cached.orgChartUrl.trim() !== '') {
+            setOrgChartUrl(cached.orgChartUrl);
+          }
+          
+          setHomepageContent(prev => ({
+            ...prev,
+            contact: cached.contact,
+          }));
+          
+          loadedFromCache = true;
+          
+          if (!isStale) {
+            console.log('[App] Other content cache is fresh, performing background sync');
+          } else {
+            console.log('[App] Other content cache is stale, refreshing...');
+          }
+        }
+        
+        // ===== STEP 2: Fetch from backend =====
         try {
-          // Invalidate cache to ensure we get fresh data on mount
-          invalidateOtherContentCache();
+          // Only invalidate if we don't have cache or cache is stale
+          if (!loadedFromCache) {
+            invalidateOtherContentCache();
+          }
           
           const otherContent = await fetchHomepageOtherContent();
           
-          // 1. Update Org Chart State
-          if (otherContent.orgChartUrl && otherContent.orgChartUrl.trim() !== '') {
-            setOrgChartUrl(otherContent.orgChartUrl);
-          }
-
-          // 2. Update Homepage Content State (Contact, Partners, Socials)
-          setHomepageContent(prev => ({
-            ...prev,
+          // Build new cache data
+          const newCacheData: CachedHomepageOther = {
+            orgChartUrl: otherContent.orgChartUrl || '',
             contact: {
-              title: otherContent.sectionTitle || prev.contact.title,
-              email: otherContent.orgEmail || prev.contact.email,
-              phone: otherContent.orgPhone || prev.contact.phone,
-              location: otherContent.orgLocation || prev.contact.location,
-              locationLink: otherContent.orgGoogleMapUrl || prev.contact.locationLink,
-              
-              // Map backend 'displayName' to frontend 'label'
+              title: otherContent.sectionTitle || '',
+              email: otherContent.orgEmail || '',
+              phone: otherContent.orgPhone || '',
+              location: otherContent.orgLocation || '',
+              locationLink: otherContent.orgGoogleMapUrl || '',
               socialLinks: otherContent.socialLinks?.map((link: any) => ({
                 id: link.id,
                 url: link.url,
                 label: link.displayName
               })) || [],
-              
-              partnerTitle: otherContent.partnerTitle || prev.contact.partnerTitle,
-              partnerDescription: otherContent.partnerDescription || prev.contact.partnerDescription,
-              partnerButtonText: otherContent.partnerButtonText || prev.contact.partnerButtonText,
-              partnerButtonLink: otherContent.partnerGformUrl || prev.contact.partnerButtonLink,
+              partnerTitle: otherContent.partnerTitle || '',
+              partnerDescription: otherContent.partnerDescription || '',
+              partnerButtonText: otherContent.partnerButtonText || '',
+              partnerButtonLink: otherContent.partnerGformUrl || '',
             }
-          }));
+          };
+          
+          // Check if content has actually changed
+          const hasChanged = hasHomepageOtherChanged(newCacheData);
+          
+          if (hasChanged || !loadedFromCache) {
+            console.log('[App] Other content changed, updating state');
+            
+            // 1. Update Org Chart State
+            if (otherContent.orgChartUrl && otherContent.orgChartUrl.trim() !== '') {
+              setOrgChartUrl(otherContent.orgChartUrl);
+            }
+
+            // 2. Update Homepage Content State (Contact, Partners, Socials)
+            setHomepageContent(prev => ({
+              ...prev,
+              contact: {
+                title: otherContent.sectionTitle || prev.contact.title,
+                email: otherContent.orgEmail || prev.contact.email,
+                phone: otherContent.orgPhone || prev.contact.phone,
+                location: otherContent.orgLocation || prev.contact.location,
+                locationLink: otherContent.orgGoogleMapUrl || prev.contact.locationLink,
+                
+                // Map backend 'displayName' to frontend 'label'
+                socialLinks: otherContent.socialLinks?.map((link: any) => ({
+                  id: link.id,
+                  url: link.url,
+                  label: link.displayName
+                })) || [],
+                
+                partnerTitle: otherContent.partnerTitle || prev.contact.partnerTitle,
+                partnerDescription: otherContent.partnerDescription || prev.contact.partnerDescription,
+                partnerButtonText: otherContent.partnerButtonText || prev.contact.partnerButtonText,
+                partnerButtonLink: otherContent.partnerGformUrl || prev.contact.partnerButtonLink,
+              }
+            }));
+            
+            // Save to cache
+            saveHomepageOtherToCache(newCacheData);
+          } else {
+            console.log('[App] Other content unchanged, skipping update');
+          }
         } catch (error) {
           console.error('[App] Error loading other content:', error);
+          if (loadedFromCache) {
+            console.warn('[App] Backend sync failed, using cached other content');
+          }
         }
       };
 
@@ -1814,6 +2043,22 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           }
           if (!projectsResult.error) {
             setProjects(projectsResult.projects);
+            
+            // Update projects cache
+            const projectsToCache = projectsResult.projects.map(p => ({
+              id: p.id,
+              title: p.title,
+              description: p.description,
+              imageUrl: p.imageUrl,
+              category: p.category,
+              status: p.status,
+              date: p.date,
+              location: p.location,
+              participants: p.participants,
+              featured: p.featured,
+            })) as CachedProject[];
+            saveProjectsToCache(projectsToCache);
+            console.log('[App] Updated projects cache after add/update');
           }
 
           updateUploadToast(toastId, {
@@ -1943,6 +2188,22 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         }
         if (!projectsResult.error) {
           setProjects(projectsResult.projects);
+          
+          // Update projects cache after deletion
+          const projectsToCache = projectsResult.projects.map(p => ({
+            id: p.id,
+            title: p.title,
+            description: p.description,
+            imageUrl: p.imageUrl,
+            category: p.category,
+            status: p.status,
+            date: p.date,
+            location: p.location,
+            participants: p.participants,
+            featured: p.featured,
+          })) as CachedProject[];
+          saveProjectsToCache(projectsToCache);
+          console.log('[App] Updated projects cache after deletion');
         } else {
           // Fallback: remove from local state
           setProjects(projects.filter((p) => !selectedProjectIds.includes(p.projectId)));
@@ -2021,6 +2282,18 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         if (result.success && result.imageUrl) {
           // The backend already saves the URL to the sheet, just update local state
           setOrgChartUrl(result.imageUrl);
+          
+          // Update the homepage other cache with new org chart URL
+          const cachedOther = loadHomepageOtherFromCache();
+          if (cachedOther) {
+            const updatedOther: CachedHomepageOther = {
+              ...cachedOther.data,
+              orgChartUrl: result.imageUrl,
+            };
+            saveHomepageOtherToCache(updatedOther);
+            console.log('[App] Updated org chart in cache');
+          }
+          
           updateUploadToast(toastId, {
             status: 'success',
             progress: 100,
@@ -2272,6 +2545,11 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       try {
         const valid = await verifySession();
         if (!valid) {
+          // Clear profile cache on session expiration
+          if (storedUser.username) {
+            clearUserProfileCache(storedUser.username);
+            console.log('[App] Cleared profile cache on session expiration');
+          }
           clearSession();
           toast.error('Session expired', {
             description: 'Please log in again.',
@@ -2292,6 +2570,11 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         });
       } catch (error) {
         console.error('[App] Session verification failed:', error);
+        // Clear profile cache on session failure
+        if (storedUser.username) {
+          clearUserProfileCache(storedUser.username);
+          console.log('[App] Cleared profile cache on session failure');
+        }
         clearSession();
         toast.error('Session check failed', {
           description: 'Please log in again.',
@@ -2303,6 +2586,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       // Log logout before clearing session (need username)
       if (userName) {
         logLogout(userName);
+        
+        // Clear the user's profile cache on logout
+        const storedUser = getStoredUser();
+        if (storedUser?.username) {
+          clearUserProfileCache(storedUser.username);
+          console.log('[App] Cleared profile cache on logout');
+        }
       }
       
       // Clear session from storage
@@ -2383,6 +2673,25 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           // Update local state
           setHomepageContent(editedContent);
           setIsEditingHomepage(false);
+          
+          // Update caches with the edited content
+          const homepageCacheData: CachedHomepageContent = {
+            hero: editedContent.hero,
+            about: editedContent.about,
+            mission: editedContent.mission,
+            vision: editedContent.vision,
+            advocacyPillars: editedContent.advocacyPillars,
+            themeSong: editedContent.themeSong,
+          };
+          saveHomepageContentToCache(homepageCacheData);
+          
+          const otherCacheData: CachedHomepageOther = {
+            orgChartUrl: orgChartUrl,
+            contact: editedContent.contact,
+          };
+          saveHomepageOtherToCache(otherCacheData);
+          console.log('[App] Updated homepage caches after save');
+          
           toast.success('Homepage updated successfully!', {
             description: 'All sections have been saved to the database.',
           });
@@ -3184,7 +3493,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading QR..." />}>
-            <MyQRIDPage onClose={() => setShowMyQRID(false)} isDark={isDark} />
+            <MyQRIDPage 
+              onClose={() => setShowMyQRID(false)} 
+              isDark={isDark}
+              addUploadToast={addUploadToast}
+              updateUploadToast={updateUploadToast}
+              removeUploadToast={removeUploadToast}
+            />
           </Suspense>
           {chatbot}
         </>

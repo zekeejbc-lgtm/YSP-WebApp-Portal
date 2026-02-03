@@ -23,6 +23,12 @@ import { SkeletonProfilePage } from "./SkeletonCard";
 import { UploadToastMessage } from "./UploadToast";
 import ChangePasswordModal from "./ChangePasswordModal";
 import EmailVerificationModal from "./EmailVerificationModal";
+import {
+  saveUserProfileToCache,
+  loadUserProfileFromCache,
+  clearUserProfileCache,
+  type CachedUserProfile,
+} from "../services/localStorageCache";
 import { 
   fetchUserProfile, 
   updateUserProfile, 
@@ -130,15 +136,14 @@ export default function MyProfilePage({
     }
   }, [startInEditMode]);
 
-  // Fetch profile data on mount
+  // Fetch profile data on mount - with local storage cache for fast loading
   useEffect(() => {
     const loadProfile = async () => {
       if (hasLoadedRef.current) {
         return;
       }
       hasLoadedRef.current = true;
-      setIsLoading(true);
-      const toastId = `profile-load-${Date.now()}`;
+      
       const controller = new AbortController();
       const { signal } = controller;
       
@@ -155,7 +160,47 @@ export default function MyProfilePage({
 
       setCurrentUsername(storedUser.username);
 
-      try {
+      // ===== STEP 1: Try to load from cache for instant display =====
+      const cachedData = loadUserProfileFromCache(storedUser.username);
+      let loadedFromCache = false;
+      
+      if (cachedData) {
+        console.log('[Profile] Loading from cache (instant)');
+        const { data: cached, isStale } = cachedData;
+        
+        // Apply cached data immediately
+        const cachedProfile = {
+          ...cached.profile,
+          password: '••••••••',
+        };
+        setProfile(cachedProfile);
+        setOriginalProfile(cachedProfile);
+        
+        if (cached.profile.profilePictureURL) {
+          setProfileImage(cached.profile.profilePictureURL);
+        }
+        
+        setIsEmailVerified(cached.emailVerified);
+        setVerifiedEmail(cached.verifiedEmail);
+        
+        loadedFromCache = true;
+        
+        // If cache is fresh (not stale), we're done - just do background sync
+        if (!isStale) {
+          setIsLoading(false);
+          console.log('[Profile] Cache is fresh, performing background sync');
+          // Continue to background sync below
+        } else {
+          console.log('[Profile] Cache is stale, refreshing...');
+        }
+      }
+
+      // If we loaded from cache, skip showing the loading toast for faster perceived performance
+      const toastId = `profile-load-${Date.now()}`;
+      const shouldShowToast = !loadedFromCache;
+      
+      if (shouldShowToast) {
+        setIsLoading(true);
         if (addUploadToast) {
           addUploadToast({
             id: toastId,
@@ -177,8 +222,11 @@ export default function MyProfilePage({
             },
           });
         }
+      }
 
-        if (updateUploadToast) {
+      // ===== STEP 2: Fetch from backend (sync or refresh) =====
+      try {
+        if (shouldShowToast && updateUploadToast) {
           updateUploadToast(toastId, { progress: 20, message: 'Connecting to backend...' });
         }
 
@@ -187,7 +235,7 @@ export default function MyProfilePage({
           return;
         }
         
-        if (updateUploadToast) {
+        if (shouldShowToast && updateUploadToast) {
           updateUploadToast(toastId, { progress: 55, message: 'Applying profile data...' });
         }
 
@@ -227,8 +275,10 @@ export default function MyProfilePage({
             role: p.role || '',
             status: p.status || '',
           };
+          
+          // Update state with fresh data
           setProfile(loadedProfile);
-          setOriginalProfile(loadedProfile); // Store original for comparison
+          setOriginalProfile(loadedProfile);
           
           // Set profile picture if available
           if (p.profilePictureURL) {
@@ -236,9 +286,11 @@ export default function MyProfilePage({
           }
           
           // Check email verification status
+          let emailVerified = false;
+          let verifiedEmailAddr = '';
           if (p.personalEmail) {
             setIsCheckingVerification(true);
-            if (updateUploadToast) {
+            if (shouldShowToast && updateUploadToast) {
               updateUploadToast(toastId, { progress: 75, message: 'Checking email verification...' });
             }
             try {
@@ -247,6 +299,8 @@ export default function MyProfilePage({
                 return;
               }
               if (verifyResult.success && verifyResult.verified) {
+                emailVerified = true;
+                verifiedEmailAddr = p.personalEmail;
                 setIsEmailVerified(true);
                 setVerifiedEmail(p.personalEmail);
               }
@@ -257,52 +311,110 @@ export default function MyProfilePage({
             }
           }
 
-          if (updateUploadToast) {
-            updateUploadToast(toastId, {
-              status: 'success',
-              progress: 100,
-              title: 'Profile Ready',
-              message: 'Profile loaded successfully.',
-            });
-          }
-          if (removeUploadToast) {
-            setTimeout(() => removeUploadToast(toastId), 2500);
+          // ===== STEP 3: Save to cache for next time =====
+          const cacheData: CachedUserProfile = {
+            username: storedUser.username,
+            profile: {
+              fullName: p.fullName || '',
+              username: p.username || '',
+              email: p.email || '',
+              personalEmail: p.personalEmail || '',
+              contactNumber: p.contactNumber || '',
+              birthday: p.birthday || '',
+              age: p.age || 0,
+              gender: p.gender || '',
+              pronouns: p.pronouns || '',
+              idCode: p.idCode || '',
+              civilStatus: p.civilStatus || '',
+              religion: p.religion || '',
+              nationality: p.nationality || '',
+              address: p.address || '',
+              barangay: p.barangay || '',
+              city: p.city || '',
+              province: p.province || '',
+              zipCode: p.zipCode || '',
+              chapter: p.chapter || '',
+              committee: p.committee || '',
+              dateJoined: p.dateJoined || '',
+              membershipType: p.membershipType || '',
+              facebook: p.facebook || '',
+              instagram: p.instagram || '',
+              twitter: p.twitter || '',
+              emergencyContactName: p.emergencyContactName || '',
+              emergencyContactRelation: p.emergencyContactRelation || '',
+              emergencyContactNumber: p.emergencyContactNumber || '',
+              position: p.position || '',
+              role: p.role || '',
+              status: p.status || '',
+              profilePictureURL: p.profilePictureURL,
+            },
+            emailVerified,
+            verifiedEmail: verifiedEmailAddr,
+          };
+          saveUserProfileToCache(cacheData);
+          console.log('[Profile] Saved fresh data to cache');
+
+          if (shouldShowToast) {
+            if (updateUploadToast) {
+              updateUploadToast(toastId, {
+                status: 'success',
+                progress: 100,
+                title: 'Profile Ready',
+                message: 'Profile loaded successfully.',
+              });
+            }
+            if (removeUploadToast) {
+              setTimeout(() => removeUploadToast(toastId), 2500);
+            }
+          } else if (loadedFromCache) {
+            // Background sync completed silently
+            console.log('[Profile] Background sync completed');
           }
         } else {
-          if (updateUploadToast) {
-            updateUploadToast(toastId, {
-              status: 'error',
-              progress: 100,
-              title: 'Load Failed',
-              message: response.error || 'Unable to load profile data.',
+          // Only show error if we didn't load from cache
+          if (!loadedFromCache) {
+            if (shouldShowToast && updateUploadToast) {
+              updateUploadToast(toastId, {
+                status: 'error',
+                progress: 100,
+                title: 'Load Failed',
+                message: response.error || 'Unable to load profile data.',
+              });
+            }
+            if (shouldShowToast && removeUploadToast) {
+              setTimeout(() => removeUploadToast(toastId), 5000);
+            }
+            toast.error('Failed to load profile', {
+              description: response.error || 'Please try again later',
             });
           }
-          if (removeUploadToast) {
-            setTimeout(() => removeUploadToast(toastId), 5000);
-          }
-          toast.error('Failed to load profile', {
-            description: response.error || 'Please try again later',
-          });
         }
       } catch (error) {
         if (signal.aborted) {
           return;
         }
         console.error('Failed to load profile:', error);
-        if (updateUploadToast) {
-          updateUploadToast(toastId, {
-            status: 'error',
-            progress: 100,
-            title: 'Load Failed',
-            message: error instanceof Error ? error.message : 'Please try again later',
+        
+        // Only show error if we didn't load from cache
+        if (!loadedFromCache) {
+          if (shouldShowToast && updateUploadToast) {
+            updateUploadToast(toastId, {
+              status: 'error',
+              progress: 100,
+              title: 'Load Failed',
+              message: error instanceof Error ? error.message : 'Please try again later',
+            });
+          }
+          if (shouldShowToast && removeUploadToast) {
+            setTimeout(() => removeUploadToast(toastId), 5000);
+          }
+          toast.error('Failed to load profile', {
+            description: error instanceof Error ? error.message : 'Please try again later'
           });
+        } else {
+          // Loaded from cache but backend failed - show subtle warning
+          console.warn('[Profile] Backend sync failed, using cached data');
         }
-        if (removeUploadToast) {
-          setTimeout(() => removeUploadToast(toastId), 5000);
-        }
-        toast.error('Failed to load profile', {
-          description: error instanceof Error ? error.message : 'Please try again later'
-        });
       } finally {
         setIsLoading(false);
       }
@@ -567,6 +679,55 @@ export default function MyProfilePage({
         
         // Update original profile to match current after successful save
         setOriginalProfile({ ...profile });
+        
+        // Update the cache with the new profile data
+        const updatedUsername = (updateData.username as string) || currentUsername;
+        const cacheData: CachedUserProfile = {
+          username: updatedUsername,
+          profile: {
+            fullName: profile.fullName || '',
+            username: profile.username || '',
+            email: profile.email || '',
+            personalEmail: profile.personalEmail || '',
+            contactNumber: profile.contactNumber || '',
+            birthday: profile.birthday || '',
+            age: profile.age || 0,
+            gender: profile.gender || '',
+            pronouns: profile.pronouns || '',
+            idCode: profile.idCode || '',
+            civilStatus: profile.civilStatus || '',
+            religion: profile.religion || '',
+            nationality: profile.nationality || '',
+            address: profile.address || '',
+            barangay: profile.barangay || '',
+            city: profile.city || '',
+            province: profile.province || '',
+            zipCode: profile.zipCode || '',
+            chapter: profile.chapter || '',
+            committee: profile.committee || '',
+            dateJoined: profile.dateJoined || '',
+            membershipType: profile.membershipType || '',
+            facebook: profile.facebook || '',
+            instagram: profile.instagram || '',
+            twitter: profile.twitter || '',
+            emergencyContactName: profile.emergencyContactName || '',
+            emergencyContactRelation: profile.emergencyContactRelation || '',
+            emergencyContactNumber: profile.emergencyContactNumber || '',
+            position: profile.position || '',
+            role: profile.role || '',
+            status: profile.status || '',
+            profilePictureURL: profileImage || undefined,
+          },
+          emailVerified: isEmailVerified,
+          verifiedEmail: verifiedEmail,
+        };
+        saveUserProfileToCache(cacheData);
+        
+        // If username changed, clear old cache
+        if (updateData.username && updateData.username !== currentUsername) {
+          clearUserProfileCache(currentUsername);
+        }
+        console.log('[Profile] Updated cache after save');
         
         // Success toast
         if (updateUploadToast) {

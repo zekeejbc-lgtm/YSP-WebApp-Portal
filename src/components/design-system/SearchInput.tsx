@@ -47,7 +47,7 @@ interface SearchInputProps {
 export default function SearchInput({
   value,
   onChange,
-  onClear = () => {},
+  onClear,
   placeholder = "Search...",
   suggestions = [],
   onSelectSuggestion,
@@ -56,6 +56,8 @@ export default function SearchInput({
   showSuggestions = false,
   disabled = false,
 }: SearchInputProps) {
+  // Default onClear to clearing the value if not provided
+  const handleClear = onClear || (() => onChange(""));
   const glassStyle = getGlassStyle(isDark);
 
   const displayedSuggestions = suggestions.slice(
@@ -96,7 +98,7 @@ export default function SearchInput({
         />
         {value && !disabled && (
           <button
-            onClick={onClear}
+            onClick={handleClear}
             className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-white/50 dark:hover:bg-white/10 transition-all"
             style={{
               transitionDuration: `${DESIGN_TOKENS.motion.duration.fast}ms`,

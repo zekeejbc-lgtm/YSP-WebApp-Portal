@@ -756,6 +756,44 @@ export interface ClearLogsResult {
   timestamp: string;
   dateRange?: { start: string; end: string };
   requestedIds?: number;
+  archived?: boolean;
+  archiveUrl?: string;
+  archiveFileName?: string;
+}
+
+// =================== MANUAL EXPORT ACCESS LOGS ===================
+
+export interface ManualExportResult {
+  message: string;
+  exportedCount?: number;
+  fileName?: string;
+  fileUrl?: string;
+  folderUrl?: string;
+  exportType?: string;
+  timestamp: string;
+}
+
+/**
+ * Upload a PDF to Google Drive (generated from frontend)
+ * This allows the exact frontend-styled PDF to be saved to Google Drive
+ * @param pdfBase64 - Base64 encoded PDF data
+ * @param fileName - Desired file name for the PDF
+ * @param username - User performing the export
+ * @param exportType - Type of export ('manual' or 'archive')
+ */
+export async function uploadAccessLogsPDF(
+  pdfBase64: string,
+  fileName: string,
+  username: string,
+  exportType: 'manual' | 'archive' = 'manual'
+): Promise<ManualExportResult> {
+  const result = await callSystemToolsAPI<ManualExportResult>('uploadAccessLogsPDF', {
+    pdfBase64,
+    fileName,
+    username,
+    exportType,
+  });
+  return result;
 }
 
 /**

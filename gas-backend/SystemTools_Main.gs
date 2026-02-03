@@ -90,6 +90,10 @@ function doPost(e) {
       case 'clearSpecificAccessLogs':
         return handleClearSpecificAccessLogs(requestData.logIds, requestData.username);
       
+      // Manual Export Access Logs (upload PDF from frontend)
+      case 'uploadAccessLogsPDF':
+        return handleUploadAccessLogsPDF(requestData.pdfBase64, requestData.fileName, requestData.username, requestData.exportType);
+      
       // Debug
       case 'testConnection':
         return handleTestConnection();
@@ -312,6 +316,12 @@ const MAINTENANCE_SHEET_NAME = 'Maintenance Mode';
 
 // Backup folder in Google Drive
 const BACKUPS_FOLDER_ID = '1n487dwMvqUbCP8s1ETFfRGF64ds01pXj';
+
+// Access Logs Archive folder in Google Drive (for automatic monthly archives before deletion)
+const ACCESS_LOGS_ARCHIVE_FOLDER_ID = '1v147QE9DUACrIMcnVNUk7WgevFWBVHfO';
+
+// Access Logs Manual Export folder in Google Drive (for manual exports by users)
+const ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID = '1LBMul1VdSubotA9FiwI4kvHsmUSv-n2k';
 
 // Events Spreadsheet ID (from Attendance_Events.gs)
 const EVENTS_SPREADSHEET_ID = '1Xn7w9kzNrP6dmZXYXjxaO11Lmao79wn9w1SPCiqFtcA';
@@ -1541,10 +1551,636 @@ function handleGetAccessLogsStats() {
   }
 }
 
+// =================== ACCESS LOGS ARCHIVE FUNCTIONS ===================
+
+/**
+ * Create a styled PDF spreadsheet matching the frontend format
+ * @param {Array} logsData - Array of log rows
+ * @param {string} reportType - Type of report ('Archive', 'Manual Export')
+ * @param {Object} metadata - Additional metadata
+ * @returns {Spreadsheet} - The styled spreadsheet ready for PDF conversion
+ */
+function createStyledAccessLogsPDF(logsData, reportType, metadata) {
+  const now = new Date();
+  const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  
+  // Create spreadsheet
+  const tempSpreadsheet = SpreadsheetApp.create('AccessLogs_temp_' + now.getTime());
+  
+  // ===== SUMMARY PAGE =====
+  const summarySheet = tempSpreadsheet.getActiveSheet();
+  summarySheet.setName('Summary');
+  
+  // Set column widths
+  summarySheet.setColumnWidth(1, 150);
+  summarySheet.setColumnWidth(2, 100);
+  summarySheet.setColumnWidth(3, 100);
+  summarySheet.setColumnWidth(4, 100);
+  summarySheet.setColumnWidth(5, 100);
+  
+  let row = 1;
+  
+  // Organization Header
+  summarySheet.getRange(row, 1, 1, 5).merge();
+  summarySheet.getRange(row, 1).setValue('Youth Service Philippines - Tagum Chapter');
+  summarySheet.getRange(row, 1).setFontSize(16).setFontWeight('bold').setHorizontalAlignment('center');
+  row++;
+  
+  // Motto
+  summarySheet.getRange(row, 1, 1, 5).merge();
+  summarySheet.getRange(row, 1).setValue('Shaping the Future to a Greater Society');
+  summarySheet.getRange(row, 1).setFontSize(10).setFontStyle('italic').setHorizontalAlignment('center').setFontColor('#666666');
+  row += 2;
+  
+  // Report Title
+  summarySheet.getRange(row, 1, 1, 5).merge();
+  summarySheet.getRange(row, 1).setValue('SYSTEM ACCESS AUDIT REPORT');
+  summarySheet.getRange(row, 1).setFontSize(18).setFontWeight('bold').setHorizontalAlignment('center').setBackground('#f64218').setFontColor('#ffffff');
+  row++;
+  
+  // Report Type
+  summarySheet.getRange(row, 1, 1, 5).merge();
+  summarySheet.getRange(row, 1).setValue(reportType + ' - Generated: ' + dateStr);
+  summarySheet.getRange(row, 1).setFontSize(10).setHorizontalAlignment('center').setFontColor('#666666');
+  row += 2;
+  
+  // AUDIT SUMMARY section
+  summarySheet.getRange(row, 1, 1, 5).merge();
+  summarySheet.getRange(row, 1).setValue('AUDIT SUMMARY');
+  summarySheet.getRange(row, 1).setFontSize(14).setFontWeight('bold').setHorizontalAlignment('center');
+  row += 2;
+  
+  // Calculate statistics
+  const successCount = logsData.filter(log => String(log[5]).toLowerCase() === 'success').length;
+  const failedCount = logsData.filter(log => String(log[5]).toLowerCase() === 'failed').length;
+  const warningCount = logsData.filter(log => String(log[5]).toLowerCase() === 'warning').length;
+  
+  // Status boxes header
+  summarySheet.getRange(row, 1).setValue('TOTAL LOGS');
+  summarySheet.getRange(row, 2).setValue('SUCCESSFUL');
+  summarySheet.getRange(row, 3).setValue('FAILED');
+  summarySheet.getRange(row, 4).setValue('WARNINGS');
+  summarySheet.getRange(row, 1, 1, 4).setFontWeight('bold').setHorizontalAlignment('center').setFontSize(9);
+  row++;
+  
+  // Status boxes values
+  summarySheet.getRange(row, 1).setValue(logsData.length).setBackground('#646464').setFontColor('#ffffff');
+  summarySheet.getRange(row, 2).setValue(successCount).setBackground('#10b981').setFontColor('#ffffff');
+  summarySheet.getRange(row, 3).setValue(failedCount).setBackground('#ef4444').setFontColor('#ffffff');
+  summarySheet.getRange(row, 4).setValue(warningCount).setBackground('#f59e0b').setFontColor('#ffffff');
+  summarySheet.getRange(row, 1, 1, 4).setFontWeight('bold').setHorizontalAlignment('center').setFontSize(16);
+  row += 2;
+  
+  // LOGS BY TYPE section
+  summarySheet.getRange(row, 1, 1, 5).merge();
+  summarySheet.getRange(row, 1).setValue('LOGS BY TYPE');
+  summarySheet.getRange(row, 1).setFontSize(12).setFontWeight('bold');
+  row++;
+  
+  const logTypes = [
+    { name: 'LOGIN', type: 'login', color: '#f6421f' },
+    { name: 'LOGOUT', type: 'logout', color: '#6b7280' },
+    { name: 'VIEW', type: 'view', color: '#3b82f6' },
+    { name: 'EDIT', type: 'edit', color: '#8b5cf6' },
+    { name: 'CREATE', type: 'create', color: '#10b981' },
+    { name: 'DELETE', type: 'delete', color: '#ef4444' },
+  ];
+  
+  // Log type headers
+  for (let i = 0; i < logTypes.length; i++) {
+    summarySheet.getRange(row, i + 1).setValue(logTypes[i].name);
+    summarySheet.getRange(row, i + 1).setFontWeight('bold').setHorizontalAlignment('center').setFontSize(8);
+  }
+  row++;
+  
+  // Log type counts with colors
+  for (let i = 0; i < logTypes.length; i++) {
+    const count = logsData.filter(log => String(log[3]).toLowerCase() === logTypes[i].type).length;
+    summarySheet.getRange(row, i + 1).setValue(count);
+    summarySheet.getRange(row, i + 1).setBackground(logTypes[i].color).setFontColor('#ffffff').setFontWeight('bold').setHorizontalAlignment('center').setFontSize(14);
+  }
+  row += 2;
+  
+  // QUICK STATISTICS
+  summarySheet.getRange(row, 1, 1, 5).merge();
+  summarySheet.getRange(row, 1).setValue('QUICK STATISTICS');
+  summarySheet.getRange(row, 1).setFontSize(12).setFontWeight('bold');
+  row++;
+  
+  const uniqueUsers = [...new Set(logsData.map(log => log[1]))].length;
+  const successRate = logsData.length > 0 ? Math.round((successCount / logsData.length) * 100) : 0;
+  
+  summarySheet.getRange(row, 1).setValue('Total unique users:');
+  summarySheet.getRange(row, 2).setValue(uniqueUsers);
+  row++;
+  summarySheet.getRange(row, 1).setValue('Success rate:');
+  summarySheet.getRange(row, 2).setValue(successRate + '%');
+  row++;
+  summarySheet.getRange(row, 1).setValue('Report period:');
+  if (metadata.dateRange) {
+    summarySheet.getRange(row, 2).setValue(metadata.dateRange.start + ' to ' + metadata.dateRange.end);
+  } else if (metadata.monthYear) {
+    summarySheet.getRange(row, 2).setValue(metadata.monthYear);
+  } else {
+    summarySheet.getRange(row, 2).setValue('All available logs');
+  }
+  row++;
+  summarySheet.getRange(row, 1).setValue('Archived by:');
+  summarySheet.getRange(row, 2).setValue(metadata.username || 'System');
+  row += 2;
+  
+  // Footer
+  summarySheet.getRange(row, 1, 1, 5).merge();
+  summarySheet.getRange(row, 1).setValue('Youth Service Philippines - Tagum Chapter | Shaping the Future to a Greater Society');
+  summarySheet.getRange(row, 1).setFontSize(8).setHorizontalAlignment('center').setFontColor('#888888');
+  
+  // ===== ALL LOGS PAGE (Chronological) =====
+  const allLogsSheet = tempSpreadsheet.insertSheet('All Logs - Chronological');
+  
+  // Header
+  allLogsSheet.getRange(1, 1, 1, 8).merge();
+  allLogsSheet.getRange(1, 1).setValue('ALL LOGS - CHRONOLOGICAL ORDER (' + logsData.length + ' entries)');
+  allLogsSheet.getRange(1, 1).setFontSize(14).setFontWeight('bold').setBackground('#646464').setFontColor('#ffffff');
+  
+  // Table headers
+  const headers = ['#', 'Username', 'Type', 'Action', 'Status', 'Timestamp', 'IP Address', 'Device'];
+  allLogsSheet.getRange(2, 1, 1, headers.length).setValues([headers]);
+  allLogsSheet.getRange(2, 1, 1, headers.length).setFontWeight('bold').setBackground('#646464').setFontColor('#ffffff').setHorizontalAlignment('center');
+  
+  // Sort chronologically and add data
+  const sortedLogs = logsData.slice().sort((a, b) => new Date(a[4]) - new Date(b[4]));
+  for (let i = 0; i < sortedLogs.length; i++) {
+    const log = sortedLogs[i];
+    const rowData = [
+      i + 1,
+      log[1], // Username
+      String(log[3]).charAt(0).toUpperCase() + String(log[3]).slice(1), // Type
+      log[2], // Action
+      String(log[5]).charAt(0).toUpperCase() + String(log[5]).slice(1), // Status
+      log[4], // Timestamp
+      log[6], // IP Address
+      log[7], // Device
+    ];
+    allLogsSheet.getRange(i + 3, 1, 1, rowData.length).setValues([rowData]);
+    
+    // Alternate row colors
+    if (i % 2 === 1) {
+      allLogsSheet.getRange(i + 3, 1, 1, rowData.length).setBackground('#f8f8f8');
+    }
+  }
+  
+  // Auto-resize columns
+  for (let i = 1; i <= headers.length; i++) {
+    allLogsSheet.autoResizeColumn(i);
+  }
+  
+  // ===== TABLES BY LOG TYPE =====
+  const logTypeColors = {
+    login: { header: '#f6421f', alt: '#fef3f0' },
+    logout: { header: '#6b7280', alt: '#f5f6f7' },
+    view: { header: '#3b82f6', alt: '#eff6ff' },
+    edit: { header: '#8b5cf6', alt: '#f5f1fe' },
+    create: { header: '#10b981', alt: '#ecfdf5' },
+    delete: { header: '#ef4444', alt: '#fef2f2' },
+  };
+  
+  for (const logType of logTypes) {
+    const typeLogs = logsData.filter(log => String(log[3]).toLowerCase() === logType.type);
+    if (typeLogs.length === 0) continue;
+    
+    const typeSheet = tempSpreadsheet.insertSheet(logType.name + ' Logs');
+    const colors = logTypeColors[logType.type];
+    
+    // Header
+    typeSheet.getRange(1, 1, 1, 7).merge();
+    typeSheet.getRange(1, 1).setValue(logType.name + ' LOGS (' + typeLogs.length + ' entries)');
+    typeSheet.getRange(1, 1).setFontSize(14).setFontWeight('bold').setBackground(colors.header).setFontColor('#ffffff');
+    
+    // Table headers
+    const typeHeaders = ['#', 'User', 'Action', 'Status', 'Timestamp', 'IP Address', 'Device'];
+    typeSheet.getRange(2, 1, 1, typeHeaders.length).setValues([typeHeaders]);
+    typeSheet.getRange(2, 1, 1, typeHeaders.length).setFontWeight('bold').setBackground(colors.header).setFontColor('#ffffff').setHorizontalAlignment('center');
+    
+    // Data rows
+    for (let i = 0; i < typeLogs.length; i++) {
+      const log = typeLogs[i];
+      const rowData = [
+        i + 1,
+        log[1], // Username
+        log[2], // Action
+        String(log[5]).charAt(0).toUpperCase() + String(log[5]).slice(1), // Status
+        log[4], // Timestamp
+        log[6], // IP Address
+        log[7], // Device
+      ];
+      typeSheet.getRange(i + 3, 1, 1, rowData.length).setValues([rowData]);
+      
+      // Alternate row colors
+      if (i % 2 === 1) {
+        typeSheet.getRange(i + 3, 1, 1, rowData.length).setBackground(colors.alt);
+      }
+    }
+    
+    // Auto-resize
+    for (let i = 1; i <= typeHeaders.length; i++) {
+      typeSheet.autoResizeColumn(i);
+    }
+  }
+  
+  return tempSpreadsheet;
+}
+
+/**
+ * Archive access logs to Google Drive before deletion as PDF
+ * Creates a styled PDF matching the frontend format
+ * @param {Array} logsData - Array of log rows to archive (including header)
+ * @param {string} archiveType - Type of archive ('all', 'dateRange', 'monthly', 'selected')
+ * @param {Object} metadata - Additional metadata (dateRange, count, etc.)
+ * @returns {Object} - Archive result with file URL
+ */
+function archiveAccessLogsToDrive(logsData, archiveType, metadata) {
+  try {
+    const archiveFolder = DriveApp.getFolderById(ACCESS_LOGS_ARCHIVE_FOLDER_ID);
+    
+    // Generate archive filename with timestamp
+    const now = new Date();
+    const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm-ss');
+    let fileName = 'AccessLogs_Archive_' + archiveType + '_' + dateStr;
+    
+    if (metadata.monthYear) {
+      fileName = 'AccessLogs_' + metadata.monthYear;
+    }
+    
+    // Create spreadsheet for archive
+    const archiveSpreadsheet = SpreadsheetApp.create(fileName);
+    const archiveSheet = archiveSpreadsheet.getActiveSheet();
+    archiveSheet.setName('Access Logs');
+    
+    // Set header row
+    const headers = ['Log ID', 'Username', 'Action', 'Action Type', 'Timestamp', 'Status', 'IP Address', 'Device'];
+    archiveSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    archiveSheet.getRange(1, 1, 1, headers.length)
+      .setFontWeight('bold')
+      .setBackground('#f64218')
+      .setFontColor('#ffffff');
+    
+    // Add data rows
+    if (logsData.length > 0) {
+      archiveSheet.getRange(2, 1, logsData.length, logsData[0].length).setValues(logsData);
+    }
+    
+    // Auto-resize columns
+    for (let i = 1; i <= headers.length; i++) {
+      archiveSheet.autoResizeColumn(i);
+    }
+    
+    // Add archive info sheet
+    const infoSheet = archiveSpreadsheet.insertSheet('Archive Info');
+    const infoData = [
+      ['Archive Type', archiveType],
+      ['Archive Date', now.toISOString()],
+      ['Archived By', metadata.username || 'System'],
+      ['Total Records', logsData.length],
+      ['Date Range', metadata.startDate && metadata.endDate ? metadata.startDate + ' to ' + metadata.endDate : 'All dates'],
+    ];
+    infoSheet.getRange(1, 1, infoData.length, 2).setValues(infoData);
+    infoSheet.getRange(1, 1, infoData.length, 1).setFontWeight('bold');
+    infoSheet.autoResizeColumn(1);
+    infoSheet.autoResizeColumn(2);
+    
+    // Move the spreadsheet to archive folder
+    const spreadsheetFile = DriveApp.getFileById(archiveSpreadsheet.getId());
+    archiveFolder.addFile(spreadsheetFile);
+    DriveApp.getRootFolder().removeFile(spreadsheetFile);
+    
+    Logger.log('Access logs archived as spreadsheet: ' + fileName + ', Records: ' + logsData.length);
+    
+    return {
+      success: true,
+      fileName: fileName,
+      fileUrl: archiveSpreadsheet.getUrl(),
+      recordCount: logsData.length,
+      archiveDate: now.toISOString()
+    };
+  } catch (error) {
+    Logger.log('Error archiving access logs: ' + error.toString());
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Get logs data for archiving (formatted for spreadsheet)
+ * @param {Sheet} sheet - The access logs sheet
+ * @param {Array} rowIndices - Optional specific row indices to get (1-based, excluding header)
+ * @returns {Array} - Array of log data rows
+ */
+function getLogsDataForArchive(sheet, rowIndices) {
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  
+  if (rowIndices && rowIndices.length > 0) {
+    // Get specific rows
+    return rowIndices
+      .filter(i => i >= 1 && i < data.length)
+      .map(i => data[i]);
+  }
+  
+  // Return all data rows (excluding header)
+  return data.slice(1);
+}
+
+/**
+ * Auto-archive and clean logs older than specified months
+ * This can be triggered by a time-based trigger for monthly cleanup
+ * @param {number} monthsOld - Archive logs older than this many months (default: 1)
+ */
+function autoArchiveOldLogs(monthsOld) {
+  const months = monthsOld || 1;
+  try {
+    const sheet = initializeAccessLogsSheet();
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) {
+      Logger.log('No logs to archive');
+      return { archived: 0, message: 'No logs to archive' };
+    }
+    
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - months);
+    cutoffDate.setDate(1);
+    cutoffDate.setHours(0, 0, 0, 0);
+    
+    // Group logs by month/year for separate archives
+    const logsByMonth = {};
+    const rowsToDelete = [];
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const timestampStr = row[4]; // Timestamp column
+      if (!timestampStr) continue;
+      
+      const logDate = new Date(timestampStr);
+      if (logDate < cutoffDate) {
+        const monthYear = Utilities.formatDate(logDate, Session.getScriptTimeZone(), 'yyyy-MM');
+        if (!logsByMonth[monthYear]) {
+          logsByMonth[monthYear] = [];
+        }
+        logsByMonth[monthYear].push(row);
+        rowsToDelete.push(i + 1); // Sheet rows are 1-indexed
+      }
+    }
+    
+    // Archive each month's logs separately
+    const archiveResults = [];
+    for (const monthYear in logsByMonth) {
+      const result = archiveAccessLogsToDrive(
+        logsByMonth[monthYear],
+        'monthly',
+        { monthYear: monthYear, username: 'Auto-Archive System' }
+      );
+      archiveResults.push({ monthYear, ...result });
+    }
+    
+    // Delete archived rows (from bottom to top)
+    rowsToDelete.sort((a, b) => b - a);
+    for (const rowIndex of rowsToDelete) {
+      sheet.deleteRow(rowIndex);
+    }
+    
+    // Log this action
+    if (rowsToDelete.length > 0) {
+      handleLogAccess('System', 'Auto-archived and cleaned ' + rowsToDelete.length + ' old logs (' + Object.keys(logsByMonth).length + ' monthly archives)', 'delete', 'success', 'System', 'Scheduled Task');
+    }
+    
+    Logger.log('Auto-archive complete. Archived: ' + rowsToDelete.length + ' logs into ' + Object.keys(logsByMonth).length + ' monthly files');
+    
+    return {
+      archived: rowsToDelete.length,
+      monthsArchived: Object.keys(logsByMonth).length,
+      archives: archiveResults
+    };
+  } catch (error) {
+    Logger.log('Error in auto-archive: ' + error.toString());
+    return { error: error.message };
+  }
+}
+
+// =================== MANUAL EXPORT ACCESS LOGS FUNCTIONS ===================
+
+/**
+ * Manually export access logs to Google Drive
+ * Saves to the manual export folder (separate from automatic archives)
+ * @param {string} username - User performing the export
+ * @param {string} filterType - Optional filter by log type (login, logout, view, edit, create, delete)
+ * @param {string} startDate - Optional start date for filtering (YYYY-MM-DD)
+ * @param {string} endDate - Optional end date for filtering (YYYY-MM-DD)
+ * @returns {Object} - Export result with file URL
+ */
+/**
+ * Handle PDF upload from frontend for Google Drive storage
+ * This allows the exact frontend-styled PDF to be saved to Google Drive
+ * @param {string} pdfBase64 - Base64 encoded PDF data
+ * @param {string} fileName - Desired file name for the PDF
+ * @param {string} username - User performing the export
+ * @param {string} exportType - Type of export ('manual' or 'archive')
+ * @returns {Object} - Success/error response
+ */
+function handleUploadAccessLogsPDF(pdfBase64, fileName, username, exportType) {
+  try {
+    if (!pdfBase64) {
+      return createErrorResponse('PDF data is required', 400);
+    }
+    
+    // Determine which folder to use based on export type
+    const folderId = exportType === 'archive' 
+      ? ACCESS_LOGS_ARCHIVE_FOLDER_ID 
+      : ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID;
+    
+    const folder = DriveApp.getFolderById(folderId);
+    
+    // Decode base64 PDF data
+    const pdfData = Utilities.base64Decode(pdfBase64);
+    const pdfBlob = Utilities.newBlob(pdfData, MimeType.PDF, fileName || 'AccessLogs_Export.pdf');
+    
+    // Save to Google Drive
+    const pdfFile = folder.createFile(pdfBlob);
+    
+    // Log this action
+    handleLogAccess(
+      username || 'System', 
+      (exportType === 'archive' ? 'Archive' : 'Manual') + ' PDF uploaded to Google Drive: ' + fileName, 
+      'view', 
+      'success', 
+      'System', 
+      exportType === 'archive' ? 'Archive Export' : 'Manual Export'
+    );
+    
+    Logger.log('PDF uploaded to Google Drive: ' + fileName + ' to folder: ' + (exportType === 'archive' ? 'Archive' : 'Manual Export'));
+    
+    return createSuccessResponse({
+      message: 'PDF saved to Google Drive successfully',
+      fileName: fileName,
+      fileUrl: pdfFile.getUrl(),
+      folderUrl: folder.getUrl(),
+      exportType: exportType || 'manual',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    Logger.log('Error uploading PDF to Drive: ' + error.toString());
+    return createErrorResponse('Failed to upload PDF: ' + error.message, 500);
+  }
+}
+
+// Keep the old function for backward compatibility with archive operations
+function handleManualExportAccessLogs(username, filterType, startDate, endDate) {
+  try {
+    const sheet = initializeAccessLogsSheet();
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) {
+      return createSuccessResponse({
+        message: 'No logs to export',
+        exportedCount: 0,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Get logs (excluding header)
+    let logsToExport = data.slice(1);
+    
+    // Apply type filter if specified
+    if (filterType && filterType !== 'all') {
+      logsToExport = logsToExport.filter(row => {
+        const logType = String(row[3]).toLowerCase(); // Action Type column
+        return logType === filterType.toLowerCase();
+      });
+    }
+    
+    // Apply date range filter if specified
+    if (startDate || endDate) {
+      const start = startDate ? new Date(startDate) : null;
+      if (start) start.setHours(0, 0, 0, 0);
+      
+      const end = endDate ? new Date(endDate) : null;
+      if (end) end.setHours(23, 59, 59, 999);
+      
+      logsToExport = logsToExport.filter(row => {
+        const timestampStr = row[4]; // Timestamp column
+        if (!timestampStr) return false;
+        
+        const logDate = new Date(timestampStr);
+        if (start && logDate < start) return false;
+        if (end && logDate > end) return false;
+        return true;
+      });
+    }
+    
+    if (logsToExport.length === 0) {
+      return createSuccessResponse({
+        message: 'No logs match the specified filters',
+        exportedCount: 0,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Get the manual export folder
+    const exportFolder = DriveApp.getFolderById(ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID);
+    
+    // Generate filename with timestamp and filter info
+    const now = new Date();
+    const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm-ss');
+    let fileName = 'AccessLogs_Manual_Export_' + dateStr;
+    
+    if (filterType && filterType !== 'all') {
+      fileName += '_' + filterType.toUpperCase();
+    }
+    if (startDate && endDate) {
+      fileName += '_' + startDate + '_to_' + endDate;
+    } else if (startDate) {
+      fileName += '_from_' + startDate;
+    } else if (endDate) {
+      fileName += '_until_' + endDate;
+    }
+    
+    // Create temporary spreadsheet for PDF conversion
+    const tempSpreadsheet = SpreadsheetApp.create(fileName + '_temp');
+    const exportSheet = tempSpreadsheet.getActiveSheet();
+    exportSheet.setName('Exported Logs');
+    
+    // Set header row
+    const headers = ['Log ID', 'Username', 'Action', 'Action Type', 'Timestamp', 'Status', 'IP Address', 'Device'];
+    exportSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    exportSheet.getRange(1, 1, 1, headers.length)
+      .setFontWeight('bold')
+      .setBackground('#f64218')
+      .setFontColor('#ffffff');
+    
+    // Add data rows
+    if (logsToExport.length > 0) {
+      exportSheet.getRange(2, 1, logsToExport.length, logsToExport[0].length).setValues(logsToExport);
+    }
+    
+    // Auto-resize columns
+    for (let i = 1; i <= headers.length; i++) {
+      exportSheet.autoResizeColumn(i);
+    }
+    
+    // Add export info sheet
+    const infoSheet = tempSpreadsheet.insertSheet('Export Info');
+    const infoData = [
+      ['Export Type', 'Manual Export (PDF)'],
+      ['Exported Date', now.toISOString()],
+      ['Exported By', username || 'Unknown'],
+      ['Total Records', logsToExport.length],
+      ['Filter Type', filterType || 'All'],
+      ['Start Date', startDate || 'Not specified'],
+      ['End Date', endDate || 'Not specified'],
+    ];
+    infoSheet.getRange(1, 1, infoData.length, 2).setValues(infoData);
+    infoSheet.getRange(1, 1, infoData.length, 1).setFontWeight('bold');
+    infoSheet.autoResizeColumn(1);
+    infoSheet.autoResizeColumn(2);
+    
+    // Flush changes before PDF conversion
+    SpreadsheetApp.flush();
+    
+    // Convert to PDF
+    const pdfBlob = tempSpreadsheet.getAs(MimeType.PDF);
+    pdfBlob.setName(fileName + '.pdf');
+    
+    // Save PDF to manual export folder
+    const pdfFile = exportFolder.createFile(pdfBlob);
+    
+    // Delete the temporary spreadsheet
+    DriveApp.getFileById(tempSpreadsheet.getId()).setTrashed(true);
+    
+    // Log this action
+    handleLogAccess(username || 'System', 'Manual PDF export: ' + logsToExport.length + ' logs exported to Google Drive (' + fileName + '.pdf)', 'view', 'success', 'System', 'Manual Export');
+    
+    Logger.log('Manual access logs PDF export completed: ' + fileName + '.pdf, Records: ' + logsToExport.length);
+    
+    return createSuccessResponse({
+      message: 'Access logs exported as PDF to Google Drive',
+      exportedCount: logsToExport.length,
+      fileName: fileName + '.pdf',
+      fileUrl: pdfFile.getUrl(),
+      folderUrl: exportFolder.getUrl(),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    Logger.log('Error in manual export access logs: ' + error.toString());
+    return createErrorResponse('Failed to export access logs: ' + error.message, 500);
+  }
+}
+
 // =================== CLEAR ACCESS LOGS FUNCTIONS ===================
 
 /**
  * Clear ALL access logs from the Access Logs sheet
+ * Archives logs to Google Drive before deletion
  * Keeps the header row intact
  */
 function handleClearAllAccessLogs(username) {
@@ -1560,18 +2196,29 @@ function handleClearAllAccessLogs(username) {
       });
     }
     
+    // Archive logs before deletion
+    const logsToArchive = getLogsDataForArchive(sheet);
+    const archiveResult = archiveAccessLogsToDrive(logsToArchive, 'all', { username: username || 'System' });
+    
+    if (!archiveResult.success) {
+      return createErrorResponse('Failed to archive logs before deletion: ' + archiveResult.error, 500);
+    }
+    
     // Delete all data rows except header
     const deletedCount = lastRow - 1;
     sheet.deleteRows(2, deletedCount);
     
     // Log this action
-    handleLogAccess(username || 'System', 'Cleared all access logs (' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
+    handleLogAccess(username || 'System', 'Archived and cleared all access logs (' + deletedCount + ' entries) - Archive: ' + archiveResult.fileName, 'delete', 'success', 'System', 'System Action');
     
-    Logger.log('All access logs cleared by: ' + username + ', count: ' + deletedCount);
+    Logger.log('All access logs archived and cleared by: ' + username + ', count: ' + deletedCount);
     
     return createSuccessResponse({
-      message: 'All access logs cleared successfully',
+      message: 'All access logs archived and cleared successfully',
       deletedCount: deletedCount,
+      archived: true,
+      archiveUrl: archiveResult.fileUrl,
+      archiveFileName: archiveResult.fileName,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1609,8 +2256,9 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
     
-    // Find rows to delete (collect indices in reverse order to avoid shifting issues)
+    // Find rows to delete and collect data for archiving
     const rowsToDelete = [];
+    const logsToArchive = [];
     for (let i = data.length - 1; i >= 1; i--) {
       const row = data[i];
       const timestampStr = row[4]; // Timestamp column
@@ -1620,7 +2268,27 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
       const logDate = new Date(timestampStr);
       if (logDate >= start && logDate <= end) {
         rowsToDelete.push(i + 1); // Sheet rows are 1-indexed
+        logsToArchive.push(row);
       }
+    }
+    
+    if (rowsToDelete.length === 0) {
+      return createSuccessResponse({
+        message: 'No logs found in the specified date range',
+        deletedCount: 0,
+        dateRange: { start: startDate, end: endDate },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Archive logs before deletion
+    const archiveResult = archiveAccessLogsToDrive(logsToArchive.reverse(), 'dateRange', { 
+      username: username || 'System',
+      dateRange: { start: startDate, end: endDate }
+    });
+    
+    if (!archiveResult.success) {
+      return createErrorResponse('Failed to archive logs before deletion: ' + archiveResult.error, 500);
     }
     
     // Delete rows from bottom to top to maintain correct indices
@@ -1631,13 +2299,16 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
     const deletedCount = rowsToDelete.length;
     
     // Log this action
-    handleLogAccess(username || 'System', 'Cleared access logs by date range (' + startDate + ' to ' + endDate + ', ' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
+    handleLogAccess(username || 'System', 'Archived and cleared access logs by date range (' + startDate + ' to ' + endDate + ', ' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
     
-    Logger.log('Access logs cleared by date range by: ' + username + ', count: ' + deletedCount);
+    Logger.log('Access logs archived and cleared by date range by: ' + username + ', count: ' + deletedCount);
     
     return createSuccessResponse({
-      message: 'Access logs cleared successfully for date range',
+      message: 'Access logs archived and cleared successfully for date range',
       deletedCount: deletedCount,
+      archived: true,
+      archiveUrl: archiveResult.fileUrl,
+      archiveFileName: archiveResult.fileName,
       dateRange: { start: startDate, end: endDate },
       timestamp: new Date().toISOString()
     });
@@ -1670,6 +2341,25 @@ function handleClearSpecificAccessLogs(logIds, username) {
     // Remove duplicates
     const uniqueRows = [...new Set(rowNumbers)];
     
+    // Get data for archiving before deletion
+    const data = sheet.getDataRange().getValues();
+    const logsToArchive = uniqueRows
+      .filter(rowIndex => rowIndex > 1 && rowIndex <= data.length)
+      .map(rowIndex => data[rowIndex - 1])
+      .reverse(); // Maintain chronological order
+    
+    if (logsToArchive.length > 0) {
+      // Archive logs before deletion
+      const archiveResult = archiveAccessLogsToDrive(logsToArchive, 'selected', { 
+        username: username || 'System',
+        selectedCount: logsToArchive.length
+      });
+      
+      if (!archiveResult.success) {
+        return createErrorResponse('Failed to archive logs before deletion: ' + archiveResult.error, 500);
+      }
+    }
+    
     // Delete rows from bottom to top
     let deletedCount = 0;
     for (const rowIndex of uniqueRows) {
@@ -1680,13 +2370,14 @@ function handleClearSpecificAccessLogs(logIds, username) {
     }
     
     // Log this action
-    handleLogAccess(username || 'System', 'Cleared specific access logs (' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
+    handleLogAccess(username || 'System', 'Archived and cleared specific access logs (' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
     
-    Logger.log('Specific access logs cleared by: ' + username + ', count: ' + deletedCount);
+    Logger.log('Specific access logs archived and cleared by: ' + username + ', count: ' + deletedCount);
     
     return createSuccessResponse({
-      message: 'Selected access logs cleared successfully',
+      message: 'Selected access logs archived and cleared successfully',
       deletedCount: deletedCount,
+      archived: true,
       requestedIds: logIds.length,
       timestamp: new Date().toISOString()
     });
@@ -1700,6 +2391,7 @@ function handleClearSpecificAccessLogs(logIds, username) {
  * Scheduled function to clear access logs automatically
  * Runs every Monday at 12:00 AM (midnight) Manila time
  * Clears logs older than 7 days to maintain a week's worth of data
+ * Archives logs before deletion
  */
 function scheduledWeeklyClearAccessLogs() {
   try {
@@ -1716,8 +2408,9 @@ function scheduledWeeklyClearAccessLogs() {
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
     oneWeekAgo.setHours(0, 0, 0, 0);
     
-    // Find rows to delete (collect indices in reverse order)
+    // Find rows to delete and collect data for archiving
     const rowsToDelete = [];
+    const logsToArchive = [];
     for (let i = data.length - 1; i >= 1; i--) {
       const row = data[i];
       const timestampStr = row[4]; // Timestamp column
@@ -1727,7 +2420,23 @@ function scheduledWeeklyClearAccessLogs() {
       const logDate = new Date(timestampStr);
       if (logDate < oneWeekAgo) {
         rowsToDelete.push(i + 1); // Sheet rows are 1-indexed
+        logsToArchive.push(row);
       }
+    }
+    
+    if (rowsToDelete.length === 0) {
+      Logger.log('Scheduled clear: No old logs to archive/clear');
+      return;
+    }
+    
+    // Archive logs before deletion
+    const archiveResult = archiveAccessLogsToDrive(logsToArchive.reverse(), 'scheduled-weekly', { 
+      username: 'System Scheduler'
+    });
+    
+    if (!archiveResult.success) {
+      Logger.log('Failed to archive logs in scheduled clear: ' + archiveResult.error);
+      return;
     }
     
     // Delete rows from bottom to top
@@ -1738,13 +2447,31 @@ function scheduledWeeklyClearAccessLogs() {
     const deletedCount = rowsToDelete.length;
     
     // Log the scheduled action
-    if (deletedCount > 0) {
-      handleLogAccess('System Scheduler', 'Scheduled weekly clear: removed ' + deletedCount + ' logs older than 7 days', 'delete', 'success', 'System', 'Scheduled Task');
-    }
+    handleLogAccess('System Scheduler', 'Scheduled weekly: archived and removed ' + deletedCount + ' logs older than 7 days', 'delete', 'success', 'System', 'Scheduled Task');
     
-    Logger.log('Scheduled weekly clear completed: ' + deletedCount + ' logs removed');
+    Logger.log('Scheduled weekly clear completed: ' + deletedCount + ' logs archived and removed');
   } catch (error) {
     Logger.log('Error in scheduled weekly clear: ' + error.toString());
+  }
+}
+
+/**
+ * Scheduled function to archive and clean access logs monthly
+ * Runs on the 1st of every month at 1:00 AM Manila time
+ * Archives logs from the previous month to Google Drive
+ */
+function scheduledMonthlyArchiveAccessLogs() {
+  try {
+    const result = autoArchiveOldLogs(1); // Archive logs older than 1 month
+    
+    if (result.error) {
+      Logger.log('Scheduled monthly archive error: ' + result.error);
+      return;
+    }
+    
+    Logger.log('Scheduled monthly archive completed: ' + result.archived + ' logs archived into ' + result.monthsArchived + ' files');
+  } catch (error) {
+    Logger.log('Error in scheduled monthly archive: ' + error.toString());
   }
 }
 
@@ -1774,7 +2501,36 @@ function setupWeeklyAccessLogClearTrigger() {
   
   Logger.log('Weekly access log clear trigger created: Every Monday at 12:00 AM Manila time');
   
-  return 'Weekly trigger set up successfully. Access logs older than 7 days will be cleared every Monday at 12:00 AM.';
+  return 'Weekly trigger set up successfully. Access logs older than 7 days will be archived and cleared every Monday at 12:00 AM.';
+}
+
+/**
+ * Create/update the monthly trigger for automatic access log archiving
+ * Call this function once to set up the scheduled trigger
+ * Runs on the 1st of every month at 1:00 AM Manila time
+ */
+function setupMonthlyAccessLogArchiveTrigger() {
+  // Delete existing triggers for this function to avoid duplicates
+  const triggers = ScriptApp.getProjectTriggers();
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === 'scheduledMonthlyArchiveAccessLogs') {
+      ScriptApp.deleteTrigger(trigger);
+      Logger.log('Deleted existing monthly archive trigger');
+    }
+  }
+  
+  // Create new monthly trigger for 1st of month at 1:00 AM
+  ScriptApp.newTrigger('scheduledMonthlyArchiveAccessLogs')
+    .timeBased()
+    .onMonthDay(1)
+    .atHour(1) // 1:00 AM
+    .nearMinute(0)
+    .inTimezone('Asia/Manila')
+    .create();
+  
+  Logger.log('Monthly access log archive trigger created: 1st of every month at 1:00 AM Manila time');
+  
+  return 'Monthly trigger set up successfully. Access logs older than 1 month will be archived on the 1st of each month at 1:00 AM.';
 }
 
 /**
@@ -1815,6 +2571,65 @@ function checkWeeklyAccessLogClearTrigger() {
   return {
     active: false,
     message: 'No weekly clear trigger found. Run setupWeeklyAccessLogClearTrigger() to enable.'
+  };
+}
+
+/**
+ * Remove the monthly trigger for automatic access log archiving
+ * Call this function to disable automatic monthly archiving
+ */
+function removeMonthlyAccessLogArchiveTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  let removed = 0;
+  
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === 'scheduledMonthlyArchiveAccessLogs') {
+      ScriptApp.deleteTrigger(trigger);
+      removed++;
+    }
+  }
+  
+  if (removed > 0) {
+    Logger.log('Removed ' + removed + ' monthly archive trigger(s)');
+    return 'Monthly archive trigger removed. Automatic monthly archiving is now disabled.';
+  } else {
+    return 'No monthly archive trigger found to remove.';
+  }
+}
+
+/**
+ * Check if the monthly trigger is set up
+ */
+function checkMonthlyAccessLogArchiveTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === 'scheduledMonthlyArchiveAccessLogs') {
+      return {
+        active: true,
+        nextRun: '1st of every month at 1:00 AM Manila time',
+        handlerFunction: trigger.getHandlerFunction()
+      };
+    }
+  }
+  
+  return {
+    active: false,
+    message: 'No monthly archive trigger found. Run setupMonthlyAccessLogArchiveTrigger() to enable.'
+  };
+}
+
+/**
+ * Set up all access log automation triggers (weekly clear + monthly archive)
+ */
+function setupAllAccessLogTriggers() {
+  const weeklyResult = setupWeeklyAccessLogClearTrigger();
+  const monthlyResult = setupMonthlyAccessLogArchiveTrigger();
+  
+  return {
+    weekly: weeklyResult,
+    monthly: monthlyResult,
+    message: 'All access log automation triggers have been set up.'
   };
 }
 

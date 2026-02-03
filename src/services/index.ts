@@ -182,3 +182,44 @@ export {
   type MaintenanceConfig as SystemMaintenanceConfig,
   type MaintenanceModeState as SystemMaintenanceModeState,
 } from './gasSystemToolsService';
+
+// Local Storage Cache Service
+export {
+  // Utility functions
+  generateChecksum,
+  isCacheExpired,
+  isCacheVersionValid,
+  saveToCache,
+  loadFromCache,
+  hasDataChanged,
+  clearCache,
+  clearAllCaches,
+  // User Profile Cache
+  saveUserProfileToCache,
+  loadUserProfileFromCache,
+  hasProfileChanged,
+  clearUserProfileCache,
+  // Homepage Content Cache
+  saveHomepageContentToCache,
+  loadHomepageContentFromCache,
+  hasHomepageContentChanged,
+  // Homepage Other Cache
+  saveHomepageOtherToCache,
+  loadHomepageOtherFromCache,
+  hasHomepageOtherChanged,
+  // Projects Cache
+  saveProjectsToCache,
+  loadProjectsFromCache,
+  getProjectChanges,
+  // Constants
+  CACHE_KEYS,
+  CACHE_VERSIONS,
+  CACHE_DURATIONS,
+  // Types
+  type CacheEntry,
+  type CacheConfig,
+  type CachedUserProfile,
+  type CachedHomepageContent,
+  type CachedHomepageOther,
+  type CachedProject,
+} from './localStorageCache';
