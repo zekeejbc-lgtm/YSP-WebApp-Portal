@@ -3501,6 +3501,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               removeUploadToast={removeUploadToast}
             />
           </Suspense>
+          <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
           {chatbot}
         </>
       );

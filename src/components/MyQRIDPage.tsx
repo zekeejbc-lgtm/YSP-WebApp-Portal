@@ -62,6 +62,8 @@ interface ExtendedUserData {
   nationality?: string;
   barangay?: string;
   city?: string;
+  province?: string;
+  zipCode?: string;
 }
 
 // Required fields for QR access (excluding optional social media fields)
@@ -78,7 +80,10 @@ const REQUIRED_DIRECTORY_FIELDS: { key: keyof ExtendedUserData; label: string }[
   { key: 'barangay', label: 'Barangay' },
   { key: 'city', label: 'City' },
   { key: 'emergencyContactName', label: 'Emergency Contact Name' },
+  { key: 'emergencyContactRelation', label: 'Emergency Contact Relation' },
   { key: 'emergencyContactNumber', label: 'Emergency Contact Number' },
+  { key: 'province', label: 'Province' },
+  { key: 'zipCode', label: 'Zip Code' },
   { key: 'profilePictureURL', label: 'Profile Picture' },
 ];
 
@@ -259,124 +264,157 @@ export default function MyQRIDPage({
   // Fetch user data from stored session on mount
   useEffect(() => {
     const loadUserData = async () => {
-      setIsLoading(true);
-      
+      // Helper to check if a value is actually filled
+      const hasValue = (val: string | undefined | null): boolean => {
+        if (!val) return false;
+        const trimmed = val.trim().toLowerCase();
+        return trimmed !== '' && trimmed !== 'n/a' && trimmed !== 'null' && trimmed !== 'undefined';
+      };
+
+      // Helper to build ExtendedUserData from profile
+      const buildExtendedData = (p: Record<string, unknown>, fallbackName: string, fallbackId: string, fallbackPosition: string): ExtendedUserData => ({
+        fullName: (p.fullName as string) || fallbackName,
+        idCode: (p.idCode as string) || fallbackId,
+        position: (p.position as string) || fallbackPosition || 'Member',
+        birthday: p.birthday as string | undefined,
+        contactNumber: p.contactNumber as string | undefined,
+        email: (p.email || p.personalEmail) as string | undefined,
+        profilePictureURL: p.profilePictureURL as string | undefined,
+        chapter: p.chapter as string | undefined,
+        committee: p.committee as string | undefined,
+        dateJoined: p.dateJoined as string | undefined,
+        emergencyContactName: p.emergencyContactName as string | undefined,
+        emergencyContactRelation: p.emergencyContactRelation as string | undefined,
+        emergencyContactNumber: p.emergencyContactNumber as string | undefined,
+        address: p.address as string | undefined,
+        gender: p.gender as string | undefined,
+        civilStatus: p.civilStatus as string | undefined,
+        religion: p.religion as string | undefined,
+        nationality: p.nationality as string | undefined,
+        barangay: p.barangay as string | undefined,
+        city: p.city as string | undefined,
+        province: p.province as string | undefined,
+        zipCode: p.zipCode as string | undefined,
+      });
+
+      // Helper to check profile completeness and set lock state
+      const checkAndSetLockState = (extendedData: ExtendedUserData, emailVerified: boolean) => {
+        const missingFields: string[] = [];
+        for (const field of REQUIRED_DIRECTORY_FIELDS) {
+          const value = extendedData[field.key];
+          if (!hasValue(value as string | undefined)) {
+            missingFields.push(field.label);
+          }
+        }
+
+        console.log('[MyQRIDPage] Profile completeness:', { 
+          emailVerified, 
+          missingFields,
+          requiredFieldsCount: REQUIRED_DIRECTORY_FIELDS.length
+        });
+
+        if (!emailVerified) {
+          setIsProfileLocked(true);
+          setLockReason('email');
+        } else if (missingFields.length > 0) {
+          setIsProfileLocked(true);
+          setLockReason('profile');
+          setMissingProfileFields(missingFields);
+        } else {
+          setIsProfileLocked(false);
+          setLockReason(null);
+        }
+      };
+
       try {
         // First try to get from stored session
         const storedUser = getStoredUser();
         
-        if (storedUser) {
-          // Helper to check if a value is actually filled
-          const hasValue = (val: string | undefined | null): boolean => {
-            if (!val) return false;
-            const trimmed = val.trim().toLowerCase();
-            return trimmed !== '' && trimmed !== 'n/a' && trimmed !== 'null' && trimmed !== 'undefined';
-          };
+        if (!storedUser) {
+          toast.error('Please log in to view your QR ID');
+          onClose();
+          return;
+        }
 
-          // Try to load from cache first for faster response
-          const cachedProfile = loadUserProfileFromCache(storedUser.username);
-          let emailVerified = false;
-          let verifiedEmail = '';
+        // FAST PATH: Load from cache immediately to show UI fast
+        const cachedProfile = loadUserProfileFromCache(storedUser.username);
+        let emailVerified = false;
 
-          if (cachedProfile?.data) {
-            emailVerified = cachedProfile.data.emailVerified;
-            verifiedEmail = cachedProfile.data.verifiedEmail;
-            setIsEmailVerified(emailVerified);
-          }
+        if (cachedProfile?.data) {
+          console.log('[MyQRIDPage] Using cached profile for instant display');
+          const p = cachedProfile.data;
+          emailVerified = p.emailVerified || false;
+          setIsEmailVerified(emailVerified);
 
-          // Try to fetch full profile for more details
-          try {
-            const profileResponse = await fetchUserProfile(storedUser.username);
-            console.log('[MyQRIDPage] Profile response:', profileResponse);
-            if (profileResponse.success && profileResponse.profile) {
-              const p = profileResponse.profile;
-              console.log('[MyQRIDPage] Raw profile data:', {
-                birthday: p.birthday,
-                contactNumber: p.contactNumber,
-                emergencyContactName: p.emergencyContactName,
-                emergencyContactNumber: p.emergencyContactNumber,
-              });
+          const extendedData = buildExtendedData(
+            p as unknown as Record<string, unknown>,
+            storedUser.name,
+            storedUser.id,
+            storedUser.position || 'Member'
+          );
+          setUserData(extendedData);
+          checkAndSetLockState(extendedData, emailVerified);
+          
+          // Stop loading immediately - we have cached data!
+          setIsLoading(false);
+        } else {
+          // No cache, show loading
+          setIsLoading(true);
+        }
 
-              const extendedData: ExtendedUserData = {
-                fullName: p.fullName || storedUser.name,
-                idCode: p.idCode || storedUser.id,
-                position: p.position || storedUser.position || 'Member',
-                birthday: p.birthday,
-                contactNumber: p.contactNumber,
-                email: p.email || p.personalEmail,
-                profilePictureURL: p.profilePictureURL,
-                chapter: p.chapter,
-                committee: p.committee,
-                dateJoined: p.dateJoined,
-                emergencyContactName: p.emergencyContactName,
-                emergencyContactRelation: p.emergencyContactRelation,
-                emergencyContactNumber: p.emergencyContactNumber,
-                address: p.address,
-                gender: p.gender,
-                civilStatus: p.civilStatus,
-                religion: p.religion,
-                nationality: p.nationality,
-                barangay: p.barangay,
-                city: p.city,
-              };
+        // BACKGROUND SYNC: Fetch fresh data from backend
+        try {
+          const profileResponse = await fetchUserProfile(storedUser.username);
+          console.log('[MyQRIDPage] Profile response:', profileResponse);
+          if (profileResponse.success && profileResponse.profile) {
+            const p = profileResponse.profile;
+            console.log('[MyQRIDPage] Raw profile data:', {
+              birthday: p.birthday,
+              contactNumber: p.contactNumber,
+              emergencyContactName: p.emergencyContactName,
+              emergencyContactNumber: p.emergencyContactNumber,
+            });
 
-              setUserData(extendedData);
+            const extendedData = buildExtendedData(
+              p as unknown as Record<string, unknown>,
+              storedUser.name,
+              storedUser.id,
+              storedUser.position || 'Member'
+            );
 
-              // Check email verification status
-              const userEmail = p.email || p.personalEmail;
-              if (userEmail) {
-                try {
-                  const verifyResult = await checkEmailVerified(storedUser.username, userEmail);
-                  if (verifyResult.success && verifyResult.verified) {
-                    emailVerified = true;
-                    verifiedEmail = verifyResult.verifiedEmail || userEmail;
-                    setIsEmailVerified(true);
-                  }
-                } catch (e) {
-                  console.warn('Email verification check failed:', e);
+            setUserData(extendedData);
+
+            // Check email verification status
+            const userEmail = p.email || p.personalEmail;
+            if (userEmail) {
+              try {
+                const verifyResult = await checkEmailVerified(storedUser.username, userEmail);
+                if (verifyResult.success && verifyResult.verified) {
+                  emailVerified = true;
+                  setIsEmailVerified(true);
                 }
+              } catch (e) {
+                console.warn('Email verification check failed:', e);
               }
-
-              // Check profile completeness for required fields
-              const missingFields: string[] = [];
-              for (const field of REQUIRED_DIRECTORY_FIELDS) {
-                const value = extendedData[field.key];
-                if (!hasValue(value as string | undefined)) {
-                  missingFields.push(field.label);
-                }
-              }
-
-              console.log('[MyQRIDPage] Profile completeness:', { 
-                emailVerified, 
-                missingFields,
-                requiredFieldsCount: REQUIRED_DIRECTORY_FIELDS.length
-              });
-
-              // Determine if QR should be locked
-              if (!emailVerified) {
-                setIsProfileLocked(true);
-                setLockReason('email');
-              } else if (missingFields.length > 0) {
-                setIsProfileLocked(true);
-                setLockReason('profile');
-                setMissingProfileFields(missingFields);
-              } else {
-                setIsProfileLocked(false);
-                setLockReason(null);
-              }
-            } else {
-              // Fallback to stored session data - profile incomplete
-              setUserData({
-                fullName: storedUser.name,
-                idCode: storedUser.id,
-                position: storedUser.position || 'Member',
-              });
-              setIsProfileLocked(true);
-              setLockReason('profile');
-              setMissingProfileFields(['Most required fields']);
             }
-          } catch {
-            // If profile fetch fails, use stored session data
+
+            // Update lock state with fresh data
+            checkAndSetLockState(extendedData, emailVerified);
+          } else if (!cachedProfile?.data) {
+            // No cached data and fetch failed - fallback to stored session data
+            setUserData({
+              fullName: storedUser.name,
+              idCode: storedUser.id,
+              position: storedUser.position || 'Member',
+            });
+            setIsProfileLocked(true);
+            setLockReason('profile');
+            setMissingProfileFields(['Most required fields']);
+          }
+        } catch (fetchError) {
+          console.warn('[MyQRIDPage] Profile fetch failed, using cached data if available:', fetchError);
+          // If no cached data was loaded earlier, set fallback
+          if (!cachedProfile?.data) {
             setUserData({
               fullName: storedUser.name,
               idCode: storedUser.id,
@@ -386,10 +424,6 @@ export default function MyQRIDPage({
             setLockReason('profile');
             setMissingProfileFields(['Unable to verify profile']);
           }
-        } else {
-          // No user logged in - redirect or show error
-          toast.error('Please log in to view your QR ID');
-          onClose();
         }
       } catch (error) {
         console.error('Error loading user data:', error);
@@ -563,6 +597,16 @@ export default function MyQRIDPage({
   // Convert Google Drive URL to a more accessible format
   const getAccessibleImageUrl = (url: string): string => {
     if (!url) return url;
+    
+    // Skip data URLs (base64) - they're already accessible
+    if (url.startsWith('data:')) {
+      return url;
+    }
+    
+    // Skip non-Google URLs
+    if (!url.includes('google') && !url.includes('drive.google.com')) {
+      return url;
+    }
     
     // Extract file ID from various Google Drive URL formats
     let fileId = '';
@@ -1200,11 +1244,22 @@ export default function MyQRIDPage({
       ctx.fillText(`ID: ${userData.idCode}`, canvas.width / 2, qrBoxY + qrBoxHeight + spacingBetween + (idHeight / 2));
 
       if (format === 'png') {
-        const link = document.createElement('a');
-        link.download = `${userData.idCode}_${userData.fullName.replace(/\s/g, '_')}_QR.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-        toast.success('QR Code Downloaded');
+        // Use blob download for better compatibility
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            toast.error('Failed to generate image');
+            return;
+          }
+          const blobUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.download = `${userData.idCode}_${userData.fullName.replace(/\s/g, '_')}_QR.png`;
+          link.href = blobUrl;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(blobUrl);
+          toast.success('QR Code Downloaded');
+        }, 'image/png');
       } else {
         // PDF format
         const doc = new jsPDF({
@@ -1330,19 +1385,37 @@ export default function MyQRIDPage({
           ctx.drawImage(frontImg, 0, 0);
           ctx.drawImage(backImg, ID_CARD_WIDTH_PX + gap, 0);
 
-          const link = document.createElement('a');
-          link.download = `${userData.idCode}_${userData.fullName.replace(/\s/g, '_')}_ID_Card.png`;
-          link.href = combinedCanvas.toDataURL('image/png');
-          link.click();
-          
-          if (updateUploadToast) {
-            updateUploadToast(toastId, {
-              title: 'ID Card Downloaded',
-              message: 'Front and back saved as PNG',
-              status: 'success',
-              progress: 100,
-            });
-          }
+          // Use blob download for better compatibility
+          combinedCanvas.toBlob((blob) => {
+            if (!blob) {
+              if (updateUploadToast) {
+                updateUploadToast(toastId, {
+                  title: 'Generation Failed',
+                  message: 'Failed to generate PNG image',
+                  status: 'error',
+                  progress: 0,
+                });
+              }
+              return;
+            }
+            const blobUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.download = `${userData.idCode}_${userData.fullName.replace(/\s/g, '_')}_ID_Card.png`;
+            link.href = blobUrl;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(blobUrl);
+            
+            if (updateUploadToast) {
+              updateUploadToast(toastId, {
+                title: 'ID Card Downloaded',
+                message: 'Front and back saved as PNG',
+                status: 'success',
+                progress: 100,
+              });
+            }
+          }, 'image/png');
         }
       } else {
         // PDF with exact ID card dimensions - PORTRAIT orientation
