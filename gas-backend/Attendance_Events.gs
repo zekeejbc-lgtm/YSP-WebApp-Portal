@@ -186,6 +186,12 @@ function doPost(e) {
       case 'updateAttendanceStatus':
         result = updateAttendanceStatus(params.attendanceId, params.status, params.notes);
         break;
+      case 'addEventRecipient':
+        result = addEventRecipient(params.eventId, params.recipientId, params.recipientName);
+        break;
+      case 'addEventRecipients':
+        result = addEventRecipients(params.eventId, params.recipients);
+        break;
       default:
         result = { success: false, error: 'Invalid action' };
     }
@@ -420,16 +426,16 @@ function createEventSettingsSheet(ss) {
 
 /**
  * Calculate the dynamic status of an event based on current date/time
- * Manual overrides (Cancelled, Disabled) are respected and not changed
- * Completed is now dynamically calculated based on date/time, not a manual override
+ * Manual overrides (Cancelled, Disabled, Completed) are respected and not changed
+ * This allows admins to manually complete an event to stop attendance recording
  * @param {Object} event - Event object with StartDate, EndDate, StartTime, EndTime, Status
  * @returns {string} - Calculated status: Scheduled, Active, Completed, Cancelled, or Disabled
  */
 function calculateEventStatus(event) {
-  // Respect manual overrides - only Cancelled and Disabled should never be auto-calculated
-  // Completed is now dynamically calculated based on date/time
+  // Respect manual overrides - Cancelled, Disabled, and Completed should never be auto-calculated
+  // This allows admins to manually complete an event to stop attendance recording
   const storedStatus = String(event.Status || '').trim();
-  if (storedStatus === 'Cancelled' || storedStatus === 'Disabled') {
+  if (storedStatus === 'Cancelled' || storedStatus === 'Disabled' || storedStatus === 'Completed') {
     return storedStatus;
   }
   
@@ -975,6 +981,213 @@ function updateEvent(eventId, eventData) {
         sheet.getRange(rowIndex, 17).setValue(now);
         
         return { success: true, message: 'Event updated successfully', eventId: eventId };
+      }
+    }
+    
+    return { success: false, error: 'Event not found' };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Add a single recipient to an event
+ * Appends to the existing recipients list without overwriting
+ * @param {string} eventId - Event ID
+ * @param {string} recipientId - Member ID to add
+ * @param {string} recipientName - Member name (for display/reference)
+ * @returns {Object} - Success/error response
+ */
+function addEventRecipient(eventId, recipientId, recipientName) {
+  try {
+    if (!eventId) {
+      return { success: false, error: 'Event ID is required' };
+    }
+    if (!recipientId && !recipientName) {
+      return { success: false, error: 'Recipient ID or Name is required' };
+    }
+    
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName('Events');
+    
+    if (!sheet || sheet.getLastRow() < 2) {
+      return { success: false, error: 'Event not found' };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const recipientsColIdx = headers.indexOf('Recipients');
+    
+    if (recipientsColIdx < 0) {
+      return { success: false, error: 'Recipients column not found - please run migrateEventsSchema' };
+    }
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === eventId) {
+        const rowIndex = i + 1;
+        const currentRecipientsJson = data[i][recipientsColIdx] || '';
+        
+        let recipients = { type: 'Person', ids: [], names: [] };
+        
+        if (currentRecipientsJson && currentRecipientsJson.trim() !== '') {
+          try {
+            const parsed = JSON.parse(currentRecipientsJson);
+            // If type is 'All', keep it but also add to ids/names for tracking
+            if (parsed.type === 'All') {
+              return { success: true, message: 'Event is open to all members - no need to add individual recipients' };
+            }
+            recipients = {
+              type: parsed.type || 'Person',
+              ids: Array.isArray(parsed.ids) ? parsed.ids : [],
+              names: Array.isArray(parsed.names) ? parsed.names : [],
+              committees: Array.isArray(parsed.committees) ? parsed.committees : []
+            };
+          } catch (e) {
+            // If JSON parse fails, start fresh with Person type
+            recipients = { type: 'Person', ids: [], names: [] };
+          }
+        }
+        
+        // Add recipient if not already present
+        let added = false;
+        if (recipientId && !recipients.ids.includes(recipientId)) {
+          recipients.ids.push(recipientId);
+          added = true;
+        }
+        if (recipientName && !recipients.names.includes(recipientName)) {
+          recipients.names.push(recipientName);
+          added = true;
+        }
+        
+        if (!added) {
+          return { success: true, message: 'Recipient already exists in the event', alreadyExists: true };
+        }
+        
+        // Ensure type is Person if we're adding individual recipients
+        if (recipients.type !== 'Committee') {
+          recipients.type = 'Person';
+        }
+        
+        // Update the recipients column
+        sheet.getRange(rowIndex, recipientsColIdx + 1).setValue(JSON.stringify(recipients));
+        
+        // Update timestamp
+        const updatedAtColIdx = headers.indexOf('UpdatedAt');
+        if (updatedAtColIdx >= 0) {
+          sheet.getRange(rowIndex, updatedAtColIdx + 1).setValue(new Date().toISOString());
+        }
+        
+        return { 
+          success: true, 
+          message: `Added ${recipientName || recipientId} to event recipients`,
+          totalRecipients: recipients.ids.length
+        };
+      }
+    }
+    
+    return { success: false, error: 'Event not found' };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Add multiple recipients to an event at once
+ * @param {string} eventId - Event ID
+ * @param {Array} recipients - Array of { id: string, name: string } objects
+ * @returns {Object} - Success/error response with counts
+ */
+function addEventRecipients(eventId, recipientsList) {
+  try {
+    if (!eventId) {
+      return { success: false, error: 'Event ID is required' };
+    }
+    if (!Array.isArray(recipientsList) || recipientsList.length === 0) {
+      return { success: false, error: 'Recipients list is required' };
+    }
+    
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName('Events');
+    
+    if (!sheet || sheet.getLastRow() < 2) {
+      return { success: false, error: 'Event not found' };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const recipientsColIdx = headers.indexOf('Recipients');
+    
+    if (recipientsColIdx < 0) {
+      return { success: false, error: 'Recipients column not found - please run migrateEventsSchema' };
+    }
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === eventId) {
+        const rowIndex = i + 1;
+        const currentRecipientsJson = data[i][recipientsColIdx] || '';
+        
+        let recipients = { type: 'Person', ids: [], names: [] };
+        
+        if (currentRecipientsJson && currentRecipientsJson.trim() !== '') {
+          try {
+            const parsed = JSON.parse(currentRecipientsJson);
+            if (parsed.type === 'All') {
+              return { success: true, message: 'Event is open to all members', addedCount: 0, skippedCount: recipientsList.length };
+            }
+            recipients = {
+              type: parsed.type || 'Person',
+              ids: Array.isArray(parsed.ids) ? parsed.ids : [],
+              names: Array.isArray(parsed.names) ? parsed.names : [],
+              committees: Array.isArray(parsed.committees) ? parsed.committees : []
+            };
+          } catch (e) {
+            recipients = { type: 'Person', ids: [], names: [] };
+          }
+        }
+        
+        let addedCount = 0;
+        let skippedCount = 0;
+        
+        for (const recipient of recipientsList) {
+          let added = false;
+          
+          if (recipient.id && !recipients.ids.includes(recipient.id)) {
+            recipients.ids.push(recipient.id);
+            added = true;
+          }
+          if (recipient.name && !recipients.names.includes(recipient.name)) {
+            recipients.names.push(recipient.name);
+            added = true;
+          }
+          
+          if (added) {
+            addedCount++;
+          } else {
+            skippedCount++;
+          }
+        }
+        
+        // Ensure type is Person if we're adding individual recipients
+        if (recipients.type !== 'Committee') {
+          recipients.type = 'Person';
+        }
+        
+        // Update the recipients column
+        sheet.getRange(rowIndex, recipientsColIdx + 1).setValue(JSON.stringify(recipients));
+        
+        // Update timestamp
+        const updatedAtColIdx = headers.indexOf('UpdatedAt');
+        if (updatedAtColIdx >= 0) {
+          sheet.getRange(rowIndex, updatedAtColIdx + 1).setValue(new Date().toISOString());
+        }
+        
+        return { 
+          success: true, 
+          message: `Added ${addedCount} recipient(s), ${skippedCount} already existed`,
+          addedCount: addedCount,
+          skippedCount: skippedCount,
+          totalRecipients: recipients.ids.length
+        };
       }
     }
     

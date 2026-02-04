@@ -31,7 +31,8 @@
       TEMPLATES: 'Templates',
       RECIPIENTS: 'Recipients',
       SEND_LOGS: 'SendLogs',
-      SETTINGS: 'Settings'
+      SETTINGS: 'Settings',
+      CONTROL_SEQUENCES: 'ControlNumberSequences'
     },
     // Default header style
     HEADER_STYLE: {
@@ -76,7 +77,11 @@
       'NameAllCaps',       // true/false - whether to convert names to ALL CAPS
       'NameStartPos',      // Start position for name line (in cm)
       'NameEndPos',        // End position for name line (in cm)
-      'NamePosUnit'        // Unit for positioning: 'cm' or 'inch'
+      'NamePosUnit',       // Unit for positioning: 'cm' or 'inch'
+      'EventID',           // Event ID if recipients are from an event (for control number)
+      'EventNumber',       // Event sequence number for the year (XX in control number)
+      'ControlNumberPrefix', // Base control number prefix (YSP-YY-TCXX) for this issuance
+      'Attachments'        // JSON array of attachment objects [{name, url, type}]
     ],
     Templates: [
       'TemplateID',
@@ -101,7 +106,8 @@
       'SentAt',
       'FailedReason',
       'PDFFileId',
-      'DownloadedAt'
+      'DownloadedAt',
+      'ControlNumber'     // Unique control number: YSP-YY-TCXXYYY
     ],
     SendLogs: [
       'LogID',
@@ -119,6 +125,17 @@
       'Description',
       'UpdatedAt',
       'UpdatedBy'
+    ],
+    ControlNumberSequences: [
+      'SequenceID',        // Unique ID for the sequence
+      'Year',              // 4-digit year (e.g., 2026)
+      'EventID',           // Event ID from attendance system
+      'EventTitle',        // Event title for reference
+      'EventNumber',       // Event sequence number for the year (01, 02, etc.)
+      'LastCertNumber',    // Last certificate number issued (001, 002, etc.)
+      'ChapterCode',       // Chapter code used (e.g., TC)
+      'CreatedAt',
+      'UpdatedAt'
     ]
   };
 
@@ -131,7 +148,8 @@
     { key: 'DefaultMemoTemplate', value: '', description: 'Default Google Docs URL for Memos' },
     { key: 'SenderName', value: 'Youth Service Philippines - Tagum Chapter', description: 'Name shown as email sender' },
     { key: 'SenderEmail', value: '', description: 'Reply-to email address' },
-    { key: 'EmailFooter', value: 'This is an automated message from YSP Tagum Chapter. Please do not reply.', description: 'Footer text for all emails' }
+    { key: 'EmailFooter', value: 'This is an automated message from YSP Tagum Chapter. Please do not reply.', description: 'Footer text for all emails' },
+    { key: 'ChapterCode', value: 'TC', description: 'Chapter code for control numbers (e.g., TC for Tagum Chapter)' }
   ];
 
   // ============================================================================
@@ -395,7 +413,47 @@
       }
     }
     
-    if (results.changes.length === 0 && updatedHeaders.length === expectedHeaders.length) {
+    // Refresh headers again
+    refreshedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    // Check if Attachments column exists
+    const hasAttachments = refreshedHeaders.includes('Attachments');
+    
+    // Add Attachments column if missing (should be at the end after ControlNumberPrefix)
+    if (!hasAttachments) {
+      const controlPrefixIndex = refreshedHeaders.indexOf('ControlNumberPrefix');
+      if (controlPrefixIndex !== -1) {
+        const insertAfterCol = controlPrefixIndex + 1;
+        sheet.insertColumnAfter(insertAfterCol);
+        sheet.getRange(1, insertAfterCol + 1).setValue('Attachments');
+        
+        // Set default empty array for all existing rows
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          for (let i = 2; i <= lastRow; i++) {
+            sheet.getRange(i, insertAfterCol + 1).setValue('[]');
+          }
+        }
+        results.changes.push('Added Attachments column');
+      } else {
+        // If ControlNumberPrefix doesn't exist, add Attachments at the very end
+        const lastCol = sheet.getLastColumn();
+        sheet.getRange(1, lastCol + 1).setValue('Attachments');
+        
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          for (let i = 2; i <= lastRow; i++) {
+            sheet.getRange(i, lastCol + 1).setValue('[]');
+          }
+        }
+        results.changes.push('Added Attachments column at end');
+      }
+    }
+    
+    // Refresh headers one more time
+    refreshedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    if (results.changes.length === 0 && refreshedHeaders.length === expectedHeaders.length) {
       return { success: true, message: 'Columns already aligned correctly', noChanges: true };
     }
     
@@ -432,7 +490,7 @@
         name: 'Digital Certificate - Event Participation',
         description: 'Certificate for event participation and attendance',
         type: 'Digital Certificate',
-        fields: JSON.stringify(['{NAME}', '{EVENT}', '{DATE}', '{POSITION}']),
+        fields: JSON.stringify(['{NAME}', '{EVENT}', '{DATE}', '{POSITION}', '{CONTROL_NUMBER}']),
         isDefault: true
       },
       {
@@ -532,6 +590,16 @@
         
         case 'getCommittees':
           return jsonResponse(getCommittees());
+        
+        case 'getControlNumberInfo':
+          return jsonResponse(getControlNumberInfo(e.parameter.issuanceId));
+        
+        case 'getEventDetails':
+          return jsonResponse(getEventDetails(e.parameter.eventId));
+        
+        case 'previewControlNumber':
+          // Preview what control number would be assigned for an event
+          return jsonResponse(previewControlNumberForEvent(e.parameter.eventId, e.parameter.eventTitle));
         
         default:
           return jsonResponse({ error: 'Invalid action', action: action });
@@ -763,6 +831,7 @@
   /**
   * Create new issuance
   * If downloadOnly is true, marks status as 'Sent' (issued) instead of 'Draft'
+  * If eventId is provided, generates control numbers for recipients
   */
   function createIssuance(data) {
     const ss = SpreadsheetApp.openById(ISSUANCE_CONFIG.SPREADSHEET_ID);
@@ -780,6 +849,28 @@
     
     // Delivery method: 'DownloadOnly' or 'Email'
     const deliveryMethod = data.downloadOnly ? 'DownloadOnly' : 'Email';
+    
+    // Handle event-based control numbers
+    let eventId = data.eventId || '';
+    let eventNumber = '';
+    let controlNumberPrefix = '';
+    let eventTitle = data.eventTitle || '';
+    
+    // If eventId is provided (from @event command or event recipient selection), generate control number prefix
+    if (eventId) {
+      // Get event details if title not provided
+      if (!eventTitle) {
+        const eventResult = getEventDetails(eventId);
+        if (eventResult.success && eventResult.data) {
+          eventTitle = eventResult.data.Title || '';
+        }
+      }
+      
+      // Generate the control number prefix for this event
+      const prefixResult = generateControlNumberPrefix(eventId, eventTitle);
+      controlNumberPrefix = prefixResult.prefix;
+      eventNumber = prefixResult.eventNumber;
+    }
     
     const row = [
       id,
@@ -808,20 +899,29 @@
        (data.NameAllCaps !== undefined ? String(data.NameAllCaps) : 'true')), // NameAllCaps - default true
       (data.nameStartPos || data.nameStartPosition || '8.1'),  // NameStartPos - default 8.1cm
       (data.nameEndPos || data.nameEndPosition || '27.6'),   // NameEndPos - default 27.6cm
-      (data.namePosUnit || data.namePositionUnit || 'cm')     // NamePosUnit - default cm
+      (data.namePosUnit || data.namePositionUnit || 'cm'),    // NamePosUnit - default cm
+      eventId, // EventID - set if linking to an event
+      eventNumber, // EventNumber - sequence number for the year
+      controlNumberPrefix, // ControlNumberPrefix - e.g., YSP-26-TC01
+      JSON.stringify(data.attachments || []) // Attachments - array of {name, url, type}
     ];
     
     sheet.appendRow(row);
     
     // Add recipients to Recipients sheet - all start as Pending
+    // If event is provided, generate control numbers for each recipient
     if (data.recipients && data.recipients.length > 0) {
-      addRecipients(id, data.recipients, false);
+      const controlNumberData = eventId ? { eventId, eventTitle } : null;
+      addRecipients(id, data.recipients, false, controlNumberData);
     }
     
     return { 
       success: true, 
       id: id,
-      message: 'Issuance created successfully' 
+      message: 'Issuance created successfully',
+      eventId: eventId,
+      eventNumber: eventNumber,
+      controlNumberPrefix: controlNumberPrefix
     };
   }
 
@@ -900,6 +1000,14 @@
         if (data.sentCount !== undefined) values[i][colMap['SentCount']] = data.sentCount;
         if (data.resentCount !== undefined) values[i][colMap['ResentCount']] = data.resentCount;
         if (data.failedCount !== undefined) values[i][colMap['FailedCount']] = data.failedCount;
+        
+        // Attachments - array of {name, url, type} objects
+        if (data.attachments !== undefined || data.Attachments !== undefined) {
+          const attachmentsData = data.attachments ?? data.Attachments;
+          values[i][colMap['Attachments']] = typeof attachmentsData === 'string' 
+            ? attachmentsData 
+            : JSON.stringify(attachmentsData || []);
+        }
         
         dataRange.setValues(values);
         return { success: true, message: 'Issuance updated successfully' };
@@ -1112,6 +1220,412 @@
   }
 
   // ============================================================================
+  // CONTROL NUMBER SYSTEM
+  // ============================================================================
+
+  /**
+  * Get or create the ControlNumberSequences sheet
+  */
+  function getControlSequencesSheet() {
+    const ss = SpreadsheetApp.openById(ISSUANCE_CONFIG.SPREADSHEET_ID);
+    let sheet = ss.getSheetByName(ISSUANCE_CONFIG.SHEETS.CONTROL_SEQUENCES);
+    
+    if (!sheet) {
+      // Create the sheet with headers
+      sheet = ss.insertSheet(ISSUANCE_CONFIG.SHEETS.CONTROL_SEQUENCES);
+      const headers = SHEET_HEADERS.ControlNumberSequences;
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      
+      // Apply header styling
+      const headerRange = sheet.getRange(1, 1, 1, headers.length);
+      headerRange.setBackground(ISSUANCE_CONFIG.HEADER_STYLE.background);
+      headerRange.setFontColor(ISSUANCE_CONFIG.HEADER_STYLE.fontColor);
+      headerRange.setFontWeight(ISSUANCE_CONFIG.HEADER_STYLE.fontWeight);
+      headerRange.setFontSize(ISSUANCE_CONFIG.HEADER_STYLE.fontSize);
+      headerRange.setHorizontalAlignment('center');
+      sheet.setFrozenRows(1);
+    }
+    
+    return sheet;
+  }
+
+  /**
+  * Get the chapter code from settings
+  */
+  function getChapterCode() {
+    const settingsResult = getSettings();
+    const settings = settingsResult.data || {};
+    return settings.ChapterCode?.value || 'TC';
+  }
+
+  /**
+  * Get or create event sequence for a given year and event
+  * Returns { eventNumber, lastCertNumber, sequenceId }
+  */
+  function getOrCreateEventSequence(eventId, eventTitle, year) {
+    const sheet = getControlSequencesSheet();
+    const chapterCode = getChapterCode();
+    
+    if (sheet.getLastRow() <= 1) {
+      // No sequences yet, create first one
+      return createEventSequence(sheet, eventId, eventTitle, year, chapterCode, 1);
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    // Find column indices
+    const yearIdx = headers.indexOf('Year');
+    const eventIdIdx = headers.indexOf('EventID');
+    const eventNumIdx = headers.indexOf('EventNumber');
+    const lastCertIdx = headers.indexOf('LastCertNumber');
+    const seqIdIdx = headers.indexOf('SequenceID');
+    
+    // Look for existing sequence for this event and year
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][yearIdx] === year && data[i][eventIdIdx] === eventId) {
+        return {
+          sequenceId: data[i][seqIdIdx],
+          eventNumber: data[i][eventNumIdx],
+          lastCertNumber: data[i][lastCertIdx] || 0,
+          rowIndex: i + 1 // 1-based row for updates
+        };
+      }
+    }
+    
+    // No sequence found, find the next event number for this year
+    let maxEventNumber = 0;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][yearIdx] === year) {
+        const eventNum = parseInt(data[i][eventNumIdx]) || 0;
+        if (eventNum > maxEventNumber) {
+          maxEventNumber = eventNum;
+        }
+      }
+    }
+    
+    // Create new sequence with next event number
+    return createEventSequence(sheet, eventId, eventTitle, year, chapterCode, maxEventNumber + 1);
+  }
+
+  /**
+  * Create a new event sequence record
+  */
+  function createEventSequence(sheet, eventId, eventTitle, year, chapterCode, eventNumber) {
+    const sequenceId = `SEQ-${year}-${String(eventNumber).padStart(2, '0')}`;
+    const now = new Date().toISOString();
+    
+    const row = [
+      sequenceId,
+      year,
+      eventId,
+      eventTitle || '',
+      eventNumber,
+      0, // LastCertNumber starts at 0
+      chapterCode,
+      now,
+      now
+    ];
+    
+    sheet.appendRow(row);
+    
+    return {
+      sequenceId: sequenceId,
+      eventNumber: eventNumber,
+      lastCertNumber: 0,
+      rowIndex: sheet.getLastRow()
+    };
+  }
+
+  /**
+  * Increment the certificate number for an event sequence and return the new number
+  */
+  function incrementCertNumber(sequenceRowIndex) {
+    const sheet = getControlSequencesSheet();
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const lastCertIdx = headers.indexOf('LastCertNumber');
+    const updatedAtIdx = headers.indexOf('UpdatedAt');
+    
+    // Get current value
+    const currentValue = sheet.getRange(sequenceRowIndex, lastCertIdx + 1).getValue() || 0;
+    const newValue = parseInt(currentValue) + 1;
+    
+    // Update the cell
+    sheet.getRange(sequenceRowIndex, lastCertIdx + 1).setValue(newValue);
+    sheet.getRange(sequenceRowIndex, updatedAtIdx + 1).setValue(new Date().toISOString());
+    
+    return newValue;
+  }
+
+  /**
+  * Generate control number for a certificate
+  * Format: YSP-YY-TCXXYYY
+  * - YSP: Organization prefix
+  * - YY: 2-digit year
+  * - TC: Chapter code
+  * - XX: Event number (2 digits)
+  * - YYY: Certificate number (3 digits)
+  */
+  function generateControlNumber(eventId, eventTitle, existingSequence = null) {
+    const currentYear = new Date().getFullYear();
+    const yearShort = String(currentYear).slice(-2);
+    
+    // Get or create the event sequence
+    let sequence;
+    if (existingSequence && existingSequence.rowIndex) {
+      sequence = existingSequence;
+    } else {
+      sequence = getOrCreateEventSequence(eventId, eventTitle, currentYear);
+    }
+    
+    // Increment and get the new certificate number
+    const certNumber = incrementCertNumber(sequence.rowIndex);
+    
+    const chapterCode = getChapterCode();
+    const eventNum = String(sequence.eventNumber).padStart(2, '0');
+    const certNum = String(certNumber).padStart(3, '0');
+    
+    return {
+      controlNumber: `YSP-${yearShort}-${chapterCode}${eventNum}${certNum}`,
+      eventNumber: sequence.eventNumber,
+      certNumber: certNumber,
+      sequence: sequence
+    };
+  }
+
+  /**
+  * Generate control number prefix for an issuance (without the certificate number)
+  * Format: YSP-YY-TCXX
+  */
+  function generateControlNumberPrefix(eventId, eventTitle) {
+    const currentYear = new Date().getFullYear();
+    const yearShort = String(currentYear).slice(-2);
+    
+    // Get or create the event sequence (don't increment cert number here)
+    const sequence = getOrCreateEventSequence(eventId, eventTitle, currentYear);
+    
+    const chapterCode = getChapterCode();
+    const eventNum = String(sequence.eventNumber).padStart(2, '0');
+    
+    return {
+      prefix: `YSP-${yearShort}-${chapterCode}${eventNum}`,
+      eventNumber: sequence.eventNumber,
+      sequence: sequence
+    };
+  }
+
+  /**
+  * Batch generate control numbers for multiple recipients
+  * More efficient than calling generateControlNumber repeatedly
+  */
+  function batchGenerateControlNumbers(eventId, eventTitle, recipientCount) {
+    const currentYear = new Date().getFullYear();
+    const yearShort = String(currentYear).slice(-2);
+    
+    // Get or create the event sequence
+    const sequence = getOrCreateEventSequence(eventId, eventTitle, currentYear);
+    
+    const sheet = getControlSequencesSheet();
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const lastCertIdx = headers.indexOf('LastCertNumber');
+    const updatedAtIdx = headers.indexOf('UpdatedAt');
+    
+    // Get current value and calculate new range
+    const startCertNumber = (parseInt(sheet.getRange(sequence.rowIndex, lastCertIdx + 1).getValue()) || 0) + 1;
+    const endCertNumber = startCertNumber + recipientCount - 1;
+    
+    // Update the last cert number to the end value
+    sheet.getRange(sequence.rowIndex, lastCertIdx + 1).setValue(endCertNumber);
+    sheet.getRange(sequence.rowIndex, updatedAtIdx + 1).setValue(new Date().toISOString());
+    
+    const chapterCode = getChapterCode();
+    const eventNum = String(sequence.eventNumber).padStart(2, '0');
+    const prefix = `YSP-${yearShort}-${chapterCode}${eventNum}`;
+    
+    // Generate array of control numbers
+    const controlNumbers = [];
+    for (let i = 0; i < recipientCount; i++) {
+      const certNum = String(startCertNumber + i).padStart(3, '0');
+      controlNumbers.push(`${prefix}${certNum}`);
+    }
+    
+    return {
+      prefix: prefix,
+      controlNumbers: controlNumbers,
+      eventNumber: sequence.eventNumber,
+      startCertNumber: startCertNumber,
+      endCertNumber: endCertNumber
+    };
+  }
+
+  /**
+  * Get event details from the Attendance system
+  */
+  function getEventDetails(eventId) {
+    try {
+      const ATTENDANCE_SPREADSHEET_ID = '1Xn7w9kzNrP6dmZXYXjxaO11Lmao79wn9w1SPCiqFtcA';
+      
+      const ss = SpreadsheetApp.openById(ATTENDANCE_SPREADSHEET_ID);
+      const eventsSheet = ss.getSheetByName('Events');
+      
+      if (!eventsSheet || eventsSheet.getLastRow() < 2) {
+        return { success: false, error: 'No events found' };
+      }
+      
+      const data = eventsSheet.getDataRange().getValues();
+      const headers = data[0];
+      
+      const eventIdIdx = headers.indexOf('EventID');
+      const titleIdx = headers.indexOf('Title');
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][eventIdIdx] === eventId) {
+          const event = {};
+          headers.forEach((h, idx) => {
+            event[h] = data[i][idx];
+          });
+          return { success: true, data: event };
+        }
+      }
+      
+      return { success: false, error: 'Event not found' };
+    } catch (e) {
+      return { success: false, error: e.toString() };
+    }
+  }
+
+  /**
+  * Get control number info for an issuance (to show in preview)
+  */
+  function getControlNumberInfo(issuanceId) {
+    const issuanceResult = getIssuanceById(issuanceId);
+    if (!issuanceResult.success) {
+      return { success: false, error: 'Issuance not found' };
+    }
+    
+    const issuance = issuanceResult.data;
+    const eventId = issuance.EventID;
+    
+    if (!eventId) {
+      return { success: false, error: 'This issuance is not linked to an event' };
+    }
+    
+    const recipientsResult = getRecipientsByIssuance(issuanceId);
+    const recipients = recipientsResult.data || [];
+    
+    return {
+      success: true,
+      prefix: issuance.ControlNumberPrefix || '',
+      eventNumber: issuance.EventNumber || '',
+      totalRecipients: recipients.length,
+      recipientsWithControlNumbers: recipients.filter(r => r.ControlNumber).length,
+      recipients: recipients.map(r => ({
+        name: r.RecipientName,
+        controlNumber: r.ControlNumber
+      }))
+    };
+  }
+
+  /**
+  * Preview control number format for an event (without actually creating it)
+  * Useful for showing users what control numbers will look like before creating issuance
+  */
+  function previewControlNumberForEvent(eventId, eventTitle) {
+    if (!eventId) {
+      return { success: false, error: 'Event ID is required' };
+    }
+    
+    const currentYear = new Date().getFullYear();
+    const yearShort = String(currentYear).slice(-2);
+    const chapterCode = getChapterCode();
+    
+    // Check if this event already has a sequence
+    const sheet = getControlSequencesSheet();
+    let eventNumber = null;
+    let lastCertNumber = 0;
+    let isExistingSequence = false;
+    
+    if (sheet.getLastRow() > 1) {
+      const data = sheet.getDataRange().getValues();
+      const headers = data[0];
+      
+      const yearIdx = headers.indexOf('Year');
+      const eventIdIdx = headers.indexOf('EventID');
+      const eventNumIdx = headers.indexOf('EventNumber');
+      const lastCertIdx = headers.indexOf('LastCertNumber');
+      
+      // Look for existing sequence
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][yearIdx] === currentYear && data[i][eventIdIdx] === eventId) {
+          eventNumber = data[i][eventNumIdx];
+          lastCertNumber = data[i][lastCertIdx] || 0;
+          isExistingSequence = true;
+          break;
+        }
+      }
+      
+      // If no sequence for this event, find the next event number
+      if (eventNumber === null) {
+        let maxEventNumber = 0;
+        for (let i = 1; i < data.length; i++) {
+          if (data[i][yearIdx] === currentYear) {
+            const eventNum = parseInt(data[i][eventNumIdx]) || 0;
+            if (eventNum > maxEventNumber) {
+              maxEventNumber = eventNum;
+            }
+          }
+        }
+        eventNumber = maxEventNumber + 1;
+      }
+    } else {
+      // No sequences yet, this would be event #1
+      eventNumber = 1;
+    }
+    
+    const eventNum = String(eventNumber).padStart(2, '0');
+    const prefix = `YSP-${yearShort}-${chapterCode}${eventNum}`;
+    
+    // Get event details if title not provided
+    let resolvedTitle = eventTitle;
+    if (!resolvedTitle) {
+      const eventResult = getEventDetails(eventId);
+      if (eventResult.success && eventResult.data) {
+        resolvedTitle = eventResult.data.Title || '';
+      }
+    }
+    
+    // Example control numbers
+    const nextCertNum = lastCertNumber + 1;
+    const exampleNumbers = [];
+    for (let i = 0; i < 3; i++) {
+      const certNum = String(nextCertNum + i).padStart(3, '0');
+      exampleNumbers.push(`${prefix}${certNum}`);
+    }
+    
+    return {
+      success: true,
+      eventId: eventId,
+      eventTitle: resolvedTitle,
+      year: currentYear,
+      chapterCode: chapterCode,
+      eventNumber: eventNumber,
+      prefix: prefix,
+      isExistingSequence: isExistingSequence,
+      lastCertNumber: lastCertNumber,
+      nextCertNumber: nextCertNum,
+      exampleNumbers: exampleNumbers,
+      format: 'YSP-YY-TCXXYYY',
+      formatExplanation: {
+        YSP: 'Organization prefix',
+        YY: `Year (${yearShort})`,
+        TC: `Chapter code (${chapterCode})`,
+        XX: `Event number (${eventNum})`,
+        YYY: 'Certificate number (001, 002, etc.)'
+      }
+    };
+  }
+
+  // ============================================================================
   // RECIPIENT OPERATIONS
   // ============================================================================
 
@@ -1120,12 +1634,24 @@
   * @param {string} issuanceId - The issuance ID
   * @param {Array} recipients - Array of recipient objects
   * @param {boolean} isDownloadOnly - If true, mark recipients as Sent/Downloaded status
+  * @param {Object} controlNumberData - Optional: { eventId, eventTitle } for control number generation
   */
-  function addRecipients(issuanceId, recipients, isDownloadOnly = false) {
+  function addRecipients(issuanceId, recipients, isDownloadOnly = false, controlNumberData = null) {
     const ss = SpreadsheetApp.openById(ISSUANCE_CONFIG.SPREADSHEET_ID);
     const sheet = ss.getSheetByName(ISSUANCE_CONFIG.SHEETS.RECIPIENTS);
     
     const now = new Date().toISOString();
+    
+    // Generate control numbers if event data is provided
+    let controlNumbers = [];
+    if (controlNumberData && controlNumberData.eventId) {
+      const batchResult = batchGenerateControlNumbers(
+        controlNumberData.eventId,
+        controlNumberData.eventTitle || '',
+        recipients.length
+      );
+      controlNumbers = batchResult.controlNumbers;
+    }
     
     const rows = recipients.map((r, i) => [
       `RCP-${issuanceId}-${i + 1}`,
@@ -1137,14 +1663,15 @@
       isDownloadOnly ? now : '', // SentAt - set if downloadOnly
       '', // FailedReason
       '', // PDFFileId
-      ''  // DownloadedAt
+      '',  // DownloadedAt
+      controlNumbers[i] || r.controlNumber || '' // ControlNumber
     ]);
     
     if (rows.length > 0) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 10).setValues(rows);
+      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 11).setValues(rows);
     }
     
-    return { success: true, count: rows.length };
+    return { success: true, count: rows.length, controlNumbers: controlNumbers };
   }
 
   /**
@@ -1527,6 +2054,11 @@
           recipientFieldValues['{NAME}'] = displayName;
         }
         
+        // Add control number if available
+        if (recipient.controlNumber) {
+          recipientFieldValues['{CONTROL_NUMBER}'] = recipient.controlNumber;
+        }
+        
         const result = generatePdfFromTemplate(
           data.templateUrl,
           recipientFieldValues,
@@ -1875,6 +2407,11 @@
           // If custom name provided, also apply ALL CAPS
           recipientFieldValues['{NAME}'] = recipientFieldValues['{NAME}'].toUpperCase();
         }
+        
+        // Add control number if available
+        if (recipient.ControlNumber) {
+          recipientFieldValues['{CONTROL_NUMBER}'] = recipient.ControlNumber;
+        }
 
         // Generate PDF
         const pdfResult = generatePdfFromTemplate(
@@ -2044,6 +2581,11 @@
         recipientFieldValues['{NAME}'] = recipientFieldValues['{NAME}'].toUpperCase();
       }
       
+      // Add control number if available
+      if (recipient.ControlNumber) {
+        recipientFieldValues['{CONTROL_NUMBER}'] = recipient.ControlNumber;
+      }
+      
       // Generate PDF
       const pdfResult = generatePdfFromTemplate(
         templateUrl,
@@ -2176,6 +2718,11 @@
         recipientFieldValues['{NAME}'] = recipient.RecipientName;
       }
       
+      // Add control number if available
+      if (recipient.ControlNumber) {
+        recipientFieldValues['{CONTROL_NUMBER}'] = recipient.ControlNumber;
+      }
+      
       const pdfResult = generatePdfFromTemplate(templateUrl, recipientFieldValues, recipient.RecipientName);
       
       if (pdfResult.success) {
@@ -2199,6 +2746,11 @@
       // Only use recipient name as fallback if no custom {NAME} value was provided
       if (!recipientFieldValues['{NAME}'] || recipientFieldValues['{NAME}'].trim() === '') {
         recipientFieldValues['{NAME}'] = recipient.RecipientName;
+      }
+      
+      // Add control number if available
+      if (recipient.ControlNumber) {
+        recipientFieldValues['{CONTROL_NUMBER}'] = recipient.ControlNumber;
       }
       
       const pdfResult = generatePdfFromTemplate(templateUrl, recipientFieldValues, recipient.RecipientName);
@@ -2646,5 +3198,64 @@
     });
     
     Logger.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  /**
+  * Test control number generation
+  * Run this to verify control numbers are generated correctly
+  */
+  function testControlNumberGeneration() {
+    // Test preview for an event
+    const previewResult = previewControlNumberForEvent('TEST-EVENT-001', 'Test Event');
+    Logger.log('Preview Result: ' + JSON.stringify(previewResult, null, 2));
+    
+    // Test batch generation
+    const batchResult = batchGenerateControlNumbers('TEST-EVENT-001', 'Test Event', 5);
+    Logger.log('Batch Result: ' + JSON.stringify(batchResult, null, 2));
+    
+    return {
+      preview: previewResult,
+      batch: batchResult
+    };
+  }
+
+  /**
+  * Test creating an issuance with event and control numbers
+  */
+  function testCreateIssuanceWithEvent() {
+    const result = createIssuance({
+      title: 'Test Certificate with Control Number',
+      templateId: 'TMPL-0001',
+      templateName: 'Digital Certificate - Event Participation',
+      createdBy: 'admin@ysp.org',
+      recipientType: 'Event',
+      eventId: 'TEST-EVENT-002',
+      eventTitle: 'Test Event for Control Numbers',
+      recipientDetails: [
+        { name: 'John Doe', email: 'john@example.com' },
+        { name: 'Jane Smith', email: 'jane@example.com' }
+      ],
+      totalRecipients: 2,
+      fieldInputs: {
+        '{EVENT}': 'Test Event for Control Numbers',
+        '{DATE}': 'February 5, 2026'
+      },
+      emailTitle: 'Your Certificate of Participation',
+      emailMessage: 'Thank you for attending our event. Please find your certificate attached.',
+      recipients: [
+        { name: 'John Doe', email: 'john@example.com', type: 'Member' },
+        { name: 'Jane Smith', email: 'jane@example.com', type: 'Member' }
+      ]
+    });
+    
+    Logger.log(JSON.stringify(result, null, 2));
+    
+    // Get control number info
+    if (result.success) {
+      const controlInfo = getControlNumberInfo(result.id);
+      Logger.log('Control Number Info: ' + JSON.stringify(controlInfo, null, 2));
+    }
+    
     return result;
   }

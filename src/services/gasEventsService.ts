@@ -693,6 +693,66 @@ export async function duplicateEvent(
   return { eventId: response.eventId || '' };
 }
 
+/**
+ * Add a single recipient to an event
+ * Appends to the existing recipients list without overwriting
+ */
+export async function addEventRecipient(
+  eventId: string,
+  recipientId: string,
+  recipientName: string,
+  signal?: AbortSignal
+): Promise<{ message: string; totalRecipients?: number; alreadyExists?: boolean }> {
+  const response = await gasPost<{ message: string; totalRecipients?: number; alreadyExists?: boolean }>({
+    action: 'addEventRecipient',
+    eventId,
+    recipientId,
+    recipientName,
+  }, signal);
+
+  if (!response.success) {
+    throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to add recipient');
+  }
+
+  // Invalidate cache
+  clearEventsCache();
+
+  return { 
+    message: response.message || 'Recipient added',
+    totalRecipients: response.totalRecipients,
+    alreadyExists: response.alreadyExists
+  };
+}
+
+/**
+ * Add multiple recipients to an event at once
+ */
+export async function addEventRecipients(
+  eventId: string,
+  recipients: Array<{ id: string; name: string }>,
+  signal?: AbortSignal
+): Promise<{ message: string; addedCount: number; skippedCount: number; totalRecipients?: number }> {
+  const response = await gasPost<{ message: string; addedCount: number; skippedCount: number; totalRecipients?: number }>({
+    action: 'addEventRecipients',
+    eventId,
+    recipients,
+  }, signal);
+
+  if (!response.success) {
+    throw new EventsAPIError(EventsErrorCodes.SERVER_ERROR, response.error || 'Failed to add recipients');
+  }
+
+  // Invalidate cache
+  clearEventsCache();
+
+  return { 
+    message: response.message || 'Recipients added',
+    addedCount: response.addedCount || 0,
+    skippedCount: response.skippedCount || 0,
+    totalRecipients: response.totalRecipients
+  };
+}
+
 // =====================================================
 // ATTENDANCE API FUNCTIONS
 // =====================================================

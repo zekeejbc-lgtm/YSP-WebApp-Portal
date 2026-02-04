@@ -58,7 +58,7 @@ import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import CustomDropdown from "./CustomDropdown";
-import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle, Search, User, UserX, Users } from "lucide-react";
+import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle, Search, User, UserX, Users, Building, AtSign } from "lucide-react";
 import {
   fetchEvents,
   clearEventsCache,
@@ -955,6 +955,38 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
   const [isLoadingRecipients, setIsLoadingRecipients] = useState(false);
   const [recipientSearchFilter, setRecipientSearchFilter] = useState("");
   
+  // Smart search @ command system (similar to IssuanceCenterPage)
+  type AttendanceSearchCommand = '@recipients' | '@all' | '@committee' | '@person' | null;
+  const [activeSearchCommand, setActiveSearchCommand] = useState<AttendanceSearchCommand>(null);
+  const [commandSearchQuery, setCommandSearchQuery] = useState("");
+  const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
+  const [batchNotFoundNames, setBatchNotFoundNames] = useState<string[]>([]);
+  
+  // Committees for @committee command
+  const COMMITTEES = [
+    { id: 'executive', name: 'Executive Committee' },
+    { id: 'environmental', name: 'Environmental Conservation' },
+    { id: 'youth-dev', name: 'Youth Development' },
+    { id: 'outreach', name: 'Community Outreach' },
+    { id: 'education', name: 'Education and Scholarship' },
+    { id: 'health', name: 'Health and Wellness' },
+    { id: 'sports', name: 'Sports and Recreation' },
+    { id: 'finance', name: 'Finance and Resource Mobilization' },
+    { id: 'communications', name: 'Communications and Media' },
+    { id: 'membership', name: 'Membership and Recruitment' },
+    { id: 'events', name: 'Events and Programs' },
+    { id: 'documentation', name: 'Documentation and Records' },
+    { id: 'general', name: 'General Members' },
+  ];
+  
+  // Smart search command definitions
+  const SEARCH_COMMANDS = [
+    { command: '@person' as const, icon: User, label: 'Search by name/ID', color: '#3b82f6' },
+    { command: '@committee' as const, icon: Building, label: 'Select by committee', color: '#10b981' },
+    { command: '@all' as const, icon: Users, label: 'Select all members', color: '#f59e0b' },
+    { command: '@recipients' as const, icon: AtSign, label: 'Event recipients', color: '#8b5cf6' },
+  ];
+  
   const memberCacheRef = useRef<Map<string, MemberForAttendance>>(new Map());
   const isProcessingScanRef = useRef(false);
   const isStartingScannerRef = useRef(false);
@@ -1680,6 +1712,164 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
       setIsLoadingRecipients(false);
     }
   }, [selectedEvent, members, isOnline, cacheMember]);
+
+  // Handle smart search @ command selection
+  const handleSelectSearchCommand = useCallback(async (command: AttendanceSearchCommand) => {
+    setActiveSearchCommand(command);
+    setCommandSearchQuery('');
+    setShowCommandSuggestions(false);
+    setMemberSearchInput('');
+    
+    switch (command) {
+      case '@recipients':
+        setShowRecipientsMode(true);
+        setRecipientSearchFilter('');
+        loadEventRecipients();
+        setActiveSearchCommand(null);
+        break;
+      
+      case '@all':
+        // Load all members and add them all
+        setIsLoadingRecipients(true);
+        try {
+          let allMembers = members;
+          if (members.length < 50 && isOnline) {
+            allMembers = await getMembersForAttendance(undefined, 1000);
+            allMembers.forEach(cacheMember);
+            setMembers(allMembers);
+            saveMembersToCache(allMembers);
+          }
+          // Add all members to selection
+          const existingIds = new Set(selectedMembers.map(m => m.id));
+          const toAdd = allMembers.filter(m => !existingIds.has(m.id));
+          setSelectedMembers(prev => [...prev, ...toAdd]);
+          toast.success(`Added ${toAdd.length} members (${selectedMembers.length} already selected)`, { duration: 3000 });
+        } catch (error) {
+          console.error("Failed to load all members:", error);
+          toast.error("Failed to load members");
+        } finally {
+          setIsLoadingRecipients(false);
+          setActiveSearchCommand(null);
+        }
+        break;
+      
+      case '@committee':
+        // Show committee selection dropdown
+        setShowCommandSuggestions(true);
+        break;
+      
+      case '@person':
+        // Just focus on person search
+        setShowMemberDropdown(true);
+        break;
+    }
+  }, [loadEventRecipients, members, isOnline, cacheMember, selectedMembers]);
+  
+  // Handle committee selection from @committee command
+  const handleSelectCommittee = useCallback(async (committeeId: string, committeeName: string) => {
+    setIsLoadingRecipients(true);
+    try {
+      let allMembers = members;
+      if (members.length < 50 && isOnline) {
+        allMembers = await getMembersForAttendance(undefined, 1000);
+        allMembers.forEach(cacheMember);
+        setMembers(allMembers);
+        saveMembersToCache(allMembers);
+      }
+      
+      // Filter members by committee
+      const committeeMembers = committeeId === 'general'
+        ? allMembers.filter(m => !m.committee || m.committee.trim() === '' || m.committee.toLowerCase().includes('general'))
+        : allMembers.filter(m => m.committee?.toLowerCase().includes(committeeName.toLowerCase()));
+      
+      // Add to selection
+      const existingIds = new Set(selectedMembers.map(m => m.id));
+      const toAdd = committeeMembers.filter(m => !existingIds.has(m.id));
+      setSelectedMembers(prev => [...prev, ...toAdd]);
+      
+      const skipped = committeeMembers.length - toAdd.length;
+      if (skipped > 0) {
+        toast.success(`Added ${toAdd.length} from ${committeeName} (${skipped} already selected)`);
+      } else {
+        toast.success(`Added ${toAdd.length} members from ${committeeName}`);
+      }
+    } catch (error) {
+      console.error("Failed to load committee members:", error);
+      toast.error("Failed to load committee members");
+    } finally {
+      setIsLoadingRecipients(false);
+      setActiveSearchCommand(null);
+      setShowCommandSuggestions(false);
+      setCommandSearchQuery('');
+    }
+  }, [members, isOnline, cacheMember, selectedMembers]);
+  
+  // Handle batch comma/Enter input for multiple names
+  const handleBatchNameInput = useCallback((input: string) => {
+    if (!input.trim()) return;
+    
+    // Split by comma or newline
+    const names = input.split(/[,\n]/).map(n => n.trim()).filter(n => n.length > 0);
+    
+    if (names.length === 0) return;
+    
+    const foundMembers: MemberForAttendance[] = [];
+    const notFound: string[] = [];
+    const alreadySelected: string[] = [];
+    
+    const existingIds = new Set(selectedMembers.map(m => m.id));
+    
+    for (const name of names) {
+      // Search for member by name (partial match), id, or exact match
+      const nameLower = name.toLowerCase();
+      const foundMember = members.find(m => 
+        m.name.toLowerCase() === nameLower ||
+        m.id.toLowerCase() === nameLower ||
+        m.name.toLowerCase().includes(nameLower) ||
+        nameLower.includes(m.name.toLowerCase().split(' ')[0]) || // Match first name
+        nameLower.includes(m.name.toLowerCase().split(',')[0]?.trim()) // Match surname (if format is "Surname, First")
+      );
+      
+      if (foundMember) {
+        if (existingIds.has(foundMember.id)) {
+          alreadySelected.push(foundMember.name);
+        } else {
+          foundMembers.push(foundMember);
+          existingIds.add(foundMember.id);
+        }
+      } else {
+        notFound.push(name);
+      }
+    }
+    
+    // Add found members to selection
+    if (foundMembers.length > 0) {
+      setSelectedMembers(prev => [...prev, ...foundMembers]);
+    }
+    
+    // Clear input
+    setMemberSearchInput('');
+    setBatchNotFoundNames(notFound);
+    
+    // Show results
+    if (foundMembers.length > 0 && notFound.length === 0) {
+      toast.success(`Added ${foundMembers.length} member${foundMembers.length !== 1 ? 's' : ''}`, { duration: 2000 });
+    } else if (foundMembers.length > 0 && notFound.length > 0) {
+      toast.warning(
+        `Added ${foundMembers.length}, ${notFound.length} not found`,
+        { description: `Not found: ${notFound.join(', ')}`, duration: 5000 }
+      );
+    } else if (foundMembers.length === 0 && notFound.length > 0) {
+      toast.error(`No matches found`, {
+        description: `Not found: ${notFound.join(', ')}`,
+        duration: 5000
+      });
+    }
+    
+    if (alreadySelected.length > 0) {
+      toast.info(`${alreadySelected.length} already selected`, { duration: 2000 });
+    }
+  }, [members, selectedMembers]);
 
   // Load members when entering recording step
   useEffect(() => {
@@ -3771,20 +3961,39 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   type="text"
-                  value={memberSearchInput}
+                  value={activeSearchCommand ? `${activeSearchCommand} ${commandSearchQuery}` : memberSearchInput}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setMemberSearchInput(value);
-                    setShowMemberDropdown(true);
                     
-                    // Check for @recipients command
-                    if (value.toLowerCase() === '@recipients' || value.toLowerCase() === '@recipient') {
-                      setMemberSearchInput('');
-                      setShowRecipientsMode(true);
-                      setRecipientSearchFilter('');
-                      loadEventRecipients();
+                    // Check if user is typing an @ command
+                    if (value.startsWith('@') && !activeSearchCommand) {
+                      setMemberSearchInput(value);
+                      setShowCommandSuggestions(true);
+                      setShowMemberDropdown(false);
+                      
+                      // Check for exact @ command matches
+                      const lowerValue = value.toLowerCase();
+                      const matchedCommand = SEARCH_COMMANDS.find(c => c.command === lowerValue);
+                      if (matchedCommand) {
+                        handleSelectSearchCommand(matchedCommand.command);
+                        setMemberSearchInput('');
+                        return;
+                      }
                       return;
                     }
+                    
+                    // If a command is active, update the command search query
+                    if (activeSearchCommand) {
+                      const queryPart = value.startsWith(activeSearchCommand) 
+                        ? value.slice(activeSearchCommand.length).trim() 
+                        : value;
+                      setCommandSearchQuery(queryPart);
+                      return;
+                    }
+                    
+                    setMemberSearchInput(value);
+                    setShowMemberDropdown(true);
+                    setShowCommandSuggestions(false);
                     
                     // Exit recipients mode if user clears or types something else after being in recipients mode
                     if (showRecipientsMode && !value.startsWith('@')) {
@@ -3825,12 +4034,39 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                       }
                     }
                   }}
-                  onFocus={() => setShowMemberDropdown(true)}
+                  onFocus={() => {
+                    if (memberSearchInput.startsWith('@')) {
+                      setShowCommandSuggestions(true);
+                    } else {
+                      setShowMemberDropdown(true);
+                    }
+                  }}
                   onKeyDown={(e) => {
-                    // Handle Enter key to add member
-                    if (e.key === 'Enter' && memberSearchInput.trim()) {
+                    // Handle Escape to clear command
+                    if (e.key === 'Escape') {
+                      if (activeSearchCommand) {
+                        setActiveSearchCommand(null);
+                        setCommandSearchQuery('');
+                        setShowCommandSuggestions(false);
+                        setMemberSearchInput('');
+                        e.preventDefault();
+                        return;
+                      }
+                    }
+                    
+                    // Handle Enter key to add member or process batch input
+                    if (e.key === 'Enter') {
                       e.preventDefault();
+                      
+                      // If there's a comma in the input, process as batch
+                      if (memberSearchInput.includes(',')) {
+                        handleBatchNameInput(memberSearchInput);
+                        return;
+                      }
+                      
                       const searchTerm = memberSearchInput.trim();
+                      if (!searchTerm) return;
+                      
                       const foundMember = members.find(m => 
                         m.name.toLowerCase() === searchTerm.toLowerCase() ||
                         m.id.toLowerCase() === searchTerm.toLowerCase() ||
@@ -3841,34 +4077,42 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
                         setMemberSearchInput('');
                         setShowMemberDropdown(false);
                         toast.success(`Added: ${foundMember.name}`, { duration: 1500 });
+                      } else if (!foundMember) {
+                        toast.error(`Member not found: "${searchTerm}"`, { duration: 2000 });
+                        setBatchNotFoundNames([searchTerm]);
                       }
                     }
                     // Handle Backspace to remove last chip when input is empty
-                    if (e.key === 'Backspace' && !memberSearchInput && selectedMembers.length > 0) {
+                    if (e.key === 'Backspace' && !memberSearchInput && !activeSearchCommand && selectedMembers.length > 0) {
                       const lastMember = selectedMembers[selectedMembers.length - 1];
                       setSelectedMembers(prev => prev.slice(0, -1));
                       toast.info(`Removed: ${lastMember.name}`, { duration: 1500 });
                     }
                   }}
-                  placeholder={selectedMembers.length > 0 
-                    ? "Add more members (type and press Enter or comma)..." 
+                  placeholder={activeSearchCommand 
+                    ? (activeSearchCommand === '@committee' ? 'Type committee name...' : 'Type to search...')
+                    : selectedMembers.length > 0 
+                    ? "Add more (comma-separated names, press Enter)..." 
                     : showRecipientsMode 
                     ? "Filter recipients..." 
-                    : "Search members or type @recipients to see expected participants..."}
+                    : "Type @ for commands, or paste names separated by commas..."}
                   className="w-full pl-10 pr-10 py-3 rounded-xl border-2 transition-all focus:outline-none"
                   style={{
                     background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
-                    borderColor: (selectedMember || selectedMembers.length > 0)
+                    borderColor: (selectedMember || selectedMembers.length > 0 || activeSearchCommand)
                       ? DESIGN_TOKENS.colors.brand.orange 
                       : isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
                     color: isDark ? '#ffffff' : '#000000',
                   }}
                 />
-                {memberSearchInput && (
+                {(memberSearchInput || activeSearchCommand) && (
                   <button
                     onClick={() => {
                       setMemberSearchInput("");
+                      setActiveSearchCommand(null);
+                      setCommandSearchQuery('');
                       setShowMemberDropdown(true);
+                      setShowCommandSuggestions(false);
                       setShowRecipientsMode(false);
                       setRecipientSearchFilter('');
                     }}
@@ -3881,8 +4125,108 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
 
               {/* Hint text */}
               <p className="text-xs text-muted-foreground mt-1">
-                💡 Tip: Type <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">@recipients</kbd> to see expected participants, or use <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">,</kbd> for batch recording
+                💡 Tip: Type <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">@</kbd> for commands (<kbd className="px-1 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">@all</kbd>, <kbd className="px-1 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">@committee</kbd>, <kbd className="px-1 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs">@recipients</kbd>) or paste comma-separated names
               </p>
+              
+              {/* Not Found Names Feedback */}
+              {batchNotFoundNames.length > 0 && (
+                <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                        Names not found ({batchNotFoundNames.length}):
+                      </p>
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                        {batchNotFoundNames.join(', ')}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setBatchNotFoundNames([])}
+                      className="p-1 rounded hover:bg-amber-100 dark:hover:bg-amber-800/30 transition-colors"
+                    >
+                      <X className="w-3 h-3 text-amber-500" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* @ Command Suggestions Dropdown */}
+              {showCommandSuggestions && memberSearchInput.startsWith('@') && !activeSearchCommand && (
+                <div 
+                  className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl z-50 overflow-hidden"
+                  style={{
+                    background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                    backdropFilter: 'blur(20px)',
+                    borderColor: DESIGN_TOKENS.colors.brand.orange + '40',
+                  }}
+                >
+                  <div className="p-2 border-b" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
+                    <span className="text-xs text-muted-foreground">Quick Commands</span>
+                  </div>
+                  {SEARCH_COMMANDS.filter(cmd => 
+                    cmd.command.toLowerCase().includes(memberSearchInput.toLowerCase())
+                  ).map((cmd) => (
+                    <button
+                      key={cmd.command}
+                      onClick={() => handleSelectSearchCommand(cmd.command)}
+                      className="w-full p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+                    >
+                      <div 
+                        className="w-8 h-8 rounded-full flex items-center justify-center"
+                        style={{ background: cmd.color + '20' }}
+                      >
+                        <cmd.icon className="w-4 h-4" style={{ color: cmd.color }} />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium" style={{ color: cmd.color }}>{cmd.command}</p>
+                        <p className="text-xs text-muted-foreground">{cmd.label}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Committee Selection Dropdown (for @committee command) */}
+              {activeSearchCommand === '@committee' && showCommandSuggestions && (
+                <div 
+                  className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl z-50 max-h-64 overflow-y-auto"
+                  style={{
+                    background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                    backdropFilter: 'blur(20px)',
+                    borderColor: '#10b981' + '40',
+                  }}
+                >
+                  <div className="p-2 border-b sticky top-0" style={{ 
+                    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                    background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                  }}>
+                    <span className="text-xs text-muted-foreground">Select Committee</span>
+                  </div>
+                  {COMMITTEES.filter(c => 
+                    !commandSearchQuery || c.name.toLowerCase().includes(commandSearchQuery.toLowerCase())
+                  ).map((committee) => (
+                    <button
+                      key={committee.id}
+                      onClick={() => handleSelectCommittee(committee.id, committee.name)}
+                      className="w-full p-3 flex items-center gap-3 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors text-left border-b last:border-b-0"
+                      style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }}
+                    >
+                      <Building className="w-5 h-5 text-green-500" />
+                      <div className="flex-1">
+                        <p className="font-medium" style={{ color: isDark ? '#fff' : '#000' }}>{committee.name}</p>
+                      </div>
+                      <span className="text-xs text-green-500">+ Select all</span>
+                    </button>
+                  ))}
+                  {COMMITTEES.filter(c => !commandSearchQuery || c.name.toLowerCase().includes(commandSearchQuery.toLowerCase())).length === 0 && (
+                    <div className="p-4 text-center text-muted-foreground">
+                      <Building className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p>No committees match "{commandSearchQuery}"</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Batch Results - show during/after batch recording */}
               {batchResults.length > 0 && (

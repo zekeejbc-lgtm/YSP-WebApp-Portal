@@ -22,7 +22,7 @@ import {
   X, Plus, Search, FileText, Mail, Download, Eye, Edit2, Trash2,
   ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Loader2, CheckCircle, XCircle, AlertCircle,
   LayoutGrid, List, Send, Users, Calendar, Building, Globe, User,
-  RefreshCw, Settings, Copy, ExternalLink, FileCheck, Clock, Image, Archive, AlertTriangle
+  RefreshCw, Settings, Copy, ExternalLink, FileCheck, Clock, Image, Archive, AlertTriangle, Link, Paperclip
 } from "lucide-react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
@@ -61,6 +61,7 @@ import {
   migrateColumns,
   type Issuance,
   type IssuanceTemplate,
+  type IssuanceAttachment,
   type Recipient,
   type Committee,
   type SendResult,
@@ -145,6 +146,92 @@ const getInitials = (name: string) => {
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   // First letter of first word + first letter of second word  
   return (words[0][0] + words[1][0]).toUpperCase();
+};
+
+// Helper to detect attachment type from URL
+const detectAttachmentType = (url: string): 'pdf' | 'document' | 'spreadsheet' | 'video' | 'image' | 'link' | 'other' => {
+  const lowerUrl = url.toLowerCase();
+  
+  // PDF files
+  if (lowerUrl.includes('.pdf') || lowerUrl.includes('/pdf')) {
+    return 'pdf';
+  }
+  
+  // Google Docs / Word documents
+  if (lowerUrl.includes('docs.google.com/document') || 
+      lowerUrl.includes('.doc') || 
+      lowerUrl.includes('.docx')) {
+    return 'document';
+  }
+  
+  // Google Sheets / Excel spreadsheets
+  if (lowerUrl.includes('docs.google.com/spreadsheet') || 
+      lowerUrl.includes('sheets.google.com') ||
+      lowerUrl.includes('.xls') || 
+      lowerUrl.includes('.xlsx') ||
+      lowerUrl.includes('.csv')) {
+    return 'spreadsheet';
+  }
+  
+  // Videos (YouTube, Facebook videos, etc.)
+  if (lowerUrl.includes('youtube.com') || 
+      lowerUrl.includes('youtu.be') ||
+      lowerUrl.includes('facebook.com/watch') ||
+      lowerUrl.includes('fb.watch') ||
+      lowerUrl.includes('vimeo.com') ||
+      lowerUrl.includes('.mp4') ||
+      lowerUrl.includes('.mov') ||
+      lowerUrl.includes('.avi')) {
+    return 'video';
+  }
+  
+  // Images
+  if (lowerUrl.includes('.jpg') || 
+      lowerUrl.includes('.jpeg') ||
+      lowerUrl.includes('.png') ||
+      lowerUrl.includes('.gif') ||
+      lowerUrl.includes('.webp') ||
+      lowerUrl.includes('.svg') ||
+      lowerUrl.includes('photos.google.com') ||
+      lowerUrl.includes('instagram.com')) {
+    return 'image';
+  }
+  
+  // Google Drive links
+  if (lowerUrl.includes('drive.google.com')) {
+    return 'link';
+  }
+  
+  // Social media links
+  if (lowerUrl.includes('facebook.com') || 
+      lowerUrl.includes('fb.com') ||
+      lowerUrl.includes('twitter.com') ||
+      lowerUrl.includes('x.com') ||
+      lowerUrl.includes('linkedin.com')) {
+    return 'link';
+  }
+  
+  return 'other';
+};
+
+// Helper to get icon for attachment type
+const getAttachmentIcon = (type: string) => {
+  switch (type) {
+    case 'pdf':
+      return '📄';
+    case 'document':
+      return '📝';
+    case 'spreadsheet':
+      return '📊';
+    case 'video':
+      return '🎥';
+    case 'image':
+      return '🖼️';
+    case 'link':
+      return '🔗';
+    default:
+      return '📎';
+  }
 };
 
 // =====================================================
@@ -684,6 +771,12 @@ export default function IssuanceCenterPage({
   const [customTemplateUrl, setCustomTemplateUrl] = useState("");
   const [issuanceTitle, setIssuanceTitle] = useState("");
   const [sendToEmail, setSendToEmail] = useState(true);
+  
+  // Attachments state - for attaching links (Google Drive, YouTube, etc.)
+  const [attachments, setAttachments] = useState<IssuanceAttachment[]>([]);
+  const [newAttachmentName, setNewAttachmentName] = useState("");
+  const [newAttachmentUrl, setNewAttachmentUrl] = useState("");
+  const [showAttachmentForm, setShowAttachmentForm] = useState(false);
   
   // Recipient search state
   const [recipientSearchQuery, setRecipientSearchQuery] = useState("");
@@ -1383,6 +1476,11 @@ export default function IssuanceCenterPage({
     // Reset dynamic field state
     setShowAddFieldInput(false);
     setDynamicFieldInput('');
+    // Reset attachments state
+    setAttachments([]);
+    setNewAttachmentName('');
+    setNewAttachmentUrl('');
+    setShowAttachmentForm(false);
     // Reset edit mode
     setIsEditMode(false);
     setEditingIssuanceId(null);
@@ -1486,6 +1584,17 @@ export default function IssuanceCenterPage({
     } catch {
       setSelectedRecipients([]);
     }
+    
+    // Parse and set attachments
+    try {
+      const attachmentsData = JSON.parse(issuance.Attachments || '[]');
+      setAttachments(attachmentsData);
+    } catch {
+      setAttachments([]);
+    }
+    setNewAttachmentName('');
+    setNewAttachmentUrl('');
+    setShowAttachmentForm(false);
     
     // Reset other states
     setCreateModalTab('recipients');
@@ -2159,7 +2268,9 @@ export default function IssuanceCenterPage({
           NameAllCaps: String(useAllCaps),
           NameStartPos: String(nameField?.nameStartPosition || 8.1),
           NameEndPos: String(nameField?.nameEndPosition || 27.6),
-          NamePosUnit: nameField?.namePositionUnit || 'cm'
+          NamePosUnit: nameField?.namePositionUnit || 'cm',
+          // Include attachments
+          Attachments: JSON.stringify(attachments)
         });
         
         updateUploadToast(toastId, { progress: 80, progressLabel: 'Draft updated...' });
@@ -2203,6 +2314,8 @@ export default function IssuanceCenterPage({
           nameStartPosition: nameField?.nameStartPosition || 8.1,
           nameEndPosition: nameField?.nameEndPosition || 27.6,
           namePositionUnit: (nameField?.namePositionUnit || 'cm') as 'cm' | 'inch',
+          // Include attachments
+          attachments: attachments,
         };
         
         await createIssuance(issuanceData);
@@ -4240,6 +4353,175 @@ export default function IssuanceCenterPage({
                       </div>
                     </div>
                   )}
+                  
+                  {/* Attachments Section - for adding link attachments */}
+                  <div 
+                    className="p-4 rounded-xl border"
+                    style={{ 
+                      background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Paperclip className="w-4 h-4" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                        <span className="font-medium text-sm">Attachments</span>
+                        <span className="text-xs text-muted-foreground">
+                          ({attachments.length} {attachments.length === 1 ? 'link' : 'links'})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowAttachmentForm(!showAttachmentForm)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105"
+                        style={{
+                          background: showAttachmentForm 
+                            ? (isDark ? 'rgba(239, 68, 68, 0.2)' : 'rgba(239, 68, 68, 0.1)')
+                            : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'),
+                          color: showAttachmentForm ? '#ef4444' : (isDark ? '#fff' : '#000'),
+                        }}
+                      >
+                        {showAttachmentForm ? (
+                          <>
+                            <X className="w-3 h-3" />
+                            <span>Cancel</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-3 h-3" />
+                            <span>Add Link</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    
+                    {/* Add attachment form */}
+                    {showAttachmentForm && (
+                      <div 
+                        className="p-3 rounded-lg mb-3 space-y-3"
+                        style={{ 
+                          background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                          border: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)}`,
+                        }}
+                      >
+                        <div>
+                          <label className="block text-xs font-medium mb-1">Display Name</label>
+                          <input
+                            type="text"
+                            value={newAttachmentName}
+                            onChange={(e) => setNewAttachmentName(e.target.value)}
+                            placeholder="e.g., Event Photos, Certificate Template, YouTube Video..."
+                            className="w-full p-2 rounded-lg border text-sm transition-all focus:outline-none focus:border-[#f6421f]"
+                            style={{
+                              background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                              color: isDark ? '#fff' : '#000',
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium mb-1">URL</label>
+                          <input
+                            type="url"
+                            value={newAttachmentUrl}
+                            onChange={(e) => setNewAttachmentUrl(e.target.value)}
+                            placeholder="https://drive.google.com/..., https://youtube.com/..., etc."
+                            className="w-full p-2 rounded-lg border text-sm transition-all focus:outline-none focus:border-[#f6421f]"
+                            style={{
+                              background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                              color: isDark ? '#fff' : '#000',
+                            }}
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Supports: Google Drive, YouTube, Facebook, Instagram, PDFs, Documents, and any URL
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!newAttachmentUrl.trim()) {
+                              toast.error('Please enter a URL');
+                              return;
+                            }
+                            // Validate URL format
+                            try {
+                              new URL(newAttachmentUrl);
+                            } catch {
+                              toast.error('Please enter a valid URL');
+                              return;
+                            }
+                            const type = detectAttachmentType(newAttachmentUrl);
+                            const name = newAttachmentName.trim() || newAttachmentUrl.split('/').pop() || 'Attachment';
+                            setAttachments([...attachments, { name, url: newAttachmentUrl.trim(), type }]);
+                            setNewAttachmentName('');
+                            setNewAttachmentUrl('');
+                            setShowAttachmentForm(false);
+                            toast.success('Attachment added');
+                          }}
+                          disabled={!newAttachmentUrl.trim()}
+                          className="w-full px-3 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{
+                            background: DESIGN_TOKENS.colors.brand.orange,
+                            color: '#fff',
+                          }}
+                        >
+                          Add Attachment
+                        </button>
+                      </div>
+                    )}
+                    
+                    {/* Attachments list */}
+                    {attachments.length > 0 ? (
+                      <div className="space-y-2">
+                        {attachments.map((attachment, index) => (
+                          <div 
+                            key={index}
+                            className="flex items-center justify-between p-2 rounded-lg group hover:bg-opacity-50 transition-all"
+                            style={{ 
+                              background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                            }}
+                          >
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span className="text-lg" title={attachment.type}>
+                                {getAttachmentIcon(attachment.type)}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">{attachment.name}</p>
+                                <p className="text-xs text-muted-foreground truncate">{attachment.url}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <a
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                                title="Open in new tab"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAttachments(attachments.filter((_, i) => i !== index));
+                                  toast.success('Attachment removed');
+                                }}
+                                className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                title="Remove attachment"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground text-center py-2">
+                        No attachments added. Click "Add Link" to attach files via URL.
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
               
@@ -5315,6 +5597,55 @@ export default function IssuanceCenterPage({
                       </div>
                     </div>
                   )}
+                  
+                  {/* Attachments Display */}
+                  {(() => {
+                    let attachmentsList: IssuanceAttachment[] = [];
+                    try {
+                      attachmentsList = JSON.parse(selectedIssuance.Attachments || '[]');
+                    } catch {
+                      attachmentsList = [];
+                    }
+                    if (attachmentsList.length === 0) return null;
+                    
+                    return (
+                      <div>
+                        <h4 className="text-sm font-semibold mb-2" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                          <span className="flex items-center gap-2">
+                            <Paperclip className="w-4 h-4" />
+                            Attachments ({attachmentsList.length})
+                          </span>
+                        </h4>
+                        <div 
+                          className="p-4 rounded-xl space-y-2"
+                          style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
+                        >
+                          {attachmentsList.map((attachment, index) => (
+                            <a
+                              key={index}
+                              href={attachment.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-3 p-3 rounded-lg transition-all hover:scale-[1.01]"
+                              style={{ 
+                                background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                                border: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)}`,
+                              }}
+                            >
+                              <span className="text-xl">
+                                {getAttachmentIcon(attachment.type)}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">{attachment.name}</p>
+                                <p className="text-xs text-muted-foreground truncate">{attachment.url}</p>
+                              </div>
+                              <ExternalLink className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               

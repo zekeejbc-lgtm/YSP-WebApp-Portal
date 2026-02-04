@@ -45,6 +45,15 @@ export interface Issuance {
   NameStartPos?: string; // Start position for name line (default: '8.1')
   NameEndPos?: string; // End position for name line (default: '27.6')
   NamePosUnit?: string; // Unit for positions: 'cm' or 'inch' (default: 'cm')
+  // Attachments - JSON string of array [{name, url, type}]
+  Attachments?: string;
+}
+
+// Attachment type for issuance attachments
+export interface IssuanceAttachment {
+  name: string;  // Display name for the attachment
+  url: string;   // URL to the attachment (Google Drive, YouTube, Facebook, etc.)
+  type: 'pdf' | 'document' | 'spreadsheet' | 'video' | 'image' | 'link' | 'other'; // Type of attachment
 }
 
 export interface IssuanceTemplate {
@@ -121,6 +130,8 @@ export interface CreateIssuanceData {
   nameStartPosition?: number; // Start position for name line (default: 8.1)
   nameEndPosition?: number; // End position for name line (default: 27.6)
   namePositionUnit?: 'cm' | 'inch'; // Unit for positions (default: 'cm')
+  // Attachments - array of links to external files
+  attachments?: IssuanceAttachment[];
 }
 
 export interface CreateTemplateData {
