@@ -72,7 +72,11 @@
       'EmailTitle',
       'EmailMessage',
       'CustomTemplateUrl',
-      'Notes'
+      'Notes',
+      'NameAllCaps',       // true/false - whether to convert names to ALL CAPS
+      'NameStartPos',      // Start position for name line (in cm)
+      'NameEndPos',        // End position for name line (in cm)
+      'NamePosUnit'        // Unit for positioning: 'cm' or 'inch'
     ],
     Templates: [
       'TemplateID',
@@ -302,6 +306,95 @@
     
     // Check if columns are already aligned
     const updatedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    // Check for new name formatting columns
+    const hasNameAllCaps = updatedHeaders.includes('NameAllCaps');
+    const hasNameStartPos = updatedHeaders.includes('NameStartPos');
+    const hasNameEndPos = updatedHeaders.includes('NameEndPos');
+    const hasNamePosUnit = updatedHeaders.includes('NamePosUnit');
+    
+    // Add NameAllCaps column if missing (after Notes)
+    if (!hasNameAllCaps) {
+      const notesIndex = updatedHeaders.indexOf('Notes');
+      if (notesIndex !== -1) {
+        const insertAfterCol = notesIndex + 1;
+        sheet.insertColumnAfter(insertAfterCol);
+        sheet.getRange(1, insertAfterCol + 1).setValue('NameAllCaps');
+        
+        // Set default value 'true' for all existing rows
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          for (let i = 2; i <= lastRow; i++) {
+            sheet.getRange(i, insertAfterCol + 1).setValue('true');
+          }
+        }
+        results.changes.push('Added NameAllCaps column');
+      }
+    }
+    
+    // Refresh headers
+    let refreshedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    // Add NameStartPos column if missing
+    if (!hasNameStartPos) {
+      const allCapsIndex = refreshedHeaders.indexOf('NameAllCaps');
+      if (allCapsIndex !== -1) {
+        const insertAfterCol = allCapsIndex + 1;
+        sheet.insertColumnAfter(insertAfterCol);
+        sheet.getRange(1, insertAfterCol + 1).setValue('NameStartPos');
+        
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          for (let i = 2; i <= lastRow; i++) {
+            sheet.getRange(i, insertAfterCol + 1).setValue('8.1');
+          }
+        }
+        results.changes.push('Added NameStartPos column');
+      }
+    }
+    
+    // Refresh headers again
+    refreshedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    // Add NameEndPos column if missing
+    if (!hasNameEndPos) {
+      const startPosIndex = refreshedHeaders.indexOf('NameStartPos');
+      if (startPosIndex !== -1) {
+        const insertAfterCol = startPosIndex + 1;
+        sheet.insertColumnAfter(insertAfterCol);
+        sheet.getRange(1, insertAfterCol + 1).setValue('NameEndPos');
+        
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          for (let i = 2; i <= lastRow; i++) {
+            sheet.getRange(i, insertAfterCol + 1).setValue('27.6');
+          }
+        }
+        results.changes.push('Added NameEndPos column');
+      }
+    }
+    
+    // Refresh headers again
+    refreshedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    // Add NamePosUnit column if missing
+    if (!hasNamePosUnit) {
+      const endPosIndex = refreshedHeaders.indexOf('NameEndPos');
+      if (endPosIndex !== -1) {
+        const insertAfterCol = endPosIndex + 1;
+        sheet.insertColumnAfter(insertAfterCol);
+        sheet.getRange(1, insertAfterCol + 1).setValue('NamePosUnit');
+        
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          for (let i = 2; i <= lastRow; i++) {
+            sheet.getRange(i, insertAfterCol + 1).setValue('cm');
+          }
+        }
+        results.changes.push('Added NamePosUnit column');
+      }
+    }
+    
     if (results.changes.length === 0 && updatedHeaders.length === expectedHeaders.length) {
       return { success: true, message: 'Columns already aligned correctly', noChanges: true };
     }
@@ -709,7 +802,13 @@
       data.emailTitle || '',
       data.emailMessage || '',
       data.customTemplateUrl || '',
-      data.notes || ''
+      data.notes || '',
+      // Name formatting columns - support both naming conventions
+      (data.nameAllCaps !== undefined ? String(data.nameAllCaps) : 
+       (data.NameAllCaps !== undefined ? String(data.NameAllCaps) : 'true')), // NameAllCaps - default true
+      (data.nameStartPos || data.nameStartPosition || '8.1'),  // NameStartPos - default 8.1cm
+      (data.nameEndPos || data.nameEndPosition || '27.6'),   // NameEndPos - default 27.6cm
+      (data.namePosUnit || data.namePositionUnit || 'cm')     // NamePosUnit - default cm
     ];
     
     sheet.appendRow(row);
@@ -779,6 +878,20 @@
         // Support delivery method update
         if (data.deliveryMethod || data.DeliveryMethod) {
           values[i][colMap['DeliveryMethod']] = data.deliveryMethod || data.DeliveryMethod;
+        }
+        
+        // Name formatting columns - support both naming conventions
+        if (data.nameAllCaps !== undefined || data.NameAllCaps !== undefined) {
+          values[i][colMap['NameAllCaps']] = String(data.nameAllCaps ?? data.NameAllCaps);
+        }
+        if (data.nameStartPos !== undefined || data.nameStartPosition !== undefined || data.NameStartPos !== undefined) {
+          values[i][colMap['NameStartPos']] = data.nameStartPos ?? data.nameStartPosition ?? data.NameStartPos;
+        }
+        if (data.nameEndPos !== undefined || data.nameEndPosition !== undefined || data.NameEndPos !== undefined) {
+          values[i][colMap['NameEndPos']] = data.nameEndPos ?? data.nameEndPosition ?? data.NameEndPos;
+        }
+        if (data.namePosUnit !== undefined || data.namePositionUnit !== undefined || data.NamePosUnit !== undefined) {
+          values[i][colMap['NamePosUnit']] = data.namePosUnit ?? data.namePositionUnit ?? data.NamePosUnit;
         }
         
         // Sending-related fields
@@ -1167,10 +1280,13 @@
   // ============================================================================
 
   /**
-  * Adjust font size for name to fit on one line
+  * Adjust font size for name to fit on one line within specified boundaries
   * This ensures consistent formatting regardless of name length
+  * @param {Body} body - The document body
+  * @param {string} name - The name text to format
+  * @param {Object} positioning - Optional positioning config { start: cm, end: cm, unit: 'cm'|'inch' }
   */
-  function adjustNameFormatting(body, name, maxCharsBeforeResize = 25) {
+  function adjustNameFormatting(body, name, positioning = null, doc = null) {
     // Find the name text in the document
     const searchResult = body.findText(name);
     if (!searchResult) return;
@@ -1182,33 +1298,65 @@
     // Get the text element
     const textElement = element.asText();
     
-    // Calculate appropriate font size based on name length
-    // Default assumption: base font size is around 24-36pt for certificates
-    const nameLength = name.length;
+    // Positioning defines the horizontal boundaries for the name on the certificate
+    // These are absolute positions from the left edge where the name should be centered within
+    // e.g., start=8.1cm, end=27.6cm means the name should be centered within that area
+    let startCm = 8.1;  // Left boundary in cm from left edge
+    let endCm = 27.6;   // Right boundary in cm from left edge
+    
+    if (positioning) {
+      startCm = positioning.start || 8.1;
+      endCm = positioning.end || 27.6;
+      
+      // Convert from inches to cm if needed
+      if (positioning.unit === 'inch') {
+        startCm = startCm * 2.54;
+        endCm = endCm * 2.54;
+      }
+    }
+    
+    // Calculate available width for the name (the boundary width)
+    const widthCm = endCm - startCm;
+    const availableWidthPts = widthCm * 28.35; // 1 cm = 28.35 points
     
     // Get current font size (or default to 28)
     let currentSize = textElement.getFontSize(startOffset);
     if (!currentSize || currentSize < 10) currentSize = 28;
     
-    // Adjust font size based on name length to keep on one line
+    // Calculate name width more accurately
+    // Use a conservative character width factor to ensure single line
+    const nameLength = name.length;
+    const charWidthFactor = 0.65; // Conservative estimate for font width
+    const safetyMargin = 0.85; // Use only 85% of available width to guarantee single line
+    const effectiveWidth = availableWidthPts * safetyMargin;
+    
+    // Calculate the font size needed to fit the name on one line
+    const estimatedTextWidth = nameLength * currentSize * charWidthFactor;
+    
     let newSize = currentSize;
-    if (nameLength > 35) {
-      newSize = Math.max(14, currentSize * 0.6); // Very long names
-    } else if (nameLength > 30) {
-      newSize = Math.max(16, currentSize * 0.7);
-    } else if (nameLength > maxCharsBeforeResize) {
-      newSize = Math.max(18, currentSize * 0.8);
+    if (estimatedTextWidth > effectiveWidth) {
+      // Calculate required font size to fit on one line
+      newSize = effectiveWidth / (nameLength * charWidthFactor);
+      newSize = Math.max(10, Math.floor(newSize)); // Min 10pt, round down to be safe
     }
     
-    // Apply the new font size if changed
-    if (newSize !== currentSize) {
-      textElement.setFontSize(startOffset, endOffset, newSize);
-    }
+    // Apply the new font size
+    textElement.setFontSize(startOffset, endOffset, newSize);
     
-    // Ensure the paragraph containing the name is centered
+    // Just center align the paragraph - don't use indentation as it can cause wrapping issues
+    // The name will be centered on the page, which should align with your measured boundaries
+    // if the template is designed with the {NAME} placeholder in the right location
     const paragraph = element.getParent();
     if (paragraph && paragraph.getType() === DocumentApp.ElementType.PARAGRAPH) {
-      paragraph.asParagraph().setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+      const para = paragraph.asParagraph();
+      
+      // Ensure no indentation that could cause wrapping
+      para.setIndentStart(0);
+      para.setIndentEnd(0);
+      para.setIndentFirstLine(0);
+      
+      // Center align the text
+      para.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
     }
   }
 
@@ -1237,14 +1385,23 @@
       // Store the name value before replacement for formatting
       const nameValue = fieldValues['{NAME}'] || recipientName || '';
       
-      // Replace all field placeholders
+      // Extract name positioning config from fieldValues
+      const namePositioning = {
+        start: parseFloat(fieldValues['{NAME}_START']) || 8.1,
+        end: parseFloat(fieldValues['{NAME}_END']) || 27.6,
+        unit: fieldValues['{NAME}_UNIT'] || 'cm'
+      };
+      
+      // Replace all field placeholders (excluding metadata fields)
       for (const [placeholder, value] of Object.entries(fieldValues)) {
+        // Skip metadata fields that start with {NAME}_
+        if (placeholder.startsWith('{NAME}_')) continue;
         body.replaceText(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), value || '');
       }
       
-      // Apply smart formatting to the name to ensure it fits on one line
+      // Apply smart formatting to the name to ensure it fits on one line within boundaries
       if (nameValue) {
-        adjustNameFormatting(body, nameValue);
+        adjustNameFormatting(body, nameValue, namePositioning, doc);
       }
       
       doc.saveAndClose();
@@ -1332,22 +1489,48 @@
       // Check if a custom name override was provided (applies to ALL recipients)
       const hasCustomNameOverride = data.customNameOverride && data.customNameOverride.trim() !== '';
       
+      // Check for ALL CAPS setting - passed from frontend via data.useAllCaps
+      const useAllCaps = data.useAllCaps === true || data.useAllCaps === 'true';
+      
+      // Get name positioning settings
+      const namePositioning = {
+        start: parseFloat(data.nameStartPosition) || 8.1,
+        end: parseFloat(data.nameEndPosition) || 27.6,
+        unit: data.namePositionUnit || 'cm'
+      };
+      
       // Generate PDF for each recipient
       for (const recipient of data.recipients) {
         // Prepare field values for this recipient
         const recipientFieldValues = { ...data.fieldValues };
+        
+        // Add positioning metadata
+        recipientFieldValues['{NAME}_START'] = String(namePositioning.start);
+        recipientFieldValues['{NAME}_END'] = String(namePositioning.end);
+        recipientFieldValues['{NAME}_UNIT'] = namePositioning.unit;
+        
+        // Get display name - apply ALL CAPS if enabled
+        let displayName = recipient.name;
+        if (useAllCaps) {
+          displayName = displayName.toUpperCase();
+        }
+        
         // Use custom name override if provided, otherwise use each recipient's own name
         if (hasCustomNameOverride) {
-          recipientFieldValues['{NAME}'] = data.customNameOverride.trim();
+          let customName = data.customNameOverride.trim();
+          if (useAllCaps) {
+            customName = customName.toUpperCase();
+          }
+          recipientFieldValues['{NAME}'] = customName;
         } else {
           // Always use the recipient's name for multi-recipient previews (not custom name mode)
-          recipientFieldValues['{NAME}'] = recipient.name;
+          recipientFieldValues['{NAME}'] = displayName;
         }
         
         const result = generatePdfFromTemplate(
           data.templateUrl,
           recipientFieldValues,
-          recipient.name
+          displayName
         );
         
         if (result.success) {
@@ -1606,6 +1789,19 @@
       fieldInputs = JSON.parse(issuance.FieldInputs || '{}');
     } catch (e) {}
     
+    // Get name formatting settings from issuance columns
+    const useAllCaps = issuance.NameAllCaps === 'true' || issuance.NameAllCaps === true;
+    const namePositioning = {
+      start: parseFloat(issuance.NameStartPos) || 8.1,
+      end: parseFloat(issuance.NameEndPos) || 27.6,
+      unit: issuance.NamePosUnit || 'cm'
+    };
+    
+    // Store positioning in fieldValues for PDF generation
+    fieldInputs['{NAME}_START'] = String(namePositioning.start);
+    fieldInputs['{NAME}_END'] = String(namePositioning.end);
+    fieldInputs['{NAME}_UNIT'] = namePositioning.unit;
+    
     // Get settings for email
     const settingsResult = getSettings();
     const settings = settingsResult.data || {};
@@ -1664,17 +1860,27 @@
       try {
         // Prepare field values for this recipient
         const recipientFieldValues = { ...fieldInputs };
+        
+        // Get the display name (apply ALL CAPS if enabled)
+        let displayName = recipient.RecipientName;
+        if (useAllCaps) {
+          displayName = displayName.toUpperCase();
+        }
+        
         // Only use recipient name as fallback if no custom {NAME} value was provided
         // This allows users to set custom values like "Dear Love" when needed
         if (!recipientFieldValues['{NAME}'] || recipientFieldValues['{NAME}'].trim() === '') {
-          recipientFieldValues['{NAME}'] = recipient.RecipientName;
+          recipientFieldValues['{NAME}'] = displayName;
+        } else if (useAllCaps && recipientFieldValues['{NAME}']) {
+          // If custom name provided, also apply ALL CAPS
+          recipientFieldValues['{NAME}'] = recipientFieldValues['{NAME}'].toUpperCase();
         }
 
         // Generate PDF
         const pdfResult = generatePdfFromTemplate(
           templateUrl,
           recipientFieldValues,
-          recipient.RecipientName
+          displayName
         );
         
         if (!pdfResult.success) {
@@ -1801,6 +2007,19 @@
       fieldInputs = JSON.parse(issuance.FieldInputs || '{}');
     } catch (e) {}
     
+    // Get name formatting settings from issuance columns
+    const useAllCaps = issuance.NameAllCaps === 'true' || issuance.NameAllCaps === true;
+    const namePositioning = {
+      start: parseFloat(issuance.NameStartPos) || 8.1,
+      end: parseFloat(issuance.NameEndPos) || 27.6,
+      unit: issuance.NamePosUnit || 'cm'
+    };
+    
+    // Store positioning in fieldValues for PDF generation
+    fieldInputs['{NAME}_START'] = String(namePositioning.start);
+    fieldInputs['{NAME}_END'] = String(namePositioning.end);
+    fieldInputs['{NAME}_UNIT'] = namePositioning.unit;
+    
     // Get settings for email
     const settingsResult = getSettings();
     const settings = settingsResult.data || {};
@@ -1810,16 +2029,26 @@
     try {
       // Prepare field values for this recipient
       const recipientFieldValues = { ...fieldInputs };
+      
+      // Get the display name (apply ALL CAPS if enabled)
+      let displayName = recipient.RecipientName;
+      if (useAllCaps) {
+        displayName = displayName.toUpperCase();
+      }
+      
       // Only use recipient name as fallback if no custom {NAME} value was provided
       if (!recipientFieldValues['{NAME}'] || recipientFieldValues['{NAME}'].trim() === '') {
-        recipientFieldValues['{NAME}'] = recipient.RecipientName;
+        recipientFieldValues['{NAME}'] = displayName;
+      } else if (useAllCaps && recipientFieldValues['{NAME}']) {
+        // If custom name provided, also apply ALL CAPS
+        recipientFieldValues['{NAME}'] = recipientFieldValues['{NAME}'].toUpperCase();
       }
       
       // Generate PDF
       const pdfResult = generatePdfFromTemplate(
         templateUrl,
         recipientFieldValues,
-        recipient.RecipientName
+        displayName
       );
       
       if (!pdfResult.success) {

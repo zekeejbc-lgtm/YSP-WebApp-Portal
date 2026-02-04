@@ -113,6 +113,11 @@ interface FieldInput {
   value: string;
   enabled: boolean;
   isCustomName?: boolean; // For {NAME} field: true = use custom value, false = auto-fill from recipient
+  isAllCaps?: boolean; // For {NAME} field: true = convert name to ALL CAPS
+  // Name positioning options (for certificate name line)
+  nameStartPosition?: number; // Start position in cm (default 8.1)
+  nameEndPosition?: number; // End position in cm (default 27.6)
+  namePositionUnit?: 'cm' | 'inch'; // Unit for positioning (default cm)
 }
 
 // =====================================================
@@ -140,6 +145,108 @@ const getInitials = (name: string) => {
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   // First letter of first word + first letter of second word  
   return (words[0][0] + words[1][0]).toUpperCase();
+};
+
+// =====================================================
+// PREVIEW CACHING UTILITIES
+// =====================================================
+
+interface PreviewCacheEntry {
+  cacheKey: string;
+  pdfBase64: string;
+  pdfPreviews?: Array<{ recipientName: string; pdfBase64: string }>;
+  timestamp: number;
+  templateUrl: string;
+}
+
+const PREVIEW_CACHE_KEY = 'issuance_preview_cache';
+const PREVIEW_CACHE_MAX_AGE = 30 * 60 * 1000; // 30 minutes
+const PREVIEW_CACHE_MAX_ENTRIES = 5; // Keep last 5 previews
+
+// Generate a cache key from preview parameters
+const generatePreviewCacheKey = (
+  templateUrl: string,
+  fieldValues: Record<string, string>,
+  recipients: Array<{ name: string; email: string }> | undefined,
+  customNameOverride: string | undefined,
+  options: { useAllCaps: boolean; nameStartPosition: number; nameEndPosition: number; namePositionUnit: string }
+): string => {
+  const keyData = {
+    templateUrl,
+    fieldValues,
+    recipientNames: recipients?.map(r => r.name).sort() || [],
+    customNameOverride,
+    ...options
+  };
+  return btoa(encodeURIComponent(JSON.stringify(keyData))).slice(0, 64);
+};
+
+// Get cached preview from localStorage
+const getCachedPreview = (cacheKey: string): PreviewCacheEntry | null => {
+  try {
+    const cacheStr = localStorage.getItem(PREVIEW_CACHE_KEY);
+    if (!cacheStr) return null;
+    
+    const cache: PreviewCacheEntry[] = JSON.parse(cacheStr);
+    const entry = cache.find(e => e.cacheKey === cacheKey);
+    
+    if (!entry) return null;
+    
+    // Check if expired
+    if (Date.now() - entry.timestamp > PREVIEW_CACHE_MAX_AGE) {
+      // Remove expired entry
+      const filtered = cache.filter(e => e.cacheKey !== cacheKey);
+      localStorage.setItem(PREVIEW_CACHE_KEY, JSON.stringify(filtered));
+      return null;
+    }
+    
+    return entry;
+  } catch {
+    return null;
+  }
+};
+
+// Save preview to localStorage cache
+const setCachedPreview = (entry: PreviewCacheEntry): void => {
+  try {
+    const cacheStr = localStorage.getItem(PREVIEW_CACHE_KEY);
+    let cache: PreviewCacheEntry[] = cacheStr ? JSON.parse(cacheStr) : [];
+    
+    // Remove existing entry with same key
+    cache = cache.filter(e => e.cacheKey !== entry.cacheKey);
+    
+    // Add new entry at the beginning
+    cache.unshift(entry);
+    
+    // Keep only last N entries
+    cache = cache.slice(0, PREVIEW_CACHE_MAX_ENTRIES);
+    
+    // Remove expired entries
+    cache = cache.filter(e => Date.now() - e.timestamp < PREVIEW_CACHE_MAX_AGE);
+    
+    localStorage.setItem(PREVIEW_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {
+    // If localStorage is full, clear cache and try again
+    console.warn('Preview cache storage failed, clearing cache', e);
+    localStorage.removeItem(PREVIEW_CACHE_KEY);
+  }
+};
+
+// Convert base64 to blob URL
+const base64ToBlobUrl = (base64: string): string => {
+  const byteCharacters = atob(base64);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  const byteArray = new Uint8Array(byteNumbers);
+  const blob = new Blob([byteArray], { type: 'application/pdf' });
+  return URL.createObjectURL(blob);
+};
+
+// Clear preview cache (can be called when templates change)
+const clearPreviewCache = (): void => {
+  localStorage.removeItem(PREVIEW_CACHE_KEY);
 };
 
 // =====================================================
@@ -1307,6 +1414,12 @@ export default function IssuanceCenterPage({
     setCustomTemplateUrl(issuance.CustomTemplateUrl || '');
     setSendToEmail(issuance.DeliveryMethod !== 'DownloadOnly');
     
+    // Get name formatting settings from issuance columns (primary) or fallback to FieldInputs JSON (legacy)
+    const nameAllCapsFromColumn = issuance.NameAllCaps === 'true' || issuance.NameAllCaps === true;
+    const nameStartFromColumn = parseFloat(issuance.NameStartPos as string) || 8.1;
+    const nameEndFromColumn = parseFloat(issuance.NameEndPos as string) || 27.6;
+    const nameUnitFromColumn = (issuance.NamePosUnit as string) || 'cm';
+    
     // Find and set the template
     const template = templates.find(t => t.TemplateID === issuance.TemplateID);
     if (template) {
@@ -1316,11 +1429,30 @@ export default function IssuanceCenterPage({
       try {
         const savedFieldInputs = JSON.parse(issuance.FieldInputs || '{}');
         const templateFields = template.FieldsParsed || [];
+        
+        // Use column values as primary source, fall back to JSON values for legacy data
+        const useAllCaps = issuance.NameAllCaps !== undefined 
+          ? nameAllCapsFromColumn 
+          : (savedFieldInputs['{NAME}_ALLCAPS'] !== 'false' && savedFieldInputs['{NAME}_ALLCAPS'] !== false);
+        const nameStart = issuance.NameStartPos !== undefined 
+          ? nameStartFromColumn 
+          : (parseFloat(savedFieldInputs['{NAME}_START']) || 8.1);
+        const nameEnd = issuance.NameEndPos !== undefined 
+          ? nameEndFromColumn 
+          : (parseFloat(savedFieldInputs['{NAME}_END']) || 27.6);
+        const nameUnit = issuance.NamePosUnit !== undefined 
+          ? nameUnitFromColumn 
+          : (savedFieldInputs['{NAME}_UNIT'] || 'cm');
+        
         const newFieldInputs: FieldInput[] = templateFields.map(placeholder => ({
           placeholder,
           value: savedFieldInputs[placeholder] || '',
           enabled: true,
-          isCustomName: placeholder === '{NAME}' && !!savedFieldInputs['{NAME}']
+          isCustomName: placeholder === '{NAME}' && !!savedFieldInputs['{NAME}'],
+          isAllCaps: placeholder === '{NAME}' ? useAllCaps : undefined,
+          nameStartPosition: placeholder === '{NAME}' ? nameStart : undefined,
+          nameEndPosition: placeholder === '{NAME}' ? nameEnd : undefined,
+          namePositionUnit: placeholder === '{NAME}' ? nameUnit : undefined
         }));
         setFieldInputs(newFieldInputs);
       } catch {
@@ -1330,7 +1462,11 @@ export default function IssuanceCenterPage({
           placeholder,
           value: '',
           enabled: true,
-          isCustomName: false
+          isCustomName: false,
+          isAllCaps: placeholder === '{NAME}' ? nameAllCapsFromColumn : undefined,
+          nameStartPosition: placeholder === '{NAME}' ? nameStartFromColumn : undefined,
+          nameEndPosition: placeholder === '{NAME}' ? nameEndFromColumn : undefined,
+          namePositionUnit: placeholder === '{NAME}' ? nameUnitFromColumn : undefined
         })));
       }
     }
@@ -1410,7 +1546,12 @@ export default function IssuanceCenterPage({
       placeholder: f,
       value: "",
       enabled: true,
-      isCustomName: f === '{NAME}' ? false : undefined // NAME field defaults to auto-fill
+      isCustomName: f === '{NAME}' ? false : undefined, // NAME field defaults to auto-fill
+      isAllCaps: f === '{NAME}' ? true : undefined, // NAME field defaults to ALL CAPS
+      // Default name positioning (8.1cm to 27.6cm for standard A4 landscape certificate)
+      nameStartPosition: f === '{NAME}' ? 8.1 : undefined,
+      nameEndPosition: f === '{NAME}' ? 27.6 : undefined,
+      namePositionUnit: f === '{NAME}' ? 'cm' : undefined
     })));
     
     // Set default email title
@@ -1670,31 +1811,25 @@ export default function IssuanceCenterPage({
     const toastId = `preview-${Date.now()}`;
     setIsGeneratingPreview(true);
     
-    // Add debug toast
-    addUploadToast({
-      id: toastId,
-      title: 'Generating Preview',
-      message: 'Preparing document preview...',
-      status: 'loading',
-      progress: 10,
-      progressLabel: 'Initializing...'
-    });
-    
     try {
       // Cleanup previous preview URLs
       cleanupPreviewUrl();
       
-      updateUploadToast(toastId, { progress: 30, progressLabel: 'Processing template...' });
-      
       const fieldValues: Record<string, string> = {};
       const nameField = fieldInputs.find(f => f.placeholder === '{NAME}');
       const useCustomName = nameField?.isCustomName && nameField?.value?.trim();
+      const useAllCaps = nameField?.isAllCaps === true; // Check if ALL CAPS is enabled
       
       fieldInputs.forEach(f => {
         if (f.enabled) {
           // For {NAME} field with custom value enabled, use the custom value
           if (f.placeholder === '{NAME}' && f.isCustomName && f.value?.trim()) {
-            fieldValues[f.placeholder] = f.value.trim();
+            let nameValue = f.value.trim();
+            // Apply ALL CAPS if enabled
+            if (useAllCaps) {
+              nameValue = nameValue.toUpperCase();
+            }
+            fieldValues[f.placeholder] = nameValue;
           } else {
             fieldValues[f.placeholder] = f.value || `[${f.placeholder}]`;
           }
@@ -1702,11 +1837,16 @@ export default function IssuanceCenterPage({
       });
       
       // Determine preview name for single recipient or fallback
-      const previewName = useCustomName 
+      let previewName = useCustomName 
         ? nameField!.value.trim()
         : (selectedRecipients.length > 0 
           ? selectedRecipients[0].name 
           : "Sample Recipient Name");
+      
+      // Apply ALL CAPS to preview name if enabled
+      if (useAllCaps) {
+        previewName = previewName.toUpperCase();
+      }
       
       // For multi-recipient previews WITHOUT custom name, leave {NAME} empty 
       // so the backend can fill each recipient's name individually.
@@ -1719,20 +1859,149 @@ export default function IssuanceCenterPage({
         fieldValues['{NAME}'] = '';
       }
       
-      updateUploadToast(toastId, { progress: 50, progressLabel: 'Generating PDF...' });
-      
       // Pass all recipients for combined multi-page preview
       // If using custom name, modify recipients to all use the same name for preview
+      // Apply ALL CAPS transformation to recipient names if enabled
       let recipientsForPreview = selectedRecipients.length > 0 
-        ? selectedRecipients 
+        ? (useAllCaps 
+          ? selectedRecipients.map(r => ({ ...r, name: r.name.toUpperCase() }))
+          : selectedRecipients)
         : undefined;
       
       // If using custom name override, pass that info to the preview generator
-      const customNameForPreview = useCustomName ? nameField!.value.trim() : undefined;
+      let customNameForPreview = useCustomName ? nameField!.value.trim() : undefined;
+      if (customNameForPreview && useAllCaps) {
+        customNameForPreview = customNameForPreview.toUpperCase();
+      }
       
-      const result = await generatePdfPreview(templateUrl, fieldValues, previewName, recipientsForPreview, customNameForPreview);
+      // Add name positioning to field values for backend processing
+      if (nameField) {
+        fieldValues['{NAME}_START'] = String(nameField.nameStartPosition || 8.1);
+        fieldValues['{NAME}_END'] = String(nameField.nameEndPosition || 27.6);
+        fieldValues['{NAME}_UNIT'] = nameField.namePositionUnit || 'cm';
+      }
       
-      updateUploadToast(toastId, { progress: 90, progressLabel: 'Finalizing...' });
+      // Prepare name formatting options for backend
+      const nameFormattingOptions = {
+        useAllCaps: useAllCaps,
+        nameStartPosition: nameField?.nameStartPosition || 8.1,
+        nameEndPosition: nameField?.nameEndPosition || 27.6,
+        namePositionUnit: (nameField?.namePositionUnit || 'cm') as 'cm' | 'inch',
+      };
+      
+      // Generate cache key for this preview configuration
+      const cacheKey = generatePreviewCacheKey(
+        templateUrl,
+        fieldValues,
+        recipientsForPreview?.map(r => ({ name: r.name, email: r.email })),
+        customNameForPreview,
+        nameFormattingOptions
+      );
+      
+      // Check cache first
+      const cachedPreview = getCachedPreview(cacheKey);
+      
+      if (cachedPreview) {
+        // Use cached preview - instant!
+        addUploadToast({
+          id: toastId,
+          title: 'Preview Loaded',
+          message: 'Using cached preview (instant)',
+          status: 'success',
+          progress: 100,
+          progressLabel: 'From cache'
+        });
+        
+        // Convert base64 to blob URLs
+        const pdfUrl = base64ToBlobUrl(cachedPreview.pdfBase64);
+        setPreviewPdfUrl(pdfUrl);
+        setCreateModalTab('preview');
+        
+        if (cachedPreview.pdfPreviews && cachedPreview.pdfPreviews.length > 1) {
+          const pdfPreviews = cachedPreview.pdfPreviews.map(p => ({
+            recipientName: p.recipientName,
+            pdfUrl: base64ToBlobUrl(p.pdfBase64)
+          }));
+          setPreviewPdfList(pdfPreviews);
+          setCurrentPreviewIndex(0);
+        } else {
+          setPreviewPdfList([]);
+          setCurrentPreviewIndex(0);
+        }
+        
+        setTimeout(() => removeUploadToast(toastId), 2000);
+        setIsGeneratingPreview(false);
+        return;
+      }
+      
+      // No cache - generate fresh preview
+      // Show recipient names in progress if multiple recipients
+      const recipientCount = recipientsForPreview?.length || 1;
+      
+      addUploadToast({
+        id: toastId,
+        title: 'Generating Preview',
+        message: recipientCount > 1 
+          ? `Creating ${recipientCount} certificates...`
+          : `Creating certificate for ${previewName}...`,
+        status: 'loading',
+        progress: 5,
+        progressLabel: recipientCount > 1 
+          ? `1/${recipientCount}: ${recipientsForPreview?.[0]?.name || previewName}...`
+          : 'Processing template...'
+      });
+      
+      // Track current recipient index for progress display
+      let currentIndex = 0;
+      let isCompleted = false;
+      
+      // Sequential progress updates - one recipient at a time
+      const progressInterval = setInterval(() => {
+        if (isCompleted) {
+          clearInterval(progressInterval);
+          return;
+        }
+        
+        currentIndex++;
+        if (currentIndex >= recipientCount) {
+          // Stay on last recipient until backend completes
+          currentIndex = recipientCount - 1;
+        }
+        
+        const currentRecipient = recipientsForPreview?.[currentIndex]?.name || previewName;
+        // Progress from 5% to 95% based on recipient count, with 2 decimal places
+        const progressPercent = parseFloat((5 + ((currentIndex + 1) / recipientCount) * 90).toFixed(2));
+        
+        updateUploadToast(toastId, { 
+          progress: progressPercent, 
+          progressLabel: recipientCount > 1 
+            ? `${currentIndex + 1}/${recipientCount}: ${currentRecipient}... (${progressPercent.toFixed(2)}%)`
+            : `Processing: ${currentRecipient}... (${progressPercent.toFixed(2)}%)`
+        });
+      }, 800); // Update every 800ms to simulate per-recipient generation
+      
+      const result = await generatePdfPreview(templateUrl, fieldValues, previewName, recipientsForPreview, customNameForPreview, nameFormattingOptions);
+      
+      // Mark as completed and clear the progress interval
+      isCompleted = true;
+      clearInterval(progressInterval);
+      
+      updateUploadToast(toastId, { progress: 97.50, progressLabel: 'Caching for faster access... (97.50%)' });
+      
+      // Cache the result for next time using base64 data
+      if (result.pdfBase64) {
+        try {
+          setCachedPreview({
+            cacheKey,
+            pdfBase64: result.pdfBase64,
+            pdfPreviews: result.rawPdfPreviews,
+            timestamp: Date.now(),
+            templateUrl
+          });
+        } catch (e) {
+          console.warn('Failed to cache preview:', e);
+        }
+      }
       
       setPreviewPdfUrl(result.pdfUrl);
       setCreateModalTab('preview');
@@ -1744,8 +2013,8 @@ export default function IssuanceCenterPage({
         
         updateUploadToast(toastId, {
           status: 'success',
-          title: 'Preview Generated',
-          message: `${result.pdfPreviews.length} certificates ready. Use arrows to navigate.`,
+          title: 'Preview Generated & Cached',
+          message: `${result.pdfPreviews.length} certificates ready. Next preview will be instant!`,
           progress: 100
         });
       } else {
@@ -1754,8 +2023,8 @@ export default function IssuanceCenterPage({
         
         updateUploadToast(toastId, {
           status: 'success',
-          title: 'Preview Generated',
-          message: 'Document preview is ready.',
+          title: 'Preview Generated & Cached',
+          message: 'Document ready. Next preview will be instant!',
           progress: 100
         });
       }
@@ -1814,20 +2083,43 @@ export default function IssuanceCenterPage({
       const fieldValues: Record<string, string> = {};
       const nameField = fieldInputs.find(f => f.placeholder === '{NAME}');
       const useCustomName = nameField?.isCustomName && nameField?.value?.trim();
+      const useAllCaps = nameField?.isAllCaps === true; // Check if ALL CAPS is enabled
       
       fieldInputs.forEach(f => {
         if (f.enabled) {
           // For {NAME} field with custom value enabled, use the custom value
           if (f.placeholder === '{NAME}' && f.isCustomName && f.value?.trim()) {
-            fieldValues[f.placeholder] = f.value.trim();
+            let nameValue = f.value.trim();
+            // Apply ALL CAPS if enabled
+            if (useAllCaps) {
+              nameValue = nameValue.toUpperCase();
+            }
+            fieldValues[f.placeholder] = nameValue;
           } else {
             fieldValues[f.placeholder] = f.value;
           }
         }
       });
       
+      // Store ALL CAPS setting in fieldValues for later retrieval
+      if (nameField) {
+        fieldValues['{NAME}_ALLCAPS'] = useAllCaps ? 'true' : 'false';
+        // Store name positioning settings
+        fieldValues['{NAME}_START'] = String(nameField.nameStartPosition || 8.1);
+        fieldValues['{NAME}_END'] = String(nameField.nameEndPosition || 27.6);
+        fieldValues['{NAME}_UNIT'] = nameField.namePositionUnit || 'cm';
+      }
+      
       // Store custom name value if using custom name for all recipients
-      const customNameValue = useCustomName ? nameField!.value.trim() : undefined;
+      let customNameValue = useCustomName ? nameField!.value.trim() : undefined;
+      if (customNameValue && useAllCaps) {
+        customNameValue = customNameValue.toUpperCase();
+      }
+      
+      // Prepare recipients with ALL CAPS transformation if enabled
+      const processedRecipients = useAllCaps 
+        ? selectedRecipients.map(r => ({ ...r, name: r.name.toUpperCase() }))
+        : selectedRecipients;
       
       // Determine recipient type based on sources
       const determineRecipientType = (): RecipientType => {
@@ -1852,17 +2144,22 @@ export default function IssuanceCenterPage({
           TemplateID: selectedTemplate.TemplateID,
           TemplateName: selectedTemplate.Name,
           RecipientType: determineRecipientType(),
-          RecipientDetails: JSON.stringify(selectedRecipients.map(r => ({
+          RecipientDetails: JSON.stringify(processedRecipients.map(r => ({
             name: r.name,
             email: r.email,
             source: r.source
           }))),
-          TotalRecipients: selectedRecipients.length,
+          TotalRecipients: processedRecipients.length,
           FieldInputs: JSON.stringify(fieldValues),
           EmailTitle: sendToEmail ? emailTitle : '',
           EmailMessage: sendToEmail ? emailMessage : '',
           CustomTemplateUrl: customTemplateUrl || '',
-          DeliveryMethod: sendToEmail ? 'Email' : 'DownloadOnly'
+          DeliveryMethod: sendToEmail ? 'Email' : 'DownloadOnly',
+          // Include name formatting columns for update
+          NameAllCaps: String(useAllCaps),
+          NameStartPos: String(nameField?.nameStartPosition || 8.1),
+          NameEndPos: String(nameField?.nameEndPosition || 27.6),
+          NamePosUnit: nameField?.namePositionUnit || 'cm'
         });
         
         updateUploadToast(toastId, { progress: 80, progressLabel: 'Draft updated...' });
@@ -1872,7 +2169,7 @@ export default function IssuanceCenterPage({
         updateUploadToast(toastId, {
           status: 'success',
           title: 'Draft Updated',
-          message: `Issuance draft updated successfully with ${selectedRecipients.length} recipients.`,
+          message: `Issuance draft updated successfully with ${processedRecipients.length} recipients.`,
           progress: 100
         });
         setTimeout(() => removeUploadToast(toastId), 3000);
@@ -1884,23 +2181,28 @@ export default function IssuanceCenterPage({
           templateName: selectedTemplate.Name,
           createdBy: username,
           recipientType: determineRecipientType(),
-          recipientDetails: selectedRecipients.map(r => ({
-            name: r.name, // Always store the actual registered name
+          recipientDetails: processedRecipients.map(r => ({
+            name: r.name, // Name with ALL CAPS applied if enabled
             email: r.email,
             source: r.source
           })),
-          totalRecipients: selectedRecipients.length,
-          fieldInputs: fieldValues, // Custom {NAME} value is already in fieldValues if set
+          totalRecipients: processedRecipients.length,
+          fieldInputs: fieldValues, // Custom {NAME} value is already in fieldValues if set, ALL CAPS setting stored
           emailTitle: sendToEmail ? emailTitle : undefined,
           emailMessage: sendToEmail ? emailMessage : undefined,
           customTemplateUrl: customTemplateUrl || undefined,
-          recipients: selectedRecipients.map(r => ({
-            name: r.name, // Always store the actual registered name
+          recipients: processedRecipients.map(r => ({
+            name: r.name, // Name with ALL CAPS applied if enabled
             email: r.email,
             type: r.type
           })),
           downloadOnly: !sendToEmail, // Mark as downloadOnly if not sending to email
-          customNameOverride: customNameValue // Pass custom name override for backend processing
+          customNameOverride: customNameValue, // Pass custom name override for backend processing (with ALL CAPS if enabled)
+          // Name formatting options for backend columns
+          nameAllCaps: useAllCaps,
+          nameStartPosition: nameField?.nameStartPosition || 8.1,
+          nameEndPosition: nameField?.nameEndPosition || 27.6,
+          namePositionUnit: (nameField?.namePositionUnit || 'cm') as 'cm' | 'inch',
         };
         
         await createIssuance(issuanceData);
@@ -1916,7 +2218,7 @@ export default function IssuanceCenterPage({
           updateUploadToast(toastId, {
             status: 'success',
             title: 'Draft Created',
-            message: `Issuance saved as draft. Open it and click Send to deliver to ${selectedRecipients.length} recipients.`,
+            message: `Issuance saved as draft. Open it and click Send to deliver to ${processedRecipients.length} recipients.`,
             progress: 100
           });
           setTimeout(() => removeUploadToast(toastId), 4000);
@@ -3540,7 +3842,7 @@ export default function IssuanceCenterPage({
                               {isNameField ? (
                                 <div className="flex-1 flex flex-col gap-2">
                                   {/* Toggle between auto-fill and custom value */}
-                                  <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-3 flex-wrap">
                                     <label className="flex items-center gap-2 cursor-pointer text-xs">
                                       <input
                                         type="radio"
@@ -3570,6 +3872,28 @@ export default function IssuanceCenterPage({
                                       />
                                       <span className={!field.enabled ? 'opacity-50' : ''}>Custom value</span>
                                     </label>
+                                    {/* ALL CAPS Toggle */}
+                                    <div className="ml-auto flex items-center gap-2">
+                                      <label className="flex items-center gap-2 cursor-pointer text-xs">
+                                        <input
+                                          type="checkbox"
+                                          checked={field.isAllCaps === true}
+                                          onChange={(e) => {
+                                            setFieldInputs(prev => prev.map((f, i) => 
+                                              i === index ? { ...f, isAllCaps: e.target.checked } : f
+                                            ));
+                                          }}
+                                          disabled={!field.enabled}
+                                          className="w-4 h-4 rounded accent-[#3b82f6]"
+                                        />
+                                        <span 
+                                          className={`font-semibold ${!field.enabled ? 'opacity-50' : ''}`}
+                                          style={{ color: field.isAllCaps ? '#3b82f6' : (isDark ? '#94a3b8' : '#64748b') }}
+                                        >
+                                          ALL CAPS
+                                        </span>
+                                      </label>
+                                    </div>
                                   </div>
                                   
                                   {/* Show input or auto-fill indicator based on toggle */}
@@ -3601,10 +3925,138 @@ export default function IssuanceCenterPage({
                                       }}
                                     >
                                       ✓ Auto-filled for each recipient {selectedRecipients.length > 0 
-                                        ? `(${selectedRecipients.length} recipient${selectedRecipients.length > 1 ? 's' : ''}: ${selectedRecipients[0].name}${selectedRecipients.length > 1 ? `, ${selectedRecipients[1].name}${selectedRecipients.length > 2 ? ', ...' : ''}` : ''})` 
+                                        ? `(${selectedRecipients.length} recipient${selectedRecipients.length > 1 ? 's' : ''}: ${field.isAllCaps ? selectedRecipients[0].name.toUpperCase() : selectedRecipients[0].name}${selectedRecipients.length > 1 ? `, ${field.isAllCaps ? selectedRecipients[1].name.toUpperCase() : selectedRecipients[1].name}${selectedRecipients.length > 2 ? ', ...' : ''}` : ''})` 
                                         : '(Add recipients first)'}
                                     </div>
                                   )}
+                                  
+                                  {/* Name Line Positioning */}
+                                  <div 
+                                    className="p-3 rounded-lg border mt-2"
+                                    style={{
+                                      background: isDark ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.05)',
+                                      borderColor: 'rgba(59, 130, 246, 0.3)',
+                                    }}
+                                  >
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="text-xs font-semibold" style={{ color: '#3b82f6' }}>
+                                        📏 Name Line Position
+                                      </span>
+                                      {/* Unit Toggle */}
+                                      <div className="flex items-center gap-1 text-xs">
+                                        <button
+                                          onClick={() => {
+                                            const updated = [...fieldInputs];
+                                            const currentUnit = updated[index].namePositionUnit || 'cm';
+                                            if (currentUnit === 'cm') {
+                                              // Convert cm to inch
+                                              updated[index].namePositionUnit = 'inch';
+                                              updated[index].nameStartPosition = parseFloat(((updated[index].nameStartPosition || 8.1) / 2.54).toFixed(2));
+                                              updated[index].nameEndPosition = parseFloat(((updated[index].nameEndPosition || 27.6) / 2.54).toFixed(2));
+                                            } else {
+                                              // Convert inch to cm
+                                              updated[index].namePositionUnit = 'cm';
+                                              updated[index].nameStartPosition = parseFloat(((updated[index].nameStartPosition || 3.19) * 2.54).toFixed(1));
+                                              updated[index].nameEndPosition = parseFloat(((updated[index].nameEndPosition || 10.87) * 2.54).toFixed(1));
+                                            }
+                                            setFieldInputs(updated);
+                                          }}
+                                          disabled={!field.enabled}
+                                          className={`px-2 py-1 rounded text-xs font-medium transition-all ${!field.enabled ? 'opacity-50' : 'hover:opacity-80'}`}
+                                          style={{
+                                            background: (field.namePositionUnit || 'cm') === 'cm' ? '#3b82f6' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'),
+                                            color: (field.namePositionUnit || 'cm') === 'cm' ? '#fff' : (isDark ? '#fff' : '#000'),
+                                          }}
+                                        >
+                                          cm
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            const updated = [...fieldInputs];
+                                            const currentUnit = updated[index].namePositionUnit || 'cm';
+                                            if (currentUnit === 'cm') {
+                                              // Convert cm to inch
+                                              updated[index].namePositionUnit = 'inch';
+                                              updated[index].nameStartPosition = parseFloat(((updated[index].nameStartPosition || 8.1) / 2.54).toFixed(2));
+                                              updated[index].nameEndPosition = parseFloat(((updated[index].nameEndPosition || 27.6) / 2.54).toFixed(2));
+                                            } else {
+                                              // Already in inch, no conversion needed
+                                            }
+                                            setFieldInputs(updated);
+                                          }}
+                                          disabled={!field.enabled}
+                                          className={`px-2 py-1 rounded text-xs font-medium transition-all ${!field.enabled ? 'opacity-50' : 'hover:opacity-80'}`}
+                                          style={{
+                                            background: (field.namePositionUnit || 'cm') === 'inch' ? '#3b82f6' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'),
+                                            color: (field.namePositionUnit || 'cm') === 'inch' ? '#fff' : (isDark ? '#fff' : '#000'),
+                                          }}
+                                        >
+                                          inch
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                      <div className="flex-1">
+                                        <label className="text-xs opacity-70 block mb-1">Start</label>
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="number"
+                                            step={field.namePositionUnit === 'inch' ? '0.1' : '0.5'}
+                                            min="0"
+                                            value={field.nameStartPosition || (field.namePositionUnit === 'inch' ? 3.19 : 8.1)}
+                                            onChange={(e) => {
+                                              const updated = [...fieldInputs];
+                                              updated[index].nameStartPosition = parseFloat(e.target.value) || 0;
+                                              setFieldInputs(updated);
+                                            }}
+                                            disabled={!field.enabled}
+                                            className="w-20 p-1.5 rounded border text-sm text-center disabled:opacity-50"
+                                            style={{
+                                              background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                                              borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+                                              color: isDark ? '#fff' : '#000',
+                                            }}
+                                          />
+                                          <span className="text-xs opacity-60">{field.namePositionUnit || 'cm'}</span>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center pt-5">
+                                        <span className="text-xs opacity-50">→</span>
+                                      </div>
+                                      <div className="flex-1">
+                                        <label className="text-xs opacity-70 block mb-1">End</label>
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="number"
+                                            step={field.namePositionUnit === 'inch' ? '0.1' : '0.5'}
+                                            min="0"
+                                            value={field.nameEndPosition || (field.namePositionUnit === 'inch' ? 10.87 : 27.6)}
+                                            onChange={(e) => {
+                                              const updated = [...fieldInputs];
+                                              updated[index].nameEndPosition = parseFloat(e.target.value) || 0;
+                                              setFieldInputs(updated);
+                                            }}
+                                            disabled={!field.enabled}
+                                            className="w-20 p-1.5 rounded border text-sm text-center disabled:opacity-50"
+                                            style={{
+                                              background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                                              borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+                                              color: isDark ? '#fff' : '#000',
+                                            }}
+                                          />
+                                          <span className="text-xs opacity-60">{field.namePositionUnit || 'cm'}</span>
+                                        </div>
+                                      </div>
+                                      <div className="flex-1 text-right pt-5">
+                                        <span className="text-xs opacity-60">
+                                          Width: {((field.nameEndPosition || (field.namePositionUnit === 'inch' ? 10.87 : 27.6)) - (field.nameStartPosition || (field.namePositionUnit === 'inch' ? 3.19 : 8.1))).toFixed(1)} {field.namePositionUnit || 'cm'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <p className="text-xs opacity-50 mt-2">
+                                      Defines where the name text starts and ends horizontally on the certificate.
+                                    </p>
+                                  </div>
                                 </div>
                               ) : (
                                 <input
@@ -3630,7 +4082,7 @@ export default function IssuanceCenterPage({
                         })}
                       </div>
                       <p className="text-xs text-muted-foreground mt-2">
-                        💡 {'{NAME}'} can be set to auto-fill each recipient's name, or use a custom value like "To all Members" for everyone
+                        💡 {'{NAME}'} can be auto-fill or custom. Use <strong>ALL CAPS</strong> for uppercase. Adjust <strong>Name Line Position</strong> (in cm or inches) to fit your certificate template.
                       </p>
                       {fieldInputs.some(f => !selectedTemplate.FieldsParsed?.includes(f.placeholder)) && (
                         <p className="text-xs mt-1" style={{ color: '#8b5cf6' }}>

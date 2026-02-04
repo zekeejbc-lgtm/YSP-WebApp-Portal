@@ -40,6 +40,11 @@ export interface Issuance {
   CustomTemplateUrl: string;
   Notes: string;
   Recipients?: Recipient[];
+  // Name formatting columns
+  NameAllCaps?: string; // 'true' or 'false' - whether names should be ALL CAPS
+  NameStartPos?: string; // Start position for name line (default: '8.1')
+  NameEndPos?: string; // End position for name line (default: '27.6')
+  NamePosUnit?: string; // Unit for positions: 'cm' or 'inch' (default: 'cm')
 }
 
 export interface IssuanceTemplate {
@@ -111,6 +116,11 @@ export interface CreateIssuanceData {
   recipients: Array<{ name: string; email: string; type: 'Member' | 'External' }>;
   downloadOnly?: boolean; // If true, marks issuance as Sent immediately (no email sent)
   customNameOverride?: string; // If set, use this value for {NAME} instead of individual recipient names
+  // Name formatting options
+  nameAllCaps?: boolean; // If true, names will be converted to ALL CAPS
+  nameStartPosition?: number; // Start position for name line (default: 8.1)
+  nameEndPosition?: number; // End position for name line (default: 27.6)
+  namePositionUnit?: 'cm' | 'inch'; // Unit for positions (default: 'cm')
 }
 
 export interface CreateTemplateData {
@@ -599,25 +609,35 @@ export async function getSendLogs(params?: {
 export interface PdfPreviewItem {
   recipientName: string;
   pdfUrl: string;
+  pdfBase64?: string; // Also store base64 for caching
 }
 
 /**
  * Generate PDF preview
  * If multiple recipients provided, generates a combined preview showing all certificates
  * Returns blob URLs that can be displayed in an iframe with pagination
+ * Also returns base64 data for caching
  */
 export async function generatePdfPreview(
   templateUrl: string,
   fieldValues: Record<string, string>,
   recipientName: string,
   recipients?: Array<{ name: string; email: string }>,
-  customNameOverride?: string // If set, use this for all {NAME} replacements
+  customNameOverride?: string, // If set, use this for all {NAME} replacements
+  options?: {
+    useAllCaps?: boolean;
+    nameStartPosition?: number;
+    nameEndPosition?: number;
+    namePositionUnit?: 'cm' | 'inch';
+  }
 ): Promise<{ 
   pdfUrl: string; 
+  pdfBase64?: string; // Return base64 for caching
   pdfFileId: string; 
   fileName?: string; 
   pageCount?: number;
   pdfPreviews?: PdfPreviewItem[];
+  rawPdfPreviews?: Array<{ recipientName: string; pdfBase64: string }>; // Raw base64 for caching
 }> {
   const response = await postToGAS({
     action: 'generatePdf',
@@ -626,9 +646,17 @@ export async function generatePdfPreview(
     recipientName,
     recipients, // Pass recipients for combined preview
     customNameOverride, // Pass custom name override to backend
+    // Pass name formatting options
+    useAllCaps: options?.useAllCaps ?? false,
+    nameStartPosition: options?.nameStartPosition ?? 8.1,
+    nameEndPosition: options?.nameEndPosition ?? 27.6,
+    namePositionUnit: options?.namePositionUnit ?? 'cm',
   });
   
   if (response.success) {
+    // Store raw base64 for caching
+    const rawPdfPreviews = response.pdfPreviews;
+    
     // Handle array of PDF previews for pagination
     let pdfPreviews: PdfPreviewItem[] | undefined;
     if (response.pdfPreviews && response.pdfPreviews.length > 0) {
@@ -645,7 +673,8 @@ export async function generatePdfPreview(
         
         return {
           recipientName: preview.recipientName,
-          pdfUrl: blobUrl
+          pdfUrl: blobUrl,
+          pdfBase64: preview.pdfBase64 // Include for caching
         };
       });
     }
@@ -665,10 +694,12 @@ export async function generatePdfPreview(
         
         return {
           pdfUrl: blobUrl,
+          pdfBase64: response.pdfBase64, // Return base64 for caching
           pdfFileId: response.pdfFileId || '',
           fileName: response.fileName,
           pageCount: response.pageCount,
           pdfPreviews,
+          rawPdfPreviews, // Return raw for caching
         };
       } catch (e) {
         console.error('Failed to convert base64 to blob:', e);
@@ -682,6 +713,7 @@ export async function generatePdfPreview(
         pdfUrl: response.pdfUrl,
         pdfFileId: response.pdfFileId || '',
         pdfPreviews,
+        rawPdfPreviews,
       };
     }
   }
