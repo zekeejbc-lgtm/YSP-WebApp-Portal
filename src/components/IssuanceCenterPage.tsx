@@ -550,7 +550,7 @@ function MemberIssuanceModal({
             <FileCheck className="w-6 h-6 text-white" />
           </div>
           
-          <h2 className="text-lg sm:text-xl font-bold mb-1" style={{ color: isDark ? '#fff' : '#000' }}>
+          <h2 className="text-base sm:text-lg font-bold mb-1 line-clamp-2 break-words px-2" style={{ color: isDark ? '#fff' : '#000' }} title={issuance.Title}>
             {issuance.Title}
           </h2>
           <p className="text-sm text-muted-foreground">
@@ -1541,10 +1541,10 @@ export default function IssuanceCenterPage({
     setSendToEmail(issuance.DeliveryMethod !== 'DownloadOnly');
     
     // Get name formatting settings from issuance columns (primary) or fallback to FieldInputs JSON (legacy)
-    const nameAllCapsFromColumn = issuance.NameAllCaps === 'true' || issuance.NameAllCaps === true;
+    const nameAllCapsFromColumn = String(issuance.NameAllCaps) === 'true';
     const nameStartFromColumn = parseFloat(issuance.NameStartPos as string) || 8.1;
     const nameEndFromColumn = parseFloat(issuance.NameEndPos as string) || 27.6;
-    const nameUnitFromColumn = (issuance.NamePosUnit as string) || 'cm';
+    const nameUnitFromColumn = ((issuance.NamePosUnit as string) || 'cm') as 'cm' | 'inch';
     
     // Find and set the template
     const template = templates.find(t => t.TemplateID === issuance.TemplateID);
@@ -1576,6 +1576,9 @@ export default function IssuanceCenterPage({
           enabled: true,
           isCustomName: placeholder === '{NAME}' && !!savedFieldInputs['{NAME}'],
           isAllCaps: placeholder === '{NAME}' ? useAllCaps : undefined,
+          isCustomControlNumber: placeholder === '{CONTROL_NUMBER}' 
+            ? (savedFieldInputs['{CONTROL_NUMBER}_CUSTOM'] === 'true' || !!savedFieldInputs['{CONTROL_NUMBER}'])
+            : undefined,
           nameStartPosition: placeholder === '{NAME}' ? nameStart : undefined,
           nameEndPosition: placeholder === '{NAME}' ? nameEnd : undefined,
           namePositionUnit: placeholder === '{NAME}' ? nameUnit : undefined
@@ -1590,6 +1593,7 @@ export default function IssuanceCenterPage({
           enabled: true,
           isCustomName: false,
           isAllCaps: placeholder === '{NAME}' ? nameAllCapsFromColumn : undefined,
+          isCustomControlNumber: placeholder === '{CONTROL_NUMBER}' ? false : undefined,
           nameStartPosition: placeholder === '{NAME}' ? nameStartFromColumn : undefined,
           nameEndPosition: placeholder === '{NAME}' ? nameEndFromColumn : undefined,
           namePositionUnit: placeholder === '{NAME}' ? nameUnitFromColumn : undefined
@@ -1685,6 +1689,7 @@ export default function IssuanceCenterPage({
       enabled: true,
       isCustomName: f === '{NAME}' ? false : undefined, // NAME field defaults to auto-fill
       isAllCaps: f === '{NAME}' ? true : undefined, // NAME field defaults to ALL CAPS
+      isCustomControlNumber: f === '{CONTROL_NUMBER}' ? false : undefined, // CONTROL_NUMBER defaults to auto-generate
       // Default name positioning (8.1cm to 27.6cm for standard A4 landscape certificate)
       nameStartPosition: f === '{NAME}' ? 8.1 : undefined,
       nameEndPosition: f === '{NAME}' ? 27.6 : undefined,
@@ -1959,6 +1964,7 @@ export default function IssuanceCenterPage({
       
       const fieldValues: Record<string, string> = {};
       const nameField = fieldInputs.find(f => f.placeholder === '{NAME}');
+      const controlNumberField = fieldInputs.find(f => f.placeholder === '{CONTROL_NUMBER}');
       const useCustomName = nameField?.isCustomName && nameField?.value?.trim();
       const useAllCaps = nameField?.isAllCaps === true; // Check if ALL CAPS is enabled
       
@@ -1972,7 +1978,17 @@ export default function IssuanceCenterPage({
               nameValue = nameValue.toUpperCase();
             }
             fieldValues[f.placeholder] = nameValue;
-          } else {
+          } 
+          // For {CONTROL_NUMBER} field with custom value enabled, use the custom value
+          else if (f.placeholder === '{CONTROL_NUMBER}' && f.isCustomControlNumber && f.value?.trim()) {
+            fieldValues[f.placeholder] = f.value.trim();
+          }
+          // For {CONTROL_NUMBER} with auto-generate (no custom value), show placeholder for preview
+          else if (f.placeholder === '{CONTROL_NUMBER}' && !f.isCustomControlNumber) {
+            // In preview mode, show a sample control number format
+            fieldValues[f.placeholder] = 'YSP-XX-TCXXYYY';
+          }
+          else {
             fieldValues[f.placeholder] = f.value || `[${f.placeholder}]`;
           }
         }
@@ -2907,16 +2923,16 @@ export default function IssuanceCenterPage({
                 borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
               }}
             >
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex-1">
-                  <h3 className="font-semibold text-base mb-1 truncate" style={{ color: isDark ? '#fff' : '#000' }}>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <h3 className="font-semibold text-base mb-1 line-clamp-2 break-words" style={{ color: isDark ? '#fff' : '#000' }}>
                     {issuance.Title}
                   </h3>
                   <p className="text-sm text-muted-foreground truncate">
                     {issuance.TemplateName}
                   </p>
                 </div>
-                <div className="flex flex-col items-end gap-1">
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
                   <StatusChip
                     status={issuance.Status.toLowerCase() as 'draft' | 'sent'}
                     label={issuance.Status}
@@ -3036,8 +3052,8 @@ export default function IssuanceCenterPage({
                   style={{ borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}
                   onClick={() => handleViewIssuance(issuance)}
                 >
-                  <td className="p-4">
-                    <span className="font-medium" style={{ color: isDark ? '#fff' : '#000' }}>
+                  <td className="p-4 max-w-[200px]">
+                    <span className="font-medium block truncate" style={{ color: isDark ? '#fff' : '#000' }} title={issuance.Title}>
                       {issuance.Title}
                     </span>
                   </td>
@@ -3176,7 +3192,7 @@ export default function IssuanceCenterPage({
                   {filteredArchivedIssuances.map((issuance) => (
                     <div
                       key={issuance.IssuanceID}
-                      className="p-4 rounded-xl border-2 cursor-pointer hover:shadow-lg transition-all"
+                      className="p-4 rounded-xl border-2 cursor-pointer hover:shadow-lg transition-all overflow-hidden"
                       style={{
                         ...glassStyle,
                         borderColor: isDark ? 'rgba(245,158,11,0.3)' : 'rgba(245,158,11,0.3)',
@@ -3184,16 +3200,16 @@ export default function IssuanceCenterPage({
                       }}
                       onClick={() => handleViewIssuance(issuance)}
                     >
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <h3 className="font-medium text-sm truncate" style={{ color: isDark ? '#fff' : '#000' }}>
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex-1 min-w-0 overflow-hidden">
+                          <h3 className="font-medium text-sm line-clamp-2 break-words" style={{ color: isDark ? '#fff' : '#000' }} title={issuance.Title}>
                             {issuance.Title}
                           </h3>
                           <p className="text-xs text-muted-foreground truncate">
                             {issuance.TemplateName}
                           </p>
                         </div>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-600 dark:text-gray-400">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-600 dark:text-gray-400 flex-shrink-0">
                           Archived
                         </span>
                       </div>
@@ -5317,13 +5333,13 @@ export default function IssuanceCenterPage({
             }}
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
-              <h2 className="text-xl font-bold truncate pr-4" style={{ color: isDark ? '#fff' : '#000' }}>
+            <div className="flex items-center justify-between gap-3 p-4 border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+              <h2 className="text-lg sm:text-xl font-bold line-clamp-2 break-words flex-1 min-w-0" style={{ color: isDark ? '#fff' : '#000' }} title={selectedIssuance.Title}>
                 {selectedIssuance.Title}
               </h2>
               <button
                 onClick={() => setShowDetailModal(false)}
-                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flex-shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>

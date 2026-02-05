@@ -2349,6 +2349,10 @@
       const doc = DocumentApp.openById(copy.getId());
       const body = doc.getBody();
       
+      // Get header and footer sections (they are separate from the body)
+      const header = doc.getHeader();
+      const footer = doc.getFooter();
+      
       // Store the name value before replacement for formatting
       const nameValue = fieldValues['{NAME}'] || recipientName || '';
       
@@ -2359,11 +2363,28 @@
         unit: fieldValues['{NAME}_UNIT'] || 'cm'
       };
       
+      // Helper function to replace text in a section (body, header, or footer)
+      const replaceInSection = (section, placeholder, value) => {
+        if (!section) return;
+        const escapedPlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        section.replaceText(escapedPlaceholder, value || '');
+      };
+      
       // Replace all field placeholders (excluding metadata fields)
+      // Replace in BODY, HEADER, and FOOTER
       for (const [placeholder, value] of Object.entries(fieldValues)) {
-        // Skip metadata fields that start with {NAME}_
+        // Skip metadata fields
         if (placeholder.startsWith('{NAME}_')) continue;
-        body.replaceText(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), value || '');
+        if (placeholder.startsWith('{CONTROL_NUMBER}_')) continue;
+        
+        // Replace in body
+        replaceInSection(body, placeholder, value);
+        
+        // Replace in header (where {CONTROL_NUMBER} typically is)
+        replaceInSection(header, placeholder, value);
+        
+        // Replace in footer
+        replaceInSection(footer, placeholder, value);
       }
       
       // Apply smart formatting to the name to ensure it fits on one line within boundaries
@@ -2494,9 +2515,24 @@
           recipientFieldValues['{NAME}'] = displayName;
         }
         
-        // Add control number if available
-        if (recipient.controlNumber) {
+        // Handle control number for preview:
+        // 1. If recipient has a controlNumber property (passed from frontend), use it
+        // 2. If fieldValues has a valid custom control number (not a placeholder), use that
+        // 3. Otherwise, use sample format for preview
+        if (recipient.controlNumber && recipient.controlNumber.trim && recipient.controlNumber.trim() !== '') {
           recipientFieldValues['{CONTROL_NUMBER}'] = recipient.controlNumber;
+        } else {
+          const existingControlNumber = data.fieldValues['{CONTROL_NUMBER}'];
+          if (existingControlNumber && 
+              existingControlNumber.trim() !== '' && 
+              !existingControlNumber.includes('XX') && 
+              !existingControlNumber.includes('[{')) {
+            // Use the custom control number from fieldValues
+            recipientFieldValues['{CONTROL_NUMBER}'] = existingControlNumber;
+          } else {
+            // For preview without control numbers, show sample format
+            recipientFieldValues['{CONTROL_NUMBER}'] = 'YSP-XX-TCXXYYY';
+          }
         }
         
         const result = generatePdfFromTemplate(
@@ -2848,9 +2884,24 @@
           recipientFieldValues['{NAME}'] = recipientFieldValues['{NAME}'].toUpperCase();
         }
         
-        // Add control number if available
-        if (recipient.ControlNumber) {
-          recipientFieldValues['{CONTROL_NUMBER}'] = recipient.ControlNumber;
+        // Handle control number:
+        // 1. If recipient has a stored ControlNumber (from event linking), always use it
+        // 2. If no stored ControlNumber but fieldInputs has a custom value (not a placeholder pattern), use that
+        // 3. Otherwise, leave the placeholder empty or as-is
+        if (recipient.ControlNumber && String(recipient.ControlNumber).trim() !== '') {
+          recipientFieldValues['{CONTROL_NUMBER}'] = String(recipient.ControlNumber);
+        } else {
+          // Check if fieldInputs has a valid custom control number (not a placeholder pattern)
+          const existingControlNumber = recipientFieldValues['{CONTROL_NUMBER}'];
+          if (existingControlNumber && 
+              existingControlNumber.trim() !== '' && 
+              !existingControlNumber.includes('XX') && 
+              !existingControlNumber.includes('[{')) {
+            // Keep the custom control number from fieldInputs
+          } else {
+            // No valid control number - set to empty to avoid showing placeholder in PDF
+            recipientFieldValues['{CONTROL_NUMBER}'] = '';
+          }
         }
 
         // Generate PDF
@@ -3022,9 +3073,21 @@
         recipientFieldValues['{NAME}'] = recipientFieldValues['{NAME}'].toUpperCase();
       }
       
-      // Add control number if available
-      if (recipient.ControlNumber) {
+      // Handle control number:
+      // 1. If recipient has a stored ControlNumber, use it
+      // 2. Otherwise check for valid custom value in fieldInputs
+      if (recipient.ControlNumber && recipient.ControlNumber.trim() !== '') {
         recipientFieldValues['{CONTROL_NUMBER}'] = recipient.ControlNumber;
+      } else {
+        const existingControlNumber = recipientFieldValues['{CONTROL_NUMBER}'];
+        if (existingControlNumber && 
+            existingControlNumber.trim() !== '' && 
+            !existingControlNumber.includes('XX') && 
+            !existingControlNumber.includes('[{')) {
+          // Keep the custom control number from fieldInputs
+        } else {
+          recipientFieldValues['{CONTROL_NUMBER}'] = '';
+        }
       }
       
       // Generate PDF
@@ -3159,9 +3222,21 @@
         recipientFieldValues['{NAME}'] = recipient.RecipientName;
       }
       
-      // Add control number if available
-      if (recipient.ControlNumber) {
+      // Handle control number:
+      // 1. If recipient has a stored ControlNumber, use it
+      // 2. Otherwise check for valid custom value in fieldInputs
+      if (recipient.ControlNumber && recipient.ControlNumber.trim() !== '') {
         recipientFieldValues['{CONTROL_NUMBER}'] = recipient.ControlNumber;
+      } else {
+        const existingControlNumber = recipientFieldValues['{CONTROL_NUMBER}'];
+        if (existingControlNumber && 
+            existingControlNumber.trim() !== '' && 
+            !existingControlNumber.includes('XX') && 
+            !existingControlNumber.includes('[{')) {
+          // Keep the custom control number from fieldInputs
+        } else {
+          recipientFieldValues['{CONTROL_NUMBER}'] = '';
+        }
       }
       
       const pdfResult = generatePdfFromTemplate(templateUrl, recipientFieldValues, recipient.RecipientName);
@@ -3189,9 +3264,21 @@
         recipientFieldValues['{NAME}'] = recipient.RecipientName;
       }
       
-      // Add control number if available
-      if (recipient.ControlNumber) {
+      // Handle control number:
+      // 1. If recipient has a stored ControlNumber, use it
+      // 2. Otherwise check for valid custom value in fieldInputs
+      if (recipient.ControlNumber && recipient.ControlNumber.trim() !== '') {
         recipientFieldValues['{CONTROL_NUMBER}'] = recipient.ControlNumber;
+      } else {
+        const existingControlNumber = recipientFieldValues['{CONTROL_NUMBER}'];
+        if (existingControlNumber && 
+            existingControlNumber.trim() !== '' && 
+            !existingControlNumber.includes('XX') && 
+            !existingControlNumber.includes('[{')) {
+          // Keep the custom control number from fieldInputs
+        } else {
+          recipientFieldValues['{CONTROL_NUMBER}'] = '';
+        }
       }
       
       const pdfResult = generatePdfFromTemplate(templateUrl, recipientFieldValues, recipient.RecipientName);
