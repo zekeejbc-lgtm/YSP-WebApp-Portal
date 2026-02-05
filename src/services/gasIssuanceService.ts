@@ -82,6 +82,7 @@ export interface Recipient {
   FailedReason: string;
   PDFFileId: string;
   DownloadedAt: string;
+  ControlNumber?: string; // Unique control number: YSP-YY-TCXXYYY
 }
 
 export interface SendLog {
@@ -132,6 +133,9 @@ export interface CreateIssuanceData {
   namePositionUnit?: 'cm' | 'inch'; // Unit for positions (default: 'cm')
   // Attachments - array of links to external files
   attachments?: IssuanceAttachment[];
+  // Event linking for control numbers
+  eventId?: string; // Event ID for control number generation
+  eventTitle?: string; // Event title for control number generation
 }
 
 export interface CreateTemplateData {
@@ -1104,4 +1108,112 @@ export function formatIssuanceDate(dateStr: string): string {
   } catch {
     return dateStr;
   }
+}
+// =====================================================
+// CONTROL NUMBER TRACKING TYPES
+// =====================================================
+
+export interface ControlNumberTrackingRecipient {
+  name: string;
+  email: string;
+  controlNumber: string;
+  status: 'Pending' | 'Sent' | 'Failed' | 'Downloaded';
+}
+
+export interface ControlNumberTracking {
+  TrackingID: string;
+  IssuanceID: string;
+  IssuanceTitle: string;
+  EventID: string;
+  EventTitle: string;
+  EventNumber: number;
+  Year: number;
+  ControlNumberStart: string;
+  ControlNumberEnd: string;
+  TotalRecipients: number;
+  Recipients: ControlNumberTrackingRecipient[];
+  TemplateID: string;
+  TemplateName: string;
+  DeliveryMethod: 'Email' | 'DownloadOnly';
+  CreatedBy: string;
+  CreatedAt: string;
+  SentAt: string;
+  Status: 'Active' | 'Completed' | 'Voided';
+  Notes: string;
+}
+
+export interface ControlNumberSummaryEvent {
+  eventId: string;
+  eventTitle: string;
+  eventNumber: number;
+  totalCertificates: number;
+  controlNumberPrefix: string;
+  controlNumberRange: string;
+}
+
+export interface ControlNumberSummary {
+  year: number;
+  totalEvents: number;
+  totalCertificates: number;
+  events: ControlNumberSummaryEvent[];
+}
+
+export interface AvailableEventNumbers {
+  usedNumbers: number[];
+  nextAvailable: number;
+  gaps: number[];
+  suggestedNext: number;
+}
+
+// =====================================================
+// CONTROL NUMBER TRACKING API
+// =====================================================
+
+/**
+ * Get control number tracking records with optional filters
+ */
+export async function getControlNumberTracking(filters?: {
+  year?: number;
+  eventId?: string;
+  status?: string;
+  issuanceId?: string;
+}): Promise<GASIssuanceResponse<ControlNumberTracking[]>> {
+  const params: Record<string, string> = { action: 'getControlNumberTracking' };
+  if (filters?.year) params.year = filters.year.toString();
+  if (filters?.eventId) params.eventId = filters.eventId;
+  if (filters?.status) params.status = filters.status;
+  if (filters?.issuanceId) params.issuanceId = filters.issuanceId;
+
+  return fetchFromGAS<ControlNumberTracking[]>(params);
+}
+
+/**
+ * Get control number summary by year
+ */
+export async function getControlNumberSummary(year?: number): Promise<GASIssuanceResponse<ControlNumberSummary>> {
+  const params: Record<string, string> = { action: 'getControlNumberSummary' };
+  if (year) params.year = year.toString();
+
+  return fetchFromGAS<ControlNumberSummary>(params);
+}
+
+/**
+ * Find available (unused) event numbers for a year
+ */
+export async function findAvailableEventNumbers(year?: number): Promise<GASIssuanceResponse<AvailableEventNumbers>> {
+  const params: Record<string, string> = { action: 'findAvailableEventNumbers' };
+  if (year) params.year = year.toString();
+
+  return fetchFromGAS<AvailableEventNumbers>(params);
+}
+
+/**
+ * Void a control number tracking record
+ */
+export async function voidControlNumberTracking(trackingId: string, voidReason?: string): Promise<GASIssuanceResponse> {
+  return postToGAS({
+    action: 'voidControlNumberTracking',
+    trackingId,
+    voidReason: voidReason || 'No reason provided'
+  });
 }

@@ -32,7 +32,8 @@
       RECIPIENTS: 'Recipients',
       SEND_LOGS: 'SendLogs',
       SETTINGS: 'Settings',
-      CONTROL_SEQUENCES: 'ControlNumberSequences'
+      CONTROL_SEQUENCES: 'ControlNumberSequences',
+      CONTROL_TRACKING: 'ControlNumberTracking'
     },
     // Default header style
     HEADER_STYLE: {
@@ -136,6 +137,27 @@
       'ChapterCode',       // Chapter code used (e.g., TC)
       'CreatedAt',
       'UpdatedAt'
+    ],
+    ControlNumberTracking: [
+      'TrackingID',        // Unique tracking ID (TRK-YYYYMMDD-XXXXX)
+      'IssuanceID',        // Reference to the issuance
+      'IssuanceTitle',     // Title of the issuance
+      'EventID',           // Event ID from attendance system
+      'EventTitle',        // Event name/title
+      'EventNumber',       // Event sequence number (XX in YSP-YY-TCXX)
+      'Year',              // Year (YYYY)
+      'ControlNumberStart',// First control number in range (e.g., YSP-26-TC01001)
+      'ControlNumberEnd',  // Last control number in range (e.g., YSP-26-TC01025)
+      'TotalRecipients',   // Number of recipients in this batch
+      'Recipients',        // JSON array of recipients [{name, email, controlNumber, status}]
+      'TemplateID',        // Template used for the issuance
+      'TemplateName',      // Template name for reference
+      'DeliveryMethod',    // Email or DownloadOnly
+      'CreatedBy',         // Who created this issuance
+      'CreatedAt',         // When created
+      'SentAt',            // When sent (if email delivery)
+      'Status',            // Active, Completed, Voided
+      'Notes'              // Any additional notes
     ]
   };
 
@@ -601,6 +623,25 @@
           // Preview what control number would be assigned for an event
           return jsonResponse(previewControlNumberForEvent(e.parameter.eventId, e.parameter.eventTitle));
         
+        // Control Number Tracking endpoints
+        case 'getControlNumberTracking':
+          return jsonResponse(getControlNumberTracking({
+            year: e.parameter.year ? parseInt(e.parameter.year) : null,
+            eventId: e.parameter.eventId || null,
+            status: e.parameter.status || null,
+            issuanceId: e.parameter.issuanceId || null
+          }));
+        
+        case 'getControlNumberSummary':
+          return jsonResponse(getControlNumberSummary(
+            e.parameter.year ? parseInt(e.parameter.year) : null
+          ));
+        
+        case 'findAvailableEventNumbers':
+          return jsonResponse(findAvailableEventNumbers(
+            e.parameter.year ? parseInt(e.parameter.year) : new Date().getFullYear()
+          ));
+        
         default:
           return jsonResponse({ error: 'Invalid action', action: action });
       }
@@ -659,6 +700,10 @@
         
         case 'downloadIssuance':
           return jsonResponse(downloadIssuance(data));
+        
+        // Control Number Tracking - void a tracking record
+        case 'voidControlNumberTracking':
+          return jsonResponse(voidControlNumberTracking(data.trackingId, data.voidReason));
         
         default:
           return jsonResponse({ error: 'Invalid action', action: action });
@@ -911,7 +956,18 @@
     // Add recipients to Recipients sheet - all start as Pending
     // If event is provided, generate control numbers for each recipient
     if (data.recipients && data.recipients.length > 0) {
-      const controlNumberData = eventId ? { eventId, eventTitle } : null;
+      const controlNumberData = eventId ? {
+        eventId: eventId,
+        eventTitle: eventTitle,
+        issuanceInfo: {
+          issuanceId: id,
+          title: data.title || '',
+          templateId: data.templateId || '',
+          templateName: data.templateName || '',
+          deliveryMethod: deliveryMethod,
+          createdBy: data.createdBy || ''
+        }
+      } : null;
       addRecipients(id, data.recipients, false, controlNumberData);
     }
     
@@ -1250,6 +1306,339 @@
   }
 
   /**
+  * Get or create the ControlNumberTracking sheet
+  */
+  function getControlTrackingSheet() {
+    const ss = SpreadsheetApp.openById(ISSUANCE_CONFIG.SPREADSHEET_ID);
+    let sheet = ss.getSheetByName(ISSUANCE_CONFIG.SHEETS.CONTROL_TRACKING);
+    
+    if (!sheet) {
+      // Create the sheet with headers
+      sheet = ss.insertSheet(ISSUANCE_CONFIG.SHEETS.CONTROL_TRACKING);
+      const headers = SHEET_HEADERS.ControlNumberTracking;
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      
+      // Apply header styling
+      const headerRange = sheet.getRange(1, 1, 1, headers.length);
+      headerRange.setBackground(ISSUANCE_CONFIG.HEADER_STYLE.background);
+      headerRange.setFontColor(ISSUANCE_CONFIG.HEADER_STYLE.fontColor);
+      headerRange.setFontWeight(ISSUANCE_CONFIG.HEADER_STYLE.fontWeight);
+      headerRange.setFontSize(ISSUANCE_CONFIG.HEADER_STYLE.fontSize);
+      headerRange.setHorizontalAlignment('center');
+      sheet.setFrozenRows(1);
+    }
+    
+    return sheet;
+  }
+
+  /**
+  * Generate unique tracking ID
+  * Format: TRK-YYYYMMDD-XXXXX (random alphanumeric)
+  */
+  function generateTrackingId() {
+    const now = new Date();
+    const dateStr = now.getFullYear().toString() +
+      String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0');
+    const random = Math.random().toString(36).substring(2, 7).toUpperCase();
+    return 'TRK-' + dateStr + '-' + random;
+  }
+
+  /**
+  * Log control number tracking data when control numbers are generated
+  * @param {Object} trackingData - The tracking information
+  */
+  function logControlNumberTracking(trackingData) {
+    try {
+      const sheet = getControlTrackingSheet();
+      const headers = SHEET_HEADERS.ControlNumberTracking;
+      
+      const trackingId = generateTrackingId();
+      const now = new Date().toISOString();
+      
+      // Prepare row data in header order
+      const rowData = headers.map(header => {
+        switch (header) {
+          case 'TrackingID':
+            return trackingId;
+          case 'IssuanceID':
+            return trackingData.issuanceId || '';
+          case 'IssuanceTitle':
+            return trackingData.issuanceTitle || '';
+          case 'EventID':
+            return trackingData.eventId || '';
+          case 'EventTitle':
+            return trackingData.eventTitle || '';
+          case 'EventNumber':
+            return trackingData.eventNumber || '';
+          case 'Year':
+            return trackingData.year || new Date().getFullYear();
+          case 'ControlNumberStart':
+            return trackingData.controlNumberStart || '';
+          case 'ControlNumberEnd':
+            return trackingData.controlNumberEnd || '';
+          case 'TotalRecipients':
+            return trackingData.totalRecipients || 0;
+          case 'Recipients':
+            // Store as JSON string
+            return JSON.stringify(trackingData.recipients || []);
+          case 'TemplateID':
+            return trackingData.templateId || '';
+          case 'TemplateName':
+            return trackingData.templateName || '';
+          case 'DeliveryMethod':
+            return trackingData.deliveryMethod || '';
+          case 'CreatedBy':
+            return trackingData.createdBy || '';
+          case 'CreatedAt':
+            return now;
+          case 'SentAt':
+            return trackingData.sentAt || '';
+          case 'Status':
+            return trackingData.status || 'Active';
+          case 'Notes':
+            return trackingData.notes || '';
+          default:
+            return '';
+        }
+      });
+      
+      sheet.appendRow(rowData);
+      
+      return {
+        success: true,
+        trackingId: trackingId
+      };
+    } catch (e) {
+      console.error('Error logging control number tracking:', e);
+      return {
+        success: false,
+        error: e.toString()
+      };
+    }
+  }
+
+  /**
+  * Get all control number tracking records
+  * @param {Object} filters - Optional filters (year, eventId, status)
+  */
+  function getControlNumberTracking(filters = {}) {
+    try {
+      const sheet = getControlTrackingSheet();
+      
+      if (sheet.getLastRow() <= 1) {
+        return { success: true, data: [] };
+      }
+      
+      const data = sheet.getDataRange().getValues();
+      const headers = data[0];
+      
+      const records = [];
+      for (let i = 1; i < data.length; i++) {
+        const record = {};
+        headers.forEach((header, idx) => {
+          let value = data[i][idx];
+          // Parse Recipients JSON
+          if (header === 'Recipients' && value) {
+            try {
+              value = JSON.parse(value);
+            } catch (e) {
+              value = [];
+            }
+          }
+          record[header] = value;
+        });
+        
+        // Apply filters
+        let include = true;
+        if (filters.year && record.Year !== filters.year) include = false;
+        if (filters.eventId && record.EventID !== filters.eventId) include = false;
+        if (filters.status && record.Status !== filters.status) include = false;
+        if (filters.issuanceId && record.IssuanceID !== filters.issuanceId) include = false;
+        
+        if (include) {
+          records.push(record);
+        }
+      }
+      
+      // Sort by CreatedAt descending (newest first)
+      records.sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
+      
+      return { success: true, data: records };
+    } catch (e) {
+      console.error('Error getting control number tracking:', e);
+      return { success: false, error: e.toString() };
+    }
+  }
+
+  /**
+  * Find available (unused) event numbers for a year
+  * This helps handle non-chronological event IDs by reusing gaps
+  */
+  function findAvailableEventNumbers(year) {
+    try {
+      const sheet = getControlSequencesSheet();
+      
+      if (sheet.getLastRow() <= 1) {
+        return { success: true, data: { usedNumbers: [], nextAvailable: 1, gaps: [] } };
+      }
+      
+      const data = sheet.getDataRange().getValues();
+      const headers = data[0];
+      
+      const yearIdx = headers.indexOf('Year');
+      const eventNumIdx = headers.indexOf('EventNumber');
+      const lastCertIdx = headers.indexOf('LastCertNumber');
+      
+      // Get all event numbers for this year with their usage status
+      const eventNumbers = [];
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][yearIdx] === year) {
+          eventNumbers.push({
+            number: parseInt(data[i][eventNumIdx]) || 0,
+            lastCert: parseInt(data[i][lastCertIdx]) || 0,
+            isEmpty: (parseInt(data[i][lastCertIdx]) || 0) === 0
+          });
+        }
+      }
+      
+      // Sort by event number
+      eventNumbers.sort((a, b) => a.number - b.number);
+      
+      // Find gaps (unused numbers) - only event numbers with no certificates
+      const gaps = eventNumbers.filter(en => en.isEmpty).map(en => en.number);
+      
+      // Find max used number
+      const maxNumber = eventNumbers.length > 0 ? 
+        Math.max(...eventNumbers.map(en => en.number)) : 0;
+      
+      return {
+        success: true,
+        data: {
+          usedNumbers: eventNumbers.map(en => en.number),
+          nextAvailable: maxNumber + 1,
+          gaps: gaps,
+          // Suggest reusing first gap if any, otherwise use next available
+          suggestedNext: gaps.length > 0 ? gaps[0] : maxNumber + 1
+        }
+      };
+    } catch (e) {
+      console.error('Error finding available event numbers:', e);
+      return { success: false, error: e.toString() };
+    }
+  }
+
+  /**
+  * Void/cancel a control number tracking record
+  * This marks the record as voided so control numbers can be recycled if needed
+  */
+  function voidControlNumberTracking(trackingId, voidReason) {
+    try {
+      const sheet = getControlTrackingSheet();
+      
+      if (sheet.getLastRow() <= 1) {
+        return { success: false, error: 'No tracking records found' };
+      }
+      
+      const data = sheet.getDataRange().getValues();
+      const headers = data[0];
+      
+      const trackingIdIdx = headers.indexOf('TrackingID');
+      const statusIdx = headers.indexOf('Status');
+      const notesIdx = headers.indexOf('Notes');
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][trackingIdIdx] === trackingId) {
+          // Update status to Voided
+          sheet.getRange(i + 1, statusIdx + 1).setValue('Voided');
+          // Add void reason to notes
+          const existingNotes = data[i][notesIdx] || '';
+          const newNotes = existingNotes + 
+            (existingNotes ? ' | ' : '') + 
+            'VOIDED on ' + new Date().toISOString() + ': ' + (voidReason || 'No reason provided');
+          sheet.getRange(i + 1, notesIdx + 1).setValue(newNotes);
+          
+          return { success: true, message: 'Tracking record voided successfully' };
+        }
+      }
+      
+      return { success: false, error: 'Tracking record not found' };
+    } catch (e) {
+      console.error('Error voiding control number tracking:', e);
+      return { success: false, error: e.toString() };
+    }
+  }
+
+  /**
+  * Get summary of control numbers by year
+  * Returns event-wise breakdown with control number ranges
+  */
+  function getControlNumberSummary(year) {
+    try {
+      const currentYear = year || new Date().getFullYear();
+      
+      // Get from sequences sheet
+      const seqSheet = getControlSequencesSheet();
+      const trackSheet = getControlTrackingSheet();
+      
+      const summary = {
+        year: currentYear,
+        totalEvents: 0,
+        totalCertificates: 0,
+        events: []
+      };
+      
+      if (seqSheet.getLastRow() <= 1) {
+        return { success: true, data: summary };
+      }
+      
+      const seqData = seqSheet.getDataRange().getValues();
+      const seqHeaders = seqData[0];
+      
+      const yearIdx = seqHeaders.indexOf('Year');
+      const eventIdIdx = seqHeaders.indexOf('EventID');
+      const eventTitleIdx = seqHeaders.indexOf('EventTitle');
+      const eventNumIdx = seqHeaders.indexOf('EventNumber');
+      const lastCertIdx = seqHeaders.indexOf('LastCertNumber');
+      const chapterCodeIdx = seqHeaders.indexOf('ChapterCode');
+      
+      for (let i = 1; i < seqData.length; i++) {
+        if (seqData[i][yearIdx] === currentYear) {
+          const eventNumber = seqData[i][eventNumIdx];
+          const lastCert = seqData[i][lastCertIdx] || 0;
+          const chapterCode = seqData[i][chapterCodeIdx] || 'TC';
+          const yearShort = String(currentYear).slice(-2);
+          const eventNum = String(eventNumber).padStart(2, '0');
+          
+          const prefix = 'YSP-' + yearShort + '-' + chapterCode + eventNum;
+          
+          summary.events.push({
+            eventId: seqData[i][eventIdIdx],
+            eventTitle: seqData[i][eventTitleIdx],
+            eventNumber: eventNumber,
+            totalCertificates: lastCert,
+            controlNumberPrefix: prefix,
+            controlNumberRange: lastCert > 0 ? 
+              prefix + '001 - ' + prefix + String(lastCert).padStart(3, '0') : 
+              'No certificates issued'
+          });
+          
+          summary.totalEvents++;
+          summary.totalCertificates += lastCert;
+        }
+      }
+      
+      // Sort by event number
+      summary.events.sort((a, b) => a.eventNumber - b.eventNumber);
+      
+      return { success: true, data: summary };
+    } catch (e) {
+      console.error('Error getting control number summary:', e);
+      return { success: false, error: e.toString() };
+    }
+  }
+
+  /**
   * Get the chapter code from settings
   */
   function getChapterCode() {
@@ -1417,8 +1806,13 @@
   /**
   * Batch generate control numbers for multiple recipients
   * More efficient than calling generateControlNumber repeatedly
+  * @param {string} eventId - The event ID
+  * @param {string} eventTitle - The event title
+  * @param {number} recipientCount - Number of recipients
+  * @param {Array} recipients - Optional array of recipient details for tracking
+  * @param {Object} issuanceInfo - Optional issuance info for tracking
   */
-  function batchGenerateControlNumbers(eventId, eventTitle, recipientCount) {
+  function batchGenerateControlNumbers(eventId, eventTitle, recipientCount, recipients, issuanceInfo) {
     const currentYear = new Date().getFullYear();
     const yearShort = String(currentYear).slice(-2);
     
@@ -1440,13 +1834,45 @@
     
     const chapterCode = getChapterCode();
     const eventNum = String(sequence.eventNumber).padStart(2, '0');
-    const prefix = `YSP-${yearShort}-${chapterCode}${eventNum}`;
+    const prefix = 'YSP-' + yearShort + '-' + chapterCode + eventNum;
     
     // Generate array of control numbers
     const controlNumbers = [];
     for (let i = 0; i < recipientCount; i++) {
       const certNum = String(startCertNumber + i).padStart(3, '0');
-      controlNumbers.push(`${prefix}${certNum}`);
+      controlNumbers.push(prefix + certNum);
+    }
+    
+    // Full control number range for tracking
+    const controlNumberStart = prefix + String(startCertNumber).padStart(3, '0');
+    const controlNumberEnd = prefix + String(endCertNumber).padStart(3, '0');
+    
+    // Log to tracking sheet if recipients info is provided
+    if (recipients && recipients.length > 0 && issuanceInfo) {
+      const trackingRecipients = recipients.map((r, idx) => ({
+        name: r.name || r.recipientName || '',
+        email: r.email || r.recipientEmail || '',
+        controlNumber: controlNumbers[idx] || '',
+        status: 'Pending'
+      }));
+      
+      logControlNumberTracking({
+        issuanceId: issuanceInfo.issuanceId || '',
+        issuanceTitle: issuanceInfo.title || '',
+        eventId: eventId,
+        eventTitle: eventTitle,
+        eventNumber: sequence.eventNumber,
+        year: currentYear,
+        controlNumberStart: controlNumberStart,
+        controlNumberEnd: controlNumberEnd,
+        totalRecipients: recipientCount,
+        recipients: trackingRecipients,
+        templateId: issuanceInfo.templateId || '',
+        templateName: issuanceInfo.templateName || '',
+        deliveryMethod: issuanceInfo.deliveryMethod || '',
+        createdBy: issuanceInfo.createdBy || '',
+        status: 'Active'
+      });
     }
     
     return {
@@ -1454,7 +1880,9 @@
       controlNumbers: controlNumbers,
       eventNumber: sequence.eventNumber,
       startCertNumber: startCertNumber,
-      endCertNumber: endCertNumber
+      endCertNumber: endCertNumber,
+      controlNumberStart: controlNumberStart,
+      controlNumberEnd: controlNumberEnd
     };
   }
 
@@ -1634,7 +2062,7 @@
   * @param {string} issuanceId - The issuance ID
   * @param {Array} recipients - Array of recipient objects
   * @param {boolean} isDownloadOnly - If true, mark recipients as Sent/Downloaded status
-  * @param {Object} controlNumberData - Optional: { eventId, eventTitle } for control number generation
+  * @param {Object} controlNumberData - Optional: { eventId, eventTitle, issuanceInfo } for control number generation and tracking
   */
   function addRecipients(issuanceId, recipients, isDownloadOnly = false, controlNumberData = null) {
     const ss = SpreadsheetApp.openById(ISSUANCE_CONFIG.SPREADSHEET_ID);
@@ -1645,10 +2073,22 @@
     // Generate control numbers if event data is provided
     let controlNumbers = [];
     if (controlNumberData && controlNumberData.eventId) {
+      // Prepare issuance info for tracking
+      const issuanceInfo = controlNumberData.issuanceInfo || {
+        issuanceId: issuanceId,
+        title: controlNumberData.issuanceTitle || '',
+        templateId: controlNumberData.templateId || '',
+        templateName: controlNumberData.templateName || '',
+        deliveryMethod: isDownloadOnly ? 'DownloadOnly' : 'Email',
+        createdBy: controlNumberData.createdBy || ''
+      };
+      
       const batchResult = batchGenerateControlNumbers(
         controlNumberData.eventId,
         controlNumberData.eventTitle || '',
-        recipients.length
+        recipients.length,
+        recipients, // Pass recipients for tracking
+        issuanceInfo // Pass issuance info for tracking
       );
       controlNumbers = batchResult.controlNumbers;
     }
@@ -2430,7 +2870,8 @@
           recipient.RecipientName,
           issuance.EmailTitle || `Document from ${senderName}`,
           emailMessage,
-          emailFooter
+          emailFooter,
+          recipient.ControlNumber || null
         );
         
         // Send email with HTML body
@@ -3075,7 +3516,7 @@
   /**
   * Build HTML email for issuance
   */
-  function buildIssuanceEmailHtml(recipientName, subject, message, footer) {
+  function buildIssuanceEmailHtml(recipientName, subject, message, footer, controlNumber) {
     // Format the message: convert markdown-style formatting to HTML
     // - **text** or __text__ becomes <strong>text</strong>
     // - Line breaks become <br>
@@ -3092,6 +3533,19 @@
         // Convert line breaks to <br>
         .replace(/\n/g, '<br>');
     };
+    
+    // Build control number section HTML if it exists
+    const controlNumberHtml = controlNumber ? `
+                  <div style="margin-top: 16px; padding: 12px 16px; background: linear-gradient(135deg, rgba(238,135,36,0.15) 0%, rgba(246,66,31,0.08) 100%); border-radius: 8px; border: 1px solid rgba(238, 135, 36, 0.3);">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="font-size: 16px;">#</span>
+                      <div>
+                        <span class="font-body" style="color: #718096; font-size: 12px; display: block;">Control Number</span>
+                        <span class="font-body" style="color: #ee8724; font-size: 15px; font-weight: 600; font-family: 'Courier New', monospace; letter-spacing: 1px;">${controlNumber}</span>
+                      </div>
+                    </div>
+                  </div>
+    ` : '';
     
     return `
     <!DOCTYPE html>
@@ -3130,6 +3584,7 @@
                       <span class="font-body" style="color: #4a5568; font-size: 14px;">Your document is attached to this email. Please download and save it for your records.</span>
                     </div>
                   </div>
+                  ${controlNumberHtml}
                   ${footer ? `
                   <div style="margin-top: 20px; color: #718096; font-size: 13px; line-height: 1.5;">
                     ${formatMessage(footer)}

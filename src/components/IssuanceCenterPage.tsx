@@ -22,7 +22,7 @@ import {
   X, Plus, Search, FileText, Mail, Download, Eye, Edit2, Trash2,
   ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Loader2, CheckCircle, XCircle, AlertCircle,
   LayoutGrid, List, Send, Users, Calendar, Building, Globe, User,
-  RefreshCw, Settings, Copy, ExternalLink, FileCheck, Clock, Image, Archive, AlertTriangle, Link, Paperclip
+  RefreshCw, Settings, Copy, ExternalLink, FileCheck, Clock, Image, Archive, AlertTriangle, Link, Paperclip, Hash
 } from "lucide-react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
@@ -107,6 +107,7 @@ interface SelectedRecipient {
   type: 'Member' | 'External';
   source?: string; // Event name, Committee name, etc.
   hasEmail?: boolean; // Flag to indicate if recipient has email (for styling)
+  eventId?: string; // Event ID if recipient is from an event (for control numbers)
 }
 
 interface FieldInput {
@@ -115,6 +116,7 @@ interface FieldInput {
   enabled: boolean;
   isCustomName?: boolean; // For {NAME} field: true = use custom value, false = auto-fill from recipient
   isAllCaps?: boolean; // For {NAME} field: true = convert name to ALL CAPS
+  isCustomControlNumber?: boolean; // For {CONTROL_NUMBER} field: true = use custom value, false = auto-generate from event
   // Name positioning options (for certificate name line)
   nameStartPosition?: number; // Start position in cm (default 8.1)
   nameEndPosition?: number; // End position in cm (default 27.6)
@@ -218,19 +220,19 @@ const detectAttachmentType = (url: string): 'pdf' | 'document' | 'spreadsheet' |
 const getAttachmentIcon = (type: string) => {
   switch (type) {
     case 'pdf':
-      return '📄';
+      return '[PDF]';
     case 'document':
-      return '📝';
+      return '[DOC]';
     case 'spreadsheet':
-      return '📊';
+      return '[XLS]';
     case 'video':
-      return '🎥';
+      return '[VID]';
     case 'image':
-      return '🖼️';
+      return '[IMG]';
     case 'link':
-      return '🔗';
+      return '[URL]';
     default:
-      return '📎';
+      return '[FILE]';
   }
 };
 
@@ -680,6 +682,25 @@ function MemberIssuanceModal({
             {formatIssuanceDate(issuance.SentAt || issuance.CreatedAt)}
           </p>
         </div>
+
+        {/* Control Number - Only shown if recipient has a control number */}
+        {userRecipient?.ControlNumber && (
+          <div 
+            className="p-4 rounded-xl"
+            style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <Hash className="w-5 h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              <span className="text-sm font-medium text-muted-foreground">Control Number</span>
+            </div>
+            <p 
+              className="text-sm pl-8 font-mono"
+              style={{ color: DESIGN_TOKENS.colors.brand.orange }}
+            >
+              {userRecipient.ControlNumber}
+            </p>
+          </div>
+        )}
       </div>
       
       {/* Modal Footer - Download Button Only */}
@@ -777,6 +798,10 @@ export default function IssuanceCenterPage({
   const [newAttachmentName, setNewAttachmentName] = useState("");
   const [newAttachmentUrl, setNewAttachmentUrl] = useState("");
   const [showAttachmentForm, setShowAttachmentForm] = useState(false);
+  
+  // Event linking state for control numbers
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedEventTitle, setSelectedEventTitle] = useState<string | null>(null);
   
   // Recipient search state
   const [recipientSearchQuery, setRecipientSearchQuery] = useState("");
@@ -1481,6 +1506,9 @@ export default function IssuanceCenterPage({
     setNewAttachmentName('');
     setNewAttachmentUrl('');
     setShowAttachmentForm(false);
+    // Reset event linking state
+    setSelectedEventId(null);
+    setSelectedEventTitle(null);
     // Reset edit mode
     setIsEditMode(false);
     setEditingIssuanceId(null);
@@ -1763,8 +1791,13 @@ export default function IssuanceCenterPage({
             email: a.email || '',
             type: 'Member' as const,
             source: event.Title,
-            hasEmail: a.hasEmail !== undefined ? a.hasEmail : !!a.email
+            hasEmail: a.hasEmail !== undefined ? a.hasEmail : !!a.email,
+            eventId: event.EventID // Track event ID for control numbers
           }));
+          
+          // Store the selected event for control number generation
+          setSelectedEventId(event.EventID);
+          setSelectedEventTitle(event.Title);
           
           // Track how many were added vs skipped (duplicates)
           let addedCount = 0;
@@ -1783,7 +1816,7 @@ export default function IssuanceCenterPage({
           const withoutEmail = newRecipients.length - withEmail;
           let message = `Added ${addedCount} attendees from ${event.Title}`;
           if (skipped > 0) message += ` (${skipped} duplicates skipped)`;
-          if (withoutEmail > 0) message += ` • ${withoutEmail} without email`;
+          if (withoutEmail > 0) message += ` - ${withoutEmail} without email`;
           toast.success(message);
         } catch {
           toast.error("Failed to load event attendees");
@@ -2191,6 +2224,7 @@ export default function IssuanceCenterPage({
       // Prepare field inputs
       const fieldValues: Record<string, string> = {};
       const nameField = fieldInputs.find(f => f.placeholder === '{NAME}');
+      const controlNumberField = fieldInputs.find(f => f.placeholder === '{CONTROL_NUMBER}');
       const useCustomName = nameField?.isCustomName && nameField?.value?.trim();
       const useAllCaps = nameField?.isAllCaps === true; // Check if ALL CAPS is enabled
       
@@ -2204,7 +2238,16 @@ export default function IssuanceCenterPage({
               nameValue = nameValue.toUpperCase();
             }
             fieldValues[f.placeholder] = nameValue;
-          } else {
+          } 
+          // For {CONTROL_NUMBER} field with custom value enabled, use the custom value
+          else if (f.placeholder === '{CONTROL_NUMBER}' && f.isCustomControlNumber && f.value?.trim()) {
+            fieldValues[f.placeholder] = f.value.trim();
+          }
+          // For {CONTROL_NUMBER} with auto-generate, don't set value (backend will generate)
+          else if (f.placeholder === '{CONTROL_NUMBER}' && !f.isCustomControlNumber) {
+            // Leave empty - backend will auto-generate based on eventId
+          }
+          else {
             fieldValues[f.placeholder] = f.value;
           }
         }
@@ -2217,6 +2260,11 @@ export default function IssuanceCenterPage({
         fieldValues['{NAME}_START'] = String(nameField.nameStartPosition || 8.1);
         fieldValues['{NAME}_END'] = String(nameField.nameEndPosition || 27.6);
         fieldValues['{NAME}_UNIT'] = nameField.namePositionUnit || 'cm';
+      }
+      
+      // Store control number mode
+      if (controlNumberField) {
+        fieldValues['{CONTROL_NUMBER}_CUSTOM'] = controlNumberField.isCustomControlNumber ? 'true' : 'false';
       }
       
       // Store custom name value if using custom name for all recipients
@@ -2316,6 +2364,22 @@ export default function IssuanceCenterPage({
           namePositionUnit: (nameField?.namePositionUnit || 'cm') as 'cm' | 'inch',
           // Include attachments
           attachments: attachments,
+          // Event linking for control numbers (only if auto-generate is enabled for {CONTROL_NUMBER})
+          eventId: (() => {
+            const controlField = fieldInputs.find(f => f.placeholder === '{CONTROL_NUMBER}');
+            // Only pass eventId if control number field exists, is enabled, and not using custom value
+            if (controlField && controlField.enabled && !controlField.isCustomControlNumber && selectedEventId) {
+              return selectedEventId;
+            }
+            return undefined;
+          })(),
+          eventTitle: (() => {
+            const controlField = fieldInputs.find(f => f.placeholder === '{CONTROL_NUMBER}');
+            if (controlField && controlField.enabled && !controlField.isCustomControlNumber && selectedEventTitle) {
+              return selectedEventTitle;
+            }
+            return undefined;
+          })(),
         };
         
         await createIssuance(issuanceData);
@@ -3137,7 +3201,7 @@ export default function IssuanceCenterPage({
                       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
                         <Users className="w-3 h-3" />
                         <span>{issuance.TotalRecipients} recipients</span>
-                        <span>•</span>
+                        <span>-</span>
                         <span>{formatIssuanceDate(issuance.CreatedAt)}</span>
                       </div>
                       
@@ -3272,9 +3336,9 @@ export default function IssuanceCenterPage({
                         <FileText className="w-3.5 h-3.5" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
                         <span>{selectedTemplate.FieldsParsed?.length || 0} fields</span>
                         {selectedTemplate.DocsUrl ? (
-                          <span className="text-green-500">• Template configured</span>
+                          <span className="text-green-500">- Template configured</span>
                         ) : (
-                          <span className="text-amber-500">• No template URL set</span>
+                          <span className="text-amber-500">- No template URL set</span>
                         )}
                       </div>
                     )}
@@ -3666,7 +3730,7 @@ export default function IssuanceCenterPage({
                                         {event.Title}
                                       </p>
                                       <p className="text-xs text-muted-foreground truncate">
-                                        {event.Status} • {event.StartDate}
+                                        {event.Status} - {event.StartDate}
                                       </p>
                                     </div>
                                     {isLoadingRecipients && (
@@ -3791,7 +3855,7 @@ export default function IssuanceCenterPage({
                                 </div>
                                 {selectedRecipients.length > 0 && (
                                   <p className="text-[10px] text-muted-foreground mt-1.5">
-                                    💡 Duplicates are automatically prevented
+                                    Tip: Duplicates are automatically prevented
                                   </p>
                                 )}
                               </div>
@@ -3914,10 +3978,11 @@ export default function IssuanceCenterPage({
                       <div className="space-y-3">
                         {fieldInputs.map((field, index) => {
                           const isNameField = field.placeholder === '{NAME}';
+                          const isControlNumberField = field.placeholder === '{CONTROL_NUMBER}';
                           const isDynamicField = !selectedTemplate.FieldsParsed?.includes(field.placeholder);
                           
                           return (
-                            <div key={field.placeholder} className="flex items-center gap-3">
+                            <div key={field.placeholder} className="flex items-start gap-3">
                               <input
                                 type="checkbox"
                                 checked={field.enabled}
@@ -3929,12 +3994,17 @@ export default function IssuanceCenterPage({
                                     updated[index].isCustomName = false;
                                     updated[index].value = '';
                                   }
+                                  // For CONTROL_NUMBER field, if disabling, also reset
+                                  if (isControlNumberField && !e.target.checked) {
+                                    updated[index].isCustomControlNumber = false;
+                                    updated[index].value = '';
+                                  }
                                   setFieldInputs(updated);
                                 }}
-                                className="w-5 h-5 rounded border-2 accent-[#f6421f]"
+                                className="w-5 h-5 rounded border-2 accent-[#f6421f] mt-1"
                               />
                               <span 
-                                className="w-28 text-sm font-mono flex items-center gap-1" 
+                                className="w-36 text-sm font-mono flex items-center gap-1 mt-1" 
                                 style={{ color: isDynamicField ? '#8b5cf6' : DESIGN_TOKENS.colors.brand.orange }}
                                 title={isDynamicField ? 'Dynamically added field' : 'Template field'}
                               >
@@ -4037,7 +4107,7 @@ export default function IssuanceCenterPage({
                                         color: isDark ? 'rgba(134, 239, 172, 1)' : 'rgba(22, 163, 74, 1)',
                                       }}
                                     >
-                                      ✓ Auto-filled for each recipient {selectedRecipients.length > 0 
+                                      Auto-filled for each recipient {selectedRecipients.length > 0 
                                         ? `(${selectedRecipients.length} recipient${selectedRecipients.length > 1 ? 's' : ''}: ${field.isAllCaps ? selectedRecipients[0].name.toUpperCase() : selectedRecipients[0].name}${selectedRecipients.length > 1 ? `, ${field.isAllCaps ? selectedRecipients[1].name.toUpperCase() : selectedRecipients[1].name}${selectedRecipients.length > 2 ? ', ...' : ''}` : ''})` 
                                         : '(Add recipients first)'}
                                     </div>
@@ -4053,7 +4123,7 @@ export default function IssuanceCenterPage({
                                   >
                                     <div className="flex items-center justify-between mb-2">
                                       <span className="text-xs font-semibold" style={{ color: '#3b82f6' }}>
-                                        📏 Name Line Position
+                                        Name Line Position
                                       </span>
                                       {/* Unit Toggle */}
                                       <div className="flex items-center gap-1 text-xs">
@@ -4134,7 +4204,7 @@ export default function IssuanceCenterPage({
                                         </div>
                                       </div>
                                       <div className="flex items-center pt-5">
-                                        <span className="text-xs opacity-50">→</span>
+                                        
                                       </div>
                                       <div className="flex-1">
                                         <label className="text-xs opacity-70 block mb-1">End</label>
@@ -4171,6 +4241,95 @@ export default function IssuanceCenterPage({
                                     </p>
                                   </div>
                                 </div>
+                              ) : isControlNumberField ? (
+                                /* CONTROL NUMBER FIELD - similar to NAME field with auto/custom toggle */
+                                <div className="flex-1 flex flex-col gap-2">
+                                  {/* Toggle between auto-generate and custom value */}
+                                  <div className="flex items-center gap-3 flex-wrap">
+                                    <label className="flex items-center gap-2 cursor-pointer text-xs">
+                                      <input
+                                        type="radio"
+                                        checked={!field.isCustomControlNumber}
+                                        onChange={() => {
+                                          const updated = [...fieldInputs];
+                                          updated[index].isCustomControlNumber = false;
+                                          updated[index].value = '';
+                                          setFieldInputs(updated);
+                                        }}
+                                        disabled={!field.enabled}
+                                        className="accent-[#22c55e]"
+                                      />
+                                      <span className={!field.enabled ? 'opacity-50' : ''}>Auto-generate from event</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer text-xs">
+                                      <input
+                                        type="radio"
+                                        checked={field.isCustomControlNumber === true}
+                                        onChange={() => {
+                                          const updated = [...fieldInputs];
+                                          updated[index].isCustomControlNumber = true;
+                                          setFieldInputs(updated);
+                                        }}
+                                        disabled={!field.enabled}
+                                        className="accent-[#f6421f]"
+                                      />
+                                      <span className={!field.enabled ? 'opacity-50' : ''}>Custom value</span>
+                                    </label>
+                                  </div>
+                                  
+                                  {/* Show input or auto-generate indicator based on toggle */}
+                                  {field.isCustomControlNumber ? (
+                                    <input
+                                      type="text"
+                                      value={field.value}
+                                      onChange={(e) => {
+                                        const updated = [...fieldInputs];
+                                        updated[index].value = e.target.value;
+                                        setFieldInputs(updated);
+                                      }}
+                                      disabled={!field.enabled}
+                                      placeholder="e.g., CERT-2026-001"
+                                      className="w-full p-2 rounded-lg border transition-all focus:outline-none focus:border-[#f6421f] disabled:opacity-50"
+                                      style={{
+                                        background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                        color: isDark ? '#fff' : '#000',
+                                      }}
+                                    />
+                                  ) : (
+                                    <div 
+                                      className={`p-2 rounded-lg border text-sm ${!field.enabled ? 'opacity-50' : ''}`}
+                                      style={{
+                                        background: selectedEventId 
+                                          ? (isDark ? 'rgba(34, 197, 94, 0.1)' : 'rgba(34, 197, 94, 0.05)')
+                                          : (isDark ? 'rgba(234, 179, 8, 0.1)' : 'rgba(234, 179, 8, 0.05)'),
+                                        borderColor: selectedEventId ? 'rgba(34, 197, 94, 0.3)' : 'rgba(234, 179, 8, 0.3)',
+                                        color: selectedEventId 
+                                          ? (isDark ? 'rgba(134, 239, 172, 1)' : 'rgba(22, 163, 74, 1)')
+                                          : (isDark ? 'rgba(250, 204, 21, 1)' : 'rgba(161, 98, 7, 1)'),
+                                      }}
+                                    >
+                                      {selectedEventId ? (
+                                        <>
+                                          Auto-generated for each recipient
+                                          <span className="block text-xs opacity-75 mt-1">
+                                            Format: YSP-{new Date().getFullYear().toString().slice(-2)}-TC##-### (e.g., YSP-26-TC01001)
+                                          </span>
+                                          <span className="block text-xs opacity-60">
+                                            Event: {selectedEventTitle}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          Select recipients from an event (@Event) to enable auto-generation
+                                          <span className="block text-xs opacity-75 mt-1">
+                                            Or switch to "Custom value" to enter manually
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               ) : (
                                 <input
                                   type="text"
@@ -4195,11 +4354,11 @@ export default function IssuanceCenterPage({
                         })}
                       </div>
                       <p className="text-xs text-muted-foreground mt-2">
-                        💡 {'{NAME}'} can be auto-fill or custom. Use <strong>ALL CAPS</strong> for uppercase. Adjust <strong>Name Line Position</strong> (in cm or inches) to fit your certificate template.
+                        Tip: {'{NAME}'} can be auto-fill or custom. Use <strong>ALL CAPS</strong> for uppercase. Adjust <strong>Name Line Position</strong> (in cm or inches) to fit your certificate template.
                       </p>
                       {fieldInputs.some(f => !selectedTemplate.FieldsParsed?.includes(f.placeholder)) && (
                         <p className="text-xs mt-1" style={{ color: '#8b5cf6' }}>
-                          ⚡ Purple fields are dynamically added - make sure the placeholder exists in your Google Docs template
+                          Note: Purple fields are dynamically added - make sure the placeholder exists in your Google Docs template
                         </p>
                       )}
                     </div>
@@ -4400,8 +4559,8 @@ export default function IssuanceCenterPage({
                       <div 
                         className="p-3 rounded-lg mb-3 space-y-3"
                         style={{ 
-                          background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-                          border: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)}`,
+                          background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)",
+                          border: "1px solid " + (isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"),
                         }}
                       >
                         <div>
@@ -4577,8 +4736,8 @@ export default function IssuanceCenterPage({
                         <div 
                           className="flex items-center justify-center gap-3 px-4 py-2 rounded-lg"
                           style={{
-                            background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-                            border: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'}`,
+                            background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)",
+                            border: "1px solid " + (isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"),
                           }}
                         >
                           <button
@@ -4872,7 +5031,7 @@ export default function IssuanceCenterPage({
                                 {template.Name}
                               </p>
                               <p className="text-sm text-muted-foreground">
-                                {template.Type} • {template.FieldsParsed?.length || 0} fields
+                                {template.Type} - {template.FieldsParsed?.length || 0} fields
                               </p>
                             </div>
                             <div className="flex items-center gap-2 ml-2">
@@ -5277,7 +5436,7 @@ export default function IssuanceCenterPage({
                             <span className="font-mono px-2 py-0.5 rounded" style={{ background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
                               {key}
                             </span>
-                            <span className="text-muted-foreground">→</span>
+                            
                             <span style={{ color: isDark ? '#fff' : '#000' }}>{value || '(empty)'}</span>
                           </div>
                         ))}
@@ -5358,7 +5517,7 @@ export default function IssuanceCenterPage({
                         }}
                       >
                         <div className="overflow-x-auto max-h-60 overflow-y-auto">
-                          <table className={`w-full ${hasCustomNameField ? 'min-w-[700px]' : 'min-w-[600px]'}`}>
+                          <table className={`w-full ${hasCustomNameField ? 'min-w-[800px]' : 'min-w-[700px]'}`}>
                             <thead>
                               <tr 
                                 className="border-b text-left text-xs font-semibold sticky top-0"
@@ -5373,6 +5532,7 @@ export default function IssuanceCenterPage({
                                   <th className="px-2 py-2 text-muted-foreground whitespace-nowrap">Custom Name</th>
                                 )}
                                 <th className="px-2 py-2 text-muted-foreground whitespace-nowrap">Email</th>
+                                <th className="px-2 py-2 text-muted-foreground whitespace-nowrap">Control No.</th>
                                 <th className="px-2 py-2 text-muted-foreground whitespace-nowrap">Status</th>
                                 <th className="px-2 py-2 text-muted-foreground whitespace-nowrap text-center">Downloaded</th>
                                 <th className="px-2 py-2 text-muted-foreground whitespace-nowrap text-center">Actions</th>
@@ -5503,6 +5663,24 @@ export default function IssuanceCenterPage({
                                       </p>
                                     </td>
                                     
+                                    {/* Control Number Column */}
+                                    <td className="px-2 py-2">
+                                      {recipient.ControlNumber ? (
+                                        <span 
+                                          className="text-xs font-mono px-1.5 py-0.5 rounded"
+                                          style={{ 
+                                            background: isDark ? 'rgba(238, 135, 36, 0.2)' : 'rgba(238, 135, 36, 0.1)',
+                                            color: DESIGN_TOKENS.colors.brand.orange
+                                          }}
+                                          title={recipient.ControlNumber}
+                                        >
+                                          {recipient.ControlNumber}
+                                        </span>
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">-</span>
+                                      )}
+                                    </td>
+                                    
                                     {/* Status Column */}
                                     <td className="px-2 py-2">
                                       <div 
@@ -5526,7 +5704,7 @@ export default function IssuanceCenterPage({
                                           <span className="text-blue-500">Yes</span>
                                         </div>
                                       ) : (
-                                        <span className="text-xs text-muted-foreground">—</span>
+                                        <span className="text-xs text-muted-foreground">-</span>
                                       )}
                                     </td>
                                     
@@ -5559,7 +5737,7 @@ export default function IssuanceCenterPage({
                                             <span>{isResending ? '...' : (isResendAction ? 'Resend' : 'Send')}</span>
                                           </button>
                                         ) : (
-                                          <span className="text-xs text-muted-foreground">—</span>
+                                          <span className="text-xs text-muted-foreground">-</span>
                                         )}
                                       </div>
                                     </td>
@@ -5628,8 +5806,8 @@ export default function IssuanceCenterPage({
                               rel="noopener noreferrer"
                               className="flex items-center gap-3 p-3 rounded-lg transition-all hover:scale-[1.01]"
                               style={{ 
-                                background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-                                border: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)}`,
+                                background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)",
+                                border: "1px solid " + (isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"),
                               }}
                             >
                               <span className="text-xl">
@@ -6033,7 +6211,7 @@ export default function IssuanceCenterPage({
                   {issuanceToDelete.Title}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {issuanceToDelete.TemplateName} • {issuanceToDelete.TotalRecipients} recipients
+                  {issuanceToDelete.TemplateName} - {issuanceToDelete.TotalRecipients} recipients
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   Created: {formatIssuanceDate(issuanceToDelete.CreatedAt)}
