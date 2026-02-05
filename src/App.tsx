@@ -94,6 +94,7 @@ import { CacheRefreshModal, RoleChangeModal, determineRoleChangeType, type RoleC
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
+  import { Analytics } from "@vercel/analytics/react";
   import MusicPlayer from "./components/MusicPlayer";
 import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
 import type { AttendanceDashboardContext } from "./components/AttendanceDashboardPage";
@@ -6083,6 +6084,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
 {/* YSP AI Chatbot */}
         {chatbot}
+        
+        {/* Vercel Web Analytics */}
+        <Analytics />
         
       </div>
     );
