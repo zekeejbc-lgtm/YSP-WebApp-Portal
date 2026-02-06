@@ -43,7 +43,7 @@ Copy `.env.example` → `.env` and fill in all values.
 | Variable | Your Current Value | Description |
 |---|---|---|
 | `VITE_FIREBASE_SDK_VERSION` | `10.13.2` | Firebase JS SDK version loaded from CDN |
-| `VITE_FIREBASE_API_KEY` | `AIzaSyCe5hb_ZcMOSOlD9Dj9UJ5TNy9FleQZSHg` | Firebase Web API key |
+| `VITE_FIREBASE_API_KEY` | `YOUR_FIREBASE_API_KEY` | Firebase Web API key |
 | `VITE_FIREBASE_AUTH_DOMAIN` | `ysp-backend.firebaseapp.com` | Firebase auth domain |
 | `VITE_FIREBASE_PROJECT_ID` | `ysp-backend` | Firebase project ID |
 | `VITE_FIREBASE_STORAGE_BUCKET` | `ysp-backend.firebasestorage.app` | Firebase storage bucket |
