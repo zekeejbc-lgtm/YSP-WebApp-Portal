@@ -1111,8 +1111,8 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
     const recipients = event.recipients || { type: 'All', ids: [], names: [] };
     const selectedRecipients: SelectedRecipient[] = [];
     
-    // Load recipients - always as 'person' type since the smart search uses individual selection
-    if (recipients.type === 'Person' && recipients.ids) {
+    // Load recipients - handle both Person and Committee types
+    if (recipients.type === 'Person' && Array.isArray(recipients.ids) && recipients.ids.length > 0) {
       recipients.ids.forEach((id, idx) => {
         selectedRecipients.push({
           id: id,
@@ -1121,7 +1121,27 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
           source: 'Saved',
         });
       });
+    } else if (recipients.type === 'Committee' && Array.isArray(recipients.committees) && recipients.committees.length > 0) {
+      // For Committee type, load all members from those committees
+      const committeeNames = recipients.committees;
+      committeeNames.forEach(committeeName => {
+        const committeeMembers = allMembers.filter(m => 
+          m.committee?.toLowerCase().includes(committeeName.toLowerCase())
+        );
+        committeeMembers.forEach(member => {
+          if (!selectedRecipients.some(r => r.id === member.id)) {
+            selectedRecipients.push({
+              id: member.id,
+              name: member.name,
+              type: 'person',
+              committee: member.committee,
+              source: committeeName,
+            });
+          }
+        });
+      });
     }
+    // For 'All' type, we leave selectedRecipients empty - the save logic will preserve 'All' if nothing is selected
     
     setFormData({
       name: event.name,
