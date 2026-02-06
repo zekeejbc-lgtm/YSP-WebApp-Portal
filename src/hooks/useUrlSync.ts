@@ -21,6 +21,15 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 /**
+ * Deep linking parameters for specific item selection
+ */
+export interface DeepLinkParams {
+  id?: string;           // General item ID (feedback, announcement, issuance)
+  eventId?: string;      // Event ID for attendance recording
+  mode?: 'qr' | 'manual'; // Attendance recording mode
+}
+
+/**
  * Page state mapping between URL paths and boolean setters
  */
 interface PageStateMap {
@@ -117,6 +126,7 @@ const PAGE_ROLE_REQUIREMENTS: Record<string, UserRole> = {
   'AttendanceRecording': 'head',
   'ManageEvents': 'admin',
   'ManageMembers': 'admin',
+  'FeedbackDashboard': 'admin', // Admin/Auditor feedback management
   'AccessLogs': 'auditor',
   'SystemTools': 'auditor',
 };
@@ -210,16 +220,31 @@ export function useUrlSync({
     }
   }, [pageSetters]);
 
-  // Build the URL with role and page
-  const buildUrl = useCallback((pageName: string | null): string => {
+  // Build the URL with role, page, and optional deep link parameters
+  const buildUrl = useCallback((pageName: string | null, params?: DeepLinkParams): string => {
     const roleSegment = getRolePathSegment(userRole, isLoggedIn);
     
     if (!pageName) {
       return `/${roleSegment}`;
     }
     
-    return `/${roleSegment}?page=${pageName}`;
+    const searchParams = new URLSearchParams();
+    searchParams.set('page', pageName);
+    
+    // Add deep link parameters if provided
+    if (params?.id) searchParams.set('id', params.id);
+    if (params?.eventId) searchParams.set('eventId', params.eventId);
+    if (params?.mode) searchParams.set('mode', params.mode);
+    
+    return `/${roleSegment}?${searchParams.toString()}`;
   }, [userRole, isLoggedIn]);
+
+  // Build a shareable deep link URL (absolute URL)
+  const buildShareableUrl = useCallback((pageName: string, params?: DeepLinkParams): string => {
+    const baseUrl = window.location.origin;
+    const relativeUrl = buildUrl(pageName, params);
+    return `${baseUrl}${relativeUrl}`;
+  }, [buildUrl]);
 
   // Store intended destination for post-login redirect
   const setIntendedDestination = useCallback((pageName: string) => {
@@ -243,8 +268,8 @@ export function useUrlSync({
     }
   }, []);
 
-  // Navigate to a page by updating both URL and state
-  const navigateToPage = useCallback((pageName: string) => {
+  // Navigate to a page by updating both URL and state, with optional deep link params
+  const navigateToPage = useCallback((pageName: string, params?: DeepLinkParams) => {
     if (!hasPageAccess(pageName)) {
       // User doesn't have access - show login panel and remember destination
       setIntendedDestination(pageName);
@@ -259,7 +284,7 @@ export function useUrlSync({
     
     skipStateSyncRef.current = true;
     openPageDirect(pageName);
-    navigate(buildUrl(pageName));
+    navigate(buildUrl(pageName, params));
     lastSyncedPage.current = pageName;
     
     setTimeout(() => { skipStateSyncRef.current = false; }, 50);
@@ -395,6 +420,15 @@ export function useUrlSync({
     }
   }, [pageStates, navigate, sessionChecked, buildUrl]);
 
+  // Get current deep link parameters from URL
+  const getDeepLinkParams = useCallback((): DeepLinkParams => {
+    return {
+      id: searchParams.get('id') || undefined,
+      eventId: searchParams.get('eventId') || undefined,
+      mode: (searchParams.get('mode') as 'qr' | 'manual') || undefined,
+    };
+  }, [searchParams]);
+
   return {
     navigateToPage,
     closePage,
@@ -402,6 +436,10 @@ export function useUrlSync({
     hasPageAccess,
     setIntendedDestination,
     getAndClearIntendedDestination,
+    // Deep linking support
+    deepLinkParams: getDeepLinkParams(),
+    buildShareableUrl,
+    buildUrl,
   };
 }
 

@@ -230,9 +230,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
   const roleCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // URL Sync - Bridges boolean navigation states with URL routing
-  // Note: navigateToPage/closePage available for programmatic navigation
-  // Currently, state changes (setShowX) auto-sync to URL via the hook
-  useUrlSync({
+  // Provides deepLinkParams for item-specific navigation (feedback ID, event ID, etc.)
+  const { deepLinkParams, buildShareableUrl } = useUrlSync({
     pageStates: {
       showFeedbackPage,
       showOfficerDirectory,
@@ -530,6 +529,20 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     
     // Manage Events Modal State (to hide chatbot when modals are open)
     const [manageEventsModalOpen, setManageEventsModalOpen] = useState(false);
+    
+    // Attendance Transparency Modal State (to hide chatbot when modals are open)
+    const [attendanceTransparencyModalOpen, setAttendanceTransparencyModalOpen] = useState(false);
+
+    useEffect(() => {
+      const handleAttendanceTransparencyModal = (event: Event) => {
+        const detail = (event as CustomEvent).detail as { open?: boolean } | undefined;
+        setAttendanceTransparencyModalOpen(!!detail?.open);
+      };
+      window.addEventListener("attendance-transparency-modal", handleAttendanceTransparencyModal as EventListener);
+      return () => {
+        window.removeEventListener("attendance-transparency-modal", handleAttendanceTransparencyModal as EventListener);
+      };
+    }, []);
     
     // Homepage Content - Fetched from GAS Backend
     const [homepageContent, setHomepageContent] = useState<HomepageMainContent & {
@@ -2742,7 +2755,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal}
+        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || attendanceTransparencyModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
         isDark={isDark}
@@ -2823,6 +2836,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
               removeUploadToast={removeUploadToast}
+              initialFeedbackId={deepLinkParams.id}
+              buildShareableUrl={buildShareableUrl}
             />
           </Suspense>
           {chatbot}
@@ -3016,7 +3031,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading attendance..." />}>
-            <AttendanceRecordingPage onClose={() => setShowAttendanceRecording(false)} isDark={isDark} />
+            <AttendanceRecordingPage 
+              onClose={() => setShowAttendanceRecording(false)} 
+              isDark={isDark}
+              initialEventId={deepLinkParams.eventId}
+              initialMode={deepLinkParams.mode}
+              buildShareableUrl={buildShareableUrl}
+            />
           </Suspense>
           {chatbot}
         </>
@@ -3041,7 +3062,14 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading events..." />}>
-            <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} username={userUsername || 'admin'} onModalStateChange={setManageEventsModalOpen} />
+            <ManageEventsPage 
+              onClose={() => setShowManageEvents(false)} 
+              isDark={isDark} 
+              username={userUsername || 'admin'} 
+              onModalStateChange={setManageEventsModalOpen}
+              initialEventId={deepLinkParams.eventId}
+              buildShareableUrl={buildShareableUrl}
+            />
           </Suspense>
           {chatbot}
         </>
@@ -3165,7 +3193,14 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading announcements..." />}>
-            <AnnouncementsPage onClose={() => setShowAnnouncements(false)} isDark={isDark} userRole={userRole} username={userUsername || 'admin'} />
+            <AnnouncementsPage 
+              onClose={() => setShowAnnouncements(false)} 
+              isDark={isDark} 
+              userRole={userRole} 
+              username={userUsername || 'admin'}
+              initialAnnouncementId={deepLinkParams.id}
+              buildShareableUrl={buildShareableUrl}
+            />
           </Suspense>
           {chatbot}
         </>
@@ -3190,7 +3225,17 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading issuance center..." />}>
-            <IssuanceCenterPage onClose={() => setShowIssuanceCenter(false)} isDark={isDark} userRole={userRole} username={userUsername || 'admin'} userEmail={userEmail} userProfilePicture={userProfilePicture} onModalStateChange={setIssuanceModalOpen} />
+            <IssuanceCenterPage 
+              onClose={() => setShowIssuanceCenter(false)} 
+              isDark={isDark} 
+              userRole={userRole} 
+              username={userUsername || 'admin'} 
+              userEmail={userEmail} 
+              userProfilePicture={userProfilePicture} 
+              onModalStateChange={setIssuanceModalOpen}
+              initialIssuanceId={deepLinkParams.id}
+              buildShareableUrl={buildShareableUrl}
+            />
           </Suspense>
           {chatbot}
         </>

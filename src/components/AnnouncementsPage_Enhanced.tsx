@@ -14,7 +14,7 @@
  */
 
 import { X, Plus, Pin, Edit2, Trash2, Bell, AlertCircle, Upload, Image as ImageIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import { toast } from "sonner";
@@ -38,6 +38,8 @@ interface AnnouncementsPageProps {
   isDark: boolean;
   userRole: string;
   username?: string;
+  initialAnnouncementId?: string;
+  buildShareableUrl?: (pageName: string, params?: { id?: string }) => string;
 }
 
 export default function AnnouncementsPageEnhanced({
@@ -45,6 +47,8 @@ export default function AnnouncementsPageEnhanced({
   isDark,
   userRole,
   username = "admin",
+  initialAnnouncementId,
+  buildShareableUrl,
 }: AnnouncementsPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
@@ -148,6 +152,18 @@ export default function AnnouncementsPageEnhanced({
   ]);
 
   const categories = ["all", "Events", "Training", "Updates", "Programs"];
+
+  // Deep link: Auto-view announcement from URL parameter
+  const hasAutoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (initialAnnouncementId && announcements.length > 0 && !hasAutoSelectedRef.current) {
+      const announcement = announcements.find(a => a.id === initialAnnouncementId);
+      if (announcement) {
+        setViewingAnnouncement(announcement);
+        hasAutoSelectedRef.current = true;
+      }
+    }
+  }, [initialAnnouncementId, announcements]);
 
   const filteredAnnouncements = announcements
     .filter((ann) => {

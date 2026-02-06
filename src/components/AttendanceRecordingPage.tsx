@@ -58,6 +58,7 @@ import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import CustomDropdown from "./CustomDropdown";
+import type { DeepLinkParams } from "../hooks/useUrlSync";
 import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle, Search, User, UserX, Users, Building, AtSign } from "lucide-react";
 import {
   fetchEvents,
@@ -85,6 +86,9 @@ import { getStoredUser } from "../services/gasLoginService";
 interface AttendanceRecordingPageProps {
   onClose: () => void;
   isDark: boolean;
+  initialEventId?: string;
+  initialMode?: 'qr' | 'manual';
+  buildShareableUrl?: (pageName: string, params?: DeepLinkParams) => string;
 }
 
 type Step = "event-selection" | "mode-selection" | "recording";
@@ -887,11 +891,14 @@ function EventCardSkeleton({ isDark }: { isDark: boolean }) {
   );
 }
 
-export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceRecordingPageProps) {
+export default function AttendanceRecordingPage({ onClose, isDark, initialEventId, initialMode, buildShareableUrl }: AttendanceRecordingPageProps) {
   // Wizard state
   const [currentStep, setCurrentStep] = useState<Step>("event-selection");
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [selectedMode, setSelectedMode] = useState<Mode>(null);
+  
+  // Deep link: Track if we've auto-selected from URL params
+  const hasAutoSelectedRef = useRef(false);
   const [showEventDetailsModal, setShowEventDetailsModal] = useState(false);
 
   // Backend data state
@@ -1286,6 +1293,50 @@ export default function AttendanceRecordingPage({ onClose, isDark }: AttendanceR
     };
     initLoad();
   }, [loadEvents]);
+
+  // Deep link: Auto-select event and mode from URL parameters
+  useEffect(() => {
+    if (initialEventId && events.length > 0 && !hasAutoSelectedRef.current) {
+      const event = events.find(e => e.id === initialEventId);
+      if (event) {
+        hasAutoSelectedRef.current = true;
+        setSelectedEvent(event);
+        
+        // If mode is also provided, validate before proceeding to recording
+        if (initialMode) {
+          // Only auto-proceed to recording if event is active or starting soon
+          if (event.status === 'happening' || event.status === 'starting-soon') {
+            setSelectedMode(initialMode);
+            setCurrentStep("recording");
+          } else if (event.status === 'upcoming') {
+            // Event hasn't started yet - show mode selection but warn
+            toast.info('Event not started yet', {
+              description: 'This event is scheduled but hasn\'t started. You can still prepare for attendance recording.',
+            });
+            setCurrentStep("mode-selection");
+          } else if (event.status === 'completed') {
+            toast.error('Event has ended', {
+              description: 'This event has already completed. Attendance recording is closed.',
+            });
+            // Stay on event selection
+          } else if (event.status === 'cancelled') {
+            toast.error('Event cancelled', {
+              description: 'This event has been cancelled.',
+            });
+            // Stay on event selection
+          }
+        } else {
+          // Otherwise, go to mode selection
+          setCurrentStep("mode-selection");
+        }
+      } else {
+        // Event not found
+        toast.error('Event not found', {
+          description: 'The linked event could not be found.',
+        });
+      }
+    }
+  }, [initialEventId, initialMode, events]);
 
   // Watch user location when event details modal is shown
   useEffect(() => {

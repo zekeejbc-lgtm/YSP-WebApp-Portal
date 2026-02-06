@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Edit, Search, MapPin, Move, Trash2, Loader2, RefreshCw, X, ToggleLeft, ToggleRight, FileText, MapPinned, AlertTriangle, Users, Clock, UserCheck, Building, User, Check, Calendar, CheckCircle } from "lucide-react";
+import { Plus, Edit, Search, MapPin, Move, Trash2, Loader2, RefreshCw, X, ToggleLeft, ToggleRight, FileText, MapPinned, AlertTriangle, Users, Clock, UserCheck, Building, User, Check, Calendar, CheckCircle, Link } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
@@ -354,9 +354,11 @@ interface ManageEventsPageProps {
   isDark: boolean;
   username?: string;
   onModalStateChange?: (isOpen: boolean) => void; // Callback when any modal opens/closes (to hide chatbot)
+  initialEventId?: string;
+  buildShareableUrl?: (pageName: string, params?: { id?: string; eventId?: string; mode?: 'qr' | 'manual' }) => string;
 }
 
-export default function ManageEventsPage({ onClose, isDark, username = 'admin', onModalStateChange }: ManageEventsPageProps) {
+export default function ManageEventsPage({ onClose, isDark, username = 'admin', onModalStateChange, initialEventId, buildShareableUrl }: ManageEventsPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
@@ -451,6 +453,19 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
   useEffect(() => {
     loadEvents();
   }, [loadEvents]);
+
+  // Deep link: Auto-select event from URL parameter
+  const hasAutoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (initialEventId && events.length > 0 && !hasAutoSelectedRef.current) {
+      const event = events.find(e => e.id === initialEventId);
+      if (event) {
+        setEditingEvent(event);
+        setShowModal(true);
+        hasAutoSelectedRef.current = true;
+      }
+    }
+  }, [initialEventId, events]);
 
   // Load members for recipient selection
   const loadMembers = useCallback(async () => {
@@ -1251,6 +1266,32 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                     size="sm"
                   />
                 </div>
+                {/* Share Attendance Link - Opens QR recording for heads */}
+                {buildShareableUrl && (event.status === 'Active' || event.status === 'Scheduled') && (
+                  <button
+                    onClick={() => {
+                      // Generate head-accessible URL with QR mode pre-selected
+                      const headUrl = buildShareableUrl('AttendanceRecording', { eventId: event.id, mode: 'qr' }).replace(/\/(admin|auditor)\?/, '/head?');
+                      navigator.clipboard.writeText(window.location.origin + headUrl).then(() => {
+                        toast.success('Attendance link copied!', {
+                          description: 'Share this with heads to start QR scanning for this event',
+                        });
+                      }).catch(() => {
+                        toast.error('Failed to copy link');
+                      });
+                    }}
+                    className="px-3 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm"
+                    style={{
+                      background: isDark ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)',
+                      color: '#3b82f6',
+                      border: '1px solid rgba(59, 130, 246, 0.3)',
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    }}
+                    title="Copy attendance link for heads (QR mode)"
+                  >
+                    <Link className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   onClick={() => openEditModal(event)}
                   className="px-3 py-2 rounded-lg bg-[#ee8724] text-white hover:bg-[#d97618] transition-colors flex items-center gap-2 text-sm"

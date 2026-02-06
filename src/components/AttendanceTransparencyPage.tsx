@@ -15,7 +15,7 @@
  * =============================================================================
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle, ChevronDown, ChevronUp, MapPin, Loader2, Timer, CheckCircle2, PlayCircle, Archive } from "lucide-react";
 import { PageLayout, StatusChip, DESIGN_TOKENS, getGlassStyle, Button } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
@@ -214,12 +214,38 @@ function formatDisplayDate(dateStr: string): string {
 
 /**
  * Calculate countdown to event start/end
+ * Handles various date formats including:
+ * - yyyy-MM-dd (e.g., "2026-02-07")
+ * - Date strings (e.g., "Feb 7, 2026")
+ * - ISO date strings
  */
 function getCountdown(targetDateStr: string, targetTimeStr: string): { text: string; isNegative: boolean; totalSeconds: number } {
+  if (!targetDateStr) {
+    return { text: 'N/A', isNegative: false, totalSeconds: 0 };
+  }
+  
   const now = new Date();
   
   try {
-    const [year, month, day] = targetDateStr.split('-').map(Number);
+    let year: number, month: number, day: number;
+    
+    // Try to parse yyyy-MM-dd format first
+    if (/^\d{4}-\d{2}-\d{2}/.test(targetDateStr)) {
+      const parts = targetDateStr.split('-').map(Number);
+      year = parts[0];
+      month = parts[1];
+      day = parts[2];
+    } else {
+      // Try to parse any date string using Date constructor
+      const parsedDate = new Date(targetDateStr);
+      if (isNaN(parsedDate.getTime())) {
+        return { text: 'N/A', isNegative: false, totalSeconds: 0 };
+      }
+      year = parsedDate.getFullYear();
+      month = parsedDate.getMonth() + 1;
+      day = parsedDate.getDate();
+    }
+    
     let hours = 0, minutes = 0;
     
     if (targetTimeStr) {
@@ -234,6 +260,12 @@ function getCountdown(targetDateStr: string, targetTimeStr: string): { text: str
     }
     
     const target = new Date(year, month - 1, day, hours, minutes);
+    
+    // Safety check for valid date
+    if (isNaN(target.getTime())) {
+      return { text: 'N/A', isNegative: false, totalSeconds: 0 };
+    }
+    
     const diffMs = target.getTime() - now.getTime();
     const isNegative = diffMs < 0;
     const absDiffMs = Math.abs(diffMs);
@@ -443,6 +475,567 @@ function SkeletonSummaryCard({ isDark }: { isDark: boolean }) {
 }
 
 // =====================================================
+// EVENT DETAIL MODAL
+// =====================================================
+
+/**
+ * Format time window value - handles ISO date strings from Google Sheets
+ * Google Sheets stores time-only values as 1899-12-30T{time}Z
+ */
+function formatTimeWindowValue(timeValue: string | undefined): string {
+  if (!timeValue) return '';
+  
+  // If it looks like an ISO date string with the 1899 date (Google Sheets time format)
+  if (timeValue.includes('1899-12-30') || timeValue.includes('T')) {
+    try {
+      const date = new Date(timeValue);
+      if (!isNaN(date.getTime())) {
+        // Extract hours and minutes from the ISO string directly
+        // The time is stored in UTC, so we need to get the UTC values
+        const hours = date.getUTCHours();
+        const minutes = date.getUTCMinutes();
+        const period = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours % 12 || 12;
+        return `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+      }
+    } catch {
+      // Fall through
+    }
+  }
+  
+  // If already formatted like "8:00 AM", return as is
+  if (/^\d{1,2}:\d{2}\s*(AM|PM)?$/i.test(timeValue.trim())) {
+    return timeValue.trim();
+  }
+  
+  return timeValue;
+}
+
+interface EventDetailModalProps {
+  event: EventData;
+  isDark: boolean;
+  onClose: () => void;
+}
+
+/**
+ * Leaflet Map Component for Event Geofence with Real-time Location
+ */
+function EventGeofenceMap({ 
+  eventLat, 
+  eventLng, 
+  radius, 
+  locationName,
+  isDark 
+}: { 
+  eventLat: number; 
+  eventLng: number; 
+  radius: number; 
+  locationName?: string;
+  isDark: boolean;
+}) {
+  const mapContainerRef = React.useRef<HTMLDivElement>(null);
+  const mapInstanceRef = React.useRef<any>(null);
+  const userMarkerRef = React.useRef<any>(null);
+  const userAccuracyCircleRef = React.useRef<any>(null);
+  const [userLocation, setUserLocation] = React.useState<{ lat: number; lng: number; accuracy: number } | null>(null);
+  const [isLocating, setIsLocating] = React.useState(true);
+  const watchIdRef = React.useRef<number | null>(null);
+
+  // Start watching user location
+  React.useEffect(() => {
+    if (!navigator.geolocation) {
+      setIsLocating(false);
+      return;
+    }
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        setUserLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        });
+        setIsLocating(false);
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+        setIsLocating(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, []);
+
+  // Initialize Leaflet map
+  React.useEffect(() => {
+    let isMounted = true;
+
+    const initMap = async () => {
+      if (!mapContainerRef.current || mapInstanceRef.current) return;
+
+      const L = (await import('leaflet')).default;
+      if (!isMounted) return;
+
+      // Custom icons
+      const eventIcon = L.divIcon({
+        html: `
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" fill="#EF4444" stroke="#991B1B" stroke-width="1.5"/>
+            <circle cx="12" cy="10" r="3" fill="white"/>
+          </svg>
+        `,
+        className: 'event-marker',
+        iconSize: [36, 36],
+        iconAnchor: [18, 36],
+        popupAnchor: [0, -36],
+      });
+
+      // Initialize map
+      const map = L.map(mapContainerRef.current, {
+        center: [eventLat, eventLng],
+        zoom: 17,
+        zoomControl: true,
+      });
+
+      // Add OpenStreetMap tile layer
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 20,
+        attribution: '© OpenStreetMap',
+      }).addTo(map);
+
+      // Add geofence circle
+      L.circle([eventLat, eventLng], {
+        radius: radius,
+        color: '#3B82F6',
+        fillColor: '#3B82F6',
+        fillOpacity: 0.2,
+        weight: 3,
+        dashArray: '10, 5',
+      }).addTo(map);
+
+      // Add event marker
+      const eventMarker = L.marker([eventLat, eventLng], { icon: eventIcon }).addTo(map);
+      eventMarker.bindPopup(`
+        <div style="text-align: center; padding: 4px;">
+          <strong style="color: #EF4444;">${locationName || 'Event Location'}</strong><br/>
+          <span style="font-size: 11px; color: #666;">Geofence: ${radius}m radius</span>
+        </div>
+      `);
+
+      mapInstanceRef.current = map;
+
+      // Invalidate size after render
+      setTimeout(() => map.invalidateSize(), 200);
+    };
+
+    initMap();
+
+    return () => {
+      isMounted = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [eventLat, eventLng, radius, locationName]);
+
+  // Update user location on map
+  React.useEffect(() => {
+    const updateUserMarker = async () => {
+      if (!mapInstanceRef.current || !userLocation) return;
+
+      const L = (await import('leaflet')).default;
+
+      const userIcon = L.divIcon({
+        html: `
+          <div style="position: relative;">
+            <div style="width: 18px; height: 18px; background: #22c55e; border: 3px solid white; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 6px; height: 6px; background: white; border-radius: 50%;"></div>
+          </div>
+        `,
+        className: 'user-marker-live',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      });
+
+      if (userMarkerRef.current) {
+        userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
+        if (userAccuracyCircleRef.current) {
+          userAccuracyCircleRef.current.setLatLng([userLocation.lat, userLocation.lng]);
+          userAccuracyCircleRef.current.setRadius(userLocation.accuracy);
+        }
+      } else {
+        // Create accuracy circle
+        userAccuracyCircleRef.current = L.circle([userLocation.lat, userLocation.lng], {
+          radius: userLocation.accuracy,
+          color: '#22c55e',
+          fillColor: '#22c55e',
+          fillOpacity: 0.15,
+          weight: 1,
+        }).addTo(mapInstanceRef.current);
+
+        // Create user marker
+        userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon }).addTo(mapInstanceRef.current);
+        userMarkerRef.current.bindPopup(`
+          <div style="text-align: center; padding: 4px;">
+            <strong style="color: #22c55e;">Your Location</strong><br/>
+            <span style="font-size: 11px; color: #666;">Accuracy: ±${Math.round(userLocation.accuracy)}m</span>
+          </div>
+        `);
+      }
+    };
+
+    updateUserMarker();
+  }, [userLocation]);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-sm">
+        <div className="flex items-center gap-2 font-medium">
+          <MapPin className="w-4 h-4 text-[#f6421f]" />
+          Geofence Location
+          <span className="text-xs text-muted-foreground font-normal">
+            ({radius}m radius)
+          </span>
+        </div>
+        {isLocating && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Locating...
+          </div>
+        )}
+        {userLocation && !isLocating && (
+          <div className="flex items-center gap-1.5 text-xs text-green-600">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            Live
+          </div>
+        )}
+      </div>
+      
+      <div 
+        className="rounded-xl overflow-hidden border relative z-0"
+        style={{ 
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+          height: '220px',
+        }}
+      >
+        <style>{`
+          @import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
+          .event-marker, .user-marker-live { background: none; border: none; }
+          .leaflet-container { z-index: 0; }
+          .leaflet-pane { z-index: 0; }
+          .leaflet-top, .leaflet-bottom { z-index: 1; }
+          .leaflet-control-zoom { border-radius: 8px !important; overflow: hidden; }
+          .leaflet-control-zoom a { 
+            background: ${isDark ? '#1f2937' : '#fff'} !important; 
+            color: ${isDark ? '#fff' : '#000'} !important; 
+          }
+        `}</style>
+        <div ref={mapContainerRef} style={{ height: '100%', width: '100%' }} />
+      </div>
+      
+      {userLocation && (
+        <div className="text-xs text-muted-foreground text-center">
+          📍 Your location: {userLocation.lat.toFixed(5)}, {userLocation.lng.toFixed(5)} (±{Math.round(userLocation.accuracy)}m)
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EventDetailModal({ event, isDark, onClose }: EventDetailModalProps) {
+  const glassStyle = getGlassStyle(isDark);
+  const statusStyle = getEventStatusStyle(event.Status);
+  
+  // Parse geofence data
+  const hasGeofence = event.GeofenceEnabled === true || event.GeofenceEnabled === 'true' || event.GeofenceEnabled === 'TRUE';
+  const lat = typeof event.Latitude === 'string' ? parseFloat(event.Latitude) : event.Latitude;
+  const lng = typeof event.Longitude === 'string' ? parseFloat(event.Longitude) : event.Longitude;
+  const radius = typeof event.Radius === 'string' ? parseFloat(event.Radius) : event.Radius;
+  const hasValidCoords = !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0;
+  
+  // Parse recipients if available
+  let recipientInfo: { type: string; names?: string[]; ids?: string[]; committees?: string[] } | null = null;
+  if (event.Recipients) {
+    try {
+      recipientInfo = JSON.parse(event.Recipients);
+    } catch {
+      // Ignore parse errors
+    }
+  }
+  
+  return (
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      
+      {/* Modal */}
+      <div 
+        className="relative w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl"
+        style={{
+          ...glassStyle,
+          background: isDark 
+            ? 'rgba(30, 30, 40, 0.95)' 
+            : 'rgba(255, 255, 255, 0.98)',
+          border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+        }}
+      >
+        {/* Header */}
+        <div 
+          className="sticky top-0 p-4 pb-3 border-b z-20"
+          style={{ 
+            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            background: isDark ? 'rgba(30, 30, 40, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+          }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span 
+                  className="px-2.5 py-0.5 rounded-full text-xs font-semibold shrink-0"
+                  style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
+                >
+                  {statusStyle.label}
+                </span>
+              </div>
+              <h2 
+                className="text-lg font-semibold truncate"
+                style={{ fontFamily: DESIGN_TOKENS.typography.fontFamily.headings }}
+              >
+                {event.Title}
+              </h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        
+        {/* Content */}
+        <div className="p-4 space-y-4">
+          {/* Description */}
+          {event.Description && (
+            <div>
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                {event.Description}
+              </p>
+            </div>
+          )}
+          
+          {/* Date & Time */}
+          <div 
+            className="p-3 rounded-xl space-y-2"
+            style={{
+              background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <Calendar className="w-4 h-4 text-[#f6421f] shrink-0" />
+              <div className="text-sm">
+                <span className="font-medium">Date: </span>
+                <span className="text-muted-foreground">
+                  {formatDisplayDate(event.StartDate)}
+                  {event.EndDate && event.EndDate !== event.StartDate && (
+                    <> – {formatDisplayDate(event.EndDate)}</>
+                  )}
+                </span>
+              </div>
+            </div>
+            
+            {(event.StartTime || event.EndTime) && (
+              <div className="flex items-center gap-3">
+                <Clock className="w-4 h-4 text-[#f6421f] shrink-0" />
+                <div className="text-sm">
+                  <span className="font-medium">Time: </span>
+                  <span className="text-muted-foreground">
+                    {event.StartTime || 'TBD'}
+                    {event.EndTime && <> – {event.EndTime}</>}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Location */}
+          {event.LocationName && (
+            <div 
+              className="p-3 rounded-xl"
+              style={{
+                background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <MapPin className="w-4 h-4 text-[#f6421f] shrink-0" />
+                <div className="text-sm">
+                  <span className="font-medium">Location: </span>
+                  <span className="text-muted-foreground">{event.LocationName}</span>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Geofence Map - Using Leaflet with real-time location */}
+          {hasGeofence && hasValidCoords && (
+            <EventGeofenceMap
+              eventLat={lat}
+              eventLng={lng}
+              radius={radius || 50}
+              locationName={event.LocationName}
+              isDark={isDark}
+            />
+          )}
+          
+          {/* Time Windows */}
+          {(event.TimeInStart || event.TimeOutStart) && (
+            <div 
+              className="p-3 rounded-xl space-y-2"
+              style={{
+                background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+              }}
+            >
+              <div className="text-sm font-medium flex items-center gap-2">
+                <Timer className="w-4 h-4 text-[#f6421f]" />
+                Attendance Windows
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                {event.TimeInStart && (
+                  <div>
+                    <span className="text-muted-foreground">Check-in: </span>
+                    <span className="font-medium">{formatTimeWindowValue(event.TimeInStart)}</span>
+                    {event.TimeInEnd && <span className="text-muted-foreground"> – {formatTimeWindowValue(event.TimeInEnd)}</span>}
+                  </div>
+                )}
+                {event.TimeOutStart && (
+                  <div>
+                    <span className="text-muted-foreground">Check-out: </span>
+                    <span className="font-medium">{formatTimeWindowValue(event.TimeOutStart)}</span>
+                    {event.TimeOutEnd && <span className="text-muted-foreground"> – {formatTimeWindowValue(event.TimeOutEnd)}</span>}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {/* Recipients */}
+          {recipientInfo && (
+            <div 
+              className="p-3 rounded-xl space-y-2"
+              style={{
+                background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+              }}
+            >
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <User className="w-4 h-4 text-[#f6421f] shrink-0" />
+                Recipients
+              </div>
+              
+              {recipientInfo.type === 'All' ? (
+                <div className="text-sm text-muted-foreground flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                    All Members
+                  </span>
+                </div>
+              ) : recipientInfo.type === 'Committee' ? (
+                <div className="space-y-1.5">
+                  <div className="text-xs text-muted-foreground">
+                    {recipientInfo.committees?.length || recipientInfo.names?.length || 0} Committee(s)
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(recipientInfo.committees || recipientInfo.names || []).map((name, idx) => (
+                      <span 
+                        key={idx}
+                        className="px-2 py-0.5 rounded-full text-xs"
+                        style={{
+                          background: isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)',
+                          color: isDark ? '#93c5fd' : '#2563eb',
+                        }}
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="text-xs text-muted-foreground">
+                    {recipientInfo.names?.length || 0} Member(s)
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                    {(recipientInfo.names || []).map((name, idx) => (
+                      <span 
+                        key={idx}
+                        className="px-2 py-0.5 rounded-full text-xs"
+                        style={{
+                          background: isDark ? 'rgba(107, 114, 128, 0.3)' : 'rgba(107, 114, 128, 0.1)',
+                          color: isDark ? '#d1d5db' : '#4b5563',
+                        }}
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Notes */}
+          {event.Notes && (
+            <div 
+              className="p-3 rounded-xl"
+              style={{
+                background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+              }}
+            >
+              <div className="flex items-start gap-2 text-sm">
+                <FileText className="w-4 h-4 text-[#f6421f] shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-medium">Notes: </span>
+                  <span className="text-muted-foreground whitespace-pre-wrap">{event.Notes}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Footer */}
+        <div 
+          className="sticky bottom-0 p-4 pt-3 border-t"
+          style={{ 
+            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            background: isDark ? 'rgba(30, 30, 40, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+          }}
+        >
+          <Button
+            onClick={onClose}
+            variant="primary"
+            className="w-full"
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================
 // MAIN COMPONENT
 // =====================================================
 
@@ -474,6 +1067,10 @@ export default function AttendanceTransparencyPage({
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
   const [showArchive, setShowArchive] = useState(false);
   const [, forceUpdate] = useState(0); // For countdown re-renders
+  
+  // Event detail modal state
+  const [selectedEvent, setSelectedEvent] = useState<EventData | null>(null);
+  const [showEventModal, setShowEventModal] = useState(false);
 
   // =====================================================
   // DATA FETCHING
@@ -566,6 +1163,16 @@ export default function AttendanceTransparencyPage({
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Notify App to hide chatbot when modals are open
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const isModalOpen = showEventModal || showDetailModal;
+    window.dispatchEvent(new CustomEvent("attendance-transparency-modal", { detail: { open: isModalOpen } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent("attendance-transparency-modal", { detail: { open: false } }));
+    };
+  }, [showEventModal, showDetailModal]);
 
   // =====================================================
   // FILTERING & SORTING
@@ -697,17 +1304,18 @@ export default function AttendanceTransparencyPage({
         {!isLoadingEvents && memberEvents && (
           <>
             {/* Active & Scheduled Events */}
-            {((memberEvents.activeEvents?.length || 0) + (memberEvents.scheduledEvents?.length || 0)) > 0 ? (
+            {((memberEvents.active?.length || 0) + (memberEvents.scheduled?.length || 0)) > 0 ? (
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {/* Active Events First */}
-                {memberEvents.activeEvents?.map((event) => {
+                {memberEvents.active?.map((event) => {
                   const statusStyle = getEventStatusStyle('active');
                   const countdown = getCountdown(event.EndDate, event.EndTime);
                   
                   return (
                     <div
                       key={event.EventID}
-                      className="rounded-xl p-4 relative overflow-hidden"
+                      className="rounded-xl p-4 overflow-hidden cursor-pointer transition-all hover:scale-[1.02] hover:shadow-lg"
+                      onClick={() => { setSelectedEvent(event); setShowEventModal(true); }}
                       style={{
                         background: isDark 
                           ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%)' 
@@ -716,35 +1324,34 @@ export default function AttendanceTransparencyPage({
                         boxShadow: '0 0 20px rgba(34, 197, 94, 0.1)',
                       }}
                     >
-                      {/* Live Indicator */}
-                      <div className="absolute top-3 right-3">
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+                      {/* Header with Badge */}
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h3 
+                          className="flex-1 min-w-0 line-clamp-2"
+                          style={{ 
+                            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                            fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                          }}
+                        >
+                          {event.Title}
+                        </h3>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-semibold shrink-0"
                           style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
                         >
-                          <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                          Live Now
+                          <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                          Live
                         </div>
                       </div>
                       
-                      <h3 
-                        className="pr-20 mb-2 truncate"
-                        style={{ 
-                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                          fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
-                        }}
-                      >
-                        {event.Title}
-                      </h3>
-                      
                       <div className="space-y-1.5 text-sm text-muted-foreground">
                         <div className="flex items-center gap-2">
-                          <Calendar className="w-4 h-4" />
+                          <Calendar className="w-4 h-4 shrink-0" />
                           <span>{formatDisplayDate(event.StartDate)}</span>
                           {event.StartTime && <span>• {event.StartTime}</span>}
                         </div>
                         {event.LocationName && (
                           <div className="flex items-center gap-2">
-                            <MapPin className="w-4 h-4" />
+                            <MapPin className="w-4 h-4 shrink-0" />
                             <span className="truncate">{event.LocationName}</span>
                           </div>
                         )}
@@ -763,7 +1370,7 @@ export default function AttendanceTransparencyPage({
                 })}
 
                 {/* Scheduled Events */}
-                {memberEvents.scheduledEvents?.map((event) => {
+                {memberEvents.scheduled?.map((event) => {
                   const statusStyle = getEventStatusStyle('scheduled');
                   const countdown = getCountdown(event.StartDate, event.StartTime);
                   const isStartingSoon = countdown.totalSeconds < 3600 && !countdown.isNegative; // Less than 1 hour
@@ -771,7 +1378,8 @@ export default function AttendanceTransparencyPage({
                   return (
                     <div
                       key={event.EventID}
-                      className="rounded-xl p-4 relative"
+                      className="rounded-xl p-4 cursor-pointer transition-all hover:scale-[1.02] hover:shadow-lg"
+                      onClick={() => { setSelectedEvent(event); setShowEventModal(true); }}
                       style={{
                         background: isDark 
                           ? 'rgba(255, 255, 255, 0.05)' 
@@ -782,35 +1390,34 @@ export default function AttendanceTransparencyPage({
                         boxShadow: isStartingSoon ? '0 0 15px rgba(246, 66, 31, 0.15)' : undefined,
                       }}
                     >
-                      {/* Status Badge */}
-                      <div className="absolute top-3 right-3">
+                      {/* Header with Badge */}
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h3 
+                          className="flex-1 min-w-0 line-clamp-2"
+                          style={{ 
+                            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                            fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                          }}
+                        >
+                          {event.Title}
+                        </h3>
                         <div 
-                          className="px-2.5 py-1 rounded-full text-xs font-semibold"
+                          className="px-2 py-1 rounded-full text-xs font-semibold shrink-0"
                           style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
                         >
-                          {isStartingSoon ? '⏰ Starting Soon' : statusStyle.label}
+                          {isStartingSoon ? '⏰ Soon' : statusStyle.label}
                         </div>
                       </div>
                       
-                      <h3 
-                        className="pr-24 mb-2 truncate"
-                        style={{ 
-                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                          fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
-                        }}
-                      >
-                        {event.Title}
-                      </h3>
-                      
                       <div className="space-y-1.5 text-sm text-muted-foreground">
                         <div className="flex items-center gap-2">
-                          <Calendar className="w-4 h-4" />
+                          <Calendar className="w-4 h-4 shrink-0" />
                           <span>{formatDisplayDate(event.StartDate)}</span>
                           {event.StartTime && <span>• {event.StartTime}</span>}
                         </div>
                         {event.LocationName && (
                           <div className="flex items-center gap-2">
-                            <MapPin className="w-4 h-4" />
+                            <MapPin className="w-4 h-4 shrink-0" />
                             <span className="truncate">{event.LocationName}</span>
                           </div>
                         )}
@@ -818,7 +1425,7 @@ export default function AttendanceTransparencyPage({
                       
                       <div className="mt-3 pt-3 border-t" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
                         <div className="flex items-center gap-2 text-sm">
-                          <Clock className="w-4 h-4" />
+                          <Clock className="w-4 h-4 shrink-0" />
                           <span className={isStartingSoon ? 'text-[#f6421f] font-medium' : 'text-muted-foreground'}>
                             Starts in {countdown.text}
                           </span>
@@ -873,7 +1480,8 @@ export default function AttendanceTransparencyPage({
                       return (
                         <div
                           key={event.EventID}
-                          className="rounded-xl p-3 opacity-75"
+                          className="rounded-xl p-3 opacity-75 cursor-pointer transition-all hover:opacity-100 hover:shadow-md"
+                          onClick={() => { setSelectedEvent(event); setShowEventModal(true); }}
                           style={{
                             background: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
                             border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
@@ -2054,6 +2662,15 @@ export default function AttendanceTransparencyPage({
             </div>
           </div>
         </div>
+      )}
+      
+      {/* Event Detail Modal */}
+      {showEventModal && selectedEvent && (
+        <EventDetailModal
+          event={selectedEvent}
+          isDark={isDark}
+          onClose={() => { setShowEventModal(false); setSelectedEvent(null); }}
+        />
       )}
     </>
   );

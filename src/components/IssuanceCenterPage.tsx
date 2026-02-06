@@ -85,6 +85,8 @@ interface IssuanceCenterPageProps {
   userEmail?: string; // Email for filtering member's issuances
   userProfilePicture?: string; // Profile picture URL for member view
   onModalStateChange?: (isOpen: boolean) => void; // Callback when any modal opens/closes (to hide chatbot)
+  initialIssuanceId?: string;
+  buildShareableUrl?: (pageName: string, params?: { id?: string }) => string;
 }
 
 type ViewMode = 'table' | 'card';
@@ -747,6 +749,8 @@ export default function IssuanceCenterPage({
   userEmail = "",
   userProfilePicture,
   onModalStateChange,
+  initialIssuanceId,
+  buildShareableUrl,
 }: IssuanceCenterPageProps) {
   const glassStyle = getGlassStyle(isDark);
   
@@ -936,6 +940,19 @@ export default function IssuanceCenterPage({
     }
   }, [canCreate]);
   
+  // Deep link: Auto-select issuance from URL parameter
+  const hasAutoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (initialIssuanceId && issuances.length > 0 && !hasAutoSelectedRef.current) {
+      const issuance = issuances.find(i => i.id === initialIssuanceId);
+      if (issuance) {
+        setSelectedIssuance(issuance);
+        setShowDetailModal(true);
+        hasAutoSelectedRef.current = true;
+      }
+    }
+  }, [initialIssuanceId, issuances]);
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -6140,6 +6157,33 @@ export default function IssuanceCenterPage({
                 >
                   <User className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">{showMemberPreviewMode ? 'Exit Preview' : 'Member View'}</span>
+                </button>
+              )}
+              
+              {/* Share Link Button - Copy member-accessible link */}
+              {canCreate && selectedIssuance && (selectedIssuance.Status === 'Sent' || selectedIssuance.Status === 'Downloaded') && buildShareableUrl && (
+                <button
+                  onClick={() => {
+                    // Generate member-accessible URL (not admin/auditor)
+                    const memberUrl = buildShareableUrl('IssuanceCenter', { id: selectedIssuance.id }).replace(/\/(admin|auditor)\?/, '/member?');
+                    navigator.clipboard.writeText(window.location.origin + memberUrl).then(() => {
+                      toast.success('Link copied!', {
+                        description: 'Members can use this link to view their issuance',
+                      });
+                    }).catch(() => {
+                      toast.error('Failed to copy link');
+                    });
+                  }}
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
+                  style={{
+                    background: isDark ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)',
+                    color: '#3b82f6',
+                    border: '1px solid rgba(59, 130, 246, 0.3)',
+                  }}
+                  title="Copy shareable link for members"
+                >
+                  <Link className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Share Link</span>
                 </button>
               )}
               

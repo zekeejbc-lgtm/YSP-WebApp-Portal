@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ArrowLeft, Send, Star, MessageSquare, ThumbsUp, AlertCircle, Upload, X, Eye, User, Clock, CheckCircle, XCircle, Mail, Image as ImageIcon, Trash2, Search, RefreshCw, Copy, BarChart3, PieChart as PieChartIcon, Download, FileText, FileSpreadsheet, Settings, ChevronDown, TrendingUp, MessageCircle, Filter, Table2 as TableIcon, Shield } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { ArrowLeft, Send, Star, MessageSquare, ThumbsUp, AlertCircle, Upload, X, Eye, User, Clock, CheckCircle, XCircle, Mail, Image as ImageIcon, Trash2, Search, RefreshCw, Copy, BarChart3, PieChart as PieChartIcon, Download, FileText, FileSpreadsheet, Settings, ChevronDown, TrendingUp, MessageCircle, Filter, Table2 as TableIcon, Shield, Link } from 'lucide-react';
 import { toast } from 'sonner';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import CustomDropdown from './CustomDropdown';
@@ -36,6 +36,9 @@ interface FeedbackPageProps {
   addUploadToast?: (message: UploadToastMessage) => void;
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
   removeUploadToast?: (id: string) => void;
+  // Deep linking support
+  initialFeedbackId?: string;
+  buildShareableUrl?: (pageName: string, params?: { id?: string }) => string;
 }
 
 // Skeleton Loading Component
@@ -55,7 +58,7 @@ const SkeletonCard = () => (
   </div>
 );
 
-export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'guest', username = 'guest', addUploadToast, updateUploadToast, removeUploadToast }: FeedbackPageProps) {
+export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'guest', username = 'guest', addUploadToast, updateUploadToast, removeUploadToast, initialFeedbackId, buildShareableUrl }: FeedbackPageProps) {
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState<Feedback | null>(null);
@@ -66,6 +69,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
   const [adminReply, setAdminReply] = useState('');
   const [editingFeedback, setEditingFeedback] = useState<Feedback | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false); // Delete confirmation state
+  const hasOpenedInitialFeedback = useRef(false);
   
   // Admin/Auditor dashboard states
   const [showDashboard, setShowDashboard] = useState(false);
@@ -136,6 +140,22 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
   useEffect(() => {
     fetchFeedbacks();
   }, [fetchFeedbacks]);
+
+  // Deep link: Open specific feedback from URL parameter (admin/auditor only)
+  useEffect(() => {
+    if (initialFeedbackId && feedbacks.length > 0 && !hasOpenedInitialFeedback.current) {
+      const feedback = feedbacks.find(f => f.id === initialFeedbackId);
+      if (feedback) {
+        setSelectedFeedback(feedback);
+        setShowDetailModal(true);
+        hasOpenedInitialFeedback.current = true;
+        // Show dashboard view for admin/auditor
+        if (isAdmin) {
+          setShowDashboard(true);
+        }
+      }
+    }
+  }, [initialFeedbackId, feedbacks, isAdmin]);
 
   // Load guest feedbacks from sessionStorage on mount
   useEffect(() => {
