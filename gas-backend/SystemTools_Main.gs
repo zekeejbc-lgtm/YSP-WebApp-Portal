@@ -305,29 +305,31 @@ function handleTestConnection() {
  * NOTE: These functions are routed through Loginpage_Main.gs doPost()
  */
 
+// IDs loaded from Script Properties for security (Project Settings > Script Properties)
+const props_ = PropertiesService.getScriptProperties();
+
 // Main data spreadsheet (same as LOGIN_SPREADSHEET_ID)
-const SYSTEM_DATA_SPREADSHEET_ID = '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
+const SYSTEM_DATA_SPREADSHEET_ID = props_.getProperty('LOGIN_SPREADSHEET_ID') || '';
 
 // Separate spreadsheet for System Settings (Maintenance Mode, Cache Version, etc.)
-// Uses the user-provided spreadsheet ID
-const SYSTEM_SETTINGS_SPREADSHEET_ID = '1ZhgrpKE3zCzohqVri0kLhi-R0HVlqjhyvMeF4su8BfI';
+const SYSTEM_SETTINGS_SPREADSHEET_ID = props_.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '';
 const SYSTEM_SETTINGS_SHEET_NAME = 'System Settings';
 const MAINTENANCE_SHEET_NAME = 'Maintenance Mode';
 
 // Backup folder in Google Drive
-const BACKUPS_FOLDER_ID = '1n487dwMvqUbCP8s1ETFfRGF64ds01pXj';
+const BACKUPS_FOLDER_ID = props_.getProperty('BACKUPS_FOLDER_ID') || '';
 
 // Access Logs Archive folder in Google Drive (for automatic monthly archives before deletion)
-const ACCESS_LOGS_ARCHIVE_FOLDER_ID = '1v147QE9DUACrIMcnVNUk7WgevFWBVHfO';
+const ACCESS_LOGS_ARCHIVE_FOLDER_ID = props_.getProperty('ACCESS_LOGS_ARCHIVE_FOLDER_ID') || '';
 
 // Access Logs Manual Export folder in Google Drive (for manual exports by users)
-const ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID = '1LBMul1VdSubotA9FiwI4kvHsmUSv-n2k';
+const ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID = props_.getProperty('ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID') || '';
 
 // Events Spreadsheet ID (from Attendance_Events.gs)
-const EVENTS_SPREADSHEET_ID = '1Xn7w9kzNrP6dmZXYXjxaO11Lmao79wn9w1SPCiqFtcA';
+const EVENTS_SPREADSHEET_ID = props_.getProperty('EVENTS_SPREADSHEET_ID') || '';
 
 // Homepage Spreadsheet ID (Homepage_Main.gs)
-const HOMEPAGE_SPREADSHEET_ID = '1p7zOte14Tu8wrL5VTlU326EQ0Bf8f4uCFwKpJiHnD30';
+const HOMEPAGE_SPREADSHEET_ID = props_.getProperty('HOMEPAGE_SPREADSHEET_ID') || '';
 
 // All spreadsheets to backup
 const ALL_SPREADSHEETS = [
@@ -564,6 +566,24 @@ function getUserRole_(username) {
   }
 }
 
+/**
+ * Reusable role gate — returns an error response if the user is NOT an admin or auditor,
+ * or null if the user is authorized. Usage:
+ *   const authError = requireAdminOrAuditor_(username, 'perform this action');
+ *   if (authError) return authError;
+ */
+function requireAdminOrAuditor_(username, actionDescription) {
+  if (!username) {
+    return createErrorResponse('Username is required', 400);
+  }
+  const role = getUserRole_(username);
+  if (role !== 'auditor' && role !== 'admin') {
+    const desc = actionDescription || 'perform this action';
+    return createErrorResponse('Only auditors or admins can ' + desc, 403);
+  }
+  return null; // authorized
+}
+
 function getScriptCacheVersion_() {
   const props = PropertiesService.getScriptProperties();
   const value = props.getProperty(CACHE_VERSION_PROPERTY_KEY);
@@ -602,15 +622,8 @@ function getCacheVersion() {
  */
 function handleBumpCacheVersion(username) {
   try {
-    if (!username) {
-      return createErrorResponse('Username is required', 400);
-    }
-
-    // Role check removed per user request (frontend restricts access to System Tools)
-    // const role = getUserRole_(username);
-    // if (role !== 'auditor' && role !== 'admin') {
-    //   return createErrorResponse('Only auditors or admins can bump the cache', 403);
-    // }
+    const authError = requireAdminOrAuditor_(username, 'bump the cache');
+    if (authError) return authError;
 
     const currentVersion = getCacheVersion();
     const newVersion = currentVersion + 1;
@@ -659,6 +672,9 @@ function handleGetCacheVersion() {
  */
 function handleDatabaseBackup(username) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'create database backups');
+    if (authError) return authError;
+
     Logger.log('Starting FULL database backup by: ' + username);
     
     const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd_HHmmss");
@@ -812,6 +828,9 @@ function handleDatabaseBackup(username) {
  */
 function handleExportData(username) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'export data');
+    if (authError) return authError;
+
     Logger.log('Starting FULL data export by: ' + username);
     
     const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd_HHmmss");
@@ -1121,7 +1140,7 @@ function handleGetSystemHealth() {
     const lastExportName = getSystemSetting('last_export_name') || '';
     
     const cacheVersion = getCacheVersion();
-    
+
     return createSuccessResponse({
       database: databaseStatus,
       databaseRows: databaseRows,
@@ -1199,6 +1218,9 @@ function handleGetMaintenanceMode() {
  */
 function handleEnableMaintenanceMode(pageId, config, username) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'enable maintenance mode');
+    if (authError) return authError;
+
     const sheet = initializeMaintenanceSheet();
     const data = sheet.getDataRange().getValues();
     
@@ -1256,6 +1278,9 @@ function handleEnableMaintenanceMode(pageId, config, username) {
  */
 function handleDisableMaintenanceMode(pageId, username) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'disable maintenance mode');
+    if (authError) return authError;
+
     const sheet = initializeMaintenanceSheet();
     const data = sheet.getDataRange().getValues();
     
@@ -1295,6 +1320,9 @@ function handleDisableMaintenanceMode(pageId, username) {
  */
 function handleClearAllMaintenance(username) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'clear all maintenance modes');
+    if (authError) return authError;
+
     const sheet = initializeMaintenanceSheet();
     const data = sheet.getDataRange().getValues();
     
@@ -1990,6 +2018,9 @@ function autoArchiveOldLogs(monthsOld) {
  */
 function handleUploadAccessLogsPDF(pdfBase64, fileName, username, exportType) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'upload access log PDFs');
+    if (authError) return authError;
+
     if (!pdfBase64) {
       return createErrorResponse('PDF data is required', 400);
     }
@@ -2185,6 +2216,9 @@ function handleManualExportAccessLogs(username, filterType, startDate, endDate) 
  */
 function handleClearAllAccessLogs(username) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'clear all access logs');
+    if (authError) return authError;
+
     const sheet = initializeAccessLogsSheet();
     const lastRow = sheet.getLastRow();
     
@@ -2235,6 +2269,9 @@ function handleClearAllAccessLogs(username) {
  */
 function handleClearAccessLogsByDateRange(startDate, endDate, username) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'clear access logs by date range');
+    if (authError) return authError;
+
     if (!startDate || !endDate) {
       return createErrorResponse('Start date and end date are required', 400);
     }
@@ -2325,6 +2362,9 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
  */
 function handleClearSpecificAccessLogs(logIds, username) {
   try {
+    const authError = requireAdminOrAuditor_(username, 'clear specific access logs');
+    if (authError) return authError;
+
     if (!logIds || !Array.isArray(logIds) || logIds.length === 0) {
       return createErrorResponse('Log IDs array is required', 400);
     }

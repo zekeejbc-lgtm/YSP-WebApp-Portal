@@ -1,4 +1,4 @@
-const FIREBASE_SDK_VERSION = "10.13.2";
+const FIREBASE_SDK_VERSION = import.meta.env.VITE_FIREBASE_SDK_VERSION || "10.13.2";
 
 let firebaseApp: unknown | null = null;
 let messaging: unknown | null = null;

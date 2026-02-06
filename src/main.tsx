@@ -2,9 +2,14 @@ import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
 import { registerSW } from "virtual:pwa-register";
 import { HelmetProvider } from "react-helmet-async"; // <--- Imported here
+import ErrorBoundary from "./components/ErrorBoundary";
 import App from "./App.tsx";
 import { clearAppBadge } from "./utils/appBadge";
+import { validateEnv } from "./utils/validateEnv";
 import "./index.css";
+
+// Validate environment variables before anything else
+validateEnv();
 
 if (import.meta.env.PROD) {
   const noop = () => {};
@@ -14,11 +19,16 @@ if (import.meta.env.PROD) {
   console.debug = noop;
 }
 
-// Wrapped App with HelmetProvider
-createRoot(document.getElementById("root")!).render(
-  <HelmetProvider>
-    <App />
-  </HelmetProvider>
+// Wrapped App with HelmetProvider and ErrorBoundary
+const rootEl = document.getElementById("root");
+if (!rootEl) throw new Error("Root element not found");
+
+createRoot(rootEl).render(
+  <ErrorBoundary>
+    <HelmetProvider>
+      <App />
+    </HelmetProvider>
+  </ErrorBoundary>
 );
 
 let updateToastId: string | number | undefined;

@@ -1,5 +1,5 @@
 // =================== CONFIGURATION ===================
-const AUDIT_SPREADSHEET_ID = '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
+const AUDIT_SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
 const AUDIT_SHEET_NAME = 'User Profiles';
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png"; 
 

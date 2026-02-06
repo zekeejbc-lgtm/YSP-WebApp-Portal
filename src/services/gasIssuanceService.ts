@@ -6,7 +6,7 @@
  * Frontend service for communicating with the Issuance GAS Backend.
  * Handles issuances, templates, recipients, and PDF generation.
  * 
- * API URL: https://script.google.com/macros/s/AKfycbwir6gVrY9U9n8KgThRx7_5CXxHvDPyF_4EDho_ZsSE2oUtfolYkK6M8A8mdatssWkPMw/exec
+ * API URL: Set via VITE_GAS_ISSUANCE_API_URL environment variable
  * 
  * =============================================================================
  */
@@ -192,7 +192,7 @@ export interface GASIssuanceResponse<T = unknown> {
 // =====================================================
 
 const GAS_ISSUANCE_CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbwir6gVrY9U9n8KgThRx7_5CXxHvDPyF_4EDho_ZsSE2oUtfolYkK6M8A8mdatssWkPMw/exec',
+  API_URL: import.meta.env.VITE_GAS_ISSUANCE_API_URL || '',
   CACHE_DURATION: 5 * 60 * 1000, // 5 minutes cache
 };
 
@@ -947,6 +947,27 @@ export async function getAllMembersForIssuance(): Promise<Array<{ name: string; 
 // =====================================================
 
 /**
+ * Minimal type declaration for pdf.js loaded via CDN
+ */
+interface PdfjsLib {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument(params: { data: ArrayBuffer }): { promise: Promise<PdfjsDocument> };
+}
+interface PdfjsDocument {
+  getPage(num: number): Promise<PdfjsPage>;
+}
+interface PdfjsPage {
+  getViewport(params: { scale: number }): { width: number; height: number };
+  render(params: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }): { promise: Promise<void> };
+}
+
+declare global {
+  interface Window {
+    pdfjsLib?: PdfjsLib;
+  }
+}
+
+/**
  * Convert PDF blob URL to PNG data URL for local preview display
  * This provides faster rendering and avoids PDF viewer dependency
  * Uses pdf.js library loaded dynamically from CDN
@@ -956,14 +977,16 @@ export async function convertPdfToImagePreview(
   scale: number = 2.0 // Higher scale = better quality
 ): Promise<string> {
   // Dynamically load pdf.js if not already loaded
-  if (!(window as any).pdfjsLib) {
+  if (!window.pdfjsLib) {
     await new Promise<void>((resolve, reject) => {
       const script = document.createElement('script');
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
       script.onload = () => {
         // Set worker source
-        (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 
-          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        if (window.pdfjsLib) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
         resolve();
       };
       script.onerror = reject;
@@ -971,7 +994,8 @@ export async function convertPdfToImagePreview(
     });
   }
   
-  const pdfjsLib = (window as any).pdfjsLib;
+  const pdfjsLib = window.pdfjsLib;
+  if (!pdfjsLib) throw new Error('pdf.js failed to load');
   
   // Fetch the PDF blob and convert to array buffer
   const response = await fetch(pdfBlobUrl);

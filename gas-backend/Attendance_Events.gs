@@ -25,12 +25,12 @@
 // =====================================================
 
 /**
- * Get the Events Spreadsheet ID
- * IMPORTANT: Update this with your actual spreadsheet ID
+ * Get the Events Spreadsheet ID from PropertiesService
+ * Set EVENTS_SPREADSHEET_ID in Script Properties
  */
 function getEventsSpreadsheetId() {
-  // Your Events Spreadsheet ID
-  return '1Xn7w9kzNrP6dmZXYXjxaO11Lmao79wn9w1SPCiqFtcA';
+  var cached = PropertiesService.getScriptProperties().getProperty('EVENTS_SPREADSHEET_ID');
+  return cached || '';
 }
 
 /**
@@ -51,9 +51,19 @@ function isRequestCancelled_(params) {
 /**
  * Handle GET requests
  */
+/**
+ * Sanitize a string parameter for Events: trim, enforce max length, strip control chars
+ */
+function sanitizeEventsParam_(value, maxLen) {
+  if (value === null || value === undefined) return '';
+  var str = String(value).trim().replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  var limit = maxLen || 200;
+  return str.length > limit ? str.substring(0, limit) : str;
+}
+
 function doGet(e) {
   const params = e.parameter;
-  const action = params.action;
+  const action = sanitizeEventsParam_(params.action, 50);
   
   let result;
   
@@ -64,21 +74,26 @@ function doGet(e) {
         .createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     }
+    // Sanitize common params
+    const eventId = sanitizeEventsParam_(params.eventId, 100);
+    const memberId = sanitizeEventsParam_(params.memberId, 100);
+    const limit = params.limit ? sanitizeEventsParam_(params.limit, 10) : undefined;
+    
     switch (action) {
       case 'getEvents':
         result = getEvents(params);
         break;
       case 'getEvent':
-        result = getEventById(params.eventId);
+        result = getEventById(eventId);
         break;
       case 'getEventAttendance':
-        result = getEventAttendance(params.eventId);
+        result = getEventAttendance(eventId);
         break;
       case 'getUpcomingEvents':
-        result = getUpcomingEvents(params.limit || 10);
+        result = getUpcomingEvents(limit || 10);
         break;
       case 'getPastEvents':
-        result = getPastEvents(params.limit || 10);
+        result = getPastEvents(limit || 10);
         break;
       case 'getEventStats':
         result = getEventStats();
@@ -88,29 +103,34 @@ function doGet(e) {
         break;
       // Attendance Recording Actions (from Attendance_Main.gs)
       case 'getEventAttendanceRecords':
-        result = getEventAttendanceRecords(params.eventId);
+        result = getEventAttendanceRecords(eventId);
         break;
       case 'getMemberAttendanceHistory':
-        result = getMemberAttendanceHistory(params.memberId, params.limit);
+        result = getMemberAttendanceHistory(memberId, limit);
         break;
       case 'checkExistingAttendance':
-        result = checkExistingAttendance(params.eventId, params.memberId);
+        result = checkExistingAttendance(eventId, memberId);
         break;
-      case 'getMembersForAttendance':
-        result = getMembersForAttendance(params.search, params.limit);
+      case 'getMembersForAttendance': {
+        const search = sanitizeEventsParam_(params.search, 100);
+        result = getMembersForAttendance(search, limit);
         break;
-      case 'validateGeofence':
-        result = validateGeofence(params.eventId, params.lat, params.lng);
+      }
+      case 'validateGeofence': {
+        const lat = sanitizeEventsParam_(params.lat, 20);
+        const lng = sanitizeEventsParam_(params.lng, 20);
+        result = validateGeofence(eventId, lat, lng);
         break;
+      }
       // New actions for recipient-based event filtering
       case 'getEventsForMember':
-        result = getEventsForMember(params.memberId, params.includeArchived);
+        result = getEventsForMember(memberId, params.includeArchived);
         break;
       case 'checkIsTargetRecipient':
-        result = checkIsTargetRecipient(params.eventId, params.memberId);
+        result = checkIsTargetRecipient(eventId, memberId);
         break;
       case 'getEventTimeWindows':
-        result = getEventTimeWindows(params.eventId);
+        result = getEventTimeWindows(eventId);
         break;
       case 'migrateEventsSchema':
         result = migrateEventsSchema();
@@ -129,6 +149,7 @@ function doGet(e) {
 
 /**
  * Handle POST requests
+ * Uses LockService to prevent concurrent write race conditions
  */
 function doPost(e) {
   let params;
@@ -141,8 +162,23 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
   
-  const action = params.action;
+  // Enforce max payload size (~500KB)
+  if (e.postData && e.postData.contents && e.postData.contents.length > 512000) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'Payload too large' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  const action = sanitizeEventsParam_(params.action, 50);
   let result;
+  
+  // Acquire script lock to prevent concurrent write race conditions
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'Server busy, please try again' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   
   try {
     if (isRequestCancelled_(params)) {
@@ -156,22 +192,22 @@ function doPost(e) {
         result = createEvent(params.eventData);
         break;
       case 'updateEvent':
-        result = updateEvent(params.eventId, params.eventData);
+        result = updateEvent(sanitizeEventsParam_(params.eventId, 100), params.eventData);
         break;
       case 'deleteEvent':
-        result = deleteEvent(params.eventId);
+        result = deleteEvent(sanitizeEventsParam_(params.eventId, 100));
         break;
       case 'recordAttendance':
-        result = recordEventAttendance(params.eventId, params.memberId, params.status);
+        result = recordEventAttendance(sanitizeEventsParam_(params.eventId, 100), sanitizeEventsParam_(params.memberId, 100), sanitizeEventsParam_(params.status, 50));
         break;
       case 'bulkRecordAttendance':
-        result = bulkRecordEventAttendance(params.eventId, params.attendanceRecords);
+        result = bulkRecordEventAttendance(sanitizeEventsParam_(params.eventId, 100), params.attendanceRecords);
         break;
       case 'duplicateEvent':
-        result = duplicateEvent(params.eventId);
+        result = duplicateEvent(sanitizeEventsParam_(params.eventId, 100));
         break;
       case 'cancelEvent':
-        result = cancelEvent(params.eventId, params.reason);
+        result = cancelEvent(sanitizeEventsParam_(params.eventId, 100), sanitizeEventsParam_(params.reason, 500));
         break;
       // Attendance Recording Actions (from Attendance_Main.gs)
       case 'recordTimeIn':
@@ -184,19 +220,21 @@ function doPost(e) {
         result = recordManualAttendance(params);
         break;
       case 'updateAttendanceStatus':
-        result = updateAttendanceStatus(params.attendanceId, params.status, params.notes);
+        result = updateAttendanceStatus(sanitizeEventsParam_(params.attendanceId, 100), sanitizeEventsParam_(params.status, 50), sanitizeEventsParam_(params.notes, 500));
         break;
       case 'addEventRecipient':
-        result = addEventRecipient(params.eventId, params.recipientId, params.recipientName);
+        result = addEventRecipient(sanitizeEventsParam_(params.eventId, 100), sanitizeEventsParam_(params.recipientId, 100), sanitizeEventsParam_(params.recipientName, 200));
         break;
       case 'addEventRecipients':
-        result = addEventRecipients(params.eventId, params.recipients);
+        result = addEventRecipients(sanitizeEventsParam_(params.eventId, 100), params.recipients);
         break;
       default:
         result = { success: false, error: 'Invalid action' };
     }
   } catch (error) {
     result = { success: false, error: error.toString() };
+  } finally {
+    lock.releaseLock();
   }
   
   return ContentService

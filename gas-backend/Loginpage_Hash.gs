@@ -1,5 +1,6 @@
 // =================== CONFIGURATION ===================
-const SPREADSHEET_ID = '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
+// ID loaded from Script Properties for security (Project Settings > Script Properties)
+const SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
 const SHEET_NAME = 'User Profiles'; 
 
 // =================== TRIGGERS ===================
@@ -69,6 +70,7 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
     position: headers.indexOf('Position'),
     numeric: headers.indexOf('Numeric ID'),
     pwd: headers.indexOf('Password'),
+    salt: headers.indexOf('Salt'),
     email: headers.indexOf('Email Address'),
     user: headers.indexOf('Username'),
     name: headers.indexOf('Full name')
@@ -106,8 +108,14 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
     const color = score === 100 ? '#33cc33' : score >= 75 ? '#b3ff66' : score >= 50 ? '#ffb84d' : '#ff4d4d';
     sheet.getRange(row, idx.pwd + 1).setBackground(color);
 
-    const hashedPassword = hashString(rawPassword);
+    // Generate salt and create salted hash: SHA-256(salt + SHA-256(password))
+    const newSalt = generateSalt();
+    const plainHash = hashString(rawPassword);
+    const hashedPassword = hashWithSalt(plainHash, newSalt);
     sheet.getRange(row, idx.pwd + 1).setValue(hashedPassword);
+    if (idx.salt > -1) {
+      sheet.getRange(row, idx.salt + 1).setValue(newSalt);
+    }
     passwordWasHashed = true;
   }
 
@@ -156,11 +164,7 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
     });
   }
 
-  // --- 6. Log Weak Passwords ---
-  if (rawPassword && rawPassword.length < 60 && score < 100) {
-    const logSheet = sheet.getParent().getSheetByName('WeakPasswords') || sheet.getParent().insertSheet('WeakPasswords');
-    logSheet.appendRow([new Date(), email, answers['Username'], rawPassword, score + '%']);
-  }
+  // --- 6. Weak password logging REMOVED for security (never store plain text passwords) ---
 }
 
 // =================== HASHING UTILITY ===================
@@ -181,7 +185,41 @@ function hashString(input) {
   return txtHash;
 }
 
-// =================== ONE-TIME MIGRATION TOOL ===================
+/**
+ * Hash a password with a salt: SHA-256(salt + SHA-256(password))
+ * @param {string} passwordHash - Already-hashed password (SHA-256 hex)
+ * @param {string} salt - Per-user salt string
+ * @returns {string} Salted hash (hexadecimal)
+ */
+function hashWithSalt(passwordHash, salt) {
+  return hashString(salt + passwordHash);
+}
+
+/**
+ * Generate a cryptographically random salt (32-char hex)
+ * @returns {string} Salt string
+ */
+function generateSalt() {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    Utilities.getUuid() + new Date().getTime().toString(),
+    Utilities.Charset.UTF_8
+  );
+  let hex = '';
+  for (let i = 0; i < 16; i++) {
+    let b = bytes[i];
+    if (b < 0) b += 256;
+    if (b.toString(16).length === 1) hex += '0';
+    hex += b.toString(16);
+  }
+  return hex;
+}
+
+// =================== ONE-TIME MIGRATION TOOLS ===================
+
+/**
+ * Legacy migration: hash plain-text passwords (kept for reference).
+ */
 function convertAllPasswordsToHash() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_NAME);
@@ -207,6 +245,113 @@ function convertAllPasswordsToHash() {
   
   range.setValues(hashedValues);
   Logger.log("Migration Complete: All plain text passwords have been hashed.");
+}
+
+/**
+ * ONE-TIME SALT MIGRATION
+ * Run this function manually in Apps Script editor to migrate all existing
+ * hashed passwords to salted hashes.
+ *
+ * What it does:
+ * 1. Finds or creates a "Salt" column in the User Profiles sheet
+ * 2. For each user that has a hashed password but NO salt:
+ *    - Generates a unique random salt
+ *    - Re-hashes as: SHA-256(salt + existingHash)
+ *    - Writes the new salted hash and salt to the sheet
+ * 3. Users who already have a salt are SKIPPED (safe to re-run)
+ *
+ * This is a non-breaking migration because:
+ * - handleLogin/handleVerifyPassword check if salt exists
+ * - If no salt, they fall back to plain SHA-256 comparison
+ * - After migration, all users will have salts
+ *
+ * IMPORTANT: Back up your User Profiles sheet before running!
+ */
+function migratePasswordsToSalted() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  
+  if (!sheet) {
+    Logger.log('Error: Sheet "' + SHEET_NAME + '" not found.');
+    return;
+  }
+  
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  
+  // Find or create the Salt column
+  let saltCol = headers.indexOf('Salt');
+  if (saltCol === -1) {
+    // Add Salt column as the next available column
+    saltCol = lastCol; // 0-based index for new column
+    sheet.getRange(1, saltCol + 1).setValue('Salt');
+    Logger.log('Created "Salt" column at position ' + (saltCol + 1));
+  }
+  
+  const pwdCol = headers.indexOf('Password');
+  if (pwdCol === -1) {
+    Logger.log('Error: Password column not found.');
+    return;
+  }
+  
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    Logger.log('No data rows found.');
+    return;
+  }
+  
+  // Read all password and salt values at once (batch read for performance)
+  const pwdRange = sheet.getRange(2, pwdCol + 1, lastRow - 1, 1).getValues();
+  const saltRange = sheet.getRange(2, saltCol + 1, lastRow - 1, 1).getValues();
+  
+  let migrated = 0;
+  let skipped = 0;
+  let empty = 0;
+  
+  // Prepare batch arrays for writing
+  const newPwdValues = [];
+  const newSaltValues = [];
+  
+  for (let i = 0; i < pwdRange.length; i++) {
+    const existingHash = (pwdRange[i][0] || '').toString().trim();
+    const existingSalt = (saltRange[i][0] || '').toString().trim();
+    
+    // Skip empty passwords
+    if (!existingHash) {
+      newPwdValues.push([existingHash]);
+      newSaltValues.push([existingSalt]);
+      empty++;
+      continue;
+    }
+    
+    // Skip already-salted users
+    if (existingSalt) {
+      newPwdValues.push([existingHash]);
+      newSaltValues.push([existingSalt]);
+      skipped++;
+      continue;
+    }
+    
+    // Generate salt and create double-hash: SHA-256(salt + existingHash)
+    const salt = generateSalt();
+    const saltedHash = hashWithSalt(existingHash, salt);
+    
+    newPwdValues.push([saltedHash]);
+    newSaltValues.push([salt]);
+    migrated++;
+  }
+  
+  // Batch write for performance
+  if (migrated > 0) {
+    sheet.getRange(2, pwdCol + 1, lastRow - 1, 1).setValues(newPwdValues);
+    sheet.getRange(2, saltCol + 1, lastRow - 1, 1).setValues(newSaltValues);
+  }
+  
+  Logger.log('=== Salt Migration Complete ===');
+  Logger.log('Migrated: ' + migrated + ' users');
+  Logger.log('Skipped (already salted): ' + skipped + ' users');
+  Logger.log('Skipped (empty password): ' + empty + ' rows');
+  Logger.log('Total rows processed: ' + pwdRange.length);
 }
 
 // =================== HELPER FUNCTIONS ===================

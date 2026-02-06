@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 
+import { clientsClaim } from 'workbox-core';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 import { BackgroundSyncPlugin } from 'workbox-background-sync';
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
@@ -8,6 +9,10 @@ import { CacheFirst, NetworkFirst, NetworkOnly, StaleWhileRevalidate } from 'wor
 import { ExpirationPlugin } from 'workbox-expiration';
 
 declare let self: ServiceWorkerGlobalScope;
+
+// Activate new service workers immediately instead of waiting for all tabs to close
+self.skipWaiting();
+clientsClaim();
 
 const CACHE_VERSION = 'v2-icon-padding';
 const CACHE_NAMES = {
@@ -166,7 +171,7 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const FIREBASE_SDK_VERSION = '10.13.2';
+const FIREBASE_SDK_VERSION = import.meta.env.VITE_FIREBASE_SDK_VERSION || '10.13.2';
 
 const initFirebaseMessaging = async () => {
   if (!firebaseConfig.apiKey || !firebaseConfig.projectId || !firebaseConfig.messagingSenderId) return;

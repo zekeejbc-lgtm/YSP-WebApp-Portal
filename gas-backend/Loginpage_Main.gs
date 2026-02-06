@@ -1,10 +1,10 @@
 // =================== CONFIGURATION ===================
-const LOGIN_SPREADSHEET_ID = '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
+// IDs loaded from Script Properties for security (Project Settings > Script Properties)
+const LOGIN_SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
 const LOGIN_SHEET_NAME = 'User Profiles';
 
 // Google Drive folder for profile pictures
-// From: https://drive.google.com/drive/folders/1QVb7--Ozam5QNokT1dC9Uzzg-T5QoPZx
-const PROFILE_PICTURES_FOLDER_ID = '1QVb7--Ozam5QNokT1dC9Uzzg-T5QoPZx';
+const PROFILE_PICTURES_FOLDER_ID = PropertiesService.getScriptProperties().getProperty('PROFILE_PICTURES_FOLDER_ID') || '';
 
 // Email configuration
 const LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -457,6 +457,16 @@ function handleLogin(username, password) {
     return createErrorResponse('Username and password are required', 400);
   }
 
+  // --- Rate Limiting: block after 5 failed attempts within 15 minutes ---
+  const cache = CacheService.getScriptCache();
+  const rateLimitKey = 'login_attempts_' + username.toLowerCase().trim();
+  const attemptsRaw = cache.get(rateLimitKey);
+  const attempts = attemptsRaw ? parseInt(attemptsRaw, 10) : 0;
+  
+  if (attempts >= 5) {
+    return createErrorResponse('Too many failed login attempts. Please try again in 15 minutes.', 429);
+  }
+
   try {
     const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
     const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
@@ -477,6 +487,7 @@ function handleLogin(username, password) {
       name: headers.indexOf('Full name'),                         // D
       username: headers.indexOf('Username'),                      // N
       password: headers.indexOf('Password'),                      // O
+      salt: headers.indexOf('Salt'),                              // Salt column
       idCode: headers.indexOf('ID Code'),                         // S
       position: headers.indexOf('Position'),                      // T
       role: headers.indexOf('Role'),                              // U
@@ -505,14 +516,18 @@ function handleLogin(username, password) {
     }
 
     if (!userRow) {
+      // Increment failed attempt counter (expires in 15 min = 900 seconds)
+      cache.put(rateLimitKey, (attempts + 1).toString(), 900);
       return createErrorResponse('Invalid username or password', 401);
     }
 
-    // Verify password (hash the input and compare with stored hash)
+    // Verify password (salt-aware: supports both migrated and un-migrated users)
     const storedHash = (userRow[idx.password] || '').toString().trim();
-    const inputHash = hashString(password);
+    const userSalt = idx.salt > -1 ? (userRow[idx.salt] || '').toString().trim() : '';
     
-    if (storedHash !== inputHash) {
+    if (!verifyPassword(password, storedHash, userSalt)) {
+      // Increment failed attempt counter (expires in 15 min = 900 seconds)
+      cache.put(rateLimitKey, (attempts + 1).toString(), 900);
       return createErrorResponse('Invalid username or password', 401);
     }
 
@@ -543,6 +558,9 @@ function handleLogin(username, password) {
     // Generate session token
     const sessionToken = generateSessionToken(userRow[idx.idCode] || username);
 
+    // Clear failed login attempts on successful login
+    cache.remove(rateLimitKey);
+
     // Return user data
     return createSuccessResponse({
       success: true,
@@ -567,6 +585,7 @@ function handleLogin(username, password) {
 
 /**
  * Verify if a session token is still valid
+ * Checks against stored sessions in CacheService with expiry
  * @param {string} sessionToken - Session token to verify
  * @returns {TextOutput} JSON response
  */
@@ -575,14 +594,32 @@ function handleVerifySession(sessionToken) {
     return createErrorResponse('Session token required', 400);
   }
   
-  // In a simple implementation, we just validate the token format
-  // In production, you'd check against a sessions table with expiry
-  const isValid = sessionToken && sessionToken.length > 0;
+  // Look up the session in CacheService
+  const cache = CacheService.getScriptCache();
+  const sessionData = cache.get('session_' + sessionToken);
   
-  return createSuccessResponse({
-    valid: isValid,
-    timestamp: new Date().toISOString()
-  });
+  if (!sessionData) {
+    return createSuccessResponse({
+      valid: false,
+      reason: 'Session expired or not found',
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  try {
+    const parsed = JSON.parse(sessionData);
+    return createSuccessResponse({
+      valid: true,
+      username: parsed.username || '',
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    return createSuccessResponse({
+      valid: false,
+      reason: 'Invalid session data',
+      timestamp: new Date().toISOString()
+    });
+  }
 }
 
 /**
@@ -1294,6 +1331,55 @@ function hashString(input) {
 }
 
 /**
+ * Hash a password with a salt using double-hash: SHA-256(salt + SHA-256(password))
+ * This allows migrating existing hashes without knowing original passwords.
+ * @param {string} passwordHash - Already-hashed password (SHA-256 hex)
+ * @param {string} salt - Per-user salt string
+ * @returns {string} Salted hash (hexadecimal)
+ */
+function hashWithSalt(passwordHash, salt) {
+  return hashString(salt + passwordHash);
+}
+
+/**
+ * Generate a cryptographically random salt
+ * @returns {string} 32-character hex salt
+ */
+function generateSalt() {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    Utilities.getUuid() + new Date().getTime().toString(),
+    Utilities.Charset.UTF_8
+  );
+  let hex = '';
+  for (let i = 0; i < 16; i++) {
+    let b = bytes[i];
+    if (b < 0) b += 256;
+    if (b.toString(16).length === 1) hex += '0';
+    hex += b.toString(16);
+  }
+  return hex;
+}
+
+/**
+ * Verify a password against a stored hash, with backward-compatible salt support.
+ * If the user has a salt, computes SHA-256(salt + SHA-256(password)) and compares.
+ * If no salt exists (pre-migration), falls back to plain SHA-256(password).
+ * @param {string} password - Plain-text password from user input
+ * @param {string} storedHash - Hash stored in the spreadsheet
+ * @param {string} salt - Per-user salt (empty string if not yet migrated)
+ * @returns {boolean} Whether the password matches
+ */
+function verifyPassword(password, storedHash, salt) {
+  const inputHash = hashString(password);
+  if (salt) {
+    return hashWithSalt(inputHash, salt) === storedHash;
+  }
+  // Backward compatibility: no salt yet (pre-migration user)
+  return inputHash === storedHash;
+}
+
+/**
  * Generate a simple session token
  * @param {string} userId - User identifier
  * @returns {string} Session token
@@ -1302,7 +1388,17 @@ function generateSessionToken(userId) {
   const timestamp = new Date().getTime();
   const random = Math.random().toString(36).substring(2);
   const payload = userId + ':' + timestamp + ':' + random;
-  return Utilities.base64Encode(payload);
+  const token = Utilities.base64Encode(payload);
+  
+  // Store session in CacheService (expires in 6 hours = 21600 seconds)
+  const cache = CacheService.getScriptCache();
+  cache.put('session_' + token, JSON.stringify({
+    userId: userId,
+    username: userId,
+    createdAt: timestamp
+  }), 21600);
+  
+  return token;
 }
 
 // =================== RESPONSE HELPERS ===================
@@ -1422,6 +1518,7 @@ function handleVerifyPassword(username, password) {
     const idx = {
       username: headers.indexOf('Username'),
       password: headers.indexOf('Password'),
+      salt: headers.indexOf('Salt'),
     };
 
     if (idx.username === -1 || idx.password === -1) {
@@ -1445,11 +1542,11 @@ function handleVerifyPassword(username, password) {
       return createErrorResponse('User not found', 404);
     }
 
-    // Verify password (hash the input and compare with stored hash)
+    // Verify password (salt-aware)
     const storedHash = (userRow[idx.password] || '').toString().trim();
-    const inputHash = hashString(password);
+    const userSalt = idx.salt > -1 ? (userRow[idx.salt] || '').toString().trim() : '';
     
-    if (storedHash !== inputHash) {
+    if (!verifyPassword(password, storedHash, userSalt)) {
       return createSuccessResponse({
         success: true,
         valid: false,
@@ -1501,6 +1598,7 @@ function handleChangePassword(username, currentPassword, newPassword) {
     const idx = {
       username: headers.indexOf('Username'),
       password: headers.indexOf('Password'),
+      salt: headers.indexOf('Salt'),
       email: headers.indexOf('Email Address'),
       name: headers.indexOf('Full name'),
     };
@@ -1528,36 +1626,28 @@ function handleChangePassword(username, currentPassword, newPassword) {
       return createErrorResponse('User not found', 404);
     }
 
-    // Verify current password
+    // Verify current password (salt-aware)
     const storedHash = (userRow[idx.password] || '').toString().trim();
-    const currentHash = hashString(currentPassword);
+    const existingSalt = idx.salt > -1 ? (userRow[idx.salt] || '').toString().trim() : '';
     
-    if (storedHash !== currentHash) {
+    if (!verifyPassword(currentPassword, storedHash, existingSalt)) {
       return createErrorResponse('Current password is incorrect', 401);
     }
 
-    // Hash the new password
-    const newHash = hashString(newPassword);
-    
-    // Check if new password is different from current
-    if (newHash === storedHash) {
+    // Check that new password is different from current
+    if (currentPassword === newPassword) {
       return createErrorResponse('New password must be different from current password', 400);
     }
 
-    // Check if this password hash already exists for another user (uniqueness check)
-    for (let i = 1; i < data.length; i++) {
-      if (i + 1 !== rowIndex) { // Skip current user's row
-        const otherHash = (data[i][idx.password] || '').toString().trim();
-        if (otherHash === newHash) {
-          return createErrorResponse('This password is already in use. Please choose a different password.', 400);
-        }
-      }
-    }
+    // Generate new salt and salted hash for the new password
+    const newSalt = generateSalt();
+    const newHash = hashWithSalt(hashString(newPassword), newSalt);
 
-    // Update the password in the spreadsheet
+    // Update the password and salt in the spreadsheet
     sheet.getRange(rowIndex, idx.password + 1).setValue(newHash);
-    
-    Logger.log('Password changed successfully for user: ' + username);
+    if (idx.salt > -1) {
+      sheet.getRange(rowIndex, idx.salt + 1).setValue(newSalt);
+    }
 
     // Send security alert email for password change
     const userEmail = idx.email > -1 ? (userRow[idx.email] || '').toString().trim() : '';
@@ -3117,6 +3207,7 @@ function handleResetPasswordWithToken(username, resetToken, newPassword) {
     const idx = {
       username: headers.indexOf('Username'),
       password: headers.indexOf('Password'),
+      salt: headers.indexOf('Salt'),
       email: headers.indexOf('Email Address'),
       name: headers.indexOf('Full name'),
     };
@@ -3146,20 +3237,28 @@ function handleResetPasswordWithToken(username, resetToken, newPassword) {
       return createErrorResponse('User not found', 404);
     }
 
-    const newHash = hashString(cleanPassword);
-    if (newHash === currentHash) {
-      return createErrorResponse('New password must be different from current password', 400);
-    }
-
-    for (let i = 1; i < data.length; i++) {
-      if (i + 1 === rowIndex) continue;
-      const otherHash = (data[i][idx.password] || '').toString().trim();
-      if (otherHash && otherHash === newHash) {
-        return createErrorResponse('This password is already in use. Please choose a different password.', 400);
+    // Check that new password is different from current (compare plain-text hash)
+    const newPlainHash = hashString(cleanPassword);
+    const existingSalt = idx.salt > -1 ? (data[rowIndex - 1][idx.salt] || '').toString().trim() : '';
+    if (existingSalt) {
+      // If salted, verify the new password isn't the same as current
+      if (hashWithSalt(newPlainHash, existingSalt) === currentHash) {
+        return createErrorResponse('New password must be different from current password', 400);
+      }
+    } else {
+      if (newPlainHash === currentHash) {
+        return createErrorResponse('New password must be different from current password', 400);
       }
     }
 
+    // Generate new salt and salted hash
+    const newSalt = generateSalt();
+    const newHash = hashWithSalt(newPlainHash, newSalt);
+
     sheet.getRange(rowIndex, idx.password + 1).setValue(newHash);
+    if (idx.salt > -1) {
+      sheet.getRange(rowIndex, idx.salt + 1).setValue(newSalt);
+    }
 
     markResetSessionUsed_(ss, cleanUsername, cleanToken);
 

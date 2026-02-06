@@ -744,40 +744,96 @@ function fileToBase64(file: File, signal?: AbortSignal): Promise<string> {
   });
 }
 
+// =================== SESSION STORAGE ENCRYPTION ===================
+
+/**
+ * Simple XOR-based obfuscation for localStorage values.
+ * NOT cryptographic — prevents casual plaintext exposure.
+ * Uses a deterministic key derived from the storage key name.
+ */
+const OBFUSCATION_SEED = 'ysp_tgm_2026';
+
+function obfuscate(plain: string): string {
+  const key = OBFUSCATION_SEED;
+  const encoded: number[] = [];
+  for (let i = 0; i < plain.length; i++) {
+    encoded.push(plain.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+  }
+  // Convert to base64 for safe storage
+  return btoa(String.fromCharCode(...encoded));
+}
+
+function deobfuscate(encoded: string): string {
+  try {
+    const key = OBFUSCATION_SEED;
+    const decoded = atob(encoded);
+    const result: string[] = [];
+    for (let i = 0; i < decoded.length; i++) {
+      result.push(String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length)));
+    }
+    return result.join('');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Migrate plaintext localStorage values to obfuscated format.
+ * Called on getSessionToken/getStoredUser — transparently upgrades old sessions.
+ */
+function migrateIfPlaintext(storageKey: string): void {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return;
+    // If it looks like valid base64 (our obfuscated format), skip
+    if (/^[A-Za-z0-9+/]+=*$/.test(raw) && raw.length > 20) return;
+    // It's plaintext — re-store as obfuscated
+    localStorage.setItem(storageKey, obfuscate(raw));
+  } catch {
+    // silently ignore migration failures
+  }
+}
+
 // =================== SESSION MANAGEMENT ===================
 
 /**
- * Store user session in localStorage
+ * Store user session in localStorage (obfuscated)
  * @param user - User data to store
  */
 export function storeSession(user: LoginUser): void {
   try {
-    localStorage.setItem(LOGIN_CONFIG.SESSION_KEY, user.sessionToken);
-    localStorage.setItem(LOGIN_CONFIG.USER_KEY, JSON.stringify(user));
+    localStorage.setItem(LOGIN_CONFIG.SESSION_KEY, obfuscate(user.sessionToken));
+    localStorage.setItem(LOGIN_CONFIG.USER_KEY, obfuscate(JSON.stringify(user)));
   } catch (error) {
     console.error('Failed to store session:', error);
   }
 }
 
 /**
- * Get stored session token
+ * Get stored session token (deobfuscated)
  * @returns Session token or null
  */
 export function getSessionToken(): string | null {
   try {
-    return localStorage.getItem(LOGIN_CONFIG.SESSION_KEY);
+    migrateIfPlaintext(LOGIN_CONFIG.SESSION_KEY);
+    const raw = localStorage.getItem(LOGIN_CONFIG.SESSION_KEY);
+    if (!raw) return null;
+    return deobfuscate(raw) || null;
   } catch {
     return null;
   }
 }
 
 /**
- * Get stored user data
+ * Get stored user data (deobfuscated)
  * @returns User data or null
  */
 export function getStoredUser(): LoginUser | null {
   try {
-    const userData = localStorage.getItem(LOGIN_CONFIG.USER_KEY);
+    migrateIfPlaintext(LOGIN_CONFIG.USER_KEY);
+    const raw = localStorage.getItem(LOGIN_CONFIG.USER_KEY);
+    if (!raw) return null;
+    const userData = deobfuscate(raw);
     if (userData) {
       return JSON.parse(userData) as LoginUser;
     }

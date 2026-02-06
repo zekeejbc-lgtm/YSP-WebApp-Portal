@@ -27,7 +27,7 @@ export interface FeedbackResponse<T> {
   id?: string;
 }
 
-const GAS_FEEDBACK_API_URL = "https://script.google.com/macros/s/AKfycbxRhzJaZBgrg6KKabNlp7YTqNlA_IDtVWxWCkU4atpKtoWHc-M-GkKxs0FWBdkZ15U6/exec";
+const GAS_FEEDBACK_API_URL = import.meta.env.VITE_GAS_FEEDBACK_API_URL || '';
 
 export class FeedbackAPIError extends Error {
   constructor(message: string, public originalError?: unknown) {

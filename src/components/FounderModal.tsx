@@ -660,9 +660,12 @@ export default function FounderModal({
 
   // Key Achievements functions
   const addAchievement = () => {
+    const nextId = founderData.keyAchievements.length > 0
+      ? Math.max(...founderData.keyAchievements.map(a => a.id ?? 0)) + 1
+      : 1;
     setFounderData({ 
       ...founderData, 
-      keyAchievements: [...founderData.keyAchievements, { achievement: '' }] 
+      keyAchievements: [...founderData.keyAchievements, { id: nextId, achievement: '' }] 
     });
   };
 
@@ -679,9 +682,12 @@ export default function FounderModal({
 
   // Social Links functions
   const addSocialLink = () => {
+    const nextId = founderData.socialLinks.length > 0
+      ? Math.max(...founderData.socialLinks.map(l => l.id ?? 0)) + 1
+      : 1;
     setFounderData({ 
       ...founderData, 
-      socialLinks: [...founderData.socialLinks, { url: '' }] 
+      socialLinks: [...founderData.socialLinks, { id: nextId, url: '' }] 
     });
   };
 
@@ -903,7 +909,7 @@ export default function FounderModal({
                     {founderData.socialLinks.map((link, index) => {
                       const platform = detectSocialPlatform(link.url);
                       return (
-                        <div key={index} className="flex items-center gap-2">
+                        <div key={link.id ?? `social-${index}`} className="flex items-center gap-2">
                           <div className={`p-2 rounded-lg ${platform.bgClass} shrink-0`}>
                             <SocialIcon platform={platform.icon} className={`w-4 h-4 ${platform.textClass}`} />
                           </div>
@@ -933,7 +939,7 @@ export default function FounderModal({
                       const platform = detectSocialPlatform(link.url);
                       return (
                         <a
-                          key={index}
+                          key={link.id ?? `social-view-${index}`}
                           href={link.url}
                           target="_blank"
                           rel="noopener noreferrer"
@@ -1010,7 +1016,7 @@ export default function FounderModal({
             {isEditing ? (
               <div className="space-y-2">
                 {founderData.keyAchievements.map((item, index) => (
-                  <div key={index} className="flex items-start gap-2">
+                  <div key={item.id ?? `achievement-${index}`} className="flex items-start gap-2">
                     <input
                       type="text"
                       value={item.achievement}
@@ -1033,7 +1039,7 @@ export default function FounderModal({
             ) : (
               <ul className="space-y-2">
                 {founderData.keyAchievements.filter(a => a.achievement).map((item, index) => (
-                  <li key={index} className="flex items-start gap-3">
+                  <li key={item.id ?? `achievement-view-${index}`} className="flex items-start gap-3">
                     <span className="text-[#f6421f] mt-1">•</span>
                     <span className="text-gray-700 dark:text-gray-300">{item.achievement}</span>
                   </li>

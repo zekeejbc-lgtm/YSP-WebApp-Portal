@@ -80,7 +80,7 @@
       ABOUT_CONTENT: 5,       // Column E
       MISSION_TITLE: 6,       // Column F
       MISSION_CONTENT: 7,     // Column G
-      VISION  _TITLE: 8,        // Column H
+      VISION_TITLE: 8,        // Column H
       VISION_CONTENT: 9,      // Column I
       ADVOCACY_TITLE: 10,     // Column J
       ADVOCACY_CONTENT: 11,   // Column K

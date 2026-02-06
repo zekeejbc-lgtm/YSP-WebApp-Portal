@@ -157,6 +157,12 @@ export default defineConfig({
     build: {
       target: 'esnext',
       outDir: 'build',
+      // Hidden sourcemaps for error tracking without exposing source in browser
+      sourcemap: 'hidden',
+      // Split CSS per chunk for better caching
+      cssCodeSplit: true,
+      // Show gzip/brotli sizes in build output
+      reportCompressedSize: true,
       // Increase the chunk size warning limit since we're already code-splitting
       // The main index chunk contains core React + main App logic which is hard to split further
       chunkSizeWarningLimit: 1200,
@@ -184,6 +190,10 @@ export default defineConfig({
               // QR code libraries
               if (id.includes('qr') || id.includes('jsqr') || id.includes('qrcode')) {
                 return 'vendor-qr';
+              }
+              // ExcelJS (only used for export, loaded on demand)
+              if (id.includes('exceljs')) {
+                return 'vendor-exceljs';
               }
             }
           },

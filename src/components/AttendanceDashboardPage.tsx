@@ -24,7 +24,7 @@ import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance } from "../services/gasAttendanceService";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import * as XLSX from "xlsx";
+import ExcelJS from 'exceljs';
 
 // Organization Logo URL
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -39,7 +39,7 @@ interface ModalMemberData extends MemberForAttendance {
 }
 
 // Helper function to format time values properly (converts UTC to Manila time)
-function formatTimeValue(timeValue: any): string {
+function formatTimeValue(timeValue: string | Date | null | undefined): string {
   if (!timeValue) return '-';
   
   const timeStr = String(timeValue).trim();
@@ -90,7 +90,7 @@ function formatTimeValue(timeValue: any): string {
 }
 
 // Helper function to check if someone has no logout time (present but didn't logout)
-function hasNoLogout(timeIn: any, timeOut: any, status: string): boolean {
+function hasNoLogout(timeIn: string | Date | null | undefined, timeOut: string | Date | null | undefined, status: string): boolean {
   const isPresent = status === 'Present' || status === 'CheckedIn' || status === 'CheckedOut' || status === 'Late';
   if (!isPresent) return false;
   
@@ -105,7 +105,7 @@ function hasNoLogout(timeIn: any, timeOut: any, status: string): boolean {
 }
 
 // Helper function to calculate attendance duration between time in and time out
-function calculateAttendanceDuration(timeIn: any, timeOut: any): string {
+function calculateAttendanceDuration(timeIn: string | Date | null | undefined, timeOut: string | Date | null | undefined): string {
   if (!timeIn || !timeOut) return '-';
   
   const timeInStr = String(timeIn).trim();
@@ -182,7 +182,7 @@ function calculateAttendanceDuration(timeIn: any, timeOut: any): string {
 }
 
 // Helper function to format date values from backend
-function formatDateValue(dateValue: any): string {
+function formatDateValue(dateValue: string | Date | null | undefined): string {
   if (!dateValue) return '-';
   
   const dateStr = String(dateValue).trim();
@@ -753,7 +753,7 @@ export default function AttendanceDashboardPage({
   }, [getFilteredAttendance, memberLookupMap, getNotRecordedMembers]);
 
   // Memoized chart click handler
-  const handleChartClick = useCallback((data: any) => {
+  const handleChartClick = useCallback((data: { name?: string; status?: string }) => {
     const status = data.name || data.status;
     const members = getMembersByStatus(status);
     setModalData({ status, members });
@@ -2162,7 +2162,8 @@ export default function AttendanceDashboardPage({
       if (cancelled) return;
 
       // Create workbook and worksheet
-      const workbook = XLSX.utils.book_new();
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Attendance Report');
 
       // Format event date and time for spreadsheet
       const eventDateValue = currentEvent?.StartDate 
@@ -2233,7 +2234,7 @@ export default function AttendanceDashboardPage({
           record.recordedByTimeIn || '-',
           record.recordedByTimeOut || '-',
           record.notes || '-',
-        ]);
+        ] as (string | number)[]);
       });
 
       // Step 4: Create worksheet (85%)
@@ -2243,25 +2244,24 @@ export default function AttendanceDashboardPage({
       await new Promise(resolve => setTimeout(resolve, 100));
       if (cancelled) return;
 
-      const worksheet = XLSX.utils.aoa_to_sheet(headerData);
+      // Add all rows to worksheet
+      headerData.forEach(row => worksheet.addRow(row));
 
       // Set column widths
-      worksheet['!cols'] = [
-        { wch: 5 },   // #
-        { wch: 25 },  // Name
-        { wch: 30 },  // Committee
-        { wch: 20 },  // Position
-        { wch: 12 },  // Status
-        { wch: 12 },  // Time In
-        { wch: 14 },  // Time Out
-        { wch: 12 },  // Duration
-        { wch: 12 },  // No Logout?
-        { wch: 20 },  // Recorded By (In)
-        { wch: 20 },  // Recorded By (Out)
-        { wch: 25 },  // Notes
+      worksheet.columns = [
+        { width: 5 },    // #
+        { width: 25 },   // Name
+        { width: 30 },   // Committee
+        { width: 20 },   // Position
+        { width: 12 },   // Status
+        { width: 12 },   // Time In
+        { width: 14 },   // Time Out
+        { width: 12 },   // Duration
+        { width: 12 },   // No Logout?
+        { width: 20 },   // Recorded By (In)
+        { width: 20 },   // Recorded By (Out)
+        { width: 25 },   // Notes
       ];
-
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance Report');
 
       // Step 5: Save file (100%)
       if (updateUploadToast) {
@@ -2275,7 +2275,15 @@ export default function AttendanceDashboardPage({
       const dateStr = new Date().toISOString().split('T')[0];
       const filename = `Attendance_${eventTitle}_${dateStr}.xlsx`;
 
-      XLSX.writeFile(workbook, filename);
+      // Write to buffer and trigger download
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
 
       // Success toast - update to success status
       if (updateUploadToast && removeUploadToast) {

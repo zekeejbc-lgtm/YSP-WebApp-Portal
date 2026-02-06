@@ -196,19 +196,20 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
         },
         signal: controller.signal,
       });
-    } catch (fetchError: any) {
+    } catch (fetchError: unknown) {
       clearTimeout(timeoutId);
-      if (fetchError.name === 'AbortError') {
+      if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
         throw new HomepageAPIError(
           'HP002',
           'Request timeout',
           `API did not respond within ${GAS_CONFIG.TIMEOUT}ms`
         );
       }
+      const errMsg = fetchError instanceof Error ? fetchError.message : 'Failed to connect to API';
       throw new HomepageAPIError(
         'HP006',
         'Network error',
-        fetchError.message || 'Failed to connect to API'
+        errMsg
       );
     }
 
@@ -595,19 +596,20 @@ export const fetchHomepageOtherContent = async (): Promise<HomepageOtherContent>
         },
         signal: controller.signal,
       });
-    } catch (fetchError: any) {
+    } catch (fetchError: unknown) {
       clearTimeout(timeoutId);
-      if (fetchError.name === 'AbortError') {
+      if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
         throw new HomepageAPIError(
           'HO002',
           'Request timeout',
           `API did not respond within ${GAS_CONFIG.TIMEOUT}ms`
         );
       }
+      const errMsg = fetchError instanceof Error ? fetchError.message : 'Failed to connect to API';
       throw new HomepageAPIError(
         'HO006',
         'Network error',
-        fetchError.message || 'Failed to connect to API'
+        errMsg
       );
     }
 
@@ -824,8 +826,7 @@ export const uploadOrgChart = async (
       return { success: false, error: 'Operation cancelled' };
     }
 
-    console.log('[GAS Homepage_Other] Uploading org chart:', file.name, 'size:', file.size);
-    console.log('[GAS Homepage_Other] API URL:', GAS_CONFIG.HOMEPAGE_API_URL);
+
     
     // Use text/plain to avoid CORS preflight (simple request)
     // application/json triggers OPTIONS preflight which GAS doesn't handle
@@ -842,10 +843,7 @@ export const uploadOrgChart = async (
       signal,
     });
 
-    console.log('[GAS Homepage_Other] Response status:', response.status);
-    
     const responseText = await response.text();
-    console.log('[GAS Homepage_Other] Raw response:', responseText);
     
     let data;
     try {
@@ -854,8 +852,6 @@ export const uploadOrgChart = async (
       console.error('[GAS Homepage_Other] Failed to parse response:', parseError);
       return { success: false, error: 'Invalid response from server: ' + responseText.substring(0, 100) };
     }
-
-    console.log('[GAS Homepage_Other] Parsed response:', data);
 
     if (data.success) {
       // Invalidate cache
@@ -996,7 +992,6 @@ export const updateSocialLink = async (index: number, url: string, displayName: 
 export const clearHomepageOtherCache = (): void => {
   cachedOtherContent = null;
   otherCacheTimestamp = 0;
-  console.log('[GAS Homepage_Other] Cache cleared');
 };
 
 /**
@@ -1088,7 +1083,6 @@ const isDevInfoCacheValid = (): boolean => {
 export const fetchDevInfoContent = async (): Promise<DevInfoContent> => {
   // Return cached content if valid
   if (isDevInfoCacheValid() && cachedDevInfoContent) {
-    console.log('[GAS DevInfo] Returning cached content');
     return cachedDevInfoContent;
   }
 
@@ -1103,7 +1097,6 @@ export const fetchDevInfoContent = async (): Promise<DevInfoContent> => {
   }
 
   try {
-    console.log('[GAS DevInfo] Fetching content from GAS...');
     
     // Create AbortController for timeout
     const controller = new AbortController();
@@ -1118,19 +1111,20 @@ export const fetchDevInfoContent = async (): Promise<DevInfoContent> => {
         },
         signal: controller.signal,
       });
-    } catch (fetchError: any) {
+    } catch (fetchError: unknown) {
       clearTimeout(timeoutId);
-      if (fetchError.name === 'AbortError') {
+      if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
         throw new HomepageAPIError(
           'DI002',
           'Request timeout',
           `API did not respond within ${GAS_CONFIG.TIMEOUT}ms`
         );
       }
+      const errMsg = fetchError instanceof Error ? fetchError.message : 'Failed to connect to API';
       throw new HomepageAPIError(
         'DI006',
         'Network error',
-        fetchError.message || 'Failed to connect to API'
+        errMsg
       );
     }
 
@@ -1175,7 +1169,6 @@ export const fetchDevInfoContent = async (): Promise<DevInfoContent> => {
     cachedDevInfoContent = result.data;
     devInfoCacheTimestamp = Date.now();
     
-    console.log('[GAS DevInfo] Content fetched successfully');
     return result.data;
 
   } catch (error) {
@@ -1268,8 +1261,6 @@ export const updateDevInfoContent = async (
   }
 
   try {
-    console.log('[GAS DevInfo] Updating content...');
-
     const payload = {
       action: 'updateDevInfo',
       data: content,
@@ -1285,14 +1276,12 @@ export const updateDevInfoContent = async (
     });
 
     const responseText = await response.text();
-    console.log('[GAS DevInfo] Response:', responseText);
 
     let result;
     try {
       result = JSON.parse(responseText);
     } catch (parseError) {
       if (response.ok) {
-        console.log('[GAS DevInfo] Response OK but not JSON, assuming success');
         cachedDevInfoContent = null;
         devInfoCacheTimestamp = 0;
         return true;
@@ -1304,7 +1293,6 @@ export const updateDevInfoContent = async (
       // Invalidate cache
       cachedDevInfoContent = null;
       devInfoCacheTimestamp = 0;
-      console.log('[GAS DevInfo] Content updated successfully');
       return true;
     }
 
@@ -1351,8 +1339,6 @@ export const uploadDevProfile = async (
       return { success: false, error: 'Operation cancelled' };
     }
 
-    console.log('[GAS DevInfo] Uploading profile image:', file.name, 'size:', file.size);
-    
     const response = await fetch(GAS_CONFIG.HOMEPAGE_API_URL, {
       method: 'POST',
       headers: {
@@ -1366,10 +1352,7 @@ export const uploadDevProfile = async (
       signal,
     });
 
-    console.log('[GAS DevInfo] Response status:', response.status);
-    
     const responseText = await response.text();
-    console.log('[GAS DevInfo] Raw response:', responseText);
     
     let data;
     try {
@@ -1378,8 +1361,6 @@ export const uploadDevProfile = async (
       console.error('[GAS DevInfo] Failed to parse response:', parseError);
       return { success: false, error: 'Invalid response from server: ' + responseText.substring(0, 100) };
     }
-
-    console.log('[GAS DevInfo] Parsed response:', data);
 
     if (data.success) {
       // Invalidate cache
@@ -1635,7 +1616,6 @@ export const updateDevSocialLink = async (index: number, url: string): Promise<{
 export const clearDevInfoCache = (): void => {
   cachedDevInfoContent = null;
   devInfoCacheTimestamp = 0;
-  console.log('[GAS DevInfo] Cache cleared');
 };
 
 
@@ -1697,7 +1677,6 @@ const isFounderInfoCacheValid = (): boolean => {
 export const fetchFounderInfoContent = async (): Promise<FounderInfoContent> => {
   // Return cached content if valid
   if (isFounderInfoCacheValid() && cachedFounderInfoContent) {
-    console.log('[GAS FounderInfo] Returning cached content');
     return cachedFounderInfoContent;
   }
 
@@ -1712,8 +1691,6 @@ export const fetchFounderInfoContent = async (): Promise<FounderInfoContent> => 
   }
 
   try {
-    console.log('[GAS FounderInfo] Fetching content from GAS...');
-    
     // Create AbortController for timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), GAS_CONFIG.TIMEOUT);
@@ -1727,19 +1704,20 @@ export const fetchFounderInfoContent = async (): Promise<FounderInfoContent> => 
         },
         signal: controller.signal,
       });
-    } catch (fetchError: any) {
+    } catch (fetchError: unknown) {
       clearTimeout(timeoutId);
-      if (fetchError.name === 'AbortError') {
+      if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
         throw new HomepageAPIError(
           'FI002',
           'Request timeout',
           `API did not respond within ${GAS_CONFIG.TIMEOUT}ms`
         );
       }
+      const errMsg = fetchError instanceof Error ? fetchError.message : 'Failed to connect to API';
       throw new HomepageAPIError(
         'FI006',
         'Network error',
-        fetchError.message || 'Failed to connect to API'
+        errMsg
       );
     }
 
@@ -1784,7 +1762,6 @@ export const fetchFounderInfoContent = async (): Promise<FounderInfoContent> => 
     cachedFounderInfoContent = result.data;
     founderInfoCacheTimestamp = Date.now();
 
-    console.log('[GAS FounderInfo] Content fetched successfully');
     return result.data;
 
   } catch (error) {
@@ -1812,8 +1789,6 @@ export const updateFounderInfoContent = async (
   }
 
   try {
-    console.log('[GAS FounderInfo] Updating content...');
-    
     const response = await fetch(GAS_CONFIG.HOMEPAGE_API_URL, {
       method: 'POST',
       headers: {
@@ -1833,7 +1808,6 @@ export const updateFounderInfoContent = async (
       // Invalidate cache so next fetch gets fresh data
       cachedFounderInfoContent = null;
       founderInfoCacheTimestamp = 0;
-      console.log('[GAS FounderInfo] Content updated successfully');
       return true;
     }
 
@@ -1889,8 +1863,6 @@ export const uploadFounderProfile = async (
     const extension = file.name.split('.').pop() || 'jpg';
     const fileName = `founder_profile_${timestamp}.${extension}`;
 
-    console.log('[GAS FounderInfo] Uploading profile image...');
-
     const response = await fetch(GAS_CONFIG.HOMEPAGE_API_URL, {
       method: 'POST',
       headers: {
@@ -1911,7 +1883,6 @@ export const uploadFounderProfile = async (
       // Invalidate cache
       cachedFounderInfoContent = null;
       founderInfoCacheTimestamp = 0;
-      console.log('[GAS FounderInfo] Profile image uploaded:', result.imageUrl);
       return { success: true, imageUrl: result.imageUrl };
     }
 
@@ -2162,5 +2133,4 @@ export const updateFounderSocialLink = async (index: number, url: string): Promi
 export const clearFounderInfoCache = (): void => {
   cachedFounderInfoContent = null;
   founderInfoCacheTimestamp = 0;
-  console.log('[GAS FounderInfo] Cache cleared');
 };

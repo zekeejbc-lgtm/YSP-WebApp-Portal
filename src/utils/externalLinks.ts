@@ -30,13 +30,11 @@ function isMobileDevice(): boolean {
  */
 export function encodeEmailForMailto(email: string): string {
   if (!email) {
-    console.warn('[Email Debug] encodeEmailForMailto: Empty email provided');
     return '';
   }
   // Encode special characters in email addresses
   // The '+' character needs to be encoded as %2B to work properly in mailto: links
   const encoded = email.replace(/\+/g, '%2B');
-  console.log('[Email Debug] encodeEmailForMailto:', { original: email, encoded });
   return encoded;
 }
 
@@ -47,11 +45,9 @@ export function encodeEmailForMailto(email: string): string {
  */
 export function createMailtoUrl(email: string): string {
   if (!email) {
-    console.warn('[Email Debug] createMailtoUrl: Empty email provided');
     return '';
   }
   const mailtoUrl = `mailto:${encodeEmailForMailto(email)}`;
-  console.log('[Email Debug] createMailtoUrl:', { email, mailtoUrl });
   return mailtoUrl;
 }
 
@@ -64,23 +60,18 @@ export function createMailtoUrl(email: string): string {
  * @param body - Optional email body
  */
 export function openEmailApp(email: string, subject?: string, body?: string): void {
-  console.log('[Email Debug] openEmailApp called with:', email, 'isMobile:', isMobileDevice());
-  
   if (!email) {
-    console.warn('[Email Debug] openEmailApp: No email provided');
     return;
   }
 
   if (isMobileDevice()) {
     // On mobile, use mailto: which works reliably
     const mailtoUrl = createMailtoUrl(email);
-    console.log('[Email Debug] Mobile detected, using mailto:', mailtoUrl);
     window.location.href = mailtoUrl;
   } else {
     // On desktop, open Gmail compose directly in a new tab
     // This is more reliable than mailto: which requires a configured email client
     const gmailUrl = createGmailComposeUrl(email, subject, body);
-    console.log('[Email Debug] Desktop detected, opening Gmail:', gmailUrl);
     window.open(gmailUrl, '_blank', 'noopener,noreferrer');
   }
 }

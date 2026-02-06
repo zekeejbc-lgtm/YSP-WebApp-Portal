@@ -8,9 +8,8 @@ import { fetchAllProjects, type Project } from "../services/projectsService";
 import { getStoredUser, fetchUserProfile, type UserProfile } from "../services/gasLoginService";
 import type { AttendanceDashboardContext } from "./AttendanceDashboardPage";
 
-// ✅ YOUR API KEY
-const API_URL =
-  "https://script.google.com/macros/s/AKfycbxBc_bEYUCdt71zuUZouXmhvhOilUBSgI0PymwzUqI9URanSF6U7UEKN_ziHQ_s9gLRcQ/exec";
+// API URL loaded from environment variable
+const API_URL = import.meta.env.VITE_GAS_CHATBOT_API_URL || '';
 
 type Sender = "user" | "bot";
 

@@ -425,7 +425,7 @@ export default function ManageMembersPage({
       } catch {
         // Ignore cache write failures
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Fetch members error:", err);
       if (err instanceof DirectoryAPIError) {
         if (err.code === DirectoryErrorCodes.NO_API_URL) {
@@ -459,7 +459,7 @@ export default function ManageMembersPage({
       } else {
         setMembers([]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Fetch members error:", err);
       if (err instanceof DirectoryAPIError) {
         if (err.code === DirectoryErrorCodes.NO_API_URL) {

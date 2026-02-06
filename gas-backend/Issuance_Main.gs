@@ -1891,7 +1891,7 @@
   */
   function getEventDetails(eventId) {
     try {
-      const ATTENDANCE_SPREADSHEET_ID = '1Xn7w9kzNrP6dmZXYXjxaO11Lmao79wn9w1SPCiqFtcA';
+      const ATTENDANCE_SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('EVENTS_SPREADSHEET_ID') || '';
       
       const ss = SpreadsheetApp.openById(ATTENDANCE_SPREADSHEET_ID);
       const eventsSheet = ss.getSheetByName('Events');
@@ -3370,7 +3370,7 @@
   function getAllMembers() {
     try {
       // Use the same spreadsheet as Login/Directory system (LOGIN_SPREADSHEET_ID from Loginpage_Main.gs)
-      const DIRECTORY_SPREADSHEET_ID = '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
+      const DIRECTORY_SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
       const DIRECTORY_SHEET_NAME = 'Form Responses 1';
       
       const ss = SpreadsheetApp.openById(DIRECTORY_SPREADSHEET_ID);
@@ -3469,9 +3469,9 @@
         return { success: false, error: 'Event ID is required' };
       }
       
-      // Spreadsheet IDs - same as used in Attendance_Main.gs
-      const ATTENDANCE_SPREADSHEET_ID = '1Xn7w9kzNrP6dmZXYXjxaO11Lmao79wn9w1SPCiqFtcA';
-      const LOGIN_SPREADSHEET_ID = '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
+      // Spreadsheet IDs - loaded from Script Properties
+      const ATTENDANCE_SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('EVENTS_SPREADSHEET_ID') || '';
+      const LOGIN_SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
       
       // Step 1: Get attendance records for this event
       const attendanceSS = SpreadsheetApp.openById(ATTENDANCE_SPREADSHEET_ID);

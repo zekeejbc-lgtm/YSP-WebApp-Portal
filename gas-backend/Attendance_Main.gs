@@ -24,19 +24,59 @@
 // =====================================================
 
 /**
- * Get the Events Spreadsheet ID (same as Attendance_Events.gs)
+ * Get the Events Spreadsheet ID from PropertiesService
+ * Set EVENTS_SPREADSHEET_ID in Script Properties
  */
 function getAttendanceSpreadsheetId() {
-  return '1Xn7w9kzNrP6dmZXYXjxaO11Lmao79wn9w1SPCiqFtcA';
+  return PropertiesService.getScriptProperties().getProperty('EVENTS_SPREADSHEET_ID') || '';
 }
 
 /**
- * Get the Login Spreadsheet ID (for member lookup)
- * Uses the same spreadsheet as Loginpage_Main.gs and Directory_Main.gs
- * This contains the User Profiles sheet with all member data
+ * Get the Login Spreadsheet ID from PropertiesService
+ * Set LOGIN_SPREADSHEET_ID in Script Properties
  */
 function getLoginSpreadsheetId() {
-  return '1vaQZoPq5a_verhICIiWXudBjAmfgFSIbaBX5xt9kjMk';
+  return PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
+}
+
+// =====================================================
+// INPUT VALIDATION HELPERS
+// =====================================================
+
+/**
+ * Sanitize a string parameter: trim, enforce max length, strip control chars
+ * @param {string} value - Raw input
+ * @param {number} [maxLen=200] - Maximum allowed length
+ * @returns {string} Sanitized string or empty string
+ */
+function sanitizeAttendanceParam_(value, maxLen) {
+  if (value === null || value === undefined) return '';
+  var str = String(value).trim();
+  // Strip control characters (allow newlines/tabs for notes)
+  str = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  var limit = maxLen || 200;
+  if (str.length > limit) str = str.substring(0, limit);
+  return str;
+}
+
+/**
+ * Validate that a value looks like a safe ID (alphanumeric, hyphens, underscores)
+ * @param {string} value - ID to validate
+ * @returns {boolean}
+ */
+function isValidId_(value) {
+  if (!value) return false;
+  return /^[\w\-]{1,100}$/.test(String(value));
+}
+
+/**
+ * Validate that a value is a reasonable numeric string
+ * @param {string} value - Number to validate
+ * @returns {boolean}
+ */
+function isValidNumeric_(value) {
+  if (value === null || value === undefined) return false;
+  return /^-?\d{1,10}(\.\d{1,10})?$/.test(String(value));
 }
 
 // =====================================================
@@ -52,7 +92,7 @@ function isRequestCancelled_(params) {
  */
 function doGetAttendance(e) {
   const params = e.parameter;
-  const action = params.action;
+  const action = sanitizeAttendanceParam_(params.action, 50);
   
   let result;
   
@@ -64,21 +104,64 @@ function doGetAttendance(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
     switch (action) {
-      case 'getEventAttendanceRecords':
-        result = getEventAttendanceRecords(params.eventId);
+      case 'getEventAttendanceRecords': {
+        const eventId = sanitizeAttendanceParam_(params.eventId, 100);
+        if (!isValidId_(eventId)) {
+          result = { success: false, error: 'Invalid Event ID format' };
+          break;
+        }
+        result = getEventAttendanceRecords(eventId);
         break;
-      case 'getMemberAttendanceHistory':
-        result = getMemberAttendanceHistory(params.memberId, params.limit);
+      }
+      case 'getMemberAttendanceHistory': {
+        const memberId = sanitizeAttendanceParam_(params.memberId, 100);
+        const limit = params.limit ? sanitizeAttendanceParam_(params.limit, 10) : undefined;
+        if (!isValidId_(memberId)) {
+          result = { success: false, error: 'Invalid Member ID format' };
+          break;
+        }
+        if (limit && !isValidNumeric_(limit)) {
+          result = { success: false, error: 'Invalid limit value' };
+          break;
+        }
+        result = getMemberAttendanceHistory(memberId, limit);
         break;
-      case 'checkExistingAttendance':
-        result = checkExistingAttendance(params.eventId, params.memberId);
+      }
+      case 'checkExistingAttendance': {
+        const eventId = sanitizeAttendanceParam_(params.eventId, 100);
+        const memberId = sanitizeAttendanceParam_(params.memberId, 100);
+        if (!isValidId_(eventId) || !isValidId_(memberId)) {
+          result = { success: false, error: 'Invalid Event ID or Member ID format' };
+          break;
+        }
+        result = checkExistingAttendance(eventId, memberId);
         break;
-      case 'getMembersForAttendance':
-        result = getMembersForAttendance(params.search, params.limit);
+      }
+      case 'getMembersForAttendance': {
+        const search = sanitizeAttendanceParam_(params.search, 100);
+        const limit = params.limit ? sanitizeAttendanceParam_(params.limit, 10) : undefined;
+        if (limit && !isValidNumeric_(limit)) {
+          result = { success: false, error: 'Invalid limit value' };
+          break;
+        }
+        result = getMembersForAttendance(search, limit);
         break;
-      case 'validateGeofence':
-        result = validateGeofence(params.eventId, params.lat, params.lng);
+      }
+      case 'validateGeofence': {
+        const eventId = sanitizeAttendanceParam_(params.eventId, 100);
+        const lat = sanitizeAttendanceParam_(params.lat, 20);
+        const lng = sanitizeAttendanceParam_(params.lng, 20);
+        if (!isValidId_(eventId)) {
+          result = { success: false, error: 'Invalid Event ID format' };
+          break;
+        }
+        if (!isValidNumeric_(lat) || !isValidNumeric_(lng)) {
+          result = { success: false, error: 'Invalid coordinates' };
+          break;
+        }
+        result = validateGeofence(eventId, lat, lng);
         break;
+      }
       default:
         result = { success: false, error: 'Invalid attendance action' };
     }
@@ -93,6 +176,7 @@ function doGetAttendance(e) {
 
 /**
  * Handle POST requests for attendance
+ * Uses LockService to prevent concurrent write race conditions
  */
 function doPostAttendance(e) {
   let params;
@@ -105,8 +189,23 @@ function doPostAttendance(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
   
-  const action = params.action;
+  // Enforce max payload size (~500KB)
+  if (e.postData.contents.length > 512000) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'Payload too large' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  const action = sanitizeAttendanceParam_(params.action, 50);
   let result;
+  
+  // Acquire script lock to prevent concurrent write race conditions
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'Server busy, please try again' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   
   try {
     if (isRequestCancelled_(params)) {
@@ -125,14 +224,24 @@ function doPostAttendance(e) {
       case 'recordManualAttendance':
         result = recordManualAttendance(params);
         break;
-      case 'updateAttendanceStatus':
-        result = updateAttendanceStatus(params.attendanceId, params.status, params.notes);
+      case 'updateAttendanceStatus': {
+        const attendanceId = sanitizeAttendanceParam_(params.attendanceId, 100);
+        const status = sanitizeAttendanceParam_(params.status, 50);
+        const notes = sanitizeAttendanceParam_(params.notes, 500);
+        if (!attendanceId) {
+          result = { success: false, error: 'Attendance ID is required' };
+          break;
+        }
+        result = updateAttendanceStatus(attendanceId, status, notes);
         break;
+      }
       default:
         result = { success: false, error: 'Invalid attendance action' };
     }
   } catch (error) {
     result = { success: false, error: error.toString() };
+  } finally {
+    lock.releaseLock();
   }
   
   return ContentService

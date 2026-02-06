@@ -1,6 +1,9 @@
-const SPREADSHEET_ID = "1837AfQpepOB0IIHtUvTqomBmeaiX-5r64J8tEpEmXL4";
-const SHEET_NAME = "Feedbacks";
-const FEEDBACK_IMAGES_FOLDER_ID = "1K-QweGSEp2HNQZnkPIE8f3FKuQkLp_mp";
+// Use PropertiesService for sensitive IDs — set these in Script Properties:
+// FEEDBACK_SPREADSHEET_ID, FEEDBACK_SHEET_NAME, FEEDBACK_IMAGES_FOLDER_ID
+const feedbackProps_ = PropertiesService.getScriptProperties();
+const SPREADSHEET_ID = feedbackProps_.getProperty('FEEDBACK_SPREADSHEET_ID') || '';
+const SHEET_NAME = feedbackProps_.getProperty('FEEDBACK_SHEET_NAME') || 'Feedbacks';
+const FEEDBACK_IMAGES_FOLDER_ID = feedbackProps_.getProperty('FEEDBACK_IMAGES_FOLDER_ID') || '';
 
 // ============================================================================
 // AUTHORIZATION & DEBUG FUNCTIONS
@@ -208,7 +211,7 @@ function doGet(e) {
   lock.tryLock(10000);
 
   try {
-    const action = e.parameter.action;
+    const action = String(e.parameter.action || '').trim();
 
     if (action === "initiate") {
       return initiateFeedbackSheets();
@@ -241,8 +244,16 @@ function doPost(e) {
   lock.tryLock(10000);
 
   try {
+    // Enforce max payload size (~5MB for image uploads)
+    if (e.postData && e.postData.contents && e.postData.contents.length > 5242880) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "error",
+        message: "Payload too large"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
     const data = JSON.parse(e.postData.contents);
-    const action = data.action;
+    const action = String(data.action || '').trim();
 
     if (action === "createFeedback") {
       return createFeedback(data);

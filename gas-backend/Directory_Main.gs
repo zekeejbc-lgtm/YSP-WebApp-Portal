@@ -71,6 +71,15 @@ function handleSearchOfficers(query) {
     });
   }
 
+  // Sanitize: enforce max length, strip control chars
+  var sanitized = String(query).trim()
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .substring(0, 200);
+  
+  if (sanitized.length === 0) {
+    return createSuccessResponse({ success: true, officers: [], total: 0 });
+  }
+
   try {
     const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
     const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
@@ -83,7 +92,7 @@ function handleSearchOfficers(query) {
     const headers = data[0];
     const idx = buildDirectoryColumnIndex(headers);
 
-    const queryLower = query.toLowerCase().trim();
+    const queryLower = sanitized.toLowerCase();
     const normalizedQuery = normalizeDirectoryText(stripDirectoryHonorifics(queryLower));
     const queryTokens = buildDirectoryTokens(normalizedQuery);
     const matchingOfficers = [];

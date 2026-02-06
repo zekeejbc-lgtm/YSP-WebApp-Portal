@@ -10,7 +10,7 @@ import { getFeedbacks, createFeedback, updateFeedback, deleteFeedback, uploadFee
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 // Organization details for export
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -1174,7 +1174,8 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
         updateUploadToast(toastId, { message: 'Processing data...', progress: 40 });
       }
 
-      const workbook = XLSX.utils.book_new();
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Feedback Report');
 
       // Header information
       const headerData: (string | number)[][] = [
@@ -1188,7 +1189,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
         ['Resolved:', statistics.resolved],
         ['Dropped:', statistics.dropped],
         ['Not Replied:', statistics.notReplied],
-        ['Average Rating:', statistics.avgRating.toFixed(2)],
+        ['Average Rating:', parseFloat(statistics.avgRating.toFixed(2))],
         [''],
         ['Generated:', new Date().toLocaleString()],
         [''],
@@ -1212,7 +1213,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
           authorDisplay,
           fb.category,
           fb.status,
-          fb.rating > 0 ? fb.rating : '-',
+          fb.rating > 0 ? fb.rating : '-' as unknown as number,
           fb.reply ? 'Yes' : 'No',
           new Date(fb.timestamp).toLocaleDateString(),
           fb.feedback.substring(0, 100) + (fb.feedback.length > 100 ? '...' : ''),
@@ -1223,20 +1224,20 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
         updateUploadToast(toastId, { message: 'Creating spreadsheet...', progress: 70 });
       }
 
-      const worksheet = XLSX.utils.aoa_to_sheet(headerData);
+      // Add all rows to worksheet
+      headerData.forEach(row => worksheet.addRow(row));
 
-      worksheet['!cols'] = [
-        { wch: 5 },
-        { wch: 30 },
-        { wch: 18 },
-        { wch: 12 },
-        { wch: 8 },
-        { wch: 10 },
-        { wch: 12 },
-        { wch: 50 },
+      // Set column widths
+      worksheet.columns = [
+        { width: 5 },
+        { width: 30 },
+        { width: 18 },
+        { width: 12 },
+        { width: 8 },
+        { width: 10 },
+        { width: 12 },
+        { width: 50 },
       ];
-
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Feedback Report');
 
       if (updateUploadToast) {
         updateUploadToast(toastId, { message: 'Saving file...', progress: 90 });
@@ -1244,7 +1245,16 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
       const dateStr = new Date().toISOString().split('T')[0];
       const filename = `Feedback_Report_${dateStr}.xlsx`;
-      XLSX.writeFile(workbook, filename);
+
+      // Write to buffer and trigger download
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
 
       if (updateUploadToast && removeUploadToast) {
         updateUploadToast(toastId, {
