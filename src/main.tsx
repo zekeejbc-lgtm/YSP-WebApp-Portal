@@ -66,8 +66,18 @@ const OFFLINE_SYNC_TOAST_COOLDOWN_MS = 5000;
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (event) => {
-    const data = event.data as { type?: string };
+    const data = event.data as { type?: string; version?: string };
     if (!data) return;
+
+    // Auto-reload when a new service worker version activates
+    if (data.type === "SW_ACTIVATED") {
+      console.log("New version activated:", data.version);
+      // Small delay to ensure the new SW is fully ready
+      setTimeout(() => {
+        window.location.reload();
+      }, 100);
+      return;
+    }
 
     if (data.type === "OFFLINE_WRITE_QUEUED") {
       const now = Date.now();
