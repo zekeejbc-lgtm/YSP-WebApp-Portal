@@ -1272,7 +1272,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                     onClick={() => {
                       // Generate head-accessible URL with QR mode pre-selected
                       const headUrl = buildShareableUrl('AttendanceRecording', { eventId: event.id, mode: 'qr' }).replace(/\/(admin|auditor)\?/, '/head?');
-                      navigator.clipboard.writeText(window.location.origin + headUrl).then(() => {
+                      navigator.clipboard.writeText(headUrl).then(() => {
                         toast.success('Attendance link copied!', {
                           description: 'Share this with heads to start QR scanning for this event',
                         });

@@ -6166,7 +6166,7 @@ export default function IssuanceCenterPage({
                   onClick={() => {
                     // Generate member-accessible URL (not admin/auditor)
                     const memberUrl = buildShareableUrl('IssuanceCenter', { id: selectedIssuance.id }).replace(/\/(admin|auditor)\?/, '/member?');
-                    navigator.clipboard.writeText(window.location.origin + memberUrl).then(() => {
+                    navigator.clipboard.writeText(memberUrl).then(() => {
                       toast.success('Link copied!', {
                         description: 'Members can use this link to view their issuance',
                       });
