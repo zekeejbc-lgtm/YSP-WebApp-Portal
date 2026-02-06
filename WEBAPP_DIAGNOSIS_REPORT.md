@@ -58,6 +58,8 @@ function handleBumpCacheVersion(username) {
   // const role = getUserRole_(username);
 ```
 - **Risk:** Attackers can call the API directly, bypassing frontend
+
+Check
 - **Fix:** Always enforce role-based access control on the backend
 
 #### C5. Hardcoded API URL in Frontend
