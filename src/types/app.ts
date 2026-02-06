@@ -1,15 +1,5 @@
 import type React from "react";
 
-// Donation type definition
-export interface Donation {
-  id: number;
-  name: string;
-  amount: number;
-  date: string;
-  status: "pending" | "verified" | "rejected";
-  receiptUrl?: string;
-}
-
 // Pending Application type definition
 export interface PendingApplication {
   id: string;

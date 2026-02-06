@@ -37,7 +37,7 @@
   import { openEmailApp, openPhoneApp } from "./utils/externalLinks";
   import { suggestLinkTextFromUrl, normalizeThemeSongUrl } from "./utils/appHelpers";
   import { detectSocialPlatform, SocialIcon, LazyFallback } from "./components/SocialMediaIcon";
-  import type { Donation, PendingApplication, NavGroup } from "./types/app";
+  import type { PendingApplication, NavGroup } from "./types/app";
   import {
     fetchHomepageContent,
     updateHomepageContent,
@@ -100,7 +100,6 @@ import { CacheRefreshModal, RoleChangeModal, determineRoleChangeType, type RoleC
   import MusicPlayer from "./components/MusicPlayer";
 import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
 import type { AttendanceDashboardContext } from "./components/AttendanceDashboardPage";
-  const DonationPage = lazy(() => import("./components/DonationPage"));
   const LoginPanel = lazy(() => import("./components/LoginPanel"));
   const FeedbackPage = lazy(() => import("./components/FeedbackPage"));
   const OfficerDirectoryPage = lazy(() => import("./components/OfficerDirectoryPage"));
@@ -147,7 +146,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
    * Helper functions, types, and social media icons are now imported from:
    * - ./utils/appHelpers (suggestLinkTextFromUrl, formatTime, getYouTubeVideoId, normalizeThemeSongUrl)
    * - ./components/SocialMediaIcon (detectSocialPlatform, SocialIcon, LazyFallback)
-   * - ./types/app (Donation, PendingApplication, NavPage, NavGroup, etc.)
+   * - ./types/app (PendingApplication, NavPage, NavGroup, etc.)
    */
 
   export default function App() {
@@ -186,8 +185,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     const [userPosition, setUserPosition] = useState<string>("");
     const [userProfilePicture, setUserProfilePicture] = useState<string>("");
     const [logoError, setLogoError] = useState(false);
-    const [showDonationPage, setShowDonationPage] =
-      useState(false);
     const [showLoginPanel, setShowLoginPanel] = useState(false);
     const [showFeedbackPage, setShowFeedbackPage] = useState(false);
     const [showMembershipApplicationsPage, setShowMembershipApplicationsPage] = useState(false);
@@ -1070,46 +1067,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         return () => document.removeEventListener('click', handleClickOutside);
       }
     }, [openDropdown]);
-
-    // Mock donation data
-    const [donations, setDonations] = useState<Donation[]>([
-      {
-        id: 1,
-        name: "Anonymous",
-        amount: 500,
-        date: "2025-01-28",
-        status: "verified",
-        receiptUrl:
-          "https://images.unsplash.com/photo-1554224311-beee4f94860b?w=400",
-      },
-      {
-        id: 2,
-        name: "Maria Santos",
-        amount: 1000,
-        date: "2025-01-27",
-        status: "verified",
-        receiptUrl:
-          "https://images.unsplash.com/photo-1554224311-beee4f94860b?w=400",
-      },
-      {
-        id: 3,
-        name: "Juan Dela Cruz",
-        amount: 250,
-        date: "2025-01-26",
-        status: "verified",
-        receiptUrl:
-          "https://images.unsplash.com/photo-1554224311-beee4f94860b?w=400",
-      },
-      {
-        id: 4,
-        name: "Anonymous",
-        amount: 750,
-        date: "2025-01-25",
-        status: "pending",
-        receiptUrl:
-          "https://images.unsplash.com/photo-1554224311-beee4f94860b?w=400",
-      },
-    ]);
 
     // Projects State
     const [projects, setProjects] = useState<Project[]>([]);
@@ -2346,7 +2303,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       if (showSystemTools) return "system-tools";
       if (showManageMembers) return "manage-members";
       if (showSettings) return "settings";
-      if (showDonationPage) return "donation";
       return activePage;
     }, [
       activePage,
@@ -2355,7 +2311,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       showAttendanceDashboard,
       showAttendanceRecording,
       showAttendanceTransparency,
-      showDonationPage,
       showFeedbackPage,
       showManageEvents,
       showManageMembers,
@@ -2494,13 +2449,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             return true;
           }
           return false;
-        case "donation":
-          if (isAdmin) {
-            setActivePage("donation");
-            setShowDonationPage(true);
-            return true;
-          }
-          return false;
         default:
           return false;
       }
@@ -2514,7 +2462,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       setShowAttendanceDashboard,
       setShowAttendanceRecording,
       setShowAttendanceTransparency,
-      setShowDonationPage,
       setShowFeedbackPage,
       setShowManageEvents,
       setShowManageMembers,
@@ -2602,7 +2549,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       "system-tools": "system-tools",
       "manage-members": "manage-members",
       "membership-applications": "membership-applications",
-      donation: "donation",
     };
 
     const projectsContent = useMemo(() => {
@@ -3369,31 +3315,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               onClose={handleDismissRoleChange}
             />
           )}
-          {chatbot}
-        </>
-      );
-    }
-
-    // Show donation page if flag is true
-    if (showDonationPage) {
-      if (isPageInMaintenance("donation")) {
-        const config = getPageMaintenanceConfig("donation");
-        return (
-          <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Donation Tracker" onBack={() => setShowDonationPage(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-            <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
-            </Suspense>
-            {chatbot}
-          </>
-        );
-      }
-      return (
-        <>
-          <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading donations..." />}>
-            <DonationPage onClose={() => setShowDonationPage(false)} donations={donations} onDonationsUpdate={setDonations} isAdmin={isAdmin} />
-          </Suspense>
           {chatbot}
         </>
       );
