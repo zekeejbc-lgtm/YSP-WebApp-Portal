@@ -2,7 +2,7 @@
 
 ## WHAT I'VE DONE
 
-### ✅ ADDED TO APP.TSX:
+### ✅ ADDED TO APP.TSX: 1
 
 1. **Import Statement** (Line 46)
    ```javascript
