@@ -12,6 +12,8 @@
 
 /// <reference types="vite/client" />
 
+import { getSessionToken } from './gasLoginService';
+
 // =====================================================
 // TYPES
 // =====================================================
@@ -305,7 +307,7 @@ async function gasPost<T>(action: string, data: Record<string, unknown>): Promis
       headers: {
         'Content-Type': 'text/plain', // GAS requires text/plain for CORS
       },
-      body: JSON.stringify({ action, ...data }),
+      body: JSON.stringify({ action, ...data, sessionToken: getSessionToken() }),
       signal: controller.signal,
     });
 

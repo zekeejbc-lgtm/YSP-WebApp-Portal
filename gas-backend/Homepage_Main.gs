@@ -182,6 +182,98 @@
     return !!(params && (params.cancelled === true || params.cancelled === 'true' || params.action === 'cancel'));
   }
 
+  // =================== ROLE-BASED ACCESS CONTROL ===================
+
+  /**
+   * Look up a user's role from the User Profiles sheet.
+   * Requires LOGIN_SPREADSHEET_ID in Script Properties.
+   */
+  function getUserRole_(username) {
+    if (!username) return null;
+    try {
+      var ssId = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
+      if (!ssId) return null;
+      var ss = SpreadsheetApp.openById(ssId);
+      var sheet = ss.getSheetByName('User Profiles');
+      if (!sheet) return null;
+      var data = sheet.getDataRange().getValues();
+      var headers = data[0] || [];
+      var usernameIdx = headers.indexOf('Username');
+      var roleIdx = headers.indexOf('Role');
+      if (usernameIdx === -1 || roleIdx === -1) return null;
+      var target = String(username).toLowerCase().trim();
+      for (var i = 1; i < data.length; i++) {
+        if (String(data[i][usernameIdx] || '').toLowerCase().trim() === target) {
+          return String(data[i][roleIdx] || '').toLowerCase().trim();
+        }
+      }
+      return null;
+    } catch (e) {
+      Logger.log('getUserRole_ error: ' + e.toString());
+      return null;
+    }
+  }
+
+  /**
+   * Reusable role gate — returns an error object if NOT admin/auditor, null if authorized.
+   */
+  function requireAdminOrAuditor_(username, actionDescription) {
+    if (!username) {
+      return { success: false, error: 'Username is required for authorization', code: 400 };
+    }
+    var role = getUserRole_(username);
+    if (role !== 'auditor' && role !== 'admin') {
+      return { success: false, error: 'Only admins or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+    }
+    return null;
+  }
+
+  /**
+   * Validate the request API key.
+   * Set SECRET_API_KEY in Script Properties for each deployment.
+   */
+  function validateApiKey_(key) {
+    var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
+    if (!expected) {
+      Logger.log('WARNING: SECRET_API_KEY not set — API key validation skipped');
+      return true;
+    }
+    return !!(key && String(key).trim() === expected);
+  }
+
+  // ---- HMAC Session Token Verification ----
+
+  function bytesToHex_(bytes) {
+    return bytes.map(function(b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+  }
+
+  function verifyHmacToken_(token) {
+    if (!token || typeof token !== 'string') return null;
+    var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+    if (!secret) {
+      Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+      return null;
+    }
+    var parts = token.split('.');
+    if (parts.length !== 2) return null;
+    var payload = parts[0];
+    var signature = parts[1];
+    var expectedSig = bytesToHex_(Utilities.computeHmacSha256Signature(payload, secret));
+    if (signature !== expectedSig) return null;
+    try {
+      var decoded = Utilities.newBlob(Utilities.base64Decode(payload)).getDataAsString();
+      var fields = decoded.split('|');
+      if (fields.length < 2) return null;
+      var username = fields[0];
+      var expiry = parseInt(fields[1], 10);
+      if (isNaN(expiry) || new Date().getTime() > expiry) return null;
+      return { username: username };
+    } catch (e) {
+      Logger.log('verifyHmacToken_ error: ' + e.toString());
+      return null;
+    }
+  }
+
   /**
   * Handle GET requests - Fetch homepage or projects content
   */
@@ -284,6 +376,25 @@
           message: 'Request cancelled',
           timestamp: new Date().toISOString()
         });
+      }
+
+      // ---- Role check: all write operations require admin or auditor ----
+      const authError = requireAdminOrAuditor_(payload.username, payload.action || 'modify homepage content');
+      if (authError) return createJsonResponse(authError);
+
+      // ---- API key validation ----
+      if (!validateApiKey_(payload.key)) {
+        return createJsonResponse({ success: false, error: 'Invalid or missing API key', code: 401 });
+      }
+
+      // ---- Session token verification (HMAC) ----
+      var tokenUser = verifyHmacToken_(payload.sessionToken);
+      var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+      if (sessionSecret && !tokenUser) {
+        return createJsonResponse({ success: false, error: 'Invalid or expired session token', code: 401 });
+      }
+      if (tokenUser) {
+        payload.username = tokenUser.username;
       }
       
       // Homepage update

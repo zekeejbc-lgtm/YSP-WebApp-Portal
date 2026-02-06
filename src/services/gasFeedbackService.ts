@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+import { getSessionToken } from './gasLoginService';
+
 export interface Feedback {
   id: string; // Feedback ID (unique)
   timestamp: string; // Timestamp
@@ -69,7 +71,7 @@ async function callFeedbackAPI<T>(
         headers: {
           'Content-Type': 'text/plain;charset=utf-8', // GAS requires text/plain to avoid CORS preflight issues sometimes, or handle OPTIONS.
         },
-        body: JSON.stringify({ action, ...data }),
+        body: JSON.stringify({ action, ...data, sessionToken: getSessionToken() }),
         signal,
       });
     }

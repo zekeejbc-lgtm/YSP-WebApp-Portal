@@ -11,6 +11,8 @@
 
 /// <reference types="vite/client" />
 
+import { getSessionToken } from './gasLoginService';
+
 // =================== TYPES ===================
 
 export interface SystemHealthData {
@@ -153,7 +155,7 @@ async function callSystemToolsAPI<T>(
       headers: {
         'Content-Type': 'text/plain;charset=utf-8',
       },
-      body: JSON.stringify({ action, ...data }),
+      body: JSON.stringify({ action, ...data, sessionToken: getSessionToken() }),
       signal,
     });
 

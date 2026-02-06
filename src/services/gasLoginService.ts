@@ -309,6 +309,7 @@ export async function fetchUserProfile(
       body: JSON.stringify({
         action: 'getProfile',
         username: username.trim(),
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -409,6 +410,7 @@ export async function updateUserProfile(
         action: 'updateProfile',
         username: username.trim(),
         profileData: profileData,
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -522,6 +524,7 @@ export async function updateUserProfileAsAdmin(
         username: username.trim(),
         adminUsername: adminUsername.trim(),
         profileData: profileData,
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -661,6 +664,7 @@ export async function uploadProfilePicture(
         base64Image: base64Image,
         fileName: file.name,
         mimeType: file.type,
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -990,6 +994,7 @@ export async function checkUserRole(
       body: JSON.stringify({
         action: 'checkUserRole',
         username: username.trim(),
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -1056,6 +1061,7 @@ export async function verifyPassword(
         action: 'verifyPassword',
         username,
         password,
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -1128,6 +1134,7 @@ export async function changePassword(
         username,
         currentPassword,
         newPassword,
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -1241,6 +1248,7 @@ export async function sendVerificationOTP(
         action: 'sendVerificationOTP',
         username: username.trim(),
         email: email.trim(),
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -1307,6 +1315,7 @@ export async function verifyOTP(
         username,
         email,
         otp,
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });
@@ -1370,6 +1379,7 @@ export async function checkEmailVerified(
         action: 'checkEmailVerified',
         username,
         email,
+        sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
     });

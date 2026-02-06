@@ -6,6 +6,97 @@ const SHEET_NAME = feedbackProps_.getProperty('FEEDBACK_SHEET_NAME') || 'Feedbac
 const FEEDBACK_IMAGES_FOLDER_ID = feedbackProps_.getProperty('FEEDBACK_IMAGES_FOLDER_ID') || '';
 
 // ============================================================================
+// ROLE-BASED ACCESS CONTROL
+// ============================================================================
+
+/**
+ * Look up a user's role from the User Profiles sheet.
+ * Requires LOGIN_SPREADSHEET_ID in Script Properties.
+ */
+function getUserRole_(username) {
+  if (!username) return null;
+  try {
+    var ssId = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
+    if (!ssId) return null;
+    var ss = SpreadsheetApp.openById(ssId);
+    var sheet = ss.getSheetByName('User Profiles');
+    if (!sheet) return null;
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0] || [];
+    var usernameIdx = headers.indexOf('Username');
+    var roleIdx = headers.indexOf('Role');
+    if (usernameIdx === -1 || roleIdx === -1) return null;
+    var target = String(username).toLowerCase().trim();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][usernameIdx] || '').toLowerCase().trim() === target) {
+        return String(data[i][roleIdx] || '').toLowerCase().trim();
+      }
+    }
+    return null;
+  } catch (e) {
+    Logger.log('getUserRole_ error: ' + e.toString());
+    return null;
+  }
+}
+
+function requireAdminOrAuditor_(username, actionDescription) {
+  if (!username) {
+    return { success: false, status: 'error', message: 'Username is required for authorization', code: 400 };
+  }
+  var role = getUserRole_(username);
+  if (role !== 'auditor' && role !== 'admin') {
+    return { success: false, status: 'error', message: 'Only admins or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+  }
+  return null;
+}
+
+/**
+ * Validate the request API key.
+ * Set SECRET_API_KEY in Script Properties for each deployment.
+ */
+function validateApiKey_(key) {
+  var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
+  if (!expected) {
+    Logger.log('WARNING: SECRET_API_KEY not set \u2014 API key validation skipped');
+    return true;
+  }
+  return !!(key && String(key).trim() === expected);
+}
+
+// ---- HMAC Session Token Verification ----
+
+function bytesToHex_(bytes) {
+  return bytes.map(function(b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+}
+
+function verifyHmacToken_(token) {
+  if (!token || typeof token !== 'string') return null;
+  var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+  if (!secret) {
+    Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+    return null;
+  }
+  var parts = token.split('.');
+  if (parts.length !== 2) return null;
+  var payload = parts[0];
+  var signature = parts[1];
+  var expectedSig = bytesToHex_(Utilities.computeHmacSha256Signature(payload, secret));
+  if (signature !== expectedSig) return null;
+  try {
+    var decoded = Utilities.newBlob(Utilities.base64Decode(payload)).getDataAsString();
+    var fields = decoded.split('|');
+    if (fields.length < 2) return null;
+    var username = fields[0];
+    var expiry = parseInt(fields[1], 10);
+    if (isNaN(expiry) || new Date().getTime() > expiry) return null;
+    return { username: username };
+  } catch (e) {
+    Logger.log('verifyHmacToken_ error: ' + e.toString());
+    return null;
+  }
+}
+
+// ============================================================================
 // AUTHORIZATION & DEBUG FUNCTIONS
 // ============================================================================
 
@@ -214,10 +305,20 @@ function doGet(e) {
     const action = String(e.parameter.action || '').trim();
 
     if (action === "initiate") {
+      var initUser = String(e.parameter.username || '').trim();
+      var initAuth = requireAdminOrAuditor_(initUser, 'initialize feedback sheets');
+      if (initAuth) {
+        return ContentService.createTextOutput(JSON.stringify(initAuth)).setMimeType(ContentService.MimeType.JSON);
+      }
       return initiateFeedbackSheets();
     } else if (action === "getFeedbacks") {
       return getFeedbacks();
     } else if (action === "migrateUrls") {
+       var migrateUser = String(e.parameter.username || '').trim();
+       var migrateAuth = requireAdminOrAuditor_(migrateUser, 'migrate image URLs');
+       if (migrateAuth) {
+         return ContentService.createTextOutput(JSON.stringify(migrateAuth)).setMimeType(ContentService.MimeType.JSON);
+       }
        const result = migrateImageUrls();
        return ContentService.createTextOutput(JSON.stringify({
         status: "success",
@@ -254,6 +355,33 @@ function doPost(e) {
     
     const data = JSON.parse(e.postData.contents);
     const action = String(data.action || '').trim();
+
+    // ---- API key validation ----
+    if (!validateApiKey_(data.key)) {
+      return ContentService.createTextOutput(JSON.stringify({
+        success: false, status: "error", message: "Invalid or missing API key", code: 401
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ---- Session token verification (HMAC) ----
+    var tokenUser = verifyHmacToken_(data.sessionToken);
+    var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+    if (sessionSecret && !tokenUser) {
+      return ContentService.createTextOutput(JSON.stringify({
+        success: false, status: "error", message: "Invalid or expired session token", code: 401
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (tokenUser) {
+      data.username = tokenUser.username;
+    }
+
+    // ---- Role checks: update/delete require admin+auditor; create/upload are open to authenticated users ----
+    if (action === "updateFeedback" || action === "deleteFeedback") {
+      const authError = requireAdminOrAuditor_(data.username, action);
+      if (authError) {
+        return ContentService.createTextOutput(JSON.stringify(authError)).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
 
     if (action === "createFeedback") {
       return createFeedback(data);

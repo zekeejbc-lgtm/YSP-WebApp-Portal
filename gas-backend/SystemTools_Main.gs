@@ -26,6 +26,24 @@ function doPost(e) {
       return createErrorResponse('Request cancelled', 499);
     }
     
+    // ---- API key validation ----
+    if (!validateApiKey_(requestData.key)) {
+      return createErrorResponse('Invalid or missing API key', 401);
+    }
+    
+    // ---- Session token verification (HMAC) ----
+    var tokenExemptActions = ['getCacheVersion', 'getMaintenanceMode'];
+    if (tokenExemptActions.indexOf(action) === -1) {
+      var tokenUser = verifyHmacToken_(requestData.sessionToken);
+      var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+      if (sessionSecret && !tokenUser) {
+        return createErrorResponse('Invalid or expired session token', 401);
+      }
+      if (tokenUser) {
+        requestData.username = tokenUser.username;
+      }
+    }
+    
     Logger.log('doPost received action: ' + action);
 
     // Legacy support: action message overwrote route action in old clients
@@ -45,8 +63,11 @@ function doPost(e) {
     
     switch (action) {
       // System Health
-      case 'getSystemHealth':
+      case 'getSystemHealth': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'view system health');
+        if (authError) return authError;
         return handleGetSystemHealth();
+      }
       
       // Cache Management
       case 'getCacheVersion':
@@ -71,16 +92,22 @@ function doPost(e) {
         return handleClearAllMaintenance(requestData.username);
       
       // Access Logs
-      case 'getAccessLogs':
+      case 'getAccessLogs': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'view access logs');
+        if (authError) return authError;
         return handleGetAccessLogs(requestData.page || 1, requestData.limit || 50, requestData.filterType);
+      }
       case 'logAccess': {
         const logAction = requestData.logAction || requestData.actionMessage || '';
         return handleLogAccess(requestData.username, logAction, requestData.actionType, requestData.status, requestData.ipAddress, requestData.device)
           ? createSuccessResponse({ message: 'Access logged successfully' })
           : createErrorResponse('Failed to log access', 500);
       }
-      case 'getAccessLogsStats':
+      case 'getAccessLogsStats': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'view access log statistics');
+        if (authError) return authError;
         return handleGetAccessLogsStats();
+      }
       
       // Clear Access Logs
       case 'clearAllAccessLogs':
@@ -95,8 +122,11 @@ function doPost(e) {
         return handleUploadAccessLogsPDF(requestData.pdfBase64, requestData.fileName, requestData.username, requestData.exportType);
       
       // Debug
-      case 'testConnection':
+      case 'testConnection': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'test system connections');
+        if (authError) return authError;
         return handleTestConnection();
+      }
       
       default:
         return createErrorResponse('Unknown action: ' + action, 400);
@@ -582,6 +612,62 @@ function requireAdminOrAuditor_(username, actionDescription) {
     return createErrorResponse('Only auditors or admins can ' + desc, 403);
   }
   return null; // authorized
+}
+
+/**
+ * Validate the request API key.
+ * Set SECRET_API_KEY in Script Properties for each deployment.
+ * Returns true if valid (or not yet configured), false if invalid.
+ */
+function validateApiKey_(key) {
+  var expected = props_.getProperty('SECRET_API_KEY') || '';
+  if (!expected) {
+    Logger.log('WARNING: SECRET_API_KEY not set — API key validation skipped');
+    return true;
+  }
+  return !!(key && String(key).trim() === expected);
+}
+
+// ---- HMAC Session Token Verification ----
+
+/**
+ * Convert byte array to hex string
+ */
+function bytesToHex_(bytes) {
+  return bytes.map(function(b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+}
+
+/**
+ * Verify an HMAC-signed session token.
+ * Requires SESSION_SECRET_KEY in Script Properties (same key across all deployments).
+ * @param {string} token - The HMAC token (payload.signature)
+ * @returns {Object|null} { username } if valid, null otherwise
+ */
+function verifyHmacToken_(token) {
+  if (!token || typeof token !== 'string') return null;
+  var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+  if (!secret) {
+    Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+    return null;
+  }
+  var parts = token.split('.');
+  if (parts.length !== 2) return null;
+  var payload = parts[0];
+  var signature = parts[1];
+  var expectedSig = bytesToHex_(Utilities.computeHmacSha256Signature(payload, secret));
+  if (signature !== expectedSig) return null;
+  try {
+    var decoded = Utilities.newBlob(Utilities.base64Decode(payload)).getDataAsString();
+    var fields = decoded.split('|');
+    if (fields.length < 2) return null;
+    var username = fields[0];
+    var expiry = parseInt(fields[1], 10);
+    if (isNaN(expiry) || new Date().getTime() > expiry) return null;
+    return { username: username };
+  } catch (e) {
+    Logger.log('verifyHmacToken_ error: ' + e.toString());
+    return null;
+  }
 }
 
 function getScriptCacheVersion_() {

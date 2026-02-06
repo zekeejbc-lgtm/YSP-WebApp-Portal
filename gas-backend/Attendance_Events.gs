@@ -61,6 +61,108 @@ function sanitizeEventsParam_(value, maxLen) {
   return str.length > limit ? str.substring(0, limit) : str;
 }
 
+// =====================================================
+// ROLE-BASED ACCESS CONTROL
+// =====================================================
+
+/**
+ * Look up a user's role from the User Profiles sheet.
+ * Requires LOGIN_SPREADSHEET_ID in Script Properties.
+ */
+function getUserRole_(username) {
+  if (!username) return null;
+  try {
+    var ssId = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
+    if (!ssId) return null;
+    var ss = SpreadsheetApp.openById(ssId);
+    var sheet = ss.getSheetByName('User Profiles');
+    if (!sheet) return null;
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0] || [];
+    var usernameIdx = headers.indexOf('Username');
+    var roleIdx = headers.indexOf('Role');
+    if (usernameIdx === -1 || roleIdx === -1) return null;
+    var target = String(username).toLowerCase().trim();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][usernameIdx] || '').toLowerCase().trim() === target) {
+        return String(data[i][roleIdx] || '').toLowerCase().trim();
+      }
+    }
+    return null;
+  } catch (e) {
+    Logger.log('getUserRole_ error: ' + e.toString());
+    return null;
+  }
+}
+
+function requireAdminOrAuditor_(username, actionDescription) {
+  if (!username) {
+    return { success: false, error: 'Username is required for authorization', code: 400 };
+  }
+  var role = getUserRole_(username);
+  if (role !== 'auditor' && role !== 'admin') {
+    return { success: false, error: 'Only admins or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+  }
+  return null;
+}
+
+function requireHeadOrAbove_(username, actionDescription) {
+  if (!username) {
+    return { success: false, error: 'Username is required for authorization', code: 400 };
+  }
+  var role = getUserRole_(username);
+  if (role !== 'head' && role !== 'admin' && role !== 'auditor') {
+    return { success: false, error: 'Only heads, admins, or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+  }
+  return null;
+}
+
+/**
+ * Validate the request API key.
+ * Set SECRET_API_KEY in Script Properties for each deployment.
+ */
+function validateApiKey_(key) {
+  var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
+  if (!expected) {
+    Logger.log('WARNING: SECRET_API_KEY not set \u2014 API key validation skipped');
+    return true;
+  }
+  return !!(key && String(key).trim() === expected);
+}
+
+// ---- HMAC Session Token Verification ----
+
+function bytesToHex_(bytes) {
+  return bytes.map(function(b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+}
+
+function verifyHmacToken_(token) {
+  if (!token || typeof token !== 'string') return null;
+  var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+  if (!secret) {
+    Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+    return null;
+  }
+  var parts = token.split('.');
+  if (parts.length !== 2) return null;
+  var payload = parts[0];
+  var signature = parts[1];
+  var expectedSig = bytesToHex_(Utilities.computeHmacSha256Signature(payload, secret));
+  if (signature !== expectedSig) return null;
+  try {
+    var decoded = Utilities.newBlob(Utilities.base64Decode(payload)).getDataAsString();
+    var fields = decoded.split('|');
+    if (fields.length < 2) return null;
+    var username = fields[0];
+    var expiry = parseInt(fields[1], 10);
+    if (isNaN(expiry) || new Date().getTime() > expiry) return null;
+    return { username: username };
+  } catch (e) {
+    Logger.log('verifyHmacToken_ error: ' + e.toString());
+    return null;
+  }
+}
+
 function doGet(e) {
   const params = e.parameter;
   const action = sanitizeEventsParam_(params.action, 50);
@@ -98,9 +200,13 @@ function doGet(e) {
       case 'getEventStats':
         result = getEventStats();
         break;
-      case 'initializeSheets':
+      case 'initializeSheets': {
+        var initUser = sanitizeEventsParam_(params.username, 100);
+        var initAuth = requireAdminOrAuditor_(initUser, 'initialize sheets');
+        if (initAuth) { result = initAuth; break; }
         result = initializeEventSheets();
         break;
+      }
       // Attendance Recording Actions (from Attendance_Main.gs)
       case 'getEventAttendanceRecords':
         result = getEventAttendanceRecords(eventId);
@@ -132,9 +238,13 @@ function doGet(e) {
       case 'getEventTimeWindows':
         result = getEventTimeWindows(eventId);
         break;
-      case 'migrateEventsSchema':
+      case 'migrateEventsSchema': {
+        var migrateUser = sanitizeEventsParam_(params.username, 100);
+        var migrateAuth = requireAdminOrAuditor_(migrateUser, 'migrate events schema');
+        if (migrateAuth) { result = migrateAuth; break; }
         result = migrateEventsSchema();
         break;
+      }
       default:
         result = { success: false, error: 'Invalid action' };
     }
@@ -171,6 +281,25 @@ function doPost(e) {
   
   const action = sanitizeEventsParam_(params.action, 50);
   let result;
+
+  // ---- API key validation ----
+  if (!validateApiKey_(params.key)) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'Invalid or missing API key', code: 401 }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // ---- Session token verification (HMAC) ----
+  var tokenUser = verifyHmacToken_(params.sessionToken);
+  var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+  if (sessionSecret && !tokenUser) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'Invalid or expired session token', code: 401 }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  if (tokenUser) {
+    params.username = tokenUser.username;
+  }
   
   // Acquire script lock to prevent concurrent write race conditions
   const lock = LockService.getScriptLock();
@@ -187,6 +316,25 @@ function doPost(e) {
         .createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     }
+
+    // ---- Role-based access control ----
+    var username = sanitizeEventsParam_(params.username, 100);
+    var adminOnlyActions = ['createEvent', 'updateEvent', 'deleteEvent', 'duplicateEvent', 'cancelEvent', 'addEventRecipient', 'addEventRecipients', 'updateAttendanceStatus'];
+    var headActions = ['recordAttendance', 'bulkRecordAttendance', 'recordTimeIn', 'recordTimeOut', 'recordManualAttendance'];
+    if (adminOnlyActions.indexOf(action) !== -1) {
+      var authError = requireAdminOrAuditor_(username, action);
+      if (authError) {
+        result = authError;
+        return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+      }
+    } else if (headActions.indexOf(action) !== -1) {
+      var authError = requireHeadOrAbove_(username, action);
+      if (authError) {
+        result = authError;
+        return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
     switch (action) {
       case 'createEvent':
         result = createEvent(params.eventData);

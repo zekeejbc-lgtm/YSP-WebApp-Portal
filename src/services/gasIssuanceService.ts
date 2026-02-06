@@ -13,6 +13,8 @@
 
 /// <reference types="vite/client" />
 
+import { getSessionToken } from './gasLoginService';
+
 // =====================================================
 // TYPES
 // =====================================================
@@ -266,7 +268,7 @@ async function postToGAS<T>(data: Record<string, unknown>): Promise<GASIssuanceR
     headers: {
       'Content-Type': 'text/plain',
     },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ ...data, sessionToken: getSessionToken() }),
   });
 
   if (!response.ok) {

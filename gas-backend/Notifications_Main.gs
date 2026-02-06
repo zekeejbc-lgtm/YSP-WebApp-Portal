@@ -60,12 +60,20 @@ function doGet(e) {
           status: 'online',
           timestamp: new Date().toISOString(),
         });
-      case 'initializeSheets':
+      case 'initializeSheets': {
+        var initUser = params.username || '';
+        var initAuth = requireAdminOrAuditor_(initUser, 'initialize sheets');
+        if (initAuth) return createJsonResponse_(initAuth);
         return createJsonResponse_(initializeNotificationSheets());
+      }
       case 'getNotifications':
         return createJsonResponse_(getNotifications(params));
-      case 'getSubscriptions':
+      case 'getSubscriptions': {
+        var subUser = params.username || '';
+        var subAuth = requireAdminOrAuditor_(subUser, 'view subscriptions');
+        if (subAuth) return createJsonResponse_(subAuth);
         return createJsonResponse_(getSubscriptions(params));
+      }
       case 'getConfig':
         return createJsonResponse_({
           success: true,
@@ -77,6 +85,97 @@ function doGet(e) {
     }
   } catch (error) {
     return createJsonResponse_({ success: false, error: error.toString() });
+  }
+}
+
+// =====================================================
+// ROLE-BASED ACCESS CONTROL
+// =====================================================
+
+/**
+ * Look up a user's role from the User Profiles sheet.
+ * Requires LOGIN_SPREADSHEET_ID in Script Properties.
+ */
+function getUserRole_(username) {
+  if (!username) return null;
+  try {
+    var ssId = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
+    if (!ssId) return null;
+    var ss = SpreadsheetApp.openById(ssId);
+    var sheet = ss.getSheetByName('User Profiles');
+    if (!sheet) return null;
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0] || [];
+    var usernameIdx = headers.indexOf('Username');
+    var roleIdx = headers.indexOf('Role');
+    if (usernameIdx === -1 || roleIdx === -1) return null;
+    var target = String(username).toLowerCase().trim();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][usernameIdx] || '').toLowerCase().trim() === target) {
+        return String(data[i][roleIdx] || '').toLowerCase().trim();
+      }
+    }
+    return null;
+  } catch (e) {
+    Logger.log('getUserRole_ error: ' + e.toString());
+    return null;
+  }
+}
+
+function requireAdminOrAuditor_(username, actionDescription) {
+  if (!username) {
+    return { success: false, error: 'Username is required for authorization', code: 400 };
+  }
+  var role = getUserRole_(username);
+  if (role !== 'auditor' && role !== 'admin') {
+    return { success: false, error: 'Only admins or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+  }
+  return null;
+}
+
+/**
+ * Validate the request API key.
+ * Set SECRET_API_KEY in Script Properties for each deployment.
+ */
+function validateApiKey_(key) {
+  var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
+  if (!expected) {
+    Logger.log('WARNING: SECRET_API_KEY not set \u2014 API key validation skipped');
+    return true;
+  }
+  return !!(key && String(key).trim() === expected);
+}
+
+// ---- HMAC Session Token Verification ----
+
+function bytesToHex_(bytes) {
+  return bytes.map(function(b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+}
+
+function verifyHmacToken_(token) {
+  if (!token || typeof token !== 'string') return null;
+  var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+  if (!secret) {
+    Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+    return null;
+  }
+  var parts = token.split('.');
+  if (parts.length !== 2) return null;
+  var payload = parts[0];
+  var signature = parts[1];
+  var expectedSig = bytesToHex_(Utilities.computeHmacSha256Signature(payload, secret));
+  if (signature !== expectedSig) return null;
+  try {
+    var decoded = Utilities.newBlob(Utilities.base64Decode(payload)).getDataAsString();
+    var fields = decoded.split('|');
+    if (fields.length < 2) return null;
+    var username = fields[0];
+    var expiry = parseInt(fields[1], 10);
+    if (isNaN(expiry) || new Date().getTime() > expiry) return null;
+    return { username: username };
+  } catch (e) {
+    Logger.log('verifyHmacToken_ error: ' + e.toString());
+    return null;
   }
 }
 
@@ -93,19 +192,46 @@ function doPost(e) {
       return createJsonResponse_({ success: false, cancelled: true, message: 'Request cancelled' });
     }
 
+    // ---- API key validation ----
+    if (!validateApiKey_(params.key)) {
+      return createJsonResponse_({ success: false, error: 'Invalid or missing API key', code: 401 });
+    }
+
+    // ---- Session token verification (HMAC) ----
+    var tokenUser = verifyHmacToken_(params.sessionToken);
+    var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+    if (sessionSecret && !tokenUser) {
+      return createJsonResponse_({ success: false, error: 'Invalid or expired session token', code: 401 });
+    }
+    if (tokenUser) {
+      params.username = tokenUser.username;
+    }
+
     switch (params.action) {
-      case 'initializeSheets':
+      case 'initializeSheets': {
+        // ---- Role check: only admin or auditor can initialize sheets ----
+        const initAuth = requireAdminOrAuditor_(params.username, 'initialize sheets');
+        if (initAuth) return createJsonResponse_(initAuth);
         return createJsonResponse_(initializeNotificationSheets());
+      }
       case 'registerSubscription':
         return createJsonResponse_(registerSubscription(params));
       case 'registerFcmToken':
         return createJsonResponse_(registerFcmToken(params));
       case 'unregisterSubscription':
         return createJsonResponse_(unregisterSubscription(params));
-      case 'createNotification':
+      case 'createNotification': {
+        // ---- Role check: only admin or auditor can create notifications ----
+        const authError = requireAdminOrAuditor_(params.username || params.userId, 'create notifications');
+        if (authError) return createJsonResponse_(authError);
         return createJsonResponse_(createNotification(params));
-      case 'queueNotification':
+      }
+      case 'queueNotification': {
+        // ---- Role check: only admin or auditor can queue notifications ----
+        const authError = requireAdminOrAuditor_(params.username || params.userId, 'queue notifications');
+        if (authError) return createJsonResponse_(authError);
         return createJsonResponse_(queueNotification(params));
+      }
       default:
         return createJsonResponse_({ success: false, error: 'Invalid action' });
     }

@@ -357,6 +357,26 @@ function doPost(e) {
       return createErrorResponse('Request cancelled', 499);
     }
 
+    // ---- Session token verification (HMAC) ----
+    // Public/pre-auth actions that don't require a valid session token
+    var PUBLIC_ACTIONS = [
+      'login', 'verifySession',
+      'lookupPasswordResetUser', 'sendPasswordResetOTP', 'verifyPasswordResetOTP', 'resetPasswordWithToken',
+      'searchOfficers', 'getOfficerByIdCode', 'getAllOfficers',
+      'getMaintenanceMode', 'getCacheVersion'
+    ];
+    if (PUBLIC_ACTIONS.indexOf(action) === -1) {
+      var tokenUser = verifyHmacToken_(requestData.sessionToken);
+      var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+      if (sessionSecret && !tokenUser) {
+        return createErrorResponse('Invalid or expired session token', 401);
+      }
+      // Use the verified username from the token (tamper-proof)
+      if (tokenUser) {
+        requestData.username = tokenUser.username;
+      }
+    }
+
     // Route to appropriate handler
     switch (action) {
       case 'login':
@@ -594,7 +614,27 @@ function handleVerifySession(sessionToken) {
     return createErrorResponse('Session token required', 400);
   }
   
-  // Look up the session in CacheService
+  // Try HMAC token verification first (stateless — preferred)
+  var hmacResult = verifyHmacToken_(sessionToken);
+  if (hmacResult) {
+    return createSuccessResponse({
+      valid: true,
+      username: hmacResult.username,
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  // If SESSION_SECRET_KEY is configured, HMAC verification failed — don't fall back
+  var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+  if (secret) {
+    return createSuccessResponse({
+      valid: false,
+      reason: 'Session expired or invalid token',
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  // Legacy fallback: CacheService lookup (only when SESSION_SECRET_KEY not configured)
   const cache = CacheService.getScriptCache();
   const sessionData = cache.get('session_' + sessionToken);
   
@@ -1379,12 +1419,76 @@ function verifyPassword(password, storedHash, salt) {
   return inputHash === storedHash;
 }
 
+// =================== HMAC TOKEN AUTHENTICATION ===================
+
 /**
- * Generate a simple session token
- * @param {string} userId - User identifier
+ * Convert a byte array to a hex string
+ * @param {number[]} bytes - Byte array from HMAC computation
+ * @returns {string} Hex string
+ */
+function bytesToHex_(bytes) {
+  return bytes.map(function(b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+}
+
+/**
+ * Generate an HMAC-signed session token (stateless)
+ * Format: base64(username|expiryMs).hex(HMAC-SHA256(payload, secret))
+ * Requires SESSION_SECRET_KEY in Script Properties.
+ * @param {string} username - The authenticated username
+ * @returns {string|null} HMAC token, or null if SESSION_SECRET_KEY not configured
+ */
+function generateHmacToken_(username) {
+  var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+  if (!secret) return null;
+  var expiry = new Date().getTime() + 21600000; // 6 hours
+  var payload = Utilities.base64Encode(username + '|' + expiry);
+  var signature = bytesToHex_(Utilities.computeHmacSha256Signature(payload, secret));
+  return payload + '.' + signature;
+}
+
+/**
+ * Verify an HMAC-signed session token
+ * @param {string} token - The HMAC token to verify
+ * @returns {Object|null} { username } if valid, null if invalid/expired/not configured
+ */
+function verifyHmacToken_(token) {
+  if (!token || typeof token !== 'string') return null;
+  var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+  if (!secret) {
+    Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+    return null;
+  }
+  var parts = token.split('.');
+  if (parts.length !== 2) return null;
+  var payload = parts[0];
+  var signature = parts[1];
+  var expectedSig = bytesToHex_(Utilities.computeHmacSha256Signature(payload, secret));
+  if (signature !== expectedSig) return null;
+  try {
+    var decoded = Utilities.newBlob(Utilities.base64Decode(payload)).getDataAsString();
+    var fields = decoded.split('|');
+    if (fields.length < 2) return null;
+    var username = fields[0];
+    var expiry = parseInt(fields[1], 10);
+    if (isNaN(expiry) || new Date().getTime() > expiry) return null;
+    return { username: username };
+  } catch (e) {
+    Logger.log('verifyHmacToken_ error: ' + e.toString());
+    return null;
+  }
+}
+
+/**
+ * Generate a session token — HMAC-signed if configured, legacy CacheService fallback
+ * @param {string} userId - User identifier (username or ID code)
  * @returns {string} Session token
  */
 function generateSessionToken(userId) {
+  // Prefer HMAC token (stateless, works across all deployments)
+  var hmacToken = generateHmacToken_(userId);
+  if (hmacToken) return hmacToken;
+
+  // Fallback: legacy CacheService token (if SESSION_SECRET_KEY not yet configured)
   const timestamp = new Date().getTime();
   const random = Math.random().toString(36).substring(2);
   const payload = userId + ':' + timestamp + ':' + random;
