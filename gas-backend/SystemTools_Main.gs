@@ -1534,12 +1534,40 @@ function handleLogAccess(username, action, actionType, status, ipAddress, device
 /**
  * Get access logs from the Access Logs sheet
  * Returns paginated logs with metadata
+ * Enriches each log with the user's full name and profile picture from User Profiles
  * Uses ONLY the Access Logs sheet in System Settings spreadsheet
  */
 function handleGetAccessLogs(page = 1, limit = 50, filterType = null) {
   try {
     const sheet = initializeAccessLogsSheet();
     const data = sheet.getDataRange().getValues();
+
+    // Build a username → { fullName, profilePic } lookup from User Profiles
+    var userLookup = {};
+    try {
+      var profileSS = SpreadsheetApp.openById(SYSTEM_DATA_SPREADSHEET_ID);
+      var profileSheet = profileSS.getSheetByName('User Profiles');
+      if (profileSheet) {
+        var pData = profileSheet.getDataRange().getValues();
+        var pHeaders = pData[0] || [];
+        var uIdx = pHeaders.indexOf('Username');
+        var nIdx = pHeaders.indexOf('Full name');
+        var picIdx = pHeaders.indexOf('ProfilePictureURL');
+        if (uIdx !== -1) {
+          for (var p = 1; p < pData.length; p++) {
+            var uName = (pData[p][uIdx] || '').toString().trim();
+            if (uName) {
+              userLookup[uName.toLowerCase()] = {
+                fullName: nIdx !== -1 ? (pData[p][nIdx] || '').toString() : '',
+                profilePic: picIdx !== -1 ? (pData[p][picIdx] || '').toString() : ''
+              };
+            }
+          }
+        }
+      }
+    } catch (lookupErr) {
+      Logger.log('Warning: Could not build user lookup: ' + lookupErr.toString());
+    }
     
     // Skip header row
     const logs = [];
@@ -1555,10 +1583,15 @@ function handleGetAccessLogs(page = 1, limit = 50, filterType = null) {
       if (filterType && filterType !== 'all' && logType !== filterType) {
         continue;
       }
+
+      const rawUser = (row[0] || '').toString().trim();
+      const profile = userLookup[rawUser.toLowerCase()] || {};
       
       logs.push({
         id: String(i),
-        user: row[0] || '',
+        user: rawUser,
+        fullName: profile.fullName || rawUser,
+        profilePic: profile.profilePic || '',
         action: row[1] || '',
         type: logType,
         status: row[3] || 'success',

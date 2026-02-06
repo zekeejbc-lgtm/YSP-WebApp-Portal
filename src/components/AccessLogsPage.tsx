@@ -53,7 +53,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import CustomDropdown from "./CustomDropdown";
 import { logAccess, clearAllAccessLogs, clearAccessLogsByDateRange, clearSpecificAccessLogs, uploadAccessLogsPDF } from "../services/gasSystemToolsService";
-import { searchOfficers } from "../services/gasDirectoryService";
+import { getSessionToken } from "../services/gasLoginService";
 import {
   PieChart,
   Pie,
@@ -177,6 +177,8 @@ function PaginationControls({
 interface AccessLog {
   id: string;
   user: string;
+  fullName: string;
+  profilePic: string;
   action: string;
   type: string; // Can be: login, logout, view, edit, create, delete
   timestamp: string;
@@ -292,8 +294,10 @@ export default function AccessLogsPage({
         body: JSON.stringify({
           action: 'getAccessLogs',
           page: 1,
-          limit: 1000,
+          limit: 200,
           filterType: selectedType !== 'all' ? selectedType : null,
+          username,
+          sessionToken: getSessionToken(),
         }),
       });
 
@@ -311,6 +315,8 @@ export default function AccessLogsPage({
       const formattedLogs = (data.data?.logs || []).map((log: any) => ({
         id: String(log.id ?? ''),
         user: String(log.user ?? ''),
+        fullName: String(log.fullName ?? log.user ?? ''),
+        profilePic: String(log.profilePic ?? ''),
         action: String(log.action ?? ''),
         type: String(log.type ?? 'view').toLowerCase(),
         status: String(log.status ?? 'success').toLowerCase(),
@@ -335,11 +341,26 @@ export default function AccessLogsPage({
       });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to fetch access logs';
-      setError(errorMsg);
-      console.error('Error fetching access logs:', err);
-      toast.error('Failed to load access logs', {
-        description: errorMsg,
-      });
+      // Check if this is a permission error
+      const isPermissionError = errorMsg.toLowerCase().includes('auditor') || 
+                                 errorMsg.toLowerCase().includes('admin') || 
+                                 errorMsg.toLowerCase().includes('permission') ||
+                                 errorMsg.toLowerCase().includes('access denied') ||
+                                 errorMsg.toLowerCase().includes('unauthorized');
+      
+      if (isPermissionError) {
+        setError('ACCESS_DENIED');
+        console.warn('Access Logs permission check failed:', errorMsg);
+        toast.warning('Access Restricted', {
+          description: 'You need auditor privileges to view access logs.',
+        });
+      } else {
+        setError(errorMsg);
+        console.error('Error fetching access logs:', err);
+        toast.error('Failed to load access logs', {
+          description: errorMsg,
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -353,11 +374,14 @@ export default function AccessLogsPage({
   }, [fetchAccessLogs]);
 
   const filteredLogs = logs.filter((log) => {
-    const userText = String(log.user ?? "");
+    const userText = String(log.fullName ?? log.user ?? "");
+    const usernameText = String(log.user ?? "");
     const actionText = String(log.action ?? "");
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      userText.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      actionText.toLowerCase().includes(searchQuery.toLowerCase());
+      userText.toLowerCase().includes(q) ||
+      usernameText.toLowerCase().includes(q) ||
+      actionText.toLowerCase().includes(q);
     const matchesType =
       selectedType === "all" || log.type === selectedType;
     return matchesSearch && matchesType;
@@ -420,39 +444,13 @@ export default function AccessLogsPage({
     }
   }, [currentPage, totalPages]);
 
+  // Use profile picture directly from the enriched log data (no extra API call needed)
   useEffect(() => {
-    let isActive = true;
-    setSelectedProfilePic(null);
-
-    if (!selectedLog?.user) {
-      return () => {
-        isActive = false;
-      };
+    if (selectedLog?.profilePic) {
+      setSelectedProfilePic(selectedLog.profilePic);
+    } else {
+      setSelectedProfilePic(null);
     }
-
-    const loadProfileImage = async () => {
-      try {
-        const result = await searchOfficers(selectedLog.user);
-        if (!isActive || !result.success || !result.officers?.length) return;
-
-        const normalizedName = selectedLog.user.trim().toLowerCase();
-        const matched =
-          result.officers.find((officer) => officer.fullName.trim().toLowerCase() === normalizedName) ||
-          result.officers[0];
-        const imageUrl = matched.profilePicture || "";
-        if (imageUrl) {
-          setSelectedProfilePic(imageUrl);
-        }
-      } catch {
-        // Ignore profile image failures
-      }
-    };
-
-    loadProfileImage();
-
-    return () => {
-      isActive = false;
-    };
   }, [selectedLog]);
 
   /**
@@ -668,7 +666,7 @@ export default function AccessLogsPage({
 
     const allLogsTableData = chronologicalLogs.map((log, index) => [
       String(index + 1),
-      log.user,
+      log.fullName,
       log.type.charAt(0).toUpperCase() + log.type.slice(1),
       log.action,
       log.status.charAt(0).toUpperCase() + log.status.slice(1),
@@ -778,7 +776,7 @@ export default function AccessLogsPage({
 
       const tableData = logsOfType.map((log, index) => [
         String(index + 1),
-        log.user,
+        log.fullName,
         log.action,
         log.status.charAt(0).toUpperCase() + log.status.slice(1),
         new Date(log.timestamp).toLocaleString(),
@@ -1081,7 +1079,7 @@ export default function AccessLogsPage({
       // Prepare spreadsheet data
       const headers = ['User', 'Action', 'Type', 'Status', 'Timestamp', 'IP Address', 'Device'];
       const data = filteredLogs.map(log => [
-        log.user,
+        log.fullName,
         log.action,
         log.type,
         log.status,
@@ -2082,23 +2080,57 @@ export default function AccessLogsPage({
 
       {/* Error State */}
       {error && !isLoading && (
-        <div className="p-6 rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-semibold text-red-900 dark:text-red-200">Error Loading Logs</h3>
-              <p className="text-sm text-red-700 dark:text-red-300 mt-1">{error}</p>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={fetchAccessLogs}
-                className="mt-3"
-              >
-                Retry
-              </Button>
+        error === 'ACCESS_DENIED' ? (
+          /* Permission Error - User-friendly access denied message */
+          <div className="p-8 rounded-xl border text-center" style={{
+            background: isDark ? 'rgba(234, 179, 8, 0.1)' : 'rgba(254, 243, 199, 1)',
+            borderColor: isDark ? 'rgba(234, 179, 8, 0.3)' : 'rgba(234, 179, 8, 0.4)',
+          }}>
+            <Shield className="w-16 h-16 mx-auto mb-4" style={{ color: '#d97706' }} />
+            <h3 className="text-xl font-semibold mb-2" style={{ color: isDark ? '#fbbf24' : '#92400e' }}>
+              Access Restricted
+            </h3>
+            <p className="text-sm mb-4" style={{ color: isDark ? '#fcd34d' : '#b45309' }}>
+              Access logs are only available to users with auditor privileges.
+              <br />
+              If you believe you should have access, please contact your administrator.
+            </p>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={onClose}
+            >
+              Go Back
+            </Button>
+          </div>
+        ) : (
+          /* Regular Error */
+          <div className="p-6 rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-semibold text-red-900 dark:text-red-200">Error Loading Logs</h3>
+                <p className="text-sm text-red-700 dark:text-red-300 mt-1">{error}</p>
+                <div className="flex gap-2 mt-3">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={fetchAccessLogs}
+                  >
+                    Retry
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={onClose}
+                  >
+                    Go Back
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        )
       )}
 
       {/* Tile View */}
@@ -2141,7 +2173,7 @@ export default function AccessLogsPage({
                         fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                       }}
                     >
-                      {log.user}
+                      {log.fullName}
                     </div>
                   </div>
                 </div>
@@ -2301,7 +2333,7 @@ export default function AccessLogsPage({
                             fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                           }}
                         >
-                          {log.user}
+                          {log.fullName}
                         </div>
                       </div>
                     </div>
@@ -2487,7 +2519,7 @@ export default function AccessLogsPage({
                     {selectedProfilePic ? (
                       <img
                         src={selectedProfilePic}
-                        alt={`${selectedLog.user} profile`}
+                        alt={`${selectedLog.fullName} profile`}
                         className="w-full h-full rounded-full object-cover"
                         onError={() => setSelectedProfilePic(null)}
                       />
@@ -2502,7 +2534,7 @@ export default function AccessLogsPage({
                         fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                       }}
                     >
-                      {selectedLog.user}
+                      {selectedLog.fullName}
                     </div>
                   </div>
                 </div>
@@ -2942,7 +2974,7 @@ export default function AccessLogsPage({
                               className="text-xs truncate"
                               style={{ color: isDark ? "#e5e7eb" : "#374151" }}
                             >
-                              {log.user} - {log.action}
+                              {log.fullName} - {log.action}
                             </div>
                             <div className="text-[10px]" style={{ color: isDark ? "#6b7280" : "#9ca3af" }}>
                               {new Date(log.timestamp).toLocaleString()}

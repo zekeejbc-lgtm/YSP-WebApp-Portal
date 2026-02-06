@@ -24,6 +24,19 @@
 
 /// <reference types="vite/client" />
 
+import { getSessionToken, getStoredUser } from './gasLoginService';
+
+/**
+ * Get auth payload to include in every POST request.
+ * Sends both sessionToken (for HMAC verification) and username (as fallback).
+ */
+function getAuthPayload(): { sessionToken: string | null; username: string } {
+  return {
+    sessionToken: getSessionToken(),
+    username: getStoredUser()?.username || '',
+  };
+}
+
 // Types for Homepage Content
 export interface HomepageHeroContent {
   mainHeading: string;
@@ -366,6 +379,7 @@ export const updateHomepageContent = async (content: HomepageMainContent): Promi
   try {
     const payload = {
       action: 'updateHomepage',
+      ...getAuthPayload(),
       data: {
         mainHeading: content.hero.mainHeading,
         subHeading: content.hero.subHeading,
@@ -749,6 +763,7 @@ export const updateHomepageOtherContent = async (
   try {
     const payload = {
       action: 'updateHomepageOther',
+      ...getAuthPayload(),
       data: content,
     };
 
@@ -837,6 +852,7 @@ export const uploadOrgChart = async (
       },
       body: JSON.stringify({
         action: 'uploadOrgChart',
+        ...getAuthPayload(),
         fileName: file.name,
         fileData: base64Data
       }),
@@ -887,6 +903,7 @@ export const addSocialLink = async (url: string, displayName: string): Promise<{
       },
       body: JSON.stringify({
         action: 'addSocialLink',
+        ...getAuthPayload(),
         data: { url, displayName },
       }),
     });
@@ -925,6 +942,7 @@ export const removeSocialLink = async (index: number): Promise<{ success: boolea
       },
       body: JSON.stringify({
         action: 'removeSocialLink',
+        ...getAuthPayload(),
         index,
       }),
     });
@@ -963,6 +981,7 @@ export const updateSocialLink = async (index: number, url: string, displayName: 
       },
       body: JSON.stringify({
         action: 'updateSocialLink',
+        ...getAuthPayload(),
         index,
         data: { url, displayName },
       }),
@@ -1263,6 +1282,7 @@ export const updateDevInfoContent = async (
   try {
     const payload = {
       action: 'updateDevInfo',
+      ...getAuthPayload(),
       data: content,
     };
 
@@ -1346,6 +1366,7 @@ export const uploadDevProfile = async (
       },
       body: JSON.stringify({
         action: 'uploadDevProfile',
+        ...getAuthPayload(),
         fileName: file.name,
         fileData: base64Data
       }),
@@ -1396,6 +1417,7 @@ export const addDevAffiliation = async (orgName: string, position: string): Prom
       },
       body: JSON.stringify({
         action: 'addDevAffiliation',
+        ...getAuthPayload(),
         data: { orgName, position },
       }),
     });
@@ -1434,6 +1456,7 @@ export const removeDevAffiliation = async (index: number): Promise<{ success: bo
       },
       body: JSON.stringify({
         action: 'removeDevAffiliation',
+        ...getAuthPayload(),
         index,
       }),
     });
@@ -1472,6 +1495,7 @@ export const updateDevAffiliation = async (index: number, orgName: string, posit
       },
       body: JSON.stringify({
         action: 'updateDevAffiliation',
+        ...getAuthPayload(),
         index,
         data: { orgName, position },
       }),
@@ -1511,6 +1535,7 @@ export const addDevSocialLink = async (url: string): Promise<{ success: boolean;
       },
       body: JSON.stringify({
         action: 'addDevSocialLink',
+        ...getAuthPayload(),
         data: { url },
       }),
     });
@@ -1549,6 +1574,7 @@ export const removeDevSocialLink = async (index: number): Promise<{ success: boo
       },
       body: JSON.stringify({
         action: 'removeDevSocialLink',
+        ...getAuthPayload(),
         index,
       }),
     });
@@ -1587,6 +1613,7 @@ export const updateDevSocialLink = async (index: number, url: string): Promise<{
       },
       body: JSON.stringify({
         action: 'updateDevSocialLink',
+        ...getAuthPayload(),
         index,
         data: { url },
       }),
@@ -1796,6 +1823,7 @@ export const updateFounderInfoContent = async (
       },
       body: JSON.stringify({
         action: 'updateFounderInfo',
+        ...getAuthPayload(),
         data: content,
       }),
       signal,
@@ -1870,6 +1898,7 @@ export const uploadFounderProfile = async (
       },
       body: JSON.stringify({
         action: 'uploadFounderProfile',
+        ...getAuthPayload(),
         fileName,
         fileData: base64Data,
       }),
@@ -1913,6 +1942,7 @@ export const addFounderAchievement = async (achievement: string): Promise<{ succ
       },
       body: JSON.stringify({
         action: 'addFounderAchievement',
+        ...getAuthPayload(),
         data: { achievement },
       }),
     });
@@ -1951,6 +1981,7 @@ export const removeFounderAchievement = async (index: number): Promise<{ success
       },
       body: JSON.stringify({
         action: 'removeFounderAchievement',
+        ...getAuthPayload(),
         index,
       }),
     });
@@ -1989,6 +2020,7 @@ export const updateFounderAchievement = async (index: number, achievement: strin
       },
       body: JSON.stringify({
         action: 'updateFounderAchievement',
+        ...getAuthPayload(),
         index,
         data: { achievement },
       }),
@@ -2028,6 +2060,7 @@ export const addFounderSocialLink = async (url: string): Promise<{ success: bool
       },
       body: JSON.stringify({
         action: 'addFounderSocialLink',
+        ...getAuthPayload(),
         data: { url },
       }),
     });
@@ -2066,6 +2099,7 @@ export const removeFounderSocialLink = async (index: number): Promise<{ success:
       },
       body: JSON.stringify({
         action: 'removeFounderSocialLink',
+        ...getAuthPayload(),
         index,
       }),
     });
@@ -2104,6 +2138,7 @@ export const updateFounderSocialLink = async (index: number, url: string): Promi
       },
       body: JSON.stringify({
         action: 'updateFounderSocialLink',
+        ...getAuthPayload(),
         index,
         data: { url },
       }),

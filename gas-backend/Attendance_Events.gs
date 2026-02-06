@@ -111,8 +111,9 @@ function requireHeadOrAbove_(username, actionDescription) {
     return { success: false, error: 'Username is required for authorization', code: 400 };
   }
   var role = getUserRole_(username);
-  if (role !== 'head' && role !== 'admin' && role !== 'auditor') {
-    return { success: false, error: 'Only heads, admins, or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+  // Allow head, officer, admin, and auditor to record attendance
+  if (role !== 'head' && role !== 'officer' && role !== 'admin' && role !== 'auditor') {
+    return { success: false, error: 'Only heads, officers, admins, or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
   }
   return null;
 }
@@ -517,6 +518,7 @@ function createEventsSheet(ss) {
 /**
  * Create the EventAttendance sheet
  * Extended with IsExternal and Late status fields
+ * UNIFIED SCHEMA: Must match Attendance_Main.gs initializeAttendanceSheet
  */
 function createEventAttendanceSheet(ss) {
   let sheet = ss.getSheetByName('EventAttendance');
@@ -526,18 +528,23 @@ function createEventAttendanceSheet(ss) {
   }
   
   // Extended headers with external attendee and late tracking
+  // UNIFIED with Attendance_Main.gs schema (17 columns)
   const headers = [
     'AttendanceID',
     'EventID',
     'MemberID',
     'MemberName',
     'Status',
-    'CheckInTime',
-    'CheckOutTime',
+    'TimeIn',            // Changed from CheckInTime for consistency
+    'TimeOut',           // Changed from CheckOutTime for consistency
+    'AttendanceDate',    // Added: Date of attendance record
+    'Location',          // Added: GPS coordinates
+    'GeofenceStatus',    // Added: Whether within geofence
     'Notes',
-    'RecordedBy',
+    'RecordedByTimeIn',  // Changed from RecordedBy - who recorded Time In
+    'RecordedByTimeOut', // Added: who recorded Time Out
     'RecordedAt',
-    // New fields
+    // New fields for external attendee and late tracking
     'IsExternal',        // TRUE if person is not a target recipient (external attendee)
     'LateTimeIn',        // TRUE if Time In was after TimeInEnd
     'LateTimeOut'        // TRUE if Time Out was after TimeOutEnd
@@ -1416,6 +1423,7 @@ function deleteEvent(eventId) {
 
 /**
  * Cancel an event
+ * UPDATED: Uses header-based column lookups instead of hardcoded indices
  */
 function cancelEvent(eventId, reason) {
   try {
@@ -1427,23 +1435,34 @@ function cancelEvent(eventId, reason) {
     }
     
     const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    const statusColIdx = headers.indexOf('Status');
+    const updatedAtColIdx = headers.indexOf('UpdatedAt');
+    const notesColIdx = headers.indexOf('Notes');
     
     for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === eventId) {
+      if (data[i][headers.indexOf('EventID')] === eventId) {
         const rowIndex = i + 1;
         const now = new Date().toISOString();
         
-        // Simplified schema: Status is column 13, UpdatedAt is column 16, Notes is column 17
-        sheet.getRange(rowIndex, 13).setValue('Cancelled'); // Status
-        sheet.getRange(rowIndex, 16).setValue(now); // UpdatedAt
+        // Set Status to Cancelled
+        if (statusColIdx >= 0) {
+          sheet.getRange(rowIndex, statusColIdx + 1).setValue('Cancelled');
+        }
+        
+        // Update UpdatedAt timestamp
+        if (updatedAtColIdx >= 0) {
+          sheet.getRange(rowIndex, updatedAtColIdx + 1).setValue(now);
+        }
         
         // Append cancellation reason to Notes if provided
-        if (reason) {
-          const currentNotes = sheet.getRange(rowIndex, 17).getValue() || '';
+        if (reason && notesColIdx >= 0) {
+          const currentNotes = data[i][notesColIdx] || '';
           const updatedNotes = currentNotes 
             ? currentNotes + '\n[Cancelled: ' + reason + ']'
             : '[Cancelled: ' + reason + ']';
-          sheet.getRange(rowIndex, 17).setValue(updatedNotes);
+          sheet.getRange(rowIndex, notesColIdx + 1).setValue(updatedNotes);
         }
         
         return { success: true, message: 'Event cancelled successfully' };
@@ -1563,6 +1582,8 @@ function getEventAttendance(eventId) {
 
 /**
  * Record attendance for an event
+ * UPDATED: Uses header-based column lookups instead of hardcoded indices
+ * UPDATED: Supports unified 17-column schema
  */
 function recordEventAttendance(eventId, memberId, status) {
   try {
@@ -1574,19 +1595,31 @@ function recordEventAttendance(eventId, memberId, status) {
     }
     
     const attendanceId = 'ATT' + Date.now() + Math.random().toString(36).substr(2, 4).toUpperCase();
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nowISO = now.toISOString();
+    const timeString = Utilities.formatDate(now, 'Asia/Manila', 'hh:mm a');
+    const dateString = Utilities.formatDate(now, 'Asia/Manila', 'yyyy-MM-dd');
+    
+    // Get headers for column lookups
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
     
     // Check if attendance already recorded
-    const data = sheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
-      if (data[i][1] === eventId && data[i][2] === memberId) {
+      if (data[i][headers.indexOf('EventID')] === eventId && 
+          data[i][headers.indexOf('MemberID')] === memberId) {
         // Update existing record
         const rowIndex = i + 1;
-        sheet.getRange(rowIndex, 5).setValue(status); // Status
-        sheet.getRange(rowIndex, 10).setValue(now); // RecordedAt
         
-        if (status === 'Present' || status === 'CheckedIn') {
-          sheet.getRange(rowIndex, 6).setValue(now); // CheckInTime
+        const statusColIdx = headers.indexOf('Status');
+        const recordedAtColIdx = headers.indexOf('RecordedAt');
+        const timeInColIdx = headers.indexOf('TimeIn');
+        
+        if (statusColIdx >= 0) sheet.getRange(rowIndex, statusColIdx + 1).setValue(status);
+        if (recordedAtColIdx >= 0) sheet.getRange(rowIndex, recordedAtColIdx + 1).setValue(nowISO);
+        
+        if ((status === 'Present' || status === 'CheckedIn') && timeInColIdx >= 0) {
+          sheet.getRange(rowIndex, timeInColIdx + 1).setValue(timeString);
         }
         
         updateEventAttendeeCount(eventId);
@@ -1595,18 +1628,25 @@ function recordEventAttendance(eventId, memberId, status) {
       }
     }
     
-    // Create new record
+    // Create new record with unified 17-column schema
     const newRow = [
-      attendanceId,
-      eventId,
-      memberId,
-      '', // MemberName - to be filled by frontend or lookup
-      status || 'Registered',
-      status === 'Present' || status === 'CheckedIn' ? now : '',
-      '', // CheckOutTime
-      '', // Notes
-      '', // RecordedBy
-      now
+      attendanceId,                     // AttendanceID
+      eventId,                          // EventID
+      memberId,                         // MemberID
+      '',                               // MemberName - to be filled by frontend or lookup
+      status || 'Registered',           // Status
+      status === 'Present' || status === 'CheckedIn' ? timeString : '',  // TimeIn
+      '',                               // TimeOut
+      dateString,                       // AttendanceDate
+      '',                               // Location
+      'N/A',                            // GeofenceStatus
+      '',                               // Notes
+      '',                               // RecordedByTimeIn
+      '',                               // RecordedByTimeOut
+      nowISO,                           // RecordedAt
+      'FALSE',                          // IsExternal
+      'FALSE',                          // LateTimeIn
+      'FALSE'                           // LateTimeOut
     ];
     
     sheet.appendRow(newRow);
@@ -1650,6 +1690,7 @@ function bulkRecordEventAttendance(eventId, attendanceRecords) {
 
 /**
  * Delete attendance records for an event
+ * UPDATED: Uses header-based column lookups instead of hardcoded indices
  */
 function deleteEventAttendanceRecords(eventId) {
   try {
@@ -1661,10 +1702,12 @@ function deleteEventAttendanceRecords(eventId) {
     }
     
     const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const eventIdColIdx = headers.indexOf('EventID');
     
     // Delete from bottom to top to avoid index issues
     for (let i = data.length - 1; i >= 1; i--) {
-      if (data[i][1] === eventId) {
+      if (data[i][eventIdColIdx] === eventId) {
         sheet.deleteRow(i + 1);
       }
     }
@@ -1677,6 +1720,7 @@ function deleteEventAttendanceRecords(eventId) {
 
 /**
  * Update the attendee count for an event
+ * UPDATED: Uses header-based column lookups instead of hardcoded indices
  */
 function updateEventAttendeeCount(eventId) {
   try {
@@ -1686,24 +1730,32 @@ function updateEventAttendeeCount(eventId) {
     
     if (!eventsSheet || !attendanceSheet) return;
     
-    // Count attendance records for this event
+    // Count attendance records for this event using header lookups
     const attendanceData = attendanceSheet.getDataRange().getValues();
+    const attendanceHeaders = attendanceData[0];
+    const eventIdColIdx = attendanceHeaders.indexOf('EventID');
+    const statusColIdx = attendanceHeaders.indexOf('Status');
+    
     let count = 0;
     
     for (let i = 1; i < attendanceData.length; i++) {
-      if (attendanceData[i][1] === eventId) {
-        const status = attendanceData[i][4];
-        if (status === 'Present' || status === 'CheckedIn' || status === 'Registered') {
+      if (attendanceData[i][eventIdColIdx] === eventId) {
+        const status = attendanceData[i][statusColIdx];
+        if (status === 'Present' || status === 'CheckedIn' || status === 'Registered' || status === 'Late') {
           count++;
         }
       }
     }
     
-    // Update event record - CurrentAttendees is now column 12
+    // Update event record using header lookup
     const eventsData = eventsSheet.getDataRange().getValues();
+    const eventsHeaders = eventsData[0];
+    const eventsEventIdColIdx = eventsHeaders.indexOf('EventID');
+    const currentAttendeesColIdx = eventsHeaders.indexOf('CurrentAttendees');
+    
     for (let i = 1; i < eventsData.length; i++) {
-      if (eventsData[i][0] === eventId) {
-        eventsSheet.getRange(i + 1, 12).setValue(count); // CurrentAttendees
+      if (eventsData[i][eventsEventIdColIdx] === eventId) {
+        eventsSheet.getRange(i + 1, currentAttendeesColIdx + 1).setValue(count);
         break;
       }
     }
@@ -1718,6 +1770,7 @@ function updateEventAttendeeCount(eventId) {
 
 /**
  * Get upcoming events
+ * UPDATED: Uses header-based column lookups instead of hardcoded indices
  */
 function getUpcomingEvents(limit) {
   try {
@@ -1733,14 +1786,17 @@ function getUpcomingEvents(limit) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
+    const startDateColIdx = headers.indexOf('StartDate');
+    const statusColIdx = headers.indexOf('Status');
+    
     const events = [];
     
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       if (!row[0]) continue;
       
-      const eventDate = new Date(row[3]); // StartDate (column 4, index 3)
-      const status = row[12]; // Status (column 13, index 12)
+      const eventDate = new Date(row[startDateColIdx]);
+      const status = row[statusColIdx];
       
       if (eventDate >= today && status !== 'Cancelled') {
         const event = {};
@@ -1765,6 +1821,7 @@ function getUpcomingEvents(limit) {
 
 /**
  * Get past events
+ * UPDATED: Uses header-based column lookups instead of hardcoded indices
  */
 function getPastEvents(limit) {
   try {
@@ -1780,13 +1837,15 @@ function getPastEvents(limit) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
+    const startDateColIdx = headers.indexOf('StartDate');
+    
     const events = [];
     
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       if (!row[0]) continue;
       
-      const eventDate = new Date(row[3]); // StartDate (column 4, index 3)
+      const eventDate = new Date(row[startDateColIdx]);
       
       if (eventDate < today) {
         const event = {};
@@ -1811,6 +1870,7 @@ function getPastEvents(limit) {
 
 /**
  * Get event statistics
+ * UPDATED: Uses header-based column lookups instead of hardcoded indices
  */
 function getEventStats() {
   try {
@@ -1831,8 +1891,13 @@ function getEventStats() {
     }
     
     const data = sheet.getDataRange().getValues();
+    const headers = data[0];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    
+    const startDateColIdx = headers.indexOf('StartDate');
+    const statusColIdx = headers.indexOf('Status');
+    const attendeesColIdx = headers.indexOf('CurrentAttendees');
     
     let totalEvents = 0;
     let upcomingEvents = 0;
@@ -1846,9 +1911,9 @@ function getEventStats() {
       
       totalEvents++;
       
-      const eventDate = new Date(row[3]); // StartDate (column 4, index 3)
-      const status = row[12]; // Status (column 13, index 12)
-      const attendees = parseInt(row[11]) || 0; // CurrentAttendees (column 12, index 11)
+      const eventDate = new Date(row[startDateColIdx]);
+      const status = row[statusColIdx];
+      const attendees = parseInt(row[attendeesColIdx]) || 0;
       
       if (status === 'Cancelled') {
         cancelledEvents++;
@@ -1976,6 +2041,7 @@ function safeAddColumn(sheetName, columnName, defaultValue) {
 /**
  * Migrate existing sheets to add new columns for recipients and time windows
  * Safe to run multiple times - will skip columns that already exist
+ * UPDATED: Now includes all columns to match unified Attendance_Main.gs schema
  */
 function migrateEventsSchema() {
   const results = {
@@ -1997,8 +2063,17 @@ function migrateEventsSchema() {
     results.events.push({ column: col.name, ...result });
   }
   
-  // Add new columns to EventAttendance sheet
+  // Add/migrate columns to EventAttendance sheet for unified schema
+  // This ensures compatibility with Attendance_Main.gs (17-column schema)
   const attendanceColumns = [
+    // Renamed columns - need to check if old names exist
+    { name: 'TimeIn', defaultValue: '' },            // Was CheckInTime
+    { name: 'TimeOut', defaultValue: '' },           // Was CheckOutTime
+    { name: 'AttendanceDate', defaultValue: '' },    // New column
+    { name: 'Location', defaultValue: '' },          // New column
+    { name: 'GeofenceStatus', defaultValue: 'N/A' }, // New column
+    { name: 'RecordedByTimeIn', defaultValue: '' },  // Was RecordedBy
+    { name: 'RecordedByTimeOut', defaultValue: '' }, // New column
     { name: 'IsExternal', defaultValue: 'FALSE' },
     { name: 'LateTimeIn', defaultValue: 'FALSE' },
     { name: 'LateTimeOut', defaultValue: 'FALSE' }
@@ -2011,7 +2086,455 @@ function migrateEventsSchema() {
   
   return {
     success: true,
-    message: 'Schema migration completed',
+    message: 'Schema migration completed - EventAttendance now has unified 17-column schema',
+    results: results
+  };
+}
+
+// =====================================================
+// COMPREHENSIVE SCHEMA MIGRATION FUNCTIONS
+// =====================================================
+
+/**
+ * MASTER MIGRATION FUNCTION - Run this to upgrade EventAttendance sheet to unified 17-column schema
+ * 
+ * This function handles all migration scenarios:
+ * - Old 10-column schema (original)
+ * - Old 13-column schema (with external/late fields)
+ * - Any partially migrated state
+ * 
+ * It will:
+ * 1. Rename CheckInTime → TimeIn (if exists)
+ * 2. Rename CheckOutTime → TimeOut (if exists)
+ * 3. Rename RecordedBy → RecordedByTimeIn (if exists)
+ * 4. Insert missing columns at correct positions
+ * 5. Preserve all existing data
+ * 
+ * Safe to run multiple times - skips already migrated columns
+ * 
+ * @returns {Object} Migration results with detailed log
+ */
+function migrateEventAttendanceToUnifiedSchema() {
+  const results = {
+    renames: [],
+    insertions: [],
+    existing: [],
+    errors: []
+  };
+  
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName('EventAttendance');
+    
+    if (!sheet) {
+      return { success: false, error: 'EventAttendance sheet not found' };
+    }
+    
+    const lastCol = sheet.getLastColumn();
+    if (lastCol === 0) {
+      // Empty sheet - just set up headers
+      return initializeEventAttendanceWithUnifiedSchema_();
+    }
+    
+    // Get current headers
+    let headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    
+    Logger.log('Current headers before migration: ' + JSON.stringify(headers));
+    
+    // ===== STEP 1: RENAME COLUMNS (header only, data stays in place) =====
+    
+    // Rename CheckInTime → TimeIn
+    const checkInIdx = headers.indexOf('CheckInTime');
+    if (checkInIdx >= 0 && headers.indexOf('TimeIn') < 0) {
+      sheet.getRange(1, checkInIdx + 1).setValue('TimeIn');
+      results.renames.push({ from: 'CheckInTime', to: 'TimeIn', column: checkInIdx + 1 });
+      headers[checkInIdx] = 'TimeIn';
+    }
+    
+    // Rename CheckOutTime → TimeOut
+    const checkOutIdx = headers.indexOf('CheckOutTime');
+    if (checkOutIdx >= 0 && headers.indexOf('TimeOut') < 0) {
+      sheet.getRange(1, checkOutIdx + 1).setValue('TimeOut');
+      results.renames.push({ from: 'CheckOutTime', to: 'TimeOut', column: checkOutIdx + 1 });
+      headers[checkOutIdx] = 'TimeOut';
+    }
+    
+    // Rename RecordedBy → RecordedByTimeIn (only if RecordedByTimeIn doesn't exist)
+    const recordedByIdx = headers.indexOf('RecordedBy');
+    if (recordedByIdx >= 0 && headers.indexOf('RecordedByTimeIn') < 0) {
+      sheet.getRange(1, recordedByIdx + 1).setValue('RecordedByTimeIn');
+      results.renames.push({ from: 'RecordedBy', to: 'RecordedByTimeIn', column: recordedByIdx + 1 });
+      headers[recordedByIdx] = 'RecordedByTimeIn';
+    }
+    
+    // ===== STEP 2: DEFINE TARGET SCHEMA =====
+    // Unified 17-column schema (must match Attendance_Main.gs)
+    const targetSchema = [
+      'AttendanceID',      // 1
+      'EventID',           // 2
+      'MemberID',          // 3
+      'MemberName',        // 4
+      'Status',            // 5
+      'TimeIn',            // 6
+      'TimeOut',           // 7
+      'AttendanceDate',    // 8
+      'Location',          // 9
+      'GeofenceStatus',    // 10
+      'Notes',             // 11
+      'RecordedByTimeIn',  // 12
+      'RecordedByTimeOut', // 13
+      'RecordedAt',        // 14
+      'IsExternal',        // 15
+      'LateTimeIn',        // 16
+      'LateTimeOut'        // 17
+    ];
+    
+    // ===== STEP 3: INSERT MISSING COLUMNS AT CORRECT POSITIONS =====
+    // Refresh headers after renames
+    headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    
+    for (let i = 0; i < targetSchema.length; i++) {
+      const expectedHeader = targetSchema[i];
+      const currentIdx = headers.indexOf(expectedHeader);
+      
+      if (currentIdx < 0) {
+        // Column doesn't exist - need to insert it at position i+1
+        const insertResult = insertColumnAtPosition_(sheet, expectedHeader, i + 1, getDefaultValue_(expectedHeader));
+        if (insertResult.success) {
+          results.insertions.push({ column: expectedHeader, position: i + 1 });
+        } else {
+          results.errors.push({ column: expectedHeader, error: insertResult.error });
+        }
+        // Refresh headers after insertion
+        headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      } else if (currentIdx !== i) {
+        // Column exists but at wrong position - we need to move it
+        // For safety, we'll just log this and not move (could cause data loss if done wrong)
+        results.existing.push({ 
+          column: expectedHeader, 
+          currentPosition: currentIdx + 1, 
+          expectedPosition: i + 1,
+          note: 'Column exists at different position - manual reorder may be needed'
+        });
+      } else {
+        results.existing.push({ column: expectedHeader, position: i + 1, status: 'OK' });
+      }
+    }
+    
+    // ===== STEP 4: FORMAT HEADER ROW =====
+    const finalColCount = sheet.getLastColumn();
+    sheet.getRange(1, 1, 1, finalColCount)
+      .setBackground('#FF6600')
+      .setFontColor('#FFFFFF')
+      .setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    
+    // Get final headers for verification
+    const finalHeaders = sheet.getRange(1, 1, 1, finalColCount).getValues()[0];
+    
+    Logger.log('Final headers after migration: ' + JSON.stringify(finalHeaders));
+    
+    return {
+      success: true,
+      message: 'EventAttendance schema migration completed',
+      beforeColumnCount: lastCol,
+      afterColumnCount: finalColCount,
+      finalHeaders: finalHeaders,
+      results: results
+    };
+    
+  } catch (error) {
+    Logger.log('Migration error: ' + error.toString());
+    return { success: false, error: error.toString(), results: results };
+  }
+}
+
+/**
+ * Insert a column at a specific position, shifting existing columns right
+ * All data in existing rows will get an empty value (or default) in the new column
+ * 
+ * @param {Sheet} sheet - The sheet to modify
+ * @param {string} headerName - Name for the new column header
+ * @param {number} position - 1-indexed position where to insert
+ * @param {string} defaultValue - Default value for existing data rows
+ * @returns {Object} Result with success status
+ */
+function insertColumnAtPosition_(sheet, headerName, position, defaultValue) {
+  try {
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    
+    // Validate position
+    if (position < 1) position = 1;
+    if (position > lastCol + 1) position = lastCol + 1;
+    
+    // Insert column at position
+    sheet.insertColumnBefore(position);
+    
+    // Set header
+    sheet.getRange(1, position).setValue(headerName);
+    
+    // Set default values for existing data rows
+    if (lastRow > 1 && defaultValue !== undefined && defaultValue !== '') {
+      const numDataRows = lastRow - 1;
+      const defaultValues = Array(numDataRows).fill([defaultValue]);
+      sheet.getRange(2, position, numDataRows, 1).setValues(defaultValues);
+    }
+    
+    // Apply header styling
+    sheet.getRange(1, position)
+      .setBackground('#FF6600')
+      .setFontColor('#FFFFFF')
+      .setFontWeight('bold');
+    
+    Logger.log('Inserted column "' + headerName + '" at position ' + position);
+    
+    return { success: true, position: position };
+  } catch (error) {
+    Logger.log('Error inserting column "' + headerName + '": ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Get default value for a column based on its name
+ */
+function getDefaultValue_(columnName) {
+  const defaults = {
+    'AttendanceDate': '',
+    'Location': '',
+    'GeofenceStatus': 'N/A',
+    'RecordedByTimeOut': '',
+    'IsExternal': 'FALSE',
+    'LateTimeIn': 'FALSE',
+    'LateTimeOut': 'FALSE'
+  };
+  return defaults[columnName] || '';
+}
+
+/**
+ * Initialize a fresh EventAttendance sheet with the unified schema
+ */
+function initializeEventAttendanceWithUnifiedSchema_() {
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    let sheet = ss.getSheetByName('EventAttendance');
+    
+    if (!sheet) {
+      sheet = ss.insertSheet('EventAttendance');
+    }
+    
+    const headers = [
+      'AttendanceID',
+      'EventID',
+      'MemberID',
+      'MemberName',
+      'Status',
+      'TimeIn',
+      'TimeOut',
+      'AttendanceDate',
+      'Location',
+      'GeofenceStatus',
+      'Notes',
+      'RecordedByTimeIn',
+      'RecordedByTimeOut',
+      'RecordedAt',
+      'IsExternal',
+      'LateTimeIn',
+      'LateTimeOut'
+    ];
+    
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length)
+      .setBackground('#FF6600')
+      .setFontColor('#FFFFFF')
+      .setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    
+    return {
+      success: true,
+      message: 'EventAttendance sheet initialized with unified 17-column schema',
+      headers: headers
+    };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Verify the current EventAttendance schema matches the expected unified schema
+ * Use this to check if migration is needed
+ * 
+ * @returns {Object} Schema validation results
+ */
+function verifyEventAttendanceSchema() {
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName('EventAttendance');
+    
+    if (!sheet) {
+      return { success: false, needsMigration: true, error: 'EventAttendance sheet not found' };
+    }
+    
+    const lastCol = sheet.getLastColumn();
+    if (lastCol === 0) {
+      return { success: true, needsMigration: true, message: 'Sheet is empty - needs initialization' };
+    }
+    
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    
+    const expectedHeaders = [
+      'AttendanceID', 'EventID', 'MemberID', 'MemberName', 'Status',
+      'TimeIn', 'TimeOut', 'AttendanceDate', 'Location', 'GeofenceStatus',
+      'Notes', 'RecordedByTimeIn', 'RecordedByTimeOut', 'RecordedAt',
+      'IsExternal', 'LateTimeIn', 'LateTimeOut'
+    ];
+    
+    const issues = [];
+    
+    // Check for missing columns
+    for (const expected of expectedHeaders) {
+      if (!headers.includes(expected)) {
+        issues.push({ type: 'missing', column: expected });
+      }
+    }
+    
+    // Check for old column names that need renaming
+    if (headers.includes('CheckInTime')) {
+      issues.push({ type: 'rename_needed', from: 'CheckInTime', to: 'TimeIn' });
+    }
+    if (headers.includes('CheckOutTime')) {
+      issues.push({ type: 'rename_needed', from: 'CheckOutTime', to: 'TimeOut' });
+    }
+    if (headers.includes('RecordedBy') && !headers.includes('RecordedByTimeIn')) {
+      issues.push({ type: 'rename_needed', from: 'RecordedBy', to: 'RecordedByTimeIn' });
+    }
+    
+    // Check column order
+    let orderIssues = [];
+    for (let i = 0; i < expectedHeaders.length; i++) {
+      const headerIdx = headers.indexOf(expectedHeaders[i]);
+      if (headerIdx >= 0 && headerIdx !== i) {
+        orderIssues.push({ column: expectedHeaders[i], expected: i + 1, actual: headerIdx + 1 });
+      }
+    }
+    
+    const needsMigration = issues.length > 0 || orderIssues.length > 0;
+    
+    return {
+      success: true,
+      needsMigration: needsMigration,
+      currentHeaders: headers,
+      expectedHeaders: expectedHeaders,
+      columnCount: { current: lastCol, expected: 17 },
+      issues: issues,
+      orderIssues: orderIssues,
+      message: needsMigration 
+        ? 'Schema needs migration - run migrateEventAttendanceToUnifiedSchema()' 
+        : 'Schema is up to date'
+    };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * EVENTS SHEET MIGRATION - Add new columns for recipients and time windows
+ * Safe to run multiple times
+ */
+function migrateEventsSheetSchema() {
+  const results = {
+    insertions: [],
+    existing: [],
+    errors: []
+  };
+  
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName('Events');
+    
+    if (!sheet) {
+      return { success: false, error: 'Events sheet not found' };
+    }
+    
+    const lastCol = sheet.getLastColumn();
+    if (lastCol === 0) {
+      return { success: false, error: 'Events sheet is empty' };
+    }
+    
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    
+    // New columns to add (will be appended at end if not exists)
+    const newColumns = [
+      { name: 'Recipients', defaultValue: '' },
+      { name: 'TimeInStart', defaultValue: '' },
+      { name: 'TimeInEnd', defaultValue: '' },
+      { name: 'TimeOutStart', defaultValue: '' },
+      { name: 'TimeOutEnd', defaultValue: '' }
+    ];
+    
+    for (const col of newColumns) {
+      if (headers.includes(col.name)) {
+        results.existing.push({ column: col.name, status: 'already exists' });
+      } else {
+        // Append at end
+        const newColIdx = sheet.getLastColumn() + 1;
+        sheet.getRange(1, newColIdx).setValue(col.name);
+        sheet.getRange(1, newColIdx)
+          .setBackground('#FF6600')
+          .setFontColor('#FFFFFF')
+          .setFontWeight('bold');
+        
+        // Set default for existing rows
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1 && col.defaultValue !== '') {
+          const numRows = lastRow - 1;
+          const defaults = Array(numRows).fill([col.defaultValue]);
+          sheet.getRange(2, newColIdx, numRows, 1).setValues(defaults);
+        }
+        
+        results.insertions.push({ column: col.name, position: newColIdx });
+      }
+    }
+    
+    return {
+      success: true,
+      message: 'Events schema migration completed',
+      results: results
+    };
+  } catch (error) {
+    return { success: false, error: error.toString(), results: results };
+  }
+}
+
+/**
+ * FULL MIGRATION - Run both Events and EventAttendance migrations
+ * This is the main function to run for complete schema upgrade
+ */
+function runFullSchemaMigration() {
+  Logger.log('========== STARTING FULL SCHEMA MIGRATION ==========');
+  
+  const results = {
+    events: null,
+    attendance: null,
+    timestamp: new Date().toISOString()
+  };
+  
+  // Migrate Events sheet
+  Logger.log('--- Migrating Events sheet ---');
+  results.events = migrateEventsSheetSchema();
+  Logger.log('Events migration result: ' + JSON.stringify(results.events));
+  
+  // Migrate EventAttendance sheet
+  Logger.log('--- Migrating EventAttendance sheet ---');
+  results.attendance = migrateEventAttendanceToUnifiedSchema();
+  Logger.log('EventAttendance migration result: ' + JSON.stringify(results.attendance));
+  
+  Logger.log('========== FULL SCHEMA MIGRATION COMPLETE ==========');
+  
+  return {
+    success: results.events.success && results.attendance.success,
+    message: 'Full schema migration completed',
     results: results
   };
 }
@@ -2378,5 +2901,185 @@ function getSpreadsheetInfo() {
     };
   } catch (error) {
     return { success: false, error: error.toString() };
+  }
+}
+
+// =====================================================
+// SCHEMA STATUS CHECK
+// =====================================================
+
+/**
+ * CHECK ALL ATTENDANCE SHEETS CONFIGURATION STATUS
+ * 
+ * Run this function to verify if all sheets are properly configured.
+ * Returns a clear status message indicating if everything is ready or what needs to be fixed.
+ * 
+ * Checks:
+ * - Events sheet (has Recipients, TimeInStart, TimeInEnd, TimeOutStart, TimeOutEnd)
+ * - EventAttendance sheet (has all 17 unified schema columns)
+ * 
+ * @returns {Object} Status with clear message
+ */
+function checkAttendanceSheetsStatus() {
+  const UNIFIED_ATTENDANCE_SCHEMA = [
+    'AttendanceID', 'EventID', 'MemberID', 'MemberName', 'Status',
+    'TimeIn', 'TimeOut', 'AttendanceDate', 'Location', 'GeofenceStatus',
+    'Notes', 'RecordedByTimeIn', 'RecordedByTimeOut', 'RecordedAt',
+    'IsExternal', 'LateTimeIn', 'LateTimeOut'
+  ];
+  
+  const REQUIRED_EVENTS_COLUMNS = [
+    'Recipients', 'TimeInStart', 'TimeInEnd', 'TimeOutStart', 'TimeOutEnd'
+  ];
+  
+  const status = {
+    timestamp: new Date().toISOString(),
+    configured: true,
+    sheets: {
+      events: { exists: false, schemaValid: false, issues: [] },
+      eventAttendance: { exists: false, schemaValid: false, issues: [] }
+    },
+    summary: '',
+    action: ''
+  };
+  
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    
+    // ===== CHECK Events SHEET =====
+    const eventsSheet = ss.getSheetByName('Events');
+    
+    if (!eventsSheet) {
+      status.sheets.events.exists = false;
+      status.sheets.events.issues.push('Sheet does not exist');
+      status.configured = false;
+    } else {
+      status.sheets.events.exists = true;
+      
+      const lastCol = eventsSheet.getLastColumn();
+      if (lastCol === 0) {
+        status.sheets.events.issues.push('Sheet is empty - no headers');
+        status.configured = false;
+      } else {
+        const headers = eventsSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+        status.sheets.events.columnCount = lastCol;
+        
+        // Check for required columns
+        const missingColumns = [];
+        for (const required of REQUIRED_EVENTS_COLUMNS) {
+          if (!headers.includes(required)) {
+            missingColumns.push(required);
+          }
+        }
+        
+        if (missingColumns.length === 0) {
+          status.sheets.events.schemaValid = true;
+        } else {
+          status.sheets.events.schemaValid = false;
+          status.configured = false;
+          status.sheets.events.issues.push('Missing columns: ' + missingColumns.join(', '));
+        }
+      }
+    }
+    
+    // ===== CHECK EventAttendance SHEET =====
+    const attendanceSheet = ss.getSheetByName('EventAttendance');
+    
+    if (!attendanceSheet) {
+      status.sheets.eventAttendance.exists = false;
+      status.sheets.eventAttendance.issues.push('Sheet does not exist');
+      status.configured = false;
+    } else {
+      status.sheets.eventAttendance.exists = true;
+      
+      const lastCol = attendanceSheet.getLastColumn();
+      if (lastCol === 0) {
+        status.sheets.eventAttendance.issues.push('Sheet is empty - no headers');
+        status.configured = false;
+      } else {
+        const headers = attendanceSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+        status.sheets.eventAttendance.columnCount = lastCol;
+        
+        // Check against unified schema
+        const missingColumns = [];
+        const renameNeeded = [];
+        
+        for (const expected of UNIFIED_ATTENDANCE_SCHEMA) {
+          if (!headers.includes(expected)) {
+            missingColumns.push(expected);
+          }
+        }
+        
+        // Check for old column names
+        if (headers.includes('CheckInTime') && !headers.includes('TimeIn')) {
+          renameNeeded.push('CheckInTime → TimeIn');
+        }
+        if (headers.includes('CheckOutTime') && !headers.includes('TimeOut')) {
+          renameNeeded.push('CheckOutTime → TimeOut');
+        }
+        if (headers.includes('RecordedBy') && !headers.includes('RecordedByTimeIn')) {
+          renameNeeded.push('RecordedBy → RecordedByTimeIn');
+        }
+        
+        if (missingColumns.length === 0 && renameNeeded.length === 0) {
+          status.sheets.eventAttendance.schemaValid = true;
+        } else {
+          status.sheets.eventAttendance.schemaValid = false;
+          status.configured = false;
+          
+          if (missingColumns.length > 0) {
+            status.sheets.eventAttendance.issues.push('Missing columns: ' + missingColumns.join(', '));
+          }
+          if (renameNeeded.length > 0) {
+            status.sheets.eventAttendance.issues.push('Columns need renaming: ' + renameNeeded.join(', '));
+          }
+        }
+      }
+    }
+    
+    // ===== GENERATE SUMMARY MESSAGE =====
+    if (status.configured) {
+      status.summary = '✅ SHEETS ARE CONFIGURED - All attendance sheets have the correct schema and are ready to use.';
+      status.action = 'No action needed. System is ready for attendance recording.';
+      Logger.log('');
+      Logger.log('========================================');
+      Logger.log('✅ SHEETS ARE CONFIGURED');
+      Logger.log('========================================');
+      Logger.log('Events sheet: OK');
+      Logger.log('EventAttendance sheet: OK');
+      Logger.log('System is ready for attendance recording.');
+      Logger.log('========================================');
+    } else {
+      const allIssues = [
+        ...status.sheets.events.issues.map(i => 'Events: ' + i),
+        ...status.sheets.eventAttendance.issues.map(i => 'EventAttendance: ' + i)
+      ];
+      status.summary = '⚠️ MIGRATION NEEDED - Some sheets require schema updates.';
+      status.action = 'Run runFullSchemaMigration() to fix all issues.';
+      Logger.log('');
+      Logger.log('========================================');
+      Logger.log('⚠️ MIGRATION NEEDED');
+      Logger.log('========================================');
+      Logger.log('Issues found:');
+      allIssues.forEach(issue => Logger.log('  - ' + issue));
+      Logger.log('');
+      Logger.log('Action: Run runFullSchemaMigration()');
+      Logger.log('========================================');
+    }
+    
+    return status;
+    
+  } catch (error) {
+    status.configured = false;
+    status.summary = '❌ ERROR - Could not check sheet configuration.';
+    status.action = 'Check that the spreadsheet ID is correct and you have access.';
+    status.error = error.toString();
+    Logger.log('');
+    Logger.log('========================================');
+    Logger.log('❌ ERROR');
+    Logger.log('========================================');
+    Logger.log('Error: ' + error.toString());
+    Logger.log('========================================');
+    return status;
   }
 }

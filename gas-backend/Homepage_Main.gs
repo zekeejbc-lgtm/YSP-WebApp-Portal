@@ -378,16 +378,12 @@
         });
       }
 
-      // ---- Role check: all write operations require admin or auditor ----
-      const authError = requireAdminOrAuditor_(payload.username, payload.action || 'modify homepage content');
-      if (authError) return createJsonResponse(authError);
-
       // ---- API key validation ----
       if (!validateApiKey_(payload.key)) {
         return createJsonResponse({ success: false, error: 'Invalid or missing API key', code: 401 });
       }
 
-      // ---- Session token verification (HMAC) ----
+      // ---- Session token verification (HMAC) — MUST run before role check ----
       var tokenUser = verifyHmacToken_(payload.sessionToken);
       var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
       if (sessionSecret && !tokenUser) {
@@ -396,6 +392,10 @@
       if (tokenUser) {
         payload.username = tokenUser.username;
       }
+
+      // ---- Role check: all write operations require admin or auditor ----
+      const authError = requireAdminOrAuditor_(payload.username, payload.action || 'modify homepage content');
+      if (authError) return createJsonResponse(authError);
       
       // Homepage update
       if (payload.action === 'updateHomepage' && payload.data) {

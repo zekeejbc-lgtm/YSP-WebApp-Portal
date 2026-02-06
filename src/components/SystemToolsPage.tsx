@@ -218,7 +218,7 @@ export default function SystemToolsPage({
   const fetchSystemHealth = useCallback(async () => {
     setIsLoadingHealth(true);
     try {
-      const health = await getSystemHealth();
+      const health = await getSystemHealth(username);
       setSystemHealth(health);
     } catch (error) {
       console.error('Error fetching system health:', error);
@@ -246,7 +246,7 @@ export default function SystemToolsPage({
     } finally {
       setIsLoadingHealth(false);
     }
-  }, []);
+  }, [username]);
 
   // Fetch maintenance mode from backend
   const fetchMaintenanceMode = useCallback(async () => {

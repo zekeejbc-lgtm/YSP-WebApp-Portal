@@ -179,7 +179,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     const [isAdmin, setIsAdmin] = useState(false);
     const [sessionChecked, setSessionChecked] = useState(false);
     const [userRole, setUserRole] = useState<string>("guest"); // guest, member, admin
-    const [userName, setUserName] = useState<string>("");
+    const [userName, setUserName] = useState<string>(""); // Display name (e.g., "John Doe")
+    const [userUsername, setUserUsername] = useState<string>(""); // Actual username for API calls (e.g., "JohnDoe123")
     const [userEmail, setUserEmail] = useState<string>("");
     const [userIdCode, setUserIdCode] = useState<string>("");
     const [userPosition, setUserPosition] = useState<string>("");
@@ -272,6 +273,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       setIsAdmin(false);
       setUserRole("guest");
       setUserName("");
+      setUserUsername("");
       setUserEmail("");
       setUserIdCode("");
       setUserPosition("");
@@ -550,6 +552,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         setIsAdmin(true);
         setUserRole(storedUser.role);
         setUserName(storedUser.name);
+        setUserUsername(storedUser.username); // Store actual username for API calls
         setUserEmail(storedUser.email || '');
         setUserIdCode(storedUser.id || '');
         setUserPosition(storedUser.position || '');
@@ -2013,6 +2016,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             setIsAdmin(true); // Allow login but limited
             setUserRole('suspended');
             setUserName(user.name);
+            setUserUsername(user.username); // Store actual username for API calls
             setUserEmail(user.email || '');
             setUserIdCode(user.id || '');
             setUserPosition(user.position || '');
@@ -2028,6 +2032,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           setIsAdmin(true);
           setUserRole(user.role);
           setUserName(user.name);
+          setUserUsername(user.username); // Store actual username for API calls
           setUserEmail(user.email || '');
           setUserIdCode(user.id || '');
           setUserPosition(user.position || '');
@@ -2124,6 +2129,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         setIsAdmin(true);
         setUserRole(storedUser.role);
         setUserName(storedUser.name);
+        setUserUsername(storedUser.username); // Store actual username for API calls
         setUserEmail(storedUser.email || '');
         setUserIdCode(storedUser.id || '');
         setUserPosition(storedUser.position || '');
@@ -2165,6 +2171,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       setIsAdmin(false);
       setUserRole("guest");
       setUserName("");
+      setUserUsername("");
       setUserEmail("");
       setUserIdCode("");
       setUserPosition("");
@@ -2799,7 +2806,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               isAdmin={userRole === 'admin' || userRole === 'auditor'}
               isDark={isDark}
               userRole={userRole}
-              username={userName || 'guest'}
+              username={userUsername || 'guest'}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
               removeUploadToast={removeUploadToast}
@@ -2857,7 +2864,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               isLoggedIn={isAdmin}
               pendingApplications={pendingApplications}
               setPendingApplications={setPendingApplications}
-              username={userName || 'admin'}
+              username={userUsername || 'admin'}
             />
           </Suspense>
           {chatbot}
@@ -3021,7 +3028,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading events..." />}>
-            <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} username={userName || 'admin'} onModalStateChange={setManageEventsModalOpen} />
+            <ManageEventsPage onClose={() => setShowManageEvents(false)} isDark={isDark} username={userUsername || 'admin'} onModalStateChange={setManageEventsModalOpen} />
           </Suspense>
           {chatbot}
         </>
@@ -3145,7 +3152,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading announcements..." />}>
-            <AnnouncementsPage onClose={() => setShowAnnouncements(false)} isDark={isDark} userRole={userRole} username={userName || 'admin'} />
+            <AnnouncementsPage onClose={() => setShowAnnouncements(false)} isDark={isDark} userRole={userRole} username={userUsername || 'admin'} />
           </Suspense>
           {chatbot}
         </>
@@ -3170,7 +3177,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading issuance center..." />}>
-            <IssuanceCenterPage onClose={() => setShowIssuanceCenter(false)} isDark={isDark} userRole={userRole} username={userName || 'admin'} userEmail={userEmail} userProfilePicture={userProfilePicture} onModalStateChange={setIssuanceModalOpen} />
+            <IssuanceCenterPage onClose={() => setShowIssuanceCenter(false)} isDark={isDark} userRole={userRole} username={userUsername || 'admin'} userEmail={userEmail} userProfilePicture={userProfilePicture} onModalStateChange={setIssuanceModalOpen} />
           </Suspense>
           {chatbot}
         </>
@@ -3198,7 +3205,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             <AccessLogsPage 
               onClose={() => setShowAccessLogs(false)} 
               isDark={isDark} 
-              username={userName || 'admin'} 
+              username={userUsername || 'admin'} 
               addUploadToast={addUploadToast} 
               updateUploadToast={updateUploadToast} 
               removeUploadToast={removeUploadToast}
@@ -3232,7 +3239,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             <SystemToolsPage 
               onClose={() => setShowSystemTools(false)} 
               isDark={isDark} 
-              username={userName || 'admin'}
+              username={userUsername || 'admin'}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
             />
@@ -3286,7 +3293,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
-            <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userName || 'admin'} />
+            <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userUsername || 'admin'} />
           </Suspense>
           {chatbot}
         </>

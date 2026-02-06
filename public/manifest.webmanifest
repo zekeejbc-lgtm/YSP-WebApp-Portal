@@ -1,0 +1,40 @@
+{
+  "name": "Youth Service Philippines - Tagum Chapter",
+  "short_name": "YSP Tagum",
+  "description": "Shaping the Future to a Greater Society",
+  "theme_color": "#f6421f",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "/icons/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["education", "social", "youth"],
+  "shortcuts": [
+    {
+      "name": "Contact Us",
+      "short_name": "Contact",
+      "url": "/#contact",
+      "description": "Get in touch with YSP"
+    },
+    {
+      "name": "Our Projects",
+      "short_name": "Projects",
+      "url": "/#projects",
+      "description": "View YSP projects"
+    }
+  ]
+}

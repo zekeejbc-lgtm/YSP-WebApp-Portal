@@ -575,8 +575,9 @@ function handleLogin(username, password) {
       return createErrorResponse('This account has been permanently banned. Contact admin for assistance.', 403);
     }
 
-    // Generate session token
-    const sessionToken = generateSessionToken(userRow[idx.idCode] || username);
+    // Generate session token — use the actual username so that HMAC-verified
+    // identity matches the 'Username' column used by getProfile / getUserRole_
+    const sessionToken = generateSessionToken(userRow[idx.username] || username);
 
     // Clear failed login attempts on successful login
     cache.remove(rateLimitKey);

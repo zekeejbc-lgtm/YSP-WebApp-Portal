@@ -336,36 +336,20 @@ export default function MyQRIDPage({
           return;
         }
 
-        // FAST PATH: Load from cache immediately to show UI fast
+        // Keep showing skeleton loader until we verify profile completeness
+        // This prevents the "Complete Your Profile" screen from appearing as a loading state
+        setIsLoading(true);
+
+        // Get cached profile for fallback, but DON'T show it immediately
         const cachedProfile = loadUserProfileFromCache(storedUser.username);
         let emailVerified = false;
+        let finalUserData: ExtendedUserData | null = null;
 
-        if (cachedProfile?.data) {
-          console.log('[MyQRIDPage] Using cached profile for instant display');
-          const p = cachedProfile.data;
-          emailVerified = p.emailVerified || false;
-          setIsEmailVerified(emailVerified);
-
-          const extendedData = buildExtendedData(
-            p as unknown as Record<string, unknown>,
-            storedUser.name,
-            storedUser.id,
-            storedUser.position || 'Member'
-          );
-          setUserData(extendedData);
-          checkAndSetLockState(extendedData, emailVerified);
-          
-          // Stop loading immediately - we have cached data!
-          setIsLoading(false);
-        } else {
-          // No cache, show loading
-          setIsLoading(true);
-        }
-
-        // BACKGROUND SYNC: Fetch fresh data from backend
+        // FETCH FRESH DATA FIRST before deciding what to show
         try {
           const profileResponse = await fetchUserProfile(storedUser.username);
           console.log('[MyQRIDPage] Profile response:', profileResponse);
+          
           if (profileResponse.success && profileResponse.profile) {
             const p = profileResponse.profile;
             console.log('[MyQRIDPage] Raw profile data:', {
@@ -375,14 +359,12 @@ export default function MyQRIDPage({
               emergencyContactNumber: p.emergencyContactNumber,
             });
 
-            const extendedData = buildExtendedData(
+            finalUserData = buildExtendedData(
               p as unknown as Record<string, unknown>,
               storedUser.name,
               storedUser.id,
               storedUser.position || 'Member'
             );
-
-            setUserData(extendedData);
 
             // Check email verification status
             const userEmail = p.email || p.personalEmail;
@@ -397,38 +379,63 @@ export default function MyQRIDPage({
                 console.warn('Email verification check failed:', e);
               }
             }
+          } else if (cachedProfile?.data) {
+            // Fetch returned no data, use cache as fallback
+            console.log('[MyQRIDPage] Using cached profile as fallback');
+            const p = cachedProfile.data;
+            emailVerified = p.emailVerified || false;
+            setIsEmailVerified(emailVerified);
 
-            // Update lock state with fresh data
-            checkAndSetLockState(extendedData, emailVerified);
-          } else if (!cachedProfile?.data) {
-            // No cached data and fetch failed - fallback to stored session data
-            setUserData({
+            finalUserData = buildExtendedData(
+              p as unknown as Record<string, unknown>,
+              storedUser.name,
+              storedUser.id,
+              storedUser.position || 'Member'
+            );
+          } else {
+            // No fresh data and no cache - use minimal stored user data
+            finalUserData = {
               fullName: storedUser.name,
               idCode: storedUser.id,
               position: storedUser.position || 'Member',
-            });
-            setIsProfileLocked(true);
-            setLockReason('profile');
-            setMissingProfileFields(['Most required fields']);
+            };
           }
         } catch (fetchError) {
-          console.warn('[MyQRIDPage] Profile fetch failed, using cached data if available:', fetchError);
-          // If no cached data was loaded earlier, set fallback
-          if (!cachedProfile?.data) {
-            setUserData({
+          console.warn('[MyQRIDPage] Profile fetch failed:', fetchError);
+          
+          // Use cache as fallback if available
+          if (cachedProfile?.data) {
+            console.log('[MyQRIDPage] Using cached profile after fetch error');
+            const p = cachedProfile.data;
+            emailVerified = p.emailVerified || false;
+            setIsEmailVerified(emailVerified);
+
+            finalUserData = buildExtendedData(
+              p as unknown as Record<string, unknown>,
+              storedUser.name,
+              storedUser.id,
+              storedUser.position || 'Member'
+            );
+          } else {
+            // No cache available, use minimal data
+            finalUserData = {
               fullName: storedUser.name,
               idCode: storedUser.id,
               position: storedUser.position || 'Member',
-            });
-            setIsProfileLocked(true);
-            setLockReason('profile');
-            setMissingProfileFields(['Unable to verify profile']);
+            };
           }
+        }
+
+        // NOW that we have all the data, set everything at once
+        if (finalUserData) {
+          setUserData(finalUserData);
+          checkAndSetLockState(finalUserData, emailVerified);
         }
       } catch (error) {
         console.error('Error loading user data:', error);
         toast.error('Failed to load user data');
       } finally {
+        // Only stop loading AFTER we've determined what to show
         setIsLoading(false);
       }
     };

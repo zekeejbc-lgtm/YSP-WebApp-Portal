@@ -11,7 +11,7 @@
 
 /// <reference types="vite/client" />
 
-import { getSessionToken } from './gasLoginService';
+import { getSessionToken, getStoredUser } from './gasLoginService';
 
 // =================== TYPES ===================
 
@@ -196,9 +196,12 @@ async function callSystemToolsAPI<T>(
 
 /**
  * Get system health status from backend
+ * Always sends username explicitly as a fallback alongside the session token
+ * so the backend can authorize the request even if token verification fails.
  */
-export async function getSystemHealth(): Promise<SystemHealthData> {
-  return callSystemToolsAPI<SystemHealthData>('getSystemHealth');
+export async function getSystemHealth(username?: string): Promise<SystemHealthData> {
+  const resolvedUsername = username || getStoredUser()?.username || '';
+  return callSystemToolsAPI<SystemHealthData>('getSystemHealth', { username: resolvedUsername });
 }
 
 // =================== DATABASE BACKUP ===================

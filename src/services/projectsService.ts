@@ -3,7 +3,19 @@
  * Handles all project CRUD operations with image uploads
  */
 
+import { getSessionToken, getStoredUser } from './gasLoginService';
+
 const PROJECTS_API_BASE = import.meta.env.VITE_GAS_HOMEPAGE_API_URL;
+
+/**
+ * Get auth payload to include in every POST request.
+ */
+function getAuthPayload(): { sessionToken: string | null; username: string } {
+  return {
+    sessionToken: getSessionToken(),
+    username: getStoredUser()?.username || '',
+  };
+}
 
 export interface Project {
   projectId: string;
@@ -122,6 +134,7 @@ export async function addProject(
       },
       body: JSON.stringify({
         action: 'addProject',
+        ...getAuthPayload(),
         data: {
           ...projectData,
           imageUrl
@@ -197,6 +210,7 @@ export async function updateProject(
       },
       body: JSON.stringify({
         action: 'updateProject',
+        ...getAuthPayload(),
         projectId,
         data: updateData
       }),
@@ -247,6 +261,7 @@ export async function deleteProject(
       },
       body: JSON.stringify({
         action: 'deleteProject',
+        ...getAuthPayload(),
         projectId
       }),
       signal,
@@ -330,6 +345,7 @@ export async function uploadProjectImage(
       },
       body: JSON.stringify({
         action: 'uploadImage',
+        ...getAuthPayload(),
         fileName: file.name,
         fileData: base64Data
       }),
