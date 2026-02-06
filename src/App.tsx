@@ -1,4 +1,5 @@
   import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
+  import { useUrlSync } from "./hooks/useUrlSync";
   import {
     Moon,
     Sun,
@@ -9,20 +10,15 @@
     Upload,
     Trash2,
     X,
-    Menu,
     ZoomIn,
     ExternalLink,
-    ChevronDown,
-    User,
     Home,
     LayoutDashboard,
-    Calendar,
     MessageSquare,
     FileText,
     QrCode,
     Users,
     ClipboardList,
-    HandHeart,
     MessageCircle,
     Network,
     Plus,
@@ -47,6 +43,7 @@
     updateHomepageOtherContent,
     invalidateOtherContentCache,
     type HomepageMainContent,
+    type SocialLinkData,
   } from "./services/gasHomepageService";
   import {
     saveHomepageContentToCache,
@@ -78,7 +75,6 @@
     verifySession,
     checkUserRole,
     LoginErrorCodes,
-    type LoginUser,
   } from "./services/gasLoginService";
   // ADDED getMaintenanceModeFromBackend HERE:
   import {
@@ -125,7 +121,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     SkeletonOrgChart, 
     SkeletonContact, 
     SkeletonProfileCard,
-    SkeletonPartnership 
   } from "./components/SkeletonCard";
   import { SideBar } from "./components/design-system";
   import TopBar from "./components/design-system/TopBar";
@@ -182,9 +177,11 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     const [userUsername, setUserUsername] = useState<string>(""); // Actual username for API calls (e.g., "JohnDoe123")
     const [userEmail, setUserEmail] = useState<string>("");
     const [userIdCode, setUserIdCode] = useState<string>("");
-    const [userPosition, setUserPosition] = useState<string>("");
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [_userPosition, setUserPosition] = useState<string>("");
     const [userProfilePicture, setUserProfilePicture] = useState<string>("");
-    const [logoError, setLogoError] = useState(false);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [logoError, _setLogoError] = useState(false);
     const [showLoginPanel, setShowLoginPanel] = useState(false);
     const [showFeedbackPage, setShowFeedbackPage] = useState(false);
     const [showMembershipApplicationsPage, setShowMembershipApplicationsPage] = useState(false);
@@ -232,6 +229,51 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
   } | null>(null);
   const roleCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // URL Sync - Bridges boolean navigation states with URL routing
+  // Note: navigateToPage/closePage available for programmatic navigation
+  // Currently, state changes (setShowX) auto-sync to URL via the hook
+  useUrlSync({
+    pageStates: {
+      showFeedbackPage,
+      showOfficerDirectory,
+      showAttendanceDashboard,
+      showAttendanceRecording,
+      showManageEvents,
+      showMyQRID,
+      showAttendanceTransparency,
+      showMyProfile,
+      showAnnouncements,
+      showIssuanceCenter,
+      showAccessLogs,
+      showSystemTools,
+      showManageMembers,
+      showMembershipApplicationsPage,
+      showSettings,
+      showLoginPanel,
+    },
+    pageSetters: {
+      setShowFeedbackPage,
+      setShowOfficerDirectory,
+      setShowAttendanceDashboard,
+      setShowAttendanceRecording,
+      setShowManageEvents,
+      setShowMyQRID,
+      setShowAttendanceTransparency,
+      setShowMyProfile,
+      setShowAnnouncements,
+      setShowIssuanceCenter,
+      setShowAccessLogs,
+      setShowSystemTools,
+      setShowManageMembers,
+      setShowMembershipApplicationsPage,
+      setShowSettings,
+      setShowLoginPanel,
+    },
+    isLoggedIn: isAdmin || userRole !== 'guest',
+    userRole,
+    sessionChecked,
+  });
+
   const handleRequestCacheClear = () => {
     setHardRefreshMode("full");
     setShowCacheRefreshModal(true);
@@ -263,6 +305,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       const storedUser = getStoredUser();
       if (storedUser?.username) {
         clearUserProfileCache(storedUser.username);
+        // eslint-disable-next-line no-console
         console.log('[App] Cleared profile cache on ban');
       }
       
@@ -330,6 +373,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         }
       } catch (error) {
         // Silently fail - don't disrupt user experience for polling failures
+        // eslint-disable-next-line no-console
         console.debug('[RoleCheck] Polling error (ignored):', error);
       }
     };
@@ -570,6 +614,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         // ===== STEP 1: Try to load from cache for instant display =====
         const cachedData = loadHomepageContentFromCache();
         if (cachedData) {
+          // eslint-disable-next-line no-console
           console.log('[App] Loading homepage from cache (instant)');
           const { data: cached, isStale } = cachedData;
           
@@ -589,8 +634,10 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           if (!isStale) {
             // Cache is fresh, perform silent background sync
             setIsLoadingHomepage(false);
+            // eslint-disable-next-line no-console
             console.log('[App] Homepage cache is fresh, performing background sync');
           } else {
+            // eslint-disable-next-line no-console
             console.log('[App] Homepage cache is stale, refreshing...');
           }
         }
@@ -636,6 +683,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             const hasChanged = hasHomepageContentChanged(newCacheData);
             
             if (hasChanged || !loadedFromCache) {
+              // eslint-disable-next-line no-console
               console.log('[App] Homepage content changed, updating state');
               setHomepageContent(prev => {
                 const updated = {
@@ -658,6 +706,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               // Save to enhanced cache
               saveHomepageContentToCache(newCacheData);
             } else {
+              // eslint-disable-next-line no-console
               console.log('[App] Homepage content unchanged, skipping update');
             }
             
@@ -673,6 +722,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               setTimeout(() => removeUploadToast(toastId), 3000);
             } else if (loadedFromCache && hasChanged) {
               // Silent update completed with changes
+              // eslint-disable-next-line no-console
               console.log('[App] Background sync completed - homepage updated');
             }
             return true;
@@ -683,6 +733,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             if (retryCount < MAX_RETRIES) {
               retryCount++;
               const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount - 1); // Exponential backoff
+              // eslint-disable-next-line no-console
               console.log(`[App] Retrying homepage load in ${delay}ms...`);
               
               if (shouldShowToast) {
@@ -749,6 +800,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       };
 
       loadHomepageContent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Fetch projects from backend on mount - with cache-first and deletion detection
@@ -759,17 +811,33 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         let loadedFromCache = false;
         
         if (cachedData) {
+          // eslint-disable-next-line no-console
           console.log('[App] Loading projects from cache (instant)');
           const { data: cachedProjects, isStale } = cachedData;
           
-          // Apply cached data immediately
-          setProjects(cachedProjects as Project[]);
+          // Apply cached data immediately - map CachedProject to Project
+          const mappedProjects: Project[] = cachedProjects.map(cp => ({
+            projectId: cp.id,
+            id: cp.id,
+            title: cp.title,
+            description: cp.description,
+            imageUrl: cp.imageUrl,
+            status: cp.status as 'Active' | 'Inactive',
+            category: cp.category,
+            date: cp.date,
+            location: cp.location,
+            participants: cp.participants,
+            featured: cp.featured,
+          }));
+          setProjects(mappedProjects);
           loadedFromCache = true;
           
           if (!isStale) {
             setIsLoadingProjects(false);
+            // eslint-disable-next-line no-console
             console.log('[App] Projects cache is fresh, performing background sync');
           } else {
+            // eslint-disable-next-line no-console
             console.log('[App] Projects cache is stale, refreshing...');
           }
         }
@@ -790,13 +858,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           } else {
             // ===== STEP 3: Detect changes and deletions =====
             const newProjects = result.projects.map(p => ({
-              id: p.id,
+              id: p.id || p.projectId,
               title: p.title,
               description: p.description,
               imageUrl: p.imageUrl,
-              category: p.category,
+              category: p.category || '',
               status: p.status,
-              date: p.date,
+              date: p.date || '',
               location: p.location,
               participants: p.participants,
               featured: p.featured,
@@ -805,6 +873,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             const changes = getProjectChanges(newProjects);
             
             if (changes.hasChanges) {
+              // eslint-disable-next-line no-console
               console.log('[App] Projects changed:', {
                 added: changes.added.length,
                 updated: changes.updated.length,
@@ -813,6 +882,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               
               // Log deleted projects for debugging
               if (changes.deleted.length > 0) {
+                // eslint-disable-next-line no-console
                 console.log('[App] Deleted project IDs:', changes.deleted);
               }
               
@@ -822,6 +892,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               // Save to cache
               saveProjectsToCache(newProjects);
             } else {
+              // eslint-disable-next-line no-console
               console.log('[App] Projects unchanged, skipping update');
             }
           }
@@ -846,6 +917,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         let loadedFromCache = false;
         
         if (cachedData) {
+          // eslint-disable-next-line no-console
           console.log('[App] Loading other content from cache (instant)');
           const { data: cached, isStale } = cachedData;
           
@@ -862,8 +934,10 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           loadedFromCache = true;
           
           if (!isStale) {
+            // eslint-disable-next-line no-console
             console.log('[App] Other content cache is fresh, performing background sync');
           } else {
+            // eslint-disable-next-line no-console
             console.log('[App] Other content cache is stale, refreshing...');
           }
         }
@@ -886,7 +960,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               phone: otherContent.orgPhone || '',
               location: otherContent.orgLocation || '',
               locationLink: otherContent.orgGoogleMapUrl || '',
-              socialLinks: otherContent.socialLinks?.map((link: any) => ({
+              socialLinks: otherContent.socialLinks?.map((link: SocialLinkData) => ({
                 id: link.id,
                 url: link.url,
                 label: link.displayName
@@ -902,6 +976,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           const hasChanged = hasHomepageOtherChanged(newCacheData);
           
           if (hasChanged || !loadedFromCache) {
+            // eslint-disable-next-line no-console
             console.log('[App] Other content changed, updating state');
             
             // 1. Update Org Chart State
@@ -920,7 +995,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                 locationLink: otherContent.orgGoogleMapUrl || prev.contact.locationLink,
                 
                 // Map backend 'displayName' to frontend 'label'
-                socialLinks: otherContent.socialLinks?.map((link: any) => ({
+                socialLinks: otherContent.socialLinks?.map((link: SocialLinkData) => ({
                   id: link.id,
                   url: link.url,
                   label: link.displayName
@@ -936,6 +1011,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             // Save to cache
             saveHomepageOtherToCache(newCacheData);
           } else {
+            // eslint-disable-next-line no-console
             console.log('[App] Other content unchanged, skipping update');
           }
         } catch (error) {
@@ -997,6 +1073,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           if (retryCount < MAX_RETRIES) {
             retryCount++;
             const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount - 1);
+            // eslint-disable-next-line no-console
             console.log(`[App] Retrying homepage load in ${delay}ms...`);
             
             updateUploadToast(toastId, {
@@ -1570,18 +1647,19 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             
             // Update projects cache
             const projectsToCache = projectsResult.projects.map(p => ({
-              id: p.id,
+              id: p.id || p.projectId,
               title: p.title,
               description: p.description,
               imageUrl: p.imageUrl,
-              category: p.category,
+              category: p.category || '',
               status: p.status,
-              date: p.date,
+              date: p.date || '',
               location: p.location,
               participants: p.participants,
               featured: p.featured,
             })) as CachedProject[];
             saveProjectsToCache(projectsToCache);
+            // eslint-disable-next-line no-console
             console.log('[App] Updated projects cache after add/update');
           }
 
@@ -1715,18 +1793,19 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           
           // Update projects cache after deletion
           const projectsToCache = projectsResult.projects.map(p => ({
-            id: p.id,
+            id: p.id || p.projectId,
             title: p.title,
             description: p.description,
             imageUrl: p.imageUrl,
-            category: p.category,
+            category: p.category || '',
             status: p.status,
-            date: p.date,
+            date: p.date || '',
             location: p.location,
             participants: p.participants,
             featured: p.featured,
           })) as CachedProject[];
           saveProjectsToCache(projectsToCache);
+          // eslint-disable-next-line no-console
           console.log('[App] Updated projects cache after deletion');
         } else {
           // Fallback: remove from local state
@@ -1815,6 +1894,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               orgChartUrl: result.imageUrl,
             };
             saveHomepageOtherToCache(updatedOther);
+            // eslint-disable-next-line no-console
             console.log('[App] Updated org chart in cache');
           }
           
@@ -1877,7 +1957,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
       try {
         // Clear from backend - this updates the sheet to have empty org chart URL
-        const success = await updateHomepageOtherContent({ orgChartUrl: '' }, signal);
+        await updateHomepageOtherContent({ orgChartUrl: '' }, signal);
 
         if (signal.aborted) {
           return;
@@ -2074,6 +2154,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           // Clear profile cache on session expiration
           if (storedUser.username) {
             clearUserProfileCache(storedUser.username);
+            // eslint-disable-next-line no-console
             console.log('[App] Cleared profile cache on session expiration');
           }
           clearSession();
@@ -2100,6 +2181,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         // Clear profile cache on session failure
         if (storedUser.username) {
           clearUserProfileCache(storedUser.username);
+          // eslint-disable-next-line no-console
           console.log('[App] Cleared profile cache on session failure');
         }
         clearSession();
@@ -2118,6 +2200,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         const storedUser = getStoredUser();
         if (storedUser?.username) {
           clearUserProfileCache(storedUser.username);
+          // eslint-disable-next-line no-console
           console.log('[App] Cleared profile cache on logout');
         }
       }
@@ -2218,6 +2301,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             contact: editedContent.contact,
           };
           saveHomepageOtherToCache(otherCacheData);
+          // eslint-disable-next-line no-console
           console.log('[App] Updated homepage caches after save');
           
           toast.success('Homepage updated successfully!', {
@@ -2531,25 +2615,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         });
         handleLogout();
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isFullMaintenance]);
-
-    // Check for Page-Specific Maintenance Mode
-    const pageMaintenanceMap: { [key: string]: string } = {
-      feedback: "feedback",
-      "membership-editor": "membership-editor",
-      "officer-directory": "officer-directory",
-      "attendance-dashboard": "attendance-dashboard",
-      "attendance-recording": "attendance-recording",
-      "manage-events": "manage-events",
-      "my-qrid": "my-qrid",
-      "attendance-transparency": "attendance-transparency",
-      "my-profile": "my-profile",
-      announcements: "announcements",
-      "access-logs": "access-logs",
-      "system-tools": "system-tools",
-      "manage-members": "manage-members",
-      "membership-applications": "membership-applications",
-    };
 
     const projectsContent = useMemo(() => {
       if (isLoadingProjects) {

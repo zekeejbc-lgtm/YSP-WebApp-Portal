@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
 import { toast } from "sonner";
 import { registerSW } from "virtual:pwa-register";
 import { HelmetProvider } from "react-helmet-async"; // <--- Imported here
@@ -19,14 +20,16 @@ if (import.meta.env.PROD) {
   console.debug = noop;
 }
 
-// Wrapped App with HelmetProvider and ErrorBoundary
+// Wrapped App with HelmetProvider, ErrorBoundary, and BrowserRouter
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("Root element not found");
 
 createRoot(rootEl).render(
   <ErrorBoundary>
     <HelmetProvider>
-      <App />
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
     </HelmetProvider>
   </ErrorBoundary>
 );

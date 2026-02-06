@@ -19,12 +19,18 @@ function getAuthPayload(): { sessionToken: string | null; username: string } {
 
 export interface Project {
   projectId: string;
+  id?: string;  // Alternative identifier (used in cache)
   title: string;
   description: string;
   imageUrl: string;
   link?: string;
   linkText?: string;
   status: 'Active' | 'Inactive';
+  category?: string;
+  date?: string;
+  location?: string;
+  participants?: number;
+  featured?: boolean;
 }
 
 export interface ProjectError {
