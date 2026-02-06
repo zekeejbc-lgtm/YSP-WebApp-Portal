@@ -4,13 +4,7 @@ import react from '@vitejs/plugin-react-swc';
 import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
-// Generate a unique build timestamp for cache versioning
-const BUILD_TIMESTAMP = Date.now().toString(36);
-
 export default defineConfig({
-  define: {
-    __BUILD_TIMESTAMP__: JSON.stringify(BUILD_TIMESTAMP),
-  },
   plugins: [
     react(),
     VitePWA({

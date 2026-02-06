@@ -9,14 +9,14 @@ import { CacheFirst, NetworkFirst, NetworkOnly, StaleWhileRevalidate } from 'wor
 import { ExpirationPlugin } from 'workbox-expiration';
 
 declare let self: ServiceWorkerGlobalScope;
-declare const __BUILD_TIMESTAMP__: string;
 
 // Activate new service workers immediately instead of waiting for all tabs to close
 self.skipWaiting();
 clientsClaim();
 
-// Use build timestamp for unique cache versioning per deployment
-const CACHE_VERSION = `v3-${__BUILD_TIMESTAMP__}`;
+// Cache version - change this manually when you want to force cache invalidation
+// The precache manifest revision hashes handle file-level cache invalidation automatically
+const CACHE_VERSION = 'v4';
 const CACHE_NAMES = {
   pages: `pages-${CACHE_VERSION}`,
   gasApi: `gas-api-${CACHE_VERSION}`,
@@ -74,22 +74,14 @@ cleanupOutdatedCaches();
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    (async () => {
-      // Delete old caches
-      const keys = await caches.keys();
-      await Promise.all(
+    caches.keys().then((keys) =>
+      Promise.all(
         keys
           .filter((key) => key.startsWith('pages-') || key.startsWith('gas-api-') || key.startsWith('google-fonts-') || key.startsWith('images-'))
           .filter((key) => !Object.values(CACHE_NAMES).includes(key))
           .map((key) => caches.delete(key))
-      );
-      
-      // Notify all clients that a new version is active - trigger auto-reload
-      await notifyClients({ 
-        type: 'SW_ACTIVATED', 
-        version: CACHE_VERSION 
-      });
-    })()
+      )
+    )
   );
 });
 

@@ -30,6 +30,3 @@ interface ServiceWorkerRegistration {
   setAppBadge?: (count?: number) => Promise<void>;
   clearAppBadge?: () => Promise<void>;
 }
-
-// Build-time injected constant for cache versioning
-declare const __BUILD_TIMESTAMP__: string;
