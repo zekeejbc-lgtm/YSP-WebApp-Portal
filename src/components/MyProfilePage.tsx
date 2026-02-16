@@ -2,8 +2,7 @@
  * =============================================================================
  * MY PROFILE PAGE
  * =============================================================================
- * 
- * SMART SPEC COMPLIANCE:
+ * * SMART SPEC COMPLIANCE:
  * ✅ Uses PageLayout master component
  * ✅ Profile image: 120px with orange border (4px)
  * ✅ Form inputs: 44px height
@@ -11,8 +10,7 @@
  * ✅ Two-column layout with proper spacing
  * ✅ Connected to real backend via GAS API
  * ✅ Progress toast for save operations
- * 
- * =============================================================================
+ * * =============================================================================
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -134,6 +132,7 @@ export default function MyProfilePage({
     if (startInEditMode && !isEditing) {
       setIsEditing(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startInEditMode]);
 
   // Fetch profile data on mount - with local storage cache for fast loading
@@ -165,7 +164,7 @@ export default function MyProfilePage({
       let loadedFromCache = false;
       
       if (cachedData) {
-        console.log('[Profile] Loading from cache (instant)');
+        // [FIXED] Removed console.log
         const { data: cached, isStale } = cachedData;
         
         // Apply cached data immediately
@@ -188,10 +187,10 @@ export default function MyProfilePage({
         // If cache is fresh (not stale), we're done - just do background sync
         if (!isStale) {
           setIsLoading(false);
-          console.log('[Profile] Cache is fresh, performing background sync');
+          // [FIXED] Removed console.log
           // Continue to background sync below
         } else {
-          console.log('[Profile] Cache is stale, refreshing...');
+          // [FIXED] Removed console.log
         }
       }
 
@@ -352,7 +351,7 @@ export default function MyProfilePage({
             verifiedEmail: verifiedEmailAddr,
           };
           saveUserProfileToCache(cacheData);
-          console.log('[Profile] Saved fresh data to cache');
+          // [FIXED] Removed console.log
 
           if (shouldShowToast) {
             if (updateUploadToast) {
@@ -368,7 +367,7 @@ export default function MyProfilePage({
             }
           } else if (loadedFromCache) {
             // Background sync completed silently
-            console.log('[Profile] Background sync completed');
+            // [FIXED] Removed console.log
           }
         } else {
           // Only show error if we didn't load from cache
@@ -421,7 +420,7 @@ export default function MyProfilePage({
     };
 
     loadProfile();
-  }, [onClose]);
+  }, [onClose, addUploadToast, updateUploadToast, removeUploadToast]); // [FIXED] Added missing dependencies
 
   // Cleanup local preview URL on unmount
   useEffect(() => {
@@ -544,6 +543,7 @@ export default function MyProfilePage({
 
       // Upload pending profile picture if there is one
       if (pendingImageFile) {
+        setIsUploadingImage(true); // [FIXED] Used the variable
         if (updateUploadToast) {
           updateUploadToast(toastId, { progress: 25, message: 'Uploading profile picture...' });
         }
@@ -552,6 +552,7 @@ export default function MyProfilePage({
           const uploadResult = await uploadProfilePicture(pendingImageFile, currentUsername, signal);
 
           if (signal.aborted) {
+            setIsUploadingImage(false);
             return;
           }
           
@@ -572,7 +573,7 @@ export default function MyProfilePage({
               setLocalPreviewUrl(null);
             }
             
-            console.log('Profile picture uploaded successfully:', uploadResult.imageUrl);
+            // [FIXED] Removed console.log
           } else {
             throw new Error(uploadResult.error || 'Failed to upload profile picture');
           }
@@ -582,6 +583,8 @@ export default function MyProfilePage({
           toast.warning('Profile picture upload failed', {
             description: 'Your other changes will still be saved',
           });
+        } finally {
+          setIsUploadingImage(false); // [FIXED] Reset state
         }
       }
 
@@ -595,7 +598,7 @@ export default function MyProfilePage({
         'fullName', 'username', 'personalEmail', 'contactNumber', 'birthday',
         'gender', 'pronouns', 'civilStatus', 'religion', 'nationality',
         'address', 'barangay', 'city', 'province', 'zipCode',
-        'chapter', 'committee', 'facebook', 'instagram', 'twitter',
+        'facebook', 'instagram', 'twitter', // [FIXED] Removed chapter/committee from this list
         'emergencyContactName', 'emergencyContactRelation', 'emergencyContactNumber'
       ] as const;
       
@@ -665,7 +668,7 @@ export default function MyProfilePage({
               const userObj = JSON.parse(storedUser);
               userObj.username = newUsername;
               localStorage.setItem('ysp_user', JSON.stringify(userObj));
-              console.log('Updated username in localStorage:', newUsername);
+              // [FIXED] Removed console.log
             } catch (e) {
               console.error('Failed to update username in localStorage:', e);
             }
@@ -727,7 +730,7 @@ export default function MyProfilePage({
         if (updateData.username && updateData.username !== currentUsername) {
           clearUserProfileCache(currentUsername);
         }
-        console.log('[Profile] Updated cache after save');
+        // [FIXED] Removed console.log
         
         // Success toast
         if (updateUploadToast) {
@@ -851,7 +854,7 @@ export default function MyProfilePage({
                 variant="secondary" 
                 onClick={handleCancel} 
                 disabled={isSaving}
-                className="!p-1.5 sm:!p-2 md:!px-4 md:!py-2 !min-w-0"
+                className="p-1.5! sm:p-2! md:px-4! md:py-2! min-w-0!"
                 icon={<X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
               >
                 <span className="hidden md:inline text-sm">Cancel</span>
@@ -861,7 +864,7 @@ export default function MyProfilePage({
                 onClick={handleSave}
                 disabled={isSaving}
                 icon={isSaving ? <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" /> : <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
-                className="!p-1.5 sm:!p-2 md:!px-4 md:!py-2 !min-w-0"
+                className="p-1.5! sm:p-2! md:px-4! md:py-2! min-w-0!"
               >
                 <span className="hidden md:inline text-sm">{isSaving ? 'Saving...' : 'Save'}</span>
               </Button>
@@ -872,7 +875,7 @@ export default function MyProfilePage({
                 variant="primary"
                 onClick={() => setIsEditing(true)}
                 icon={<Edit className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
-                className="!p-1.5 sm:!p-2 md:!px-4 md:!py-2 !min-w-0"
+                className="p-1.5! sm:p-2! md:px-4! md:py-2! min-w-0!"
               >
                 <span className="hidden md:inline text-sm">Edit</span>
               </Button>
@@ -908,7 +911,9 @@ export default function MyProfilePage({
                 alt="Profile"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
-                onLoad={() => console.log('Profile image loaded successfully')}
+                onLoad={() => {
+                  // [FIXED] Removed console.log
+                }}
                 onError={(e) => {
                   // If image fails to load, try alternate URL format or show default
                   console.error('Failed to load profile image:', profileImage);
@@ -929,15 +934,15 @@ export default function MyProfilePage({
                     // Try different URL formats
                     if (profileImage.includes('thumbnail')) {
                       const altUrl = `https://lh3.googleusercontent.com/d/${fileId}`;
-                      console.log('Trying lh3 format:', altUrl);
+                      // [FIXED] Removed console.log
                       target.src = altUrl;
                     } else if (profileImage.includes('lh3.googleusercontent.com')) {
                       const altUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w500`;
-                      console.log('Trying thumbnail format:', altUrl);
+                      // [FIXED] Removed console.log
                       target.src = altUrl;
                     } else {
                       const altUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w500`;
-                      console.log('Trying thumbnail format:', altUrl);
+                      // [FIXED] Removed console.log
                       target.src = altUrl;
                     }
                   } else {
@@ -1313,8 +1318,8 @@ export default function MyProfilePage({
           }}
         >
           {[
-            { label: "Chapter", value: profile.chapter, key: "chapter", editable: true },
-            { label: "Committee", value: profile.committee, key: "committee", editable: true },
+            { label: "Chapter", value: profile.chapter, key: "chapter", editable: false }, // [FIXED] editable: false
+            { label: "Committee", value: profile.committee, key: "committee", editable: false }, // [FIXED] editable: false
             { label: "Date Joined", value: profile.dateJoined, key: "dateJoined", editable: false, type: "date" },
             { label: "Membership Type", value: profile.membershipType, key: "membershipType", editable: false },
           ].map((field) => (
