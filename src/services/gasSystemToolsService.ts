@@ -110,6 +110,48 @@ const GAS_API_URL =
 const CACHE_VERSION_KEY = 'ysp_cache_version';
 const MAINTENANCE_CACHE_KEY = 'ysp_maintenance_mode';
 const MAINTENANCE_CACHE_TTL = 60 * 1000; // 1 minute cache for maintenance mode
+const DEFAULT_MAINTENANCE_STATE: MaintenanceModeState = {
+  fullPWA: { enabled: false },
+  pages: {},
+};
+
+function normalizeMaintenanceConfig(input: unknown): MaintenanceConfig {
+  if (!input || typeof input !== 'object') {
+    return { enabled: false };
+  }
+
+  const raw = input as Record<string, unknown>;
+  return {
+    enabled: raw.enabled === true,
+    reason: typeof raw.reason === 'string' ? raw.reason : '',
+    message: typeof raw.message === 'string' ? raw.message : '',
+    estimatedTime: typeof raw.estimatedTime === 'string' ? raw.estimatedTime : '',
+    maintenanceDate: typeof raw.maintenanceDate === 'string' ? raw.maintenanceDate : '',
+    durationDays: typeof raw.durationDays === 'number' ? raw.durationDays : 0,
+    enabledAt: typeof raw.enabledAt === 'string' ? raw.enabledAt : '',
+    enabledBy: typeof raw.enabledBy === 'string' ? raw.enabledBy : '',
+  };
+}
+
+function normalizeMaintenanceModeState(input: unknown): MaintenanceModeState {
+  if (!input || typeof input !== 'object') {
+    return DEFAULT_MAINTENANCE_STATE;
+  }
+
+  const raw = input as Record<string, unknown>;
+  const rawPages =
+    raw.pages && typeof raw.pages === 'object' ? (raw.pages as Record<string, unknown>) : {};
+  const pages: Record<string, MaintenanceConfig> = {};
+  Object.keys(rawPages).forEach((pageId) => {
+    pages[pageId] = normalizeMaintenanceConfig(rawPages[pageId]);
+  });
+
+  return {
+    fullPWA: normalizeMaintenanceConfig(raw.fullPWA),
+    pages,
+    timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : undefined,
+  };
+}
 
 // =================== ERROR HANDLING ===================
 
@@ -388,7 +430,9 @@ export async function getMaintenanceModeFromBackend(forceRefresh = false): Promi
   }
   
   try {
-    const result = await callSystemToolsAPI<MaintenanceModeState>('getMaintenanceMode');
+    const result = normalizeMaintenanceModeState(
+      await callSystemToolsAPI<MaintenanceModeState>('getMaintenanceMode')
+    );
     
     // Update cache
     maintenanceModeCache = {
@@ -404,14 +448,11 @@ export async function getMaintenanceModeFromBackend(forceRefresh = false): Promi
     // If backend fails, try to use cached data
     const cached = localStorage.getItem(MAINTENANCE_CACHE_KEY);
     if (cached) {
-      return JSON.parse(cached);
+      return normalizeMaintenanceModeState(JSON.parse(cached));
     }
     
     // Return default state if no cache available
-    return {
-      fullPWA: { enabled: false },
-      pages: {}
-    };
+    return DEFAULT_MAINTENANCE_STATE;
   }
 }
 

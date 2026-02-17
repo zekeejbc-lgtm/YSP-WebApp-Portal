@@ -26,6 +26,45 @@ export interface MaintenanceModeState {
 }
 
 const STORAGE_KEY = "ysp_maintenance_mode";
+const DEFAULT_MAINTENANCE_STATE: MaintenanceModeState = {
+  fullPWA: { enabled: false },
+  pages: {},
+};
+
+function normalizeConfig(input: unknown): MaintenanceConfig {
+  if (!input || typeof input !== "object") {
+    return { enabled: false };
+  }
+
+  const raw = input as Record<string, unknown>;
+  return {
+    enabled: raw.enabled === true,
+    reason: typeof raw.reason === "string" ? raw.reason : "",
+    message: typeof raw.message === "string" ? raw.message : "",
+    estimatedTime: typeof raw.estimatedTime === "string" ? raw.estimatedTime : "",
+    maintenanceDate: typeof raw.maintenanceDate === "string" ? raw.maintenanceDate : "",
+    durationDays: typeof raw.durationDays === "number" ? raw.durationDays : 0,
+  };
+}
+
+function normalizeMaintenanceState(input: unknown): MaintenanceModeState {
+  if (!input || typeof input !== "object") {
+    return DEFAULT_MAINTENANCE_STATE;
+  }
+
+  const raw = input as Record<string, unknown>;
+  const rawPages =
+    raw.pages && typeof raw.pages === "object" ? (raw.pages as Record<string, unknown>) : {};
+  const pages: Record<string, MaintenanceConfig> = {};
+  Object.keys(rawPages).forEach((pageId) => {
+    pages[pageId] = normalizeConfig(rawPages[pageId]);
+  });
+
+  return {
+    fullPWA: normalizeConfig(raw.fullPWA),
+    pages,
+  };
+}
 
 // Available pages that can be put in maintenance mode
 export const AVAILABLE_PAGES = [
@@ -51,23 +90,19 @@ export function getMaintenanceMode(): MaintenanceModeState {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      return normalizeMaintenanceState(JSON.parse(stored));
     }
   } catch (error) {
     console.error("Failed to load maintenance mode:", error);
   }
 
-  // Default state
-  return {
-    fullPWA: { enabled: false },
-    pages: {},
-  };
+  return DEFAULT_MAINTENANCE_STATE;
 }
 
 // Save maintenance mode state
 export function saveMaintenanceMode(state: MaintenanceModeState): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeMaintenanceState(state)));
   } catch (error) {
     console.error("Failed to save maintenance mode:", error);
   }
@@ -133,7 +168,7 @@ export function disablePageMaintenance(pageId: string): void {
 // Check if full PWA is in maintenance mode
 export function isFullPWAInMaintenance(): boolean {
   const state = getMaintenanceMode();
-  return state.fullPWA.enabled;
+  return !!state.fullPWA?.enabled;
 }
 
 // Check if a specific page is in maintenance mode
@@ -145,7 +180,7 @@ export function isPageInMaintenance(pageId: string): boolean {
 // Get maintenance config for full PWA
 export function getFullPWAMaintenanceConfig(): MaintenanceConfig {
   const state = getMaintenanceMode();
-  return state.fullPWA;
+  return state.fullPWA || { enabled: false };
 }
 
 // Get maintenance config for a specific page
@@ -156,8 +191,5 @@ export function getPageMaintenanceConfig(pageId: string): MaintenanceConfig {
 
 // Clear all maintenance modes
 export function clearAllMaintenance(): void {
-  saveMaintenanceMode({
-    fullPWA: { enabled: false },
-    pages: {},
-  });
+  saveMaintenanceMode(DEFAULT_MAINTENANCE_STATE);
 }
