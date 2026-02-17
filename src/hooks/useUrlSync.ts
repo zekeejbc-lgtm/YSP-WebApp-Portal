@@ -10,7 +10,9 @@
  * - Stores intended destination for post-login redirect
  * - Indicates user role in the URL path (/guest, /member, /admin, etc.)
  * 
- * URL Format: /{role}?page={PageName}
+ * URL Format:
+ * - Home: /{role}/home
+ * - Pages: /{role}?page={PageName}
  * Examples:
  *   - /guest?page=Feedback
  *   - /member?page=MyProfile
@@ -34,6 +36,7 @@ export interface DeepLinkParams {
  */
 interface PageStateMap {
   showFeedbackPage: boolean;
+  showMembershipApplications: boolean;
   showOfficerDirectory: boolean;
   showAttendanceDashboard: boolean;
   showAttendanceRecording: boolean;
@@ -49,10 +52,13 @@ interface PageStateMap {
   showMembershipApplicationsPage: boolean;
   showSettings: boolean;
   showLoginPanel: boolean;
+  showFounderModal: boolean;
+  showDeveloperModal: boolean;
 }
 
 interface PageSetterMap {
   setShowFeedbackPage: (v: boolean) => void;
+  setShowMembershipApplications: (v: boolean) => void;
   setShowOfficerDirectory: (v: boolean) => void;
   setShowAttendanceDashboard: (v: boolean) => void;
   setShowAttendanceRecording: (v: boolean) => void;
@@ -68,11 +74,14 @@ interface PageSetterMap {
   setShowMembershipApplicationsPage: (v: boolean) => void;
   setShowSettings: (v: boolean) => void;
   setShowLoginPanel: (v: boolean) => void;
+  setShowFounderModal: (v: boolean) => void;
+  setShowDeveloperModal: (v: boolean) => void;
 }
 
 // Map page query param values to state property names
 const PAGE_TO_STATE: Record<string, keyof PageStateMap> = {
   'Feedback': 'showFeedbackPage',
+  'MembershipApplications': 'showMembershipApplications',
   'OfficerDirectory': 'showOfficerDirectory',
   'AttendanceDashboard': 'showAttendanceDashboard',
   'AttendanceRecording': 'showAttendanceRecording',
@@ -85,10 +94,24 @@ const PAGE_TO_STATE: Record<string, keyof PageStateMap> = {
   'AccessLogs': 'showAccessLogs',
   'SystemTools': 'showSystemTools',
   'ManageMembers': 'showManageMembers',
-  'MembershipApplications': 'showMembershipApplicationsPage',
+  'MembershipEditor': 'showMembershipApplicationsPage',
   'Settings': 'showSettings',
   'Login': 'showLoginPanel',
+  'Founder': 'showFounderModal',
+  'Developer': 'showDeveloperModal',
 };
+
+// Backward-compatible aliases for old/deprecated page names in URLs
+const PAGE_ALIASES: Record<string, string> = {
+  MembershipApplicationsPage: 'MembershipEditor',
+  MembershipApplicationsEditor: 'MembershipEditor',
+  MembershipApplicationsAdmin: 'MembershipEditor',
+};
+
+function normalizePageName(pageName: string | null): string | null {
+  if (!pageName) return null;
+  return PAGE_ALIASES[pageName] || pageName;
+}
 
 // Reverse mapping: state property names to page query values
 const STATE_TO_PAGE: Record<keyof PageStateMap, string> = Object.entries(PAGE_TO_STATE).reduce(
@@ -100,7 +123,7 @@ const STATE_TO_PAGE: Record<keyof PageStateMap, string> = Object.entries(PAGE_TO
 );
 
 // Public pages that don't require authentication
-const PUBLIC_PAGES = new Set(['Feedback', 'Login']);
+const PUBLIC_PAGES = new Set(['Feedback', 'MembershipApplications', 'Founder', 'Developer', 'Login']);
 
 // Role requirements for protected pages
 type UserRole = 'guest' | 'member' | 'head' | 'admin' | 'auditor';
@@ -119,7 +142,7 @@ const PAGE_ROLE_REQUIREMENTS: Record<string, UserRole> = {
   'MyProfile': 'member',
   'Announcements': 'member',
   'IssuanceCenter': 'member',
-  'MembershipApplications': 'member',
+  'MembershipEditor': 'admin',
   'Settings': 'member',
   'OfficerDirectory': 'head',
   'AttendanceDashboard': 'head',
@@ -155,6 +178,11 @@ function getRolePathSegment(userRole: string, isLoggedIn: boolean): string {
     case 'member': return 'member';
     default: return 'guest';
   }
+}
+
+function getHomePath(isLoggedIn: boolean, userRole: string): string {
+  if (!isLoggedIn) return '/Home';
+  return `/${getRolePathSegment(userRole, isLoggedIn)}/home`;
 }
 
 /**
@@ -222,14 +250,15 @@ export function useUrlSync({
 
   // Build the URL with role, page, and optional deep link parameters
   const buildUrl = useCallback((pageName: string | null, params?: DeepLinkParams): string => {
+    const normalizedPageName = normalizePageName(pageName);
     const roleSegment = getRolePathSegment(userRole, isLoggedIn);
     
-    if (!pageName) {
-      return `/${roleSegment}`;
+    if (!normalizedPageName) {
+      return getHomePath(isLoggedIn, userRole);
     }
     
     const searchParams = new URLSearchParams();
-    searchParams.set('page', pageName);
+    searchParams.set('page', normalizedPageName);
     
     // Add deep link parameters if provided
     if (params?.id) searchParams.set('id', params.id);
@@ -270,9 +299,15 @@ export function useUrlSync({
 
   // Navigate to a page by updating both URL and state, with optional deep link params
   const navigateToPage = useCallback((pageName: string, params?: DeepLinkParams) => {
-    if (!hasPageAccess(pageName)) {
+    const normalizedPageName = normalizePageName(pageName);
+    if (!normalizedPageName) {
+      closePage();
+      return;
+    }
+
+    if (!hasPageAccess(normalizedPageName)) {
       // User doesn't have access - show login panel and remember destination
-      setIntendedDestination(pageName);
+      setIntendedDestination(normalizedPageName);
       skipStateSyncRef.current = true;
       closeAllPages();
       pageSetters.setShowLoginPanel(true);
@@ -283,9 +318,9 @@ export function useUrlSync({
     }
     
     skipStateSyncRef.current = true;
-    openPageDirect(pageName);
-    navigate(buildUrl(pageName, params));
-    lastSyncedPage.current = pageName;
+    openPageDirect(normalizedPageName);
+    navigate(buildUrl(normalizedPageName, params));
+    lastSyncedPage.current = normalizedPageName;
     
     setTimeout(() => { skipStateSyncRef.current = false; }, 50);
   }, [hasPageAccess, setIntendedDestination, closeAllPages, pageSetters, navigate, openPageDirect, buildUrl]);
@@ -304,12 +339,14 @@ export function useUrlSync({
     if (!sessionChecked || skipStateSyncRef.current) return;
     
     const currentPage = searchParams.get('page');
-    const roleSegment = getRolePathSegment(userRole, isLoggedIn);
-    const expectedPath = `/${roleSegment}`;
+    const expectedPath = currentPage
+      ? `/${getRolePathSegment(userRole, isLoggedIn)}`
+      : getHomePath(isLoggedIn, userRole);
     
     // Only update if path doesn't match current role
-    if (!location.pathname.startsWith(expectedPath) || location.pathname !== expectedPath) {
-      const newUrl = currentPage ? `/${roleSegment}?page=${currentPage}` : `/${roleSegment}`;
+    if (location.pathname !== expectedPath) {
+      const roleSegment = getRolePathSegment(userRole, isLoggedIn);
+      const newUrl = currentPage ? `/${roleSegment}?page=${currentPage}` : expectedPath;
       navigate(newUrl, { replace: true });
     }
   }, [userRole, isLoggedIn, sessionChecked, navigate, searchParams, location.pathname]);
@@ -319,7 +356,15 @@ export function useUrlSync({
     if (!sessionChecked) return;
     if (processingUrlRef.current) return;
     
-    const currentPage = searchParams.get('page');
+    const rawPage = searchParams.get('page');
+    const currentPage = normalizePageName(rawPage);
+
+    if (rawPage && currentPage && rawPage !== currentPage) {
+      const normalizedParams = new URLSearchParams(searchParams.toString());
+      normalizedParams.set('page', currentPage);
+      navigate(`${location.pathname}?${normalizedParams.toString()}`, { replace: true });
+      return;
+    }
     
     // Skip if we already processed this page
     if (!isInitialLoad.current && currentPage === lastSyncedPage.current) {

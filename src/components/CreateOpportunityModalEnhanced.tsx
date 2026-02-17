@@ -3,13 +3,15 @@
  * Simplified version: just basic info and external link.
  */
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Calendar, Link as LinkIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button, DESIGN_TOKENS } from "./design-system";
 import { ApplicationOpportunity } from "./MembershipApplicationsPage";
 import CustomDropdown from "./CustomDropdown";
+
+const BE_A_MEMBER_PAGE_LINK = "/guest?page=MembershipApplications";
 
 interface CreateOpportunityModalProps {
   isOpen: boolean;
@@ -20,6 +22,57 @@ interface CreateOpportunityModalProps {
   isSaving?: boolean;
 }
 
+function createInitialFormData(opportunity: ApplicationOpportunity | null): ApplicationOpportunity {
+  if (opportunity) return opportunity;
+
+  const now = new Date();
+  const nextMonth = new Date();
+  nextMonth.setMonth(now.getMonth() + 1);
+
+  // Handle timezone offset to ensure local time is displayed correctly in input.
+  const formatForInput = (date: Date) => {
+    const offset = date.getTimezoneOffset() * 60000;
+    const localDate = new Date(date.getTime() - offset);
+    return localDate.toISOString().slice(0, 16);
+  };
+
+  return {
+    id: "",
+    title: "",
+    description: "",
+    startDate: formatForInput(now),
+    endDate: formatForInput(nextMonth),
+    status: "open",
+    visibility: "public",
+    link: "",
+  };
+}
+
+function normalizeOpportunityLinkInput(rawLink: string): string {
+  const trimmed = rawLink.trim();
+  const guestAliases = new Set([
+    "/guest",
+    "guest",
+    "be-a-member",
+    "be a member",
+    "/guest?page=membershipapplications",
+  ]);
+  if (guestAliases.has(trimmed.toLowerCase())) return BE_A_MEMBER_PAGE_LINK;
+  return trimmed;
+}
+
+function isAllowedOpportunityLink(rawLink: string): boolean {
+  const normalized = normalizeOpportunityLinkInput(rawLink);
+  if (normalized === BE_A_MEMBER_PAGE_LINK) return true;
+  try {
+    // Accept only absolute HTTP(S) for external links.
+    const parsed = new URL(normalized);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export default function CreateOpportunityModalEnhanced({
   isOpen,
   onClose,
@@ -28,47 +81,7 @@ export default function CreateOpportunityModalEnhanced({
   onSave,
   isSaving = false,
 }: CreateOpportunityModalProps) {
-  const [formData, setFormData] = useState<ApplicationOpportunity>({
-    id: "",
-    title: "",
-    description: "",
-    startDate: "",
-    endDate: "",
-    status: "open",
-    visibility: "public",
-    link: "",
-  });
-
-  // Load opportunity data when opening for edit
-  useEffect(() => {
-    if (opportunity) {
-      setFormData(opportunity);
-    } else {
-      // Set default dates if creating new
-      const now = new Date();
-      const nextMonth = new Date();
-      nextMonth.setMonth(now.getMonth() + 1);
-      
-      // Format to YYYY-MM-DDTHH:mm for datetime-local input
-      const formatForInput = (date: Date) => {
-        // Handle timezone offset to ensure local time is displayed correctly in input
-        const offset = date.getTimezoneOffset() * 60000;
-        const localDate = new Date(date.getTime() - offset);
-        return localDate.toISOString().slice(0, 16);
-      };
-
-      setFormData({
-        id: "",
-        title: "",
-        description: "",
-        startDate: formatForInput(now),
-        endDate: formatForInput(nextMonth),
-        status: "open",
-        visibility: "public",
-        link: "",
-      });
-    }
-  }, [opportunity, isOpen]);
+  const [formData, setFormData] = useState<ApplicationOpportunity>(() => createInitialFormData(opportunity));
 
   const handleSubmit = async () => {
     if (!formData.title.trim()) {
@@ -91,8 +104,15 @@ export default function CreateOpportunityModalEnhanced({
       toast.error("Link is required");
       return;
     }
+    if (!isAllowedOpportunityLink(formData.link)) {
+      toast.error("Use a valid URL (https://...) or /guest?page=MembershipApplications");
+      return;
+    }
 
-    await Promise.resolve(onSave(formData));
+    await Promise.resolve(onSave({
+      ...formData,
+      link: normalizeOpportunityLinkInput(formData.link),
+    }));
   };
 
   if (!isOpen) return null;
@@ -211,16 +231,26 @@ export default function CreateOpportunityModalEnhanced({
             <div className="relative">
               <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <input
-                type="url"
+                type="text"
                 value={formData.link}
                 onChange={(e) => setFormData({ ...formData, link: e.target.value })}
                 className="w-full pl-10 pr-4 py-2 rounded-lg border bg-white dark:bg-gray-800 focus:ring-2 focus:ring-[#f6421f] outline-none"
                 style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}
-                placeholder="https://forms.google.com/..."
+                placeholder="https://forms.google.com/... or /guest?page=MembershipApplications"
               />
             </div>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, link: BE_A_MEMBER_PAGE_LINK })}
+                className="px-3 py-1.5 rounded-lg text-xs border bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.12)" }}
+              >
+                Use Be a Member page
+              </button>
+            </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Link to Google Form or other external registration page.
+              Use external URL or set <code>/guest?page=MembershipApplications</code> for the Be a Member page.
             </p>
           </div>
 
@@ -232,7 +262,7 @@ export default function CreateOpportunityModalEnhanced({
               </label>
               <CustomDropdown
                 value={formData.status}
-                onChange={(value) => setFormData({ ...formData, status: value as any })}
+                onChange={(value) => setFormData({ ...formData, status: value as ApplicationOpportunity["status"] })}
                 options={[
                   { value: "open", label: "Open" },
                   { value: "closed", label: "Closed" },
@@ -251,7 +281,7 @@ export default function CreateOpportunityModalEnhanced({
               </label>
               <CustomDropdown
                 value={formData.visibility}
-                onChange={(value) => setFormData({ ...formData, visibility: value as any })}
+                onChange={(value) => setFormData({ ...formData, visibility: value as ApplicationOpportunity["visibility"] })}
                 options={[
                   { value: "public", label: "Public" },
                   { value: "hidden", label: "Hidden" },

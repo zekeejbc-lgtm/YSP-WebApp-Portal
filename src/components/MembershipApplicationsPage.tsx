@@ -17,6 +17,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import {
   Plus, Edit, Trash2, Calendar, Clock, ExternalLink,
   Lock, Unlock, Archive, CheckCircle, Eye, EyeOff,
@@ -29,12 +30,16 @@ import CreateOpportunityModalEnhanced from "./CreateOpportunityModalEnhanced";
 import CustomDropdown from "./CustomDropdown";
 import { SkeletonCardGrid } from "./SkeletonCard";
 import { type UploadToastMessage } from "./UploadToast";
+import { type PendingApplication } from "../types/app";
 import { 
   fetchOpportunities, 
   addOpportunity, 
   updateOpportunity, 
   deleteOpportunity 
 } from "../services/gasApplicationsService";
+
+const MANILA_TIME_ZONE = "Asia/Manila";
+const BE_A_MEMBER_PAGE_LINK = "/guest?page=MembershipApplications";
 
 export interface ApplicationOpportunity {
   id: string;
@@ -52,8 +57,8 @@ interface MembershipApplicationsPageProps {
   isDark: boolean;
   userRole: string;
   isLoggedIn?: boolean;
-  pendingApplications?: unknown[];
-  setPendingApplications?: (apps: unknown[]) => void;
+  pendingApplications?: PendingApplication[];
+  setPendingApplications?: (apps: PendingApplication[]) => void;
   username?: string;
   onModalStateChange?: (isOpen: boolean) => void;
   addUploadToast?: (message: UploadToastMessage) => void;
@@ -65,11 +70,13 @@ export default function MembershipApplicationsPage({
   onClose,
   isDark,
   userRole,
+  isLoggedIn = false,
   onModalStateChange,
   addUploadToast = () => {},
   updateUploadToast = () => {},
   removeUploadToast = () => {},
 }: MembershipApplicationsPageProps) {
+  const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -85,6 +92,30 @@ export default function MembershipApplicationsPage({
 
   const isAdminOrAuditor = userRole === "admin" || userRole === "auditor";
 
+  const getRolePathSegment = useCallback((role: string) => {
+    switch (role) {
+      case "auditor":
+        return "auditor";
+      case "admin":
+        return "admin";
+      case "head":
+        return "officer";
+      case "member":
+        return "member";
+      default:
+        return "guest";
+    }
+  }, []);
+
+  const handleGoHome = useCallback(() => {
+    onClose();
+    if (!isLoggedIn) {
+      navigate("/Home");
+      return;
+    }
+    navigate(`/${getRolePathSegment(userRole)}`);
+  }, [getRolePathSegment, isLoggedIn, navigate, onClose, userRole]);
+
   // Notify parent about modal state
   useEffect(() => {
     onModalStateChange?.(showCreateModal || !!viewingOpportunity);
@@ -98,7 +129,15 @@ export default function MembershipApplicationsPage({
     
     const result = await fetchOpportunities();
     if (result.success && result.data) {
-      setOpportunities(result.data);
+      const normalized = result.data.map((opp) => {
+        const parsedEnd = new Date(opp.endDate);
+        const shouldAutoComplete =
+          opp.status === "open" &&
+          !Number.isNaN(parsedEnd.getTime()) &&
+          parsedEnd.getTime() <= Date.now();
+        return shouldAutoComplete ? { ...opp, status: "completed" as const } : opp;
+      });
+      setOpportunities(normalized);
     } else {
       console.error("[MembershipApplications] Failed to load opportunities:", result.error);
       toast.error(result.error || "Failed to load opportunities");
@@ -294,10 +333,56 @@ export default function MembershipApplicationsPage({
   const formatDateTime = (dateStr: string) => {
     if (!dateStr) return "N/A";
     const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return "Invalid date";
     return date.toLocaleString('en-US', {
       month: 'short', day: 'numeric', year: 'numeric',
-      hour: 'numeric', minute: '2-digit', hour12: true
+      hour: 'numeric', minute: '2-digit', hour12: true,
+      timeZone: MANILA_TIME_ZONE,
     });
+  };
+
+  const resolveOpportunityLink = (rawLink: string) => {
+    const trimmed = (rawLink || "").trim();
+    if (!trimmed) return "";
+
+    const guestAliases = new Set([
+      "/guest",
+      "guest",
+      "be-a-member",
+      "be a member",
+      "/guest?page=membershipapplications",
+    ]);
+    if (guestAliases.has(trimmed.toLowerCase())) {
+      return `${window.location.origin}${BE_A_MEMBER_PAGE_LINK}`;
+    }
+
+    try {
+      const url = new URL(trimmed);
+      if (url.pathname === "/guest") {
+        const page = url.searchParams.get("page");
+        if (!page) {
+          return `${window.location.origin}${BE_A_MEMBER_PAGE_LINK}`;
+        }
+      }
+      return url.toString();
+    } catch {
+      if (trimmed.startsWith("/")) {
+        if (trimmed.toLowerCase() === "/guest") {
+          return `${window.location.origin}${BE_A_MEMBER_PAGE_LINK}`;
+        }
+        return `${window.location.origin}${trimmed}`;
+      }
+      return trimmed;
+    }
+  };
+
+  const openOpportunityLink = (rawLink: string) => {
+    const resolved = resolveOpportunityLink(rawLink);
+    if (!resolved) {
+      toast.error("No application link configured");
+      return;
+    }
+    window.open(resolved, "_blank", "noopener,noreferrer");
   };
 
   const getStatusColor = (status: string) => {
@@ -327,7 +412,7 @@ export default function MembershipApplicationsPage({
       isDark={isDark}
       onClose={onClose}
       breadcrumbs={[
-        { label: "Home", onClick: onClose },
+        { label: "Home", onClick: handleGoHome },
         { label: "Opportunities", onClick: undefined },
       ]}
     >
@@ -455,6 +540,7 @@ export default function MembershipApplicationsPage({
                     onToggleVisibility={handleToggleVisibility}
                     onEdit={handleEditOpportunity}
                     onDelete={handleDeleteOpportunity}
+                    onOpenLink={openOpportunityLink}
                   />
                 ))
               ) : (
@@ -469,6 +555,7 @@ export default function MembershipApplicationsPage({
                   onToggleVisibility={handleToggleVisibility}
                   onEdit={handleEditOpportunity}
                   onDelete={handleDeleteOpportunity}
+                  onOpenLink={openOpportunityLink}
                 />
               )}
             </div>
@@ -505,6 +592,7 @@ export default function MembershipApplicationsPage({
                           onToggleVisibility={handleToggleVisibility}
                           onEdit={handleEditOpportunity}
                           onDelete={handleDeleteOpportunity}
+                          onOpenLink={openOpportunityLink}
                           isArchived={true}
                         />
                       ))
@@ -520,6 +608,7 @@ export default function MembershipApplicationsPage({
                         onToggleVisibility={handleToggleVisibility}
                         onEdit={handleEditOpportunity}
                         onDelete={handleDeleteOpportunity}
+                        onOpenLink={openOpportunityLink}
                       />
                     )}
                   </div>
@@ -611,7 +700,7 @@ export default function MembershipApplicationsPage({
               {(viewingOpportunity.status === "open" || isAdminOrAuditor || viewingOpportunity.status === "archived") && (
                 <Button
                   variant="primary"
-                  onClick={() => window.open(viewingOpportunity.link, "_blank")}
+                  onClick={() => openOpportunityLink(viewingOpportunity.link)}
                   icon={<ExternalLink className="w-4 h-4" />}
                   className="flex-1 justify-center py-3"
                   disabled={viewingOpportunity.status !== "open" && !isAdminOrAuditor && viewingOpportunity.status !== "archived"}
@@ -667,6 +756,7 @@ function OpportunityCard({
   onToggleVisibility,
   onEdit,
   onDelete,
+  onOpenLink,
   isArchived = false
 }: {
   opp: ApplicationOpportunity;
@@ -680,6 +770,7 @@ function OpportunityCard({
   onToggleVisibility: (o: ApplicationOpportunity) => void;
   onEdit: (o: ApplicationOpportunity) => void;
   onDelete: (id: string) => void;
+  onOpenLink: (link: string) => void;
   isArchived?: boolean;
 }) {
   const isList = viewMode === "list";
@@ -768,7 +859,7 @@ function OpportunityCard({
           {(opp.status === "open" || isAdminOrAuditor || opp.status === "archived") && (
             <Button
               variant={opp.status === "open" ? "primary" : "secondary"}
-              onClick={() => window.open(opp.link, "_blank")}
+              onClick={() => onOpenLink(opp.link)}
               icon={<ExternalLink className="w-4 h-4" />}
               size="sm"
               className={isList ? "" : "w-full justify-center"}
@@ -821,6 +912,7 @@ function OpportunityTable({
   onToggleVisibility,
   onEdit,
   onDelete,
+  onOpenLink,
 }: {
   opportunities: ApplicationOpportunity[];
   isDark: boolean;
@@ -832,6 +924,7 @@ function OpportunityTable({
   onToggleVisibility: (o: ApplicationOpportunity) => void;
   onEdit: (o: ApplicationOpportunity) => void;
   onDelete: (id: string) => void;
+  onOpenLink: (link: string) => void;
 }) {
   return (
     <div
@@ -918,7 +1011,7 @@ function OpportunityTable({
                   </button>
                   {(opp.status === "open" || isAdminOrAuditor || opp.status === "archived") && (
                     <button
-                      onClick={() => window.open(opp.link, "_blank")}
+                      onClick={() => onOpenLink(opp.link)}
                       className="p-2 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-900/20 text-gray-500 hover:text-orange-600 dark:text-gray-400 dark:hover:text-orange-400 transition-colors"
                       title={opp.status === "open" ? "Apply now" : "View link"}
                       aria-label={opp.status === "open" ? "Apply now" : "View link"}

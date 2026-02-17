@@ -12,12 +12,12 @@
  * =============================================================================
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { Search, UserPlus, Eye, Edit, Mail, FileText, CheckCircle, XCircle, Clock, X, LayoutGrid, Table as TableIcon, User } from "lucide-react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { Search, UserPlus, Eye, Edit, Mail, CheckCircle, Clock, X, LayoutGrid, Table as TableIcon, User, Phone, MapPin } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
-import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
+import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
 import { AddMemberModal, EditMemberModal, ViewMemberModal, type Member } from "./ManageMembersModals";
 import AccountCreationModal from "./AccountCreationModal";
 import CustomDropdown from "./CustomDropdown";
@@ -31,6 +31,13 @@ import {
   clearDirectoryCache,
 } from "../services/gasDirectoryService";
 import { updateUserProfileAsAdmin, type UserProfile } from "../services/gasLoginService";
+import {
+  getSyncedApplicantSheet,
+  getApplicantImageDataUrl,
+  syncApplicantSheet,
+  type SyncedApplicantSheetData,
+} from "../services/gasApplicationsService";
+import { useLocation, useNavigate } from "react-router-dom";
 
 // =================== SKELETON COMPONENTS ===================
 
@@ -285,8 +292,11 @@ interface ApplicationData {
   dateOfBirth: string;
   age: number;
   gender: string;
+  pronouns?: string;
   civilStatus: string;
   nationality: string;
+  religion?: string;
+  medicalConcerns?: string;
   chapter: string;
   committeePreference: string;
   desiredRole: string;
@@ -308,8 +318,10 @@ interface ApplicationData {
     type: string;
     name: string;
     url: string;
+    thumbnailUrl?: string;
   }[];
   profilePicture?: string;
+  additionalFields?: Record<string, string>;
 }
 
 interface ManageMembersPageProps {
@@ -318,25 +330,348 @@ interface ManageMembersPageProps {
   pendingApplications: PendingApplication[];
   setPendingApplications: (apps: PendingApplication[]) => void;
   currentUserName: string;
+  onModalStateChange?: (isOpen: boolean) => void;
 }
 
 // Logo URL for PDF export
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
+const ORG_NAME = "Youth Service Philippines";
+const ORG_CHAPTER = "Tagum Chapter";
+const ORG_MOTTO = "Shaping the Future to a Greater Society";
 const ITEMS_PER_PAGE = 10;
 const MEMBERS_CACHE_KEY = "ysp_manage_members_cache";
+const APPLICANT_MAPPING_DEBUG = true;
+const APPLICANT_IMAGE_LINK_CACHE_KEY = "ysp_applicant_image_link_cache_v1";
+
+function getApplicantImageLinkCache(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(APPLICANT_IMAGE_LINK_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function setApplicantImageLinkCache(cache: Record<string, string>) {
+  try {
+    localStorage.setItem(APPLICANT_IMAGE_LINK_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // ignore quota/storage errors
+  }
+}
+
+function transformDriveLinkLikeProjects(rawUrl?: string): string {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return "";
+  const fileId = extractDriveIdFromAny(raw);
+  if (!fileId) return raw;
+  // Mirror Homepage_Main.gs convertToCORSFreeLink output.
+  return `https://drive.google.com/thumbnail?id=${fileId}&sz=w4000`;
+}
+
+function getTransformedProfileLinkWithCache(rawUrl?: string): string {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return "";
+  const cache = getApplicantImageLinkCache();
+  if (cache[raw]) return cache[raw];
+  const transformed = transformDriveLinkLikeProjects(raw);
+  if (transformed) {
+    cache[raw] = transformed;
+    setApplicantImageLinkCache(cache);
+  }
+  return transformed;
+}
+
+function normalizeProfileImageUrl(rawUrl?: string): string {
+  const candidates = getProfileImageCandidates(rawUrl);
+  return candidates[0] || "";
+}
+
+function extractUrlsFromText(raw?: string): string[] {
+  const source = String(raw || "").trim();
+  if (!source) return [];
+  const matches = source.match(/https?:\/\/[^\s<>"')]+/gi) || [];
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  matches.forEach((item) => {
+    const value = item.replace(/[),.;]+$/, "");
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    cleaned.push(value);
+  });
+  return cleaned;
+}
+
+function extractDriveIdFromAny(raw?: string): string {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const filePath = value.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (filePath?.[1]) return filePath[1];
+
+  const idParam = value.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
+  if (idParam?.[1]) return idParam[1];
+
+  const standaloneIds = value.match(/\b[a-zA-Z0-9_-]{20,}\b/g) || [];
+  if (standaloneIds.length === 1) return standaloneIds[0];
+  return "";
+}
+
+function getProfileImageCandidates(rawUrl?: string): string[] {
+  const value = (rawUrl || "").trim();
+  if (!value) return [];
+  const urls = extractUrlsFromText(value);
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  const pushCandidate = (url: string) => {
+    const normalized = String(url || "").trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  const addDriveCandidates = (id: string) => {
+    if (!id) return;
+    pushCandidate(`https://drive.google.com/thumbnail?id=${id}&sz=w4000`);
+    pushCandidate(`https://drive.usercontent.google.com/download?id=${id}&export=view`);
+    pushCandidate(`https://lh3.googleusercontent.com/d/${id}`);
+    pushCandidate(`https://drive.google.com/uc?export=view&id=${id}`);
+    pushCandidate(`https://drive.google.com/uc?export=download&id=${id}`);
+    pushCandidate(`https://drive.google.com/open?id=${id}`);
+  };
+
+  if (urls.length > 0) {
+    urls.forEach((url) => {
+      const driveId = extractDriveIdFromAny(url);
+      if (driveId) addDriveCandidates(driveId);
+      pushCandidate(url);
+    });
+  } else {
+    const driveId = extractDriveIdFromAny(value);
+    if (driveId) addDriveCandidates(driveId);
+    else pushCandidate(value.split(/[\s,\n\r]+/).find(Boolean) || value);
+  }
+
+  return candidates;
+}
+
+function getAccessibleImageUrlLikeMyQR(url: string): string {
+  const source = String(url || "").trim();
+  if (!source) return "";
+  let fileId = "";
+  const idMatch = source.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  const dMatch = source.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  const lh3Match = source.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/);
+  if (idMatch?.[1]) fileId = idMatch[1];
+  else if (dMatch?.[1]) fileId = dMatch[1];
+  else if (lh3Match?.[1]) fileId = lh3Match[1];
+  return fileId ? `https://lh3.googleusercontent.com/d/${fileId}=s500` : source;
+}
+
+function loadImageLikeMyQR(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const accessibleUrl = getAccessibleImageUrlLikeMyQR(src);
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.referrerPolicy = "no-referrer";
+    img.onload = () => resolve(img);
+    img.onerror = () => {
+      const fileId =
+        extractDriveIdFromAny(src) ||
+        extractDriveIdFromAny(accessibleUrl);
+      if (fileId) {
+        const altUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w500`;
+        const img2 = new Image();
+        img2.crossOrigin = "anonymous";
+        img2.referrerPolicy = "no-referrer";
+        img2.onload = () => resolve(img2);
+        img2.onerror = () => reject(new Error("Image load failed"));
+        img2.src = altUrl;
+        return;
+      }
+      reject(new Error("Image load failed"));
+    };
+    img.src = accessibleUrl;
+  });
+}
+
+async function loadImageDataUrl(imageUrl: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || 300;
+          canvas.height = img.naturalHeight || 300;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(null);
+            return;
+          }
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/png"));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = imageUrl;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function loadImageAsCircleDataUrl(imageUrl: string, size = 220): Promise<string | null> {
+  const rawDataUrl = await loadImageDataUrl(imageUrl);
+  if (!rawDataUrl) return null;
+
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(null);
+            return;
+          }
+          ctx.clearRect(0, 0, size, size);
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+          ctx.closePath();
+          ctx.clip();
+          ctx.drawImage(img, 0, 0, size, size);
+          ctx.restore();
+          resolve(canvas.toDataURL("image/png"));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = rawDataUrl;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function loadFirstWorkingCircleDataUrl(rawValue?: string, size = 220): Promise<string | null> {
+  const candidates = getProfileImageCandidates(rawValue);
+  for (let i = 0; i < candidates.length; i++) {
+    const dataUrl = await loadImageAsCircleDataUrl(candidates[i], size);
+    if (dataUrl) return dataUrl;
+  }
+  return null;
+}
+
+async function loadCircleDataUrlLikeMyQR(rawValue?: string, size = 220): Promise<string | null> {
+  const candidates = getProfileImageCandidates(rawValue);
+  for (let i = 0; i < candidates.length; i++) {
+    try {
+      const img = await loadImageLikeMyQR(candidates[i]);
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(img, 0, 0, size, size);
+      ctx.restore();
+      return canvas.toDataURL("image/png");
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+function previewDebugValue(value: unknown): string {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (text.length <= 140) return text;
+  return `${text.slice(0, 140)}...`;
+}
+
+function logApplicantFrontDebug(
+  label: string,
+  applicationOrData?: PendingApplication | ApplicationData | null
+) {
+  if (!APPLICANT_MAPPING_DEBUG || !applicationOrData) return;
+  const data = "fullData" in applicationOrData ? applicationOrData.fullData : applicationOrData;
+  const hasSocial = Boolean(data.facebook || data.instagram || data.twitter);
+  const normalizedProfilePicture = normalizeProfileImageUrl(data.profilePicture);
+  console.log(`[Applicants UI Debug] ${label}`, {
+    name: data.fullName,
+    email: data.email,
+    address: previewDebugValue(data.address),
+    facebook: previewDebugValue(data.facebook),
+    instagram: previewDebugValue(data.instagram),
+    twitter: previewDebugValue(data.twitter),
+    profilePictureRaw: previewDebugValue(data.profilePicture),
+    profilePictureNormalized: previewDebugValue(normalizedProfilePicture),
+    hasSocial,
+    additionalFieldsCount: Object.keys(data.additionalFields || {}).length,
+    additionalFieldKeys: Object.keys(data.additionalFields || {}).slice(0, 8),
+  });
+}
+
+function hasContent(value?: string | number | null): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "number") return !Number.isNaN(value) && value !== 0;
+  return String(value).trim().length > 0;
+}
+
+function toDriveDownloadUrl(rawUrl?: string): string {
+  const value = (rawUrl || "").trim();
+  if (!value) return "";
+
+  const filePathMatch = value.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (filePathMatch?.[1]) {
+    return `https://drive.google.com/uc?export=download&id=${filePathMatch[1]}`;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const driveId = parsed.searchParams.get("id");
+    if (driveId) {
+      return `https://drive.google.com/uc?export=download&id=${driveId}`;
+    }
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
+function formatDateSafe(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value || "N/A";
+  return parsed.toLocaleDateString();
+}
 
 export default function ManageMembersPage({ 
   onClose, 
   isDark, 
   pendingApplications,
   setPendingApplications,
-  currentUserName
+  currentUserName,
+  onModalStateChange,
 }: ManageMembersPageProps) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterRole, setFilterRole] = useState("all");
   const [filterCommittee, setFilterCommittee] = useState("all");
   const [viewMode, setViewMode] = useState<"tile" | "table">("table");
-  const [showPendingsModal, setShowPendingsModal] = useState(false);
   const [selectedApplication, setSelectedApplication] = useState<PendingApplication | null>(null);
   
   const [showAddMemberModal, setShowAddMemberModal] = useState(false);
@@ -354,6 +689,17 @@ export default function ManageMembersPage({
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasInitializedRef = useRef(false);
   const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
+  const [sheetUrlInput, setSheetUrlInput] = useState("");
+  const [isSyncingApplicants, setIsSyncingApplicants] = useState(false);
+  const [isLoadingSyncedApplicants, setIsLoadingSyncedApplicants] = useState(true);
+  const [syncedSheetName, setSyncedSheetName] = useState("");
+  const [syncedHeaders, setSyncedHeaders] = useState<string[]>([]);
+  const [syncedRowCount, setSyncedRowCount] = useState(0);
+  const [lastSyncedAt, setLastSyncedAt] = useState("");
+
+  const queryParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const isPendingPageView = queryParams.get("view") === "pending";
+  const selectedApplicantIdInUrl = queryParams.get("applicantId") || "";
 
   const addUploadToast = useCallback((message: UploadToastMessage) => {
     setUploadToastMessages(prev => [...prev, message]);
@@ -369,6 +715,90 @@ export default function ManageMembersPage({
     setUploadToastMessages(prev => prev.filter(msg => msg.id !== id));
   }, []);
 
+  const applySyncedApplicants = useCallback((data?: SyncedApplicantSheetData) => {
+    if (!data) return;
+    if (APPLICANT_MAPPING_DEBUG) {
+      console.log("[Applicants UI Debug] synced payload summary", {
+        sheetName: data.sheetName || "",
+        rowCount: Number(data.rowCount || 0),
+        headerCount: Array.isArray(data.headers) ? data.headers.length : 0,
+        applicantsCount: Array.isArray(data.applicants) ? data.applicants.length : 0,
+      });
+      const firstApplicant = (data.applicants || [])[0] as PendingApplication | undefined;
+      if (firstApplicant) {
+        logApplicantFrontDebug("first applicant from sync", firstApplicant);
+      }
+    }
+    setSheetUrlInput(data.sheetUrl || "");
+    setSyncedSheetName(data.sheetName || "");
+    setSyncedHeaders(Array.isArray(data.headers) ? data.headers : []);
+    setSyncedRowCount(Number(data.rowCount || 0));
+    setLastSyncedAt(data.syncedAt || "");
+    setPendingApplications((data.applicants || []) as PendingApplication[]);
+  }, [setPendingApplications]);
+
+  const loadSyncedApplicants = useCallback(async () => {
+    setIsLoadingSyncedApplicants(true);
+    const result = await getSyncedApplicantSheet();
+    if (result.success) {
+      applySyncedApplicants(result.data);
+    } else if (result.data) {
+      applySyncedApplicants(result.data);
+    } else if (result.error) {
+      console.error("[ManageMembers] Failed to load synced applicant sheet:", result.error);
+      toast.error(result.error);
+    }
+    setIsLoadingSyncedApplicants(false);
+  }, [applySyncedApplicants]);
+
+  const handleSyncApplicants = useCallback(async () => {
+    const normalizedUrl = sheetUrlInput.trim();
+    if (!normalizedUrl) {
+      toast.error("Please paste a Google Sheet link first.");
+      return;
+    }
+
+    setIsSyncingApplicants(true);
+    const result = await syncApplicantSheet(normalizedUrl);
+    if (result.success && result.data) {
+      applySyncedApplicants(result.data);
+      toast.success(`Synced ${result.data.applicants.length} applicant(s).`);
+    } else {
+      console.error("[ManageMembers] Failed to sync applicant sheet:", result.error);
+      toast.error(result.error || "Failed to sync applicant sheet");
+    }
+    setIsSyncingApplicants(false);
+  }, [applySyncedApplicants, sheetUrlInput]);
+
+  const updateManageMembersUrl = useCallback((updates: { view?: string | null; applicantId?: string | null }) => {
+    const params = new URLSearchParams(location.search);
+    params.set("page", "ManageMembers");
+
+    if (updates.view === null) params.delete("view");
+    else if (updates.view !== undefined) params.set("view", updates.view);
+
+    if (updates.applicantId === null) params.delete("applicantId");
+    else if (updates.applicantId !== undefined) params.set("applicantId", updates.applicantId);
+
+    navigate(`${location.pathname}?${params.toString()}`);
+  }, [location.pathname, location.search, navigate]);
+
+  const openPendingsPage = useCallback(() => {
+    updateManageMembersUrl({ view: "pending", applicantId: null });
+  }, [updateManageMembersUrl]);
+
+  const openApplicantTrail = useCallback((applicationId: string) => {
+    updateManageMembersUrl({ view: "pending", applicantId: applicationId });
+  }, [updateManageMembersUrl]);
+
+  const clearApplicantTrail = useCallback(() => {
+    updateManageMembersUrl({ applicantId: null });
+  }, [updateManageMembersUrl]);
+
+  const closePendingsPage = useCallback(() => {
+    updateManageMembersUrl({ view: null, applicantId: null });
+  }, [updateManageMembersUrl]);
+
   // =================== FETCH MEMBERS FROM BACKEND ===================
   
   const filterMembersByQuery = useCallback((list: Member[], query: string) => {
@@ -383,7 +813,7 @@ export default function ManageMembersPage({
         member.committee,
         member.role,
       ]
-        .filter(Boolean)
+        .filter((value): value is string => Boolean(value))
         .some((value) => value.toLowerCase().includes(normalized))
     );
   }, []);
@@ -503,6 +933,10 @@ export default function ManageMembersPage({
   }, [fetchAllMembers]);
 
   useEffect(() => {
+    loadSyncedApplicants();
+  }, [loadSyncedApplicants]);
+
+  useEffect(() => {
     if (!hasInitializedRef.current) {
       hasInitializedRef.current = true;
       return;
@@ -545,7 +979,10 @@ export default function ManageMembersPage({
 
   const totalMembers = members.length;
   const activeMembers = members.filter((m) => m.status === "Active").length;
-  const pendingCount = pendingApplications.filter((a) => a.status === "pending").length;
+  const pendingApplicationsList = pendingApplications.filter((a) => a.status === "pending");
+  const pendingCount = pendingApplicationsList.length;
+  const selectedApplicantForTrail =
+    pendingApplicationsList.find((app) => app.id === selectedApplicantIdInUrl) || null;
   const viewToggleLabel = viewMode === "table" ? "Table View" : "Tile View";
 
   const [exportType, setExportType] = useState("");
@@ -559,6 +996,60 @@ export default function ManageMembersPage({
       setCurrentPage(totalPages);
     }
   }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    if (!isPendingPageView) {
+      if (selectedApplication) setSelectedApplication(null);
+      return;
+    }
+
+    if (!selectedApplicantIdInUrl) {
+      if (selectedApplication) setSelectedApplication(null);
+      return;
+    }
+
+    const target = pendingApplicationsList.find((app) => app.id === selectedApplicantIdInUrl) || null;
+    if (!target) {
+      setSelectedApplication(null);
+      return;
+    }
+    if (!selectedApplication || selectedApplication.id !== target.id) {
+      setSelectedApplication(target);
+    }
+  }, [
+    isPendingPageView,
+    pendingApplicationsList,
+    selectedApplicantIdInUrl,
+    selectedApplication,
+  ]);
+
+  useEffect(() => {
+    if (!selectedApplication) return;
+    logApplicantFrontDebug(`selected application ${selectedApplication.id}`, selectedApplication);
+  }, [selectedApplication]);
+
+  useEffect(() => {
+    const isAnyModalOpen =
+      Boolean(selectedApplication) ||
+      showAddMemberModal ||
+      showEditMemberModal ||
+      showViewMemberModal ||
+      showAccountModal;
+    onModalStateChange?.(isAnyModalOpen);
+  }, [
+    selectedApplication,
+    showAddMemberModal,
+    showEditMemberModal,
+    showViewMemberModal,
+    showAccountModal,
+    onModalStateChange,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      onModalStateChange?.(false);
+    };
+  }, [onModalStateChange]);
 
   const handleExportCSV = () => {
     if (!filteredMembers.length) {
@@ -862,21 +1353,21 @@ export default function ManageMembersPage({
 
   const handleViewApplication = (application: PendingApplication) => {
     setSelectedApplication(application);
-    setShowPendingsModal(false);
+    openApplicantTrail(application.id);
   };
 
-  const handleApproveApplication = (applicationId: string) => {
+  const handleApproveApplication = (_applicationId: string) => {
     toast.success("Application Approved!", {
       description: "Member has been added to the system",
     });
-    setSelectedApplication(null);
+    clearApplicantTrail();
   };
 
-  const handleRejectApplication = (applicationId: string) => {
+  const handleRejectApplication = (_applicationId: string) => {
     toast.error("Application Rejected", {
       description: "Applicant will be notified via email",
     });
-    setSelectedApplication(null);
+    clearApplicantTrail();
   };
 
   const handleSendEmail = (email: string) => {
@@ -888,7 +1379,193 @@ export default function ManageMembersPage({
     });
   };
 
-  const glassStyle = getGlassStyle(isDark);
+  const handleDownloadApplicationPDF = async (application: PendingApplication) => {
+    const data = application.fullData;
+    const doc = new jsPDF({ orientation: "portrait", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 20;
+
+    // Header (aligned with existing branded exporter style)
+    doc.setFillColor(246, 66, 31);
+    doc.rect(0, 0, pageWidth, 45, "F");
+
+    try {
+      const logo = new Image();
+      logo.src = ORG_LOGO_URL;
+      logo.crossOrigin = "Anonymous";
+      await new Promise((resolve) => {
+        logo.onload = resolve;
+        logo.onerror = resolve;
+      });
+      const logoSize = 30;
+      const logoX = margin;
+      const logoY = 7.5;
+      doc.setFillColor(255, 255, 255);
+      doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 2, "F");
+      doc.addImage(logo, "PNG", logoX, logoY, logoSize, logoSize);
+    } catch {
+      doc.setFillColor(255, 255, 255);
+      doc.circle(margin + 12, 21, 11, "F");
+    }
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text(ORG_NAME, margin + 35, 18);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+    doc.text(ORG_CHAPTER, margin + 35, 26);
+    doc.setFontSize(10);
+    doc.text("APPLICANT PROFILE REPORT", margin + 35, 35);
+
+    const dateStr = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    doc.setFontSize(9);
+    doc.text(`Generated: ${dateStr}`, pageWidth - margin, 35, { align: "right" });
+    doc.text(`Application ID: ${application.id}`, pageWidth - margin, 27, { align: "right" });
+
+    // Profile image holder (circular)
+    const profileCircleX = margin;
+    const profileCircleY = 52;
+    const profileCircleDiameter = 28;
+    doc.setDrawColor(238, 135, 36);
+    doc.setLineWidth(1.2);
+    doc.circle(profileCircleX + profileCircleDiameter / 2, profileCircleY + profileCircleDiameter / 2, profileCircleDiameter / 2, "S");
+    let circleDataUrl: string | null = null;
+    const profileSource = String(data.profilePicture || "").trim();
+    const hasCandidate = getProfileImageCandidates(profileSource).length > 0;
+    if (profileSource && hasCandidate) {
+      const proxiedImage = await getApplicantImageDataUrl(profileSource);
+      if (proxiedImage.success && proxiedImage.dataUrl) {
+        circleDataUrl = await loadImageAsCircleDataUrl(proxiedImage.dataUrl, 360);
+      }
+    }
+    if (!circleDataUrl) {
+      const cachedTransformed = getTransformedProfileLinkWithCache(profileSource);
+      if (cachedTransformed) {
+        circleDataUrl = await loadImageAsCircleDataUrl(cachedTransformed, 360);
+      }
+    }
+    if (!circleDataUrl) {
+      circleDataUrl = await loadFirstWorkingCircleDataUrl(data.profilePicture, 360);
+    }
+    if (!circleDataUrl) {
+      circleDataUrl = await loadCircleDataUrlLikeMyQR(data.profilePicture, 360);
+    }
+    if (circleDataUrl) {
+      doc.addImage(circleDataUrl, "PNG", profileCircleX, profileCircleY, profileCircleDiameter, profileCircleDiameter);
+    }
+
+    doc.setTextColor(30, 41, 59);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text(data.fullName || application.name || "Unnamed Applicant", margin + 36, 60);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`${data.email || application.email || "N/A"} | ${data.phone || application.phone || "N/A"}`, margin + 36, 66);
+
+    const baseRows: [string, string][] = [
+      ["Date Applied", formatDateSafe(application.dateApplied)],
+      ["Committee", data.committeePreference || application.committee || "N/A"],
+      ["Desired Role", data.desiredRole || "N/A"],
+      ["Chapter", data.chapter || "N/A"],
+      ["Gender", data.gender || "N/A"],
+      ["Date of Birth", formatDateSafe(data.dateOfBirth)],
+      ["Age", data.age ? `${data.age}` : "N/A"],
+      ["Civil Status", data.civilStatus || "N/A"],
+      ["Nationality", data.nationality || "N/A"],
+      ["Address", data.address || "N/A"],
+      ["Emergency Contact", data.emergencyContactName || "N/A"],
+      ["Emergency Relation", data.emergencyContactRelation || "N/A"],
+      ["Emergency Number", data.emergencyContactNumber || "N/A"],
+      ["Facebook", data.facebook || "N/A"],
+      ["Instagram", data.instagram || "N/A"],
+      ["Twitter/X", data.twitter || "N/A"],
+    ];
+
+    autoTable(doc, {
+      startY: 76,
+      head: [["Field", "Value"]],
+      body: baseRows,
+      styles: { fontSize: 9, cellPadding: 2.5, overflow: "linebreak" },
+      headStyles: { fillColor: [246, 66, 31], textColor: 255 },
+      columnStyles: {
+        0: { cellWidth: 52, fontStyle: "bold" },
+        1: { cellWidth: 118 },
+      },
+      margin: { left: margin, right: margin, bottom: 22 },
+    });
+
+    let currentY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 74;
+    const sectionFields: Array<{ title: string; content?: string }> = [
+      { title: "Skills", content: data.skills },
+      { title: "Education", content: data.education },
+      { title: "Certifications", content: data.certifications },
+      { title: "Experience", content: data.experience },
+      { title: "Achievements", content: data.achievements },
+      { title: "Volunteer History", content: data.volunteerHistory },
+      { title: "Reason for Joining", content: data.reasonForJoining },
+      { title: "Personal Statement", content: data.personalStatement },
+    ];
+    const filledSections = sectionFields.filter((s) => (s.content || "").trim().length > 0);
+    if (filledSections.length > 0) {
+      autoTable(doc, {
+        startY: currentY + 6,
+        head: [["Section", "Details"]],
+        body: filledSections.map((s) => [s.title, s.content || ""]),
+        styles: { fontSize: 9, cellPadding: 2.5, overflow: "linebreak" },
+        headStyles: { fillColor: [238, 135, 36], textColor: 255 },
+        columnStyles: {
+          0: { cellWidth: 52, fontStyle: "bold" },
+          1: { cellWidth: 118 },
+        },
+        margin: { left: margin, right: margin, bottom: 22 },
+      });
+      currentY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || currentY;
+    }
+
+    const extraRows = Object.entries(data.additionalFields || {}).map(([k, v]) => [k, v]);
+    if (extraRows.length > 0) {
+      autoTable(doc, {
+        startY: currentY + 6,
+        head: [["Extra Column", "Value"]],
+        body: extraRows,
+        styles: { fontSize: 8.5, cellPadding: 2.2, overflow: "linebreak" },
+        headStyles: { fillColor: [99, 102, 112], textColor: 255 },
+        columnStyles: {
+          0: { cellWidth: 70, fontStyle: "bold" },
+          1: { cellWidth: 100 },
+        },
+        margin: { left: margin, right: margin, bottom: 22 },
+      });
+    }
+
+    const totalPages = doc.getNumberOfPages();
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      doc.setPage(pageNum);
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.5);
+      doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+
+      doc.setFontSize(7);
+      doc.setTextColor(100, 100, 100);
+      doc.setFont("helvetica", "normal");
+      doc.text(`${ORG_NAME} - ${ORG_CHAPTER}`, margin, pageHeight - 10);
+      doc.setFont("helvetica", "italic");
+      doc.text(`"${ORG_MOTTO}"`, pageWidth / 2, pageHeight - 10, { align: "center" });
+      doc.setFont("helvetica", "normal");
+      doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: "right" });
+    }
+
+    doc.save(`YSP_Application_${application.id}.pdf`);
+    toast.success("Applicant PDF downloaded.");
+  };
 
   return (
     <>
@@ -979,6 +1656,159 @@ export default function ManageMembersPage({
           )}
         </div>
 
+        {isPendingPageView ? (
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-xs sm:text-sm mb-1">
+                  <button
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    onClick={closePendingsPage}
+                  >
+                    Manage Members
+                  </button>
+                  <span className="text-muted-foreground/70">/</span>
+                  <span
+                    style={{
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                      color: DESIGN_TOKENS.colors.brand.orange,
+                    }}
+                  >
+                    Pending Applications
+                  </span>
+                  {selectedApplicantIdInUrl && (
+                    <>
+                      <span className="text-muted-foreground/70">/</span>
+                      <span className="text-muted-foreground truncate max-w-[180px] sm:max-w-[260px]">
+                        {selectedApplicantForTrail?.name || selectedApplicantIdInUrl}
+                      </span>
+                    </>
+                  )}
+                </div>
+                <h3
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: DESIGN_TOKENS.colors.brand.red,
+                  }}
+                >
+                  Pending Applications ({pendingCount})
+                </h3>
+              </div>
+              <Button variant="secondary" size="sm" onClick={closePendingsPage}>
+                Back to Members
+              </Button>
+            </div>
+
+            <div
+              className="rounded-xl p-4 border mb-5"
+              style={{
+                background: isDark ? 'rgba(30, 41, 59, 0.55)' : 'rgba(255, 255, 255, 0.75)',
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)',
+              }}
+            >
+              <div className="flex flex-col gap-3">
+                <label
+                  className="text-sm"
+                  style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+                >
+                  Google Sheet Link
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    value={sheetUrlInput}
+                    onChange={(e) => setSheetUrlInput(e.target.value)}
+                    placeholder="Paste Google Sheet URL here..."
+                    className="flex-1 px-3 py-2 rounded-lg border text-sm bg-white dark:bg-gray-900"
+                    style={{
+                      borderColor: isDark ? "rgba(255, 255, 255, 0.16)" : "rgba(0, 0, 0, 0.15)",
+                    }}
+                  />
+                  <Button
+                    variant="primary"
+                    onClick={handleSyncApplicants}
+                    disabled={isSyncingApplicants}
+                  >
+                    {isSyncingApplicants ? "Syncing..." : "Sync"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={loadSyncedApplicants}
+                    disabled={isLoadingSyncedApplicants || isSyncingApplicants}
+                  >
+                    {isLoadingSyncedApplicants ? "Loading..." : "Reload"}
+                  </Button>
+                </div>
+                {(syncedSheetName || syncedHeaders.length > 0 || lastSyncedAt) && (
+                  <div className="text-xs text-muted-foreground">
+                    <span>Sheet: {syncedSheetName || "Unknown"}</span>
+                    <span className="mx-2">|</span>
+                    <span>Rows: {syncedRowCount}</span>
+                    <span className="mx-2">|</span>
+                    <span>Headers: {syncedHeaders.length}</span>
+                    {lastSyncedAt && (
+                      <>
+                        <span className="mx-2">|</span>
+                        <span>Last Synced: {new Date(lastSyncedAt).toLocaleString()}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {pendingApplicationsList.map((application) => (
+                <div
+                  key={application.id}
+                  className="rounded-xl p-6 border cursor-pointer hover:shadow-lg transition-all"
+                  style={{
+                    background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                  }}
+                  onClick={() => handleViewApplication(application)}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h4
+                        className="mb-2"
+                        style={{
+                          fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                          fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                          color: DESIGN_TOKENS.colors.brand.orange,
+                        }}
+                      >
+                        {application.name}
+                      </h4>
+                      <p className="text-sm text-muted-foreground mb-1">{application.email}</p>
+                      <p className="text-sm text-muted-foreground mb-2">{application.phone}</p>
+                    </div>
+                    <button
+                      className="px-3 py-1.5 rounded-lg text-white text-sm transition-all hover:scale-105"
+                      style={{
+                        background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                      }}
+                    >
+                      View Application
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {pendingApplicationsList.length === 0 && (
+                <div className="text-center py-12">
+                  <Clock className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+                  <p className="text-muted-foreground">No pending applications</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+        <>
         {/* Search and Filters */}
         <div className="flex flex-col gap-4 mb-4">
           <div className="relative">
@@ -1050,7 +1880,7 @@ export default function ManageMembersPage({
           <div className="flex flex-wrap gap-2 justify-end">
             <Button
               variant="secondary"
-              onClick={() => setShowPendingsModal(true)}
+              onClick={openPendingsPage}
               icon={<Clock className="w-5 h-5" />}
               size="sm"
             >
@@ -1352,6 +2182,8 @@ export default function ManageMembersPage({
             onPageChange={setCurrentPage}
           />
         )}
+        </>
+        )}
       </PageLayout>
 
       {/* ===========================================
@@ -1361,109 +2193,17 @@ export default function ManageMembersPage({
         (and its sticky header) rather than being trapped inside it.
       */}
 
-      {/* Pendings Modal */}
-      {showPendingsModal && (
-        <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-          style={{ zIndex: 'var(--z-modal, 1000)' }}
-          onClick={() => setShowPendingsModal(false)}
-        >
-          <div
-            className="rounded-xl p-6 max-w-4xl w-full max-h-[80vh] overflow-y-auto border"
-            style={{
-              background: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
-              backdropFilter: 'blur(20px)',
-              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h3
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  color: DESIGN_TOKENS.colors.brand.red,
-                }}
-              >
-                Pending Applications ({pendingCount})
-              </h3>
-              <button
-                onClick={() => setShowPendingsModal(false)}
-                className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {pendingApplications.filter(a => a.status === "pending").map((application) => (
-                <div
-                  key={application.id}
-                  className="rounded-xl p-6 border cursor-pointer hover:shadow-lg transition-all"
-                  style={{
-                    background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-                    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-                  }}
-                  onClick={() => handleViewApplication(application)}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <h4
-                        className="mb-2"
-                        style={{
-                          fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                          fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                          color: DESIGN_TOKENS.colors.brand.orange,
-                        }}
-                      >
-                        {application.name}
-                      </h4>
-                      <p className="text-sm text-muted-foreground mb-1">{application.email}</p>
-                      <p className="text-sm text-muted-foreground mb-2">{application.phone}</p>
-                      <div className="flex gap-2">
-                        <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
-                          {application.committee}
-                        </span>
-                        <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300">
-                          Applied: {new Date(application.dateApplied).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
-                    <button
-                      className="px-4 py-2 rounded-lg text-white transition-all hover:scale-105"
-                      style={{
-                        background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                      }}
-                    >
-                      View Application
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              {pendingApplications.filter(a => a.status === "pending").length === 0 && (
-                <div className="text-center py-12">
-                  <Clock className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-                  <p className="text-muted-foreground">No pending applications</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Application Panel (Resume Style) */}
       {selectedApplication && (
         <ApplicationPanel
+          key={selectedApplication.id}
           application={selectedApplication}
           isDark={isDark}
-          onClose={() => setSelectedApplication(null)}
+          onClose={clearApplicantTrail}
           onApprove={handleApproveApplication}
           onReject={handleRejectApplication}
           onSendEmail={handleSendEmail}
+          onDownload={handleDownloadApplicationPDF}
         />
       )}
 
@@ -1558,7 +2298,7 @@ export default function ManageMembersPage({
             desiredRole: "",
           }}
           onClose={() => setShowAccountModal(false)}
-          onCreateAccount={(data) => {
+          onCreateAccount={(_data) => {
              // ... handle creation
              setShowAccountModal(false);
           }}
@@ -1583,6 +2323,7 @@ interface ApplicationPanelProps {
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onSendEmail: (email: string) => void;
+  onDownload: (application: PendingApplication) => void;
 }
 
 function ApplicationPanel({
@@ -1592,23 +2333,98 @@ function ApplicationPanel({
   onApprove,
   onReject,
   onSendEmail,
+  onDownload,
 }: ApplicationPanelProps) {
   const data = application.fullData;
   const [adminNotes, setAdminNotes] = useState("");
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [profileImageFailed, setProfileImageFailed] = useState(false);
+  const [profileImageIndex, setProfileImageIndex] = useState(0);
+  const [proxiedProfileSrc, setProxiedProfileSrc] = useState("");
+  const [cachedTransformedProfileSrc, setCachedTransformedProfileSrc] = useState("");
+  const [actionMenuValue, setActionMenuValue] = useState("");
+  const panelScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastProxySourceRef = useRef("");
+  const profileImageCandidates = useMemo(
+    () => getProfileImageCandidates(data.profilePicture),
+    [data.profilePicture]
+  );
+  const normalizedProfileUrl = profileImageCandidates[profileImageIndex] || "";
+  const displayedProfileUrl = proxiedProfileSrc || cachedTransformedProfileSrc || normalizedProfileUrl;
+
+  useEffect(() => {
+    logApplicantFrontDebug(`panel open ${application.id}`, application);
+  }, [application]);
+
+  useEffect(() => {
+    setProfileImageFailed(false);
+    setProfileImageIndex(0);
+    setProxiedProfileSrc("");
+    lastProxySourceRef.current = "";
+    setCachedTransformedProfileSrc(getTransformedProfileLinkWithCache(data.profilePicture));
+  }, [application.id, data.profilePicture]);
+
+  useEffect(() => {
+    let active = true;
+    const source = (data.profilePicture || "").trim();
+    const candidates = getProfileImageCandidates(source);
+    if (!source || candidates.length === 0 || source.startsWith("data:")) {
+      return () => { active = false; };
+    }
+    if (lastProxySourceRef.current === source) {
+      return () => { active = false; };
+    }
+    lastProxySourceRef.current = source;
+
+    (async () => {
+      const result = await getApplicantImageDataUrl(source);
+      if (!active) return;
+      if (result.success && result.dataUrl) {
+        setProxiedProfileSrc(result.dataUrl);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [data.profilePicture]);
+
+  useEffect(() => {
+    if (panelScrollRef.current) {
+      panelScrollRef.current.scrollTop = 0;
+    }
+  }, [application.id]);
 
   const handleApproveClick = () => {
     setShowAccountModal(true);
   };
 
+  const handleActionMenuChange = (value: string) => {
+    setActionMenuValue("");
+    if (value === "reject") {
+      onReject(application.id);
+      return;
+    }
+    if (value === "email") {
+      onSendEmail(data.email);
+      return;
+    }
+    if (value === "download") {
+      onDownload(application);
+      return;
+    }
+    if (value === "close") {
+      onClose();
+    }
+  };
+
   const handleAccountCreation = (accountData: any) => {
     console.log("Account created:", accountData);
-    
-    // Simulate email sending
+
     toast.success("Account Created Successfully!", {
       description: `Welcome email sent to ${data.email}`,
     });
-    
+
     setShowAccountModal(false);
     onApprove(application.id);
     onClose();
@@ -1617,11 +2433,12 @@ function ApplicationPanel({
   return (
     <>
       <div
-        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto"
+        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
         onClick={onClose}
       >
         <div
-          className="rounded-xl p-8 max-w-5xl w-full max-h-[90vh] overflow-y-auto border my-8"
+          ref={panelScrollRef}
+          className="rounded-2xl shadow-2xl p-4 sm:p-5 lg:p-6 w-full max-w-[720px] md:max-w-[760px] lg:max-w-[800px] max-h-[80vh] overflow-y-auto border my-2 sm:my-4"
           style={{
             background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
             backdropFilter: 'blur(20px)',
@@ -1629,105 +2446,121 @@ function ApplicationPanel({
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
-          <div className="flex items-start justify-between mb-8 pb-6 border-b" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
-            <div className="flex gap-6 flex-1">
-              {/* Profile Picture */}
+          <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4 sm:gap-6 mb-8 pb-6 border-b" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
+            <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 flex-1 min-w-0">
               <div
-                className="rounded-full flex items-center justify-center bg-gradient-to-br from-[#f6421f] to-[#ee8724] text-white overflow-hidden"
-                style={{
-                  width: '120px',
-                  height: '120px',
-                  border: '4px solid #ee8724',
-                }}
+                className="w-20 h-20 sm:w-24 sm:h-24 lg:w-28 lg:h-28 rounded-full flex items-center justify-center bg-gradient-to-br from-[#f6421f] to-[#ee8724] text-white overflow-hidden shrink-0"
+                style={{ border: '4px solid #ee8724' }}
               >
-                {data.profilePicture ? (
-                  <img src={data.profilePicture} alt={data.fullName} className="w-full h-full object-cover" />
+                {displayedProfileUrl && !profileImageFailed ? (
+                  <img
+                    src={displayedProfileUrl}
+                    alt={data.fullName}
+                    className="w-full h-full object-cover"
+                    onError={() => {
+                      if (proxiedProfileSrc) {
+                        setProxiedProfileSrc("");
+                        return;
+                      }
+                      if (profileImageIndex < profileImageCandidates.length - 1) {
+                        setProfileImageIndex((prev) => prev + 1);
+                        return;
+                      }
+                      setProfileImageFailed(true);
+                    }}
+                  />
                 ) : (
-                  <span style={{ fontSize: '48px', fontWeight: DESIGN_TOKENS.typography.fontWeight.bold }}>
+                  <span className="text-3xl sm:text-4xl" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.bold }}>
                     {data.fullName.charAt(0)}
                   </span>
                 )}
               </div>
 
-              {/* Basic Info */}
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <h2
-                  className="mb-2"
+                  className="mb-2 text-2xl sm:text-3xl break-words"
                   style={{
                     fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                    fontSize: '32px',
                     fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
                     color: DESIGN_TOKENS.colors.brand.red,
                   }}
                 >
                   {data.fullName}
                 </h2>
-                <p className="text-muted-foreground mb-1 flex items-center gap-2">
+                <p className="text-muted-foreground mb-1 flex items-center gap-2 break-all">
                   <Mail className="w-4 h-4" />
                   {data.email}
                 </p>
-                <p className="text-muted-foreground mb-1">📞 {data.phone}</p>
-                <p className="text-muted-foreground">📍 {data.address}</p>
+                <p className="text-muted-foreground mb-1 flex items-center gap-2">
+                  <Phone className="w-4 h-4" />
+                  {data.phone || "N/A"}
+                </p>
+                <p className="text-muted-foreground flex items-center gap-2">
+                  <MapPin className="w-4 h-4" />
+                  {data.address || "N/A"}
+                </p>
               </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex flex-col gap-2 ml-4">
+            <div className="w-full xl:w-auto flex flex-row xl:flex-col items-stretch gap-2 xl:min-w-[220px]">
               <button
                 onClick={handleApproveClick}
-                className="px-4 py-2 rounded-lg bg-green-500 hover:bg-green-600 text-white transition-all flex items-center gap-2"
+                className="px-3 py-2 rounded-lg bg-green-500 hover:bg-green-600 text-white transition-all flex items-center justify-center gap-2 text-sm"
                 style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
               >
                 <CheckCircle className="w-4 h-4" />
                 Approve
               </button>
-              <button
-                onClick={() => onReject(application.id)}
-                className="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all flex items-center gap-2"
-                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
-              >
-                <XCircle className="w-4 h-4" />
-                Reject
-              </button>
-              <button
-                onClick={() => onSendEmail(data.email)}
-                className="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-all flex items-center gap-2"
-                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
-              >
-                <Mail className="w-4 h-4" />
-                Email
-              </button>
-              <button
-                onClick={() => toast.info("PDF download feature coming soon!")}
-                className="px-4 py-2 rounded-lg bg-gray-500 hover:bg-gray-600 text-white transition-all flex items-center gap-2"
-                style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
-              >
-                <FileText className="w-4 h-4" />
-                Download
-              </button>
+              <CustomDropdown
+                value={actionMenuValue}
+                onChange={handleActionMenuChange}
+                placeholder="More actions"
+                isDark={isDark}
+                size="sm"
+                variant="outlined"
+                className="min-w-[150px] sm:min-w-[180px] flex-1 xl:flex-none"
+                options={[
+                  { value: "email", label: "Send Email" },
+                  { value: "download", label: "Download PDF" },
+                  { value: "reject", label: "Reject Application" },
+                  { value: "close", label: "Close Panel" },
+                ]}
+              />
               <button
                 onClick={onClose}
-                className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-all flex items-center justify-center"
+                className="px-3 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-all flex items-center justify-center"
+                title="Close panel"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          {/* Info Cards Grid */}
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-            <InfoCard title="Gender" value={data.gender} isDark={isDark} />
-            <InfoCard title="Date of Birth" value={new Date(data.dateOfBirth).toLocaleDateString()} isDark={isDark} />
-            <InfoCard title="Age" value={`${data.age} years old`} isDark={isDark} />
-            <InfoCard title="Civil Status" value={data.civilStatus} isDark={isDark} />
-            <InfoCard title="Nationality" value={data.nationality} isDark={isDark} />
-            <InfoCard title="YSP Chapter" value={data.chapter} isDark={isDark} />
-            <InfoCard title="Committee Preference" value={data.committeePreference} isDark={isDark} />
-            <InfoCard title="Desired Role" value={data.desiredRole} isDark={isDark} />
-          </div>
+          {(() => {
+            const infoCards = [
+              hasContent(data.gender) ? { title: "Gender", value: data.gender } : null,
+              hasContent(data.pronouns) ? { title: "Pronouns", value: data.pronouns || "" } : null,
+              hasContent(data.dateOfBirth) ? { title: "Date of Birth", value: formatDateSafe(data.dateOfBirth) } : null,
+              hasContent(data.age) ? { title: "Age", value: `${data.age} years old` } : null,
+              hasContent(data.civilStatus) ? { title: "Civil Status", value: data.civilStatus } : null,
+              hasContent(data.nationality) ? { title: "Nationality", value: data.nationality } : null,
+              hasContent(data.religion) ? { title: "Religion", value: data.religion || "" } : null,
+              hasContent(data.chapter) ? { title: "YSP Chapter", value: data.chapter } : null,
+              hasContent(data.committeePreference) ? { title: "Committee Preference", value: data.committeePreference } : null,
+              hasContent(data.desiredRole) ? { title: "Desired Role", value: data.desiredRole } : null,
+            ].filter(Boolean) as { title: string; value: string }[];
 
-          {/* Additional Information Sections */}
+            if (infoCards.length === 0) return null;
+
+            return (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                {infoCards.map((card) => (
+                  <InfoCard key={card.title} title={card.title} value={card.value} isDark={isDark} />
+                ))}
+              </div>
+            );
+          })()}
+
           {data.skills && <DetailCard title="Skills" content={data.skills} isDark={isDark} />}
           {data.education && <DetailCard title="Education" content={data.education} isDark={isDark} />}
           {data.certifications && <DetailCard title="Certifications" content={data.certifications} isDark={isDark} />}
@@ -1736,9 +2569,18 @@ function ApplicationPanel({
           {data.volunteerHistory && <DetailCard title="Volunteer History" content={data.volunteerHistory} isDark={isDark} />}
           {data.reasonForJoining && <DetailCard title="Reason for Joining" content={data.reasonForJoining} isDark={isDark} />}
           {data.personalStatement && <DetailCard title="Personal Statement" content={data.personalStatement} isDark={isDark} />}
+          {data.medicalConcerns && <DetailCard title="Medical Concerns" content={data.medicalConcerns} isDark={isDark} />}
+          {data.additionalFields && Object.keys(data.additionalFields).length > 0 && (
+            <DetailCard
+              title="Additional Form Fields"
+              content={Object.entries(data.additionalFields)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join("\n")}
+              isDark={isDark}
+            />
+          )}
 
-          {/* Emergency Contact */}
-          {data.emergencyContactName && (
+          {(data.emergencyContactName || data.emergencyContactRelation || data.emergencyContactNumber) && (
             <div className="mb-6">
               <h4
                 className="mb-3"
@@ -1752,14 +2594,19 @@ function ApplicationPanel({
                 Emergency Contact
               </h4>
               <div className="grid md:grid-cols-3 gap-4">
-                <InfoCard title="Name" value={data.emergencyContactName} isDark={isDark} />
-                <InfoCard title="Relation" value={data.emergencyContactRelation || ""} isDark={isDark} />
-                <InfoCard title="Contact" value={data.emergencyContactNumber || ""} isDark={isDark} />
+                {hasContent(data.emergencyContactName) && (
+                  <InfoCard title="Name" value={data.emergencyContactName || ""} isDark={isDark} />
+                )}
+                {hasContent(data.emergencyContactRelation) && (
+                  <InfoCard title="Relation" value={data.emergencyContactRelation || ""} isDark={isDark} />
+                )}
+                {hasContent(data.emergencyContactNumber) && (
+                  <InfoCard title="Contact" value={data.emergencyContactNumber || ""} isDark={isDark} />
+                )}
               </div>
             </div>
           )}
 
-          {/* Social Media */}
           {(data.facebook || data.instagram || data.twitter) && (
             <div className="mb-6">
               <h4
@@ -1781,7 +2628,6 @@ function ApplicationPanel({
             </div>
           )}
 
-          {/* Attachments */}
           {data.attachments && data.attachments.length > 0 && (
             <div className="mb-6">
               <h4
@@ -1809,6 +2655,16 @@ function ApplicationPanel({
                     <p className="text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                       {attachment.name}
                     </p>
+                    <div className="mb-3 overflow-hidden rounded-md border" style={{ borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)' }}>
+                      <img
+                        src={normalizeProfileImageUrl(attachment.thumbnailUrl || attachment.url)}
+                        alt={attachment.name}
+                        className="w-full h-28 object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
                     <div className="flex gap-2">
                       <button
                         className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600 transition-colors"
@@ -1818,7 +2674,7 @@ function ApplicationPanel({
                       </button>
                       <button
                         className="text-xs px-2 py-1 rounded bg-green-500 text-white hover:bg-green-600 transition-colors"
-                        onClick={() => toast.success("Download started")}
+                        onClick={() => window.open(toDriveDownloadUrl(attachment.url), '_blank')}
                       >
                         Download
                       </button>
@@ -1829,7 +2685,6 @@ function ApplicationPanel({
             </div>
           )}
 
-          {/* Admin Notes Section */}
           <div
             className="rounded-lg p-4 border mt-6"
             style={{
@@ -1862,7 +2717,6 @@ function ApplicationPanel({
         </div>
       </div>
 
-      {/* Account Creation Modal */}
       {showAccountModal && (
         <AccountCreationModal
           isOpen={showAccountModal}
@@ -1932,3 +2786,5 @@ function DetailCard({ title, content, isDark }: DetailCardProps) {
     </div>
   );
 }
+
+

@@ -9,6 +9,60 @@ import { type ApplicationOpportunity } from "../components/MembershipApplication
 const API_URL = "https://script.google.com/macros/s/AKfycbyrv2aWb4fXt372V4RdYM2SYU9jeK3DWfCTBLe2EI59UjIMuwh9csd8MdYh1MduVHl09A/exec";
 const API_KEY = import.meta.env.VITE_GAS_API_KEY || "YSP_TAGUM_CHAPTER_SECRET_KEY_2025";
 
+export interface SyncedApplicant {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  dateApplied: string;
+  committee: string;
+  status: "pending" | "approved" | "rejected";
+  fullData: {
+    fullName: string;
+    email: string;
+    phone: string;
+    address: string;
+    dateOfBirth: string;
+    age: number;
+    gender: string;
+    civilStatus: string;
+    nationality: string;
+    chapter: string;
+    committeePreference: string;
+    desiredRole: string;
+    skills?: string;
+    education?: string;
+    certifications?: string;
+    experience?: string;
+    achievements?: string;
+    volunteerHistory?: string;
+    reasonForJoining?: string;
+    personalStatement?: string;
+    emergencyContactName?: string;
+    emergencyContactRelation?: string;
+    emergencyContactNumber?: string;
+    facebook?: string;
+    instagram?: string;
+    twitter?: string;
+    attachments?: {
+      type: string;
+      name: string;
+      url: string;
+    }[];
+    profilePicture?: string;
+    additionalFields?: Record<string, string>;
+  };
+}
+
+export interface SyncedApplicantSheetData {
+  sheetUrl: string;
+  sheetName: string;
+  headers: string[];
+  rowCount: number;
+  syncedAt: string;
+  applicants: SyncedApplicant[];
+}
+
 function safeErrorDetails(raw: unknown) {
   if (!raw || typeof raw !== "object") return {};
   const obj = raw as Record<string, unknown>;
@@ -208,6 +262,127 @@ export async function deleteOpportunity(id: string): Promise<{ success: boolean;
     }
   } catch (error) {
     logApiError("deleteOpportunity", { error, payload: { id } });
+    return { success: false, error: "Network error" };
+  }
+}
+
+function requireAuthContext() {
+  const user = getStoredUser();
+  const token = getSessionToken();
+  if (!user || !token) {
+    return null;
+  }
+  return { user, token };
+}
+
+async function postAuthorized<T>(payload: Record<string, unknown>): Promise<T> {
+  const response = await fetch(API_URL, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return response.json();
+}
+
+/**
+ * Get persisted applicant sheet link and current parsed applicants.
+ */
+export async function getSyncedApplicantSheet(): Promise<{ success: boolean; data?: SyncedApplicantSheetData; error?: string }> {
+  try {
+    const auth = requireAuthContext();
+    if (!auth) {
+      return { success: false, error: "Authentication required" };
+    }
+
+    const payload = {
+      action: "getSyncedApplicantSheet",
+      key: API_KEY,
+      sessionToken: auth.token,
+      username: auth.user.username,
+    };
+
+    const result = await postAuthorized<{ success: boolean; data?: SyncedApplicantSheetData; error?: string }>(payload);
+    if (result.success) {
+      return { success: true, data: result.data };
+    }
+
+    logApiError("getSyncedApplicantSheet", {
+      username: auth.user.username,
+      hasSessionToken: Boolean(auth.token),
+      payload: { action: payload.action },
+      result: safeErrorDetails(result),
+    });
+    return { success: false, error: result.error || "Failed to load synced applicant sheet" };
+  } catch (error) {
+    logApiError("getSyncedApplicantSheet", { error });
+    return { success: false, error: "Network error" };
+  }
+}
+
+/**
+ * Persist applicant sheet link and sync applicants from it.
+ */
+export async function syncApplicantSheet(sheetUrl: string): Promise<{ success: boolean; data?: SyncedApplicantSheetData; error?: string }> {
+  try {
+    const auth = requireAuthContext();
+    if (!auth) {
+      return { success: false, error: "Authentication required" };
+    }
+
+    const payload = {
+      action: "syncApplicantSheet",
+      key: API_KEY,
+      sessionToken: auth.token,
+      username: auth.user.username,
+      sheetUrl,
+    };
+
+    const result = await postAuthorized<{ success: boolean; data?: SyncedApplicantSheetData; error?: string }>(payload);
+    if (result.success) {
+      return { success: true, data: result.data };
+    }
+
+    logApiError("syncApplicantSheet", {
+      username: auth.user.username,
+      hasSessionToken: Boolean(auth.token),
+      payload: { action: payload.action },
+      result: safeErrorDetails(result),
+    });
+    return { success: false, error: result.error || "Failed to sync applicant sheet" };
+  } catch (error) {
+    logApiError("syncApplicantSheet", { error });
+    return { success: false, error: "Network error" };
+  }
+}
+
+export async function getApplicantImageDataUrl(imageUrl: string): Promise<{ success: boolean; dataUrl?: string; error?: string }> {
+  try {
+    const auth = requireAuthContext();
+    if (!auth) {
+      return { success: false, error: "Authentication required" };
+    }
+
+    const payload = {
+      action: "getApplicantImageDataUrl",
+      key: API_KEY,
+      sessionToken: auth.token,
+      username: auth.user.username,
+      imageUrl,
+    };
+
+    const result = await postAuthorized<{
+      success: boolean;
+      data?: { dataUrl?: string };
+      error?: string;
+    }>(payload);
+
+    if (result.success && result.data?.dataUrl) {
+      return { success: true, dataUrl: result.data.dataUrl };
+    }
+
+    // Image proxy is best-effort; frontend has multiple fallback loaders.
+    return { success: false, error: result.error || "Failed to resolve applicant image" };
+  } catch (error) {
+    // Keep this silent to avoid noisy console spam in dev when fallback paths are expected.
     return { success: false, error: "Network error" };
   }
 }

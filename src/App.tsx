@@ -235,6 +235,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
   const { deepLinkParams, buildShareableUrl } = useUrlSync({
     pageStates: {
       showFeedbackPage,
+      showMembershipApplications,
       showOfficerDirectory,
       showAttendanceDashboard,
       showAttendanceRecording,
@@ -250,9 +251,12 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       showMembershipApplicationsPage,
       showSettings,
       showLoginPanel,
+      showFounderModal,
+      showDeveloperModal,
     },
     pageSetters: {
       setShowFeedbackPage,
+      setShowMembershipApplications,
       setShowOfficerDirectory,
       setShowAttendanceDashboard,
       setShowAttendanceRecording,
@@ -268,6 +272,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       setShowMembershipApplicationsPage,
       setShowSettings,
       setShowLoginPanel,
+      setShowFounderModal,
+      setShowDeveloperModal,
     },
     isLoggedIn: isAdmin || userRole !== 'guest',
     userRole,
@@ -562,6 +568,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
     // Membership Applications Modal State (to hide chatbot)
     const [membershipAppsModalOpen, setMembershipAppsModalOpen] = useState(false);
+    
+    // Manage Members Modal State (to hide chatbot)
+    const [manageMembersModalOpen, setManageMembersModalOpen] = useState(false);
 
     useEffect(() => {
       const handleAttendanceTransparencyModal = (event: Event) => {
@@ -2738,7 +2747,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || attendanceTransparencyModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal || membershipAppsModalOpen}
+        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || attendanceTransparencyModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal || membershipAppsModalOpen || manageMembersModalOpen}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
         isDark={isDark}
@@ -2872,7 +2881,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               onClose={() => setShowMembershipApplicationsPage(false)}
               isDark={isDark}
               userRole={userRole}
-              isLoggedIn={isAdmin}
+              isLoggedIn={isAdmin || userRole !== 'guest'}
               pendingApplications={pendingApplications}
               setPendingApplications={setPendingApplications}
               username={userUsername || 'admin'}
@@ -3314,7 +3323,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading members..." />}>
-            <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userName} />
+            <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userName} onModalStateChange={setManageMembersModalOpen} />
           </Suspense>
           {chatbot}
         </>
@@ -3339,7 +3348,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
-            <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userUsername || 'admin'} onModalStateChange={setMembershipAppsModalOpen} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
+            <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin || userRole !== 'guest'} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userUsername || 'admin'} onModalStateChange={setMembershipAppsModalOpen} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
           </Suspense>
           <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
           {chatbot}

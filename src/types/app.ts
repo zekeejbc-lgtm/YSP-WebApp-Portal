@@ -53,6 +53,7 @@ export interface ApplicationData {
     url: string;
   }[];
   profilePicture?: string;
+  additionalFields?: Record<string, string>;
 }
 
 // Navigation types

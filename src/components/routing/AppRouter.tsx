@@ -68,6 +68,7 @@ export function AppRouter({ children }: AppRouterProps) {
       <Routes>
         {/* Homepage route - renders the layout/homepage */}
         <Route path="/" element={children} />
+        <Route path="/Home" element={children} />
         
         {/* Dynamic routes from configuration */}
         {routes.map((route) => {
