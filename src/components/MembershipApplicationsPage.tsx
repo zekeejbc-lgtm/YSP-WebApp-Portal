@@ -17,7 +17,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus, Edit, Trash2, Calendar, Clock, ExternalLink,
   Lock, Unlock, Archive, CheckCircle, Eye, EyeOff,
@@ -102,6 +102,8 @@ export default function MembershipApplicationsPage({
   removeUploadToast = () => {},
 }: MembershipApplicationsPageProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -118,6 +120,29 @@ export default function MembershipApplicationsPage({
   const canManageOpportunities = hasOpportunityManagementAccess(userRole);
 
   const getRolePathSegment = useCallback((role: string) => roleToPathSlug(role), []);
+
+  const setOpportunityIdInUrl = useCallback((opportunityId: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (opportunityId) {
+      params.set("id", opportunityId);
+    } else {
+      params.delete("id");
+    }
+    const nextSearch = params.toString();
+    const currentSearch = location.search.startsWith("?") ? location.search.slice(1) : location.search;
+    if (nextSearch === currentSearch) return;
+    navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ""}`, { replace: true });
+  }, [location.pathname, location.search, navigate, searchParams]);
+
+  const openOpportunityDetails = useCallback((opportunity: ApplicationOpportunity) => {
+    setViewingOpportunity(opportunity);
+    setOpportunityIdInUrl(opportunity.id);
+  }, [setOpportunityIdInUrl]);
+
+  const closeOpportunityDetails = useCallback(() => {
+    setViewingOpportunity(null);
+    setOpportunityIdInUrl(null);
+  }, [setOpportunityIdInUrl]);
 
   const handleGoHome = useCallback(() => {
     onClose();
@@ -202,7 +227,7 @@ export default function MembershipApplicationsPage({
   const handleEditOpportunity = (opp: ApplicationOpportunity) => {
     setEditingOpportunity(opp);
     setShowCreateModal(true);
-    setViewingOpportunity(null); // Close view modal if open
+    closeOpportunityDetails(); // Close view modal if open
   };
 
   const handleDeleteOpportunity = async (id: string) => {
@@ -211,7 +236,7 @@ export default function MembershipApplicationsPage({
     // Optimistic update
     const prevOpportunities = [...opportunities];
     setOpportunities(opportunities.filter(o => o.id !== id));
-    if (viewingOpportunity?.id === id) setViewingOpportunity(null);
+    if (viewingOpportunity?.id === id) closeOpportunityDetails();
 
     const toastId = toast.loading("Deleting opportunity...");
     const result = await deleteOpportunity(id);
@@ -341,6 +366,26 @@ export default function MembershipApplicationsPage({
       setIsSavingOpportunity(false);
     }
   };
+
+  // Open opportunity modal directly when URL contains ?id=...
+  useEffect(() => {
+    const deepLinkId = (searchParams.get("id") || "").trim();
+    if (!deepLinkId) {
+      if (viewingOpportunity) {
+        setViewingOpportunity(null);
+      }
+      return;
+    }
+    if (opportunities.length === 0) return;
+
+    const matched = opportunities.find(
+      (opp) => String(opp.id || "").trim().toLowerCase() === deepLinkId.toLowerCase()
+    );
+    if (!matched) return;
+    if (viewingOpportunity?.id === matched.id) return;
+
+    setViewingOpportunity(matched);
+  }, [opportunities, searchParams, viewingOpportunity?.id]);
 
   const formatDateTime = (dateStr: string) => {
     if (!dateStr) return "N/A";
@@ -551,7 +596,7 @@ export default function MembershipApplicationsPage({
                     getStatusColor={getStatusColor}
                     getStatusIcon={getStatusIcon}
                     formatDateTime={formatDateTime}
-                    onClick={() => setViewingOpportunity(opp)}
+                    onClick={() => openOpportunityDetails(opp)}
                     onToggleVisibility={handleToggleVisibility}
                     onEdit={handleEditOpportunity}
                     onDelete={handleDeleteOpportunity}
@@ -566,7 +611,7 @@ export default function MembershipApplicationsPage({
                   formatDateTime={formatDateTime}
                   getStatusColor={getStatusColor}
                   getStatusIcon={getStatusIcon}
-                  onView={(opp) => setViewingOpportunity(opp)}
+                  onView={openOpportunityDetails}
                   onToggleVisibility={handleToggleVisibility}
                   onEdit={handleEditOpportunity}
                   onDelete={handleDeleteOpportunity}
@@ -603,7 +648,7 @@ export default function MembershipApplicationsPage({
                           getStatusColor={getStatusColor}
                           getStatusIcon={getStatusIcon}
                           formatDateTime={formatDateTime}
-                          onClick={() => setViewingOpportunity(opp)}
+                          onClick={() => openOpportunityDetails(opp)}
                           onToggleVisibility={handleToggleVisibility}
                           onEdit={handleEditOpportunity}
                           onDelete={handleDeleteOpportunity}
@@ -619,7 +664,7 @@ export default function MembershipApplicationsPage({
                         formatDateTime={formatDateTime}
                         getStatusColor={getStatusColor}
                         getStatusIcon={getStatusIcon}
-                        onView={(opp) => setViewingOpportunity(opp)}
+                        onView={openOpportunityDetails}
                         onToggleVisibility={handleToggleVisibility}
                         onEdit={handleEditOpportunity}
                         onDelete={handleDeleteOpportunity}
@@ -638,7 +683,7 @@ export default function MembershipApplicationsPage({
       {viewingOpportunity && typeof document !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-10000 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
-          onClick={() => setViewingOpportunity(null)}
+          onClick={closeOpportunityDetails}
         >
           <div
             className="w-full max-w-2xl rounded-2xl border max-h-[90vh] shadow-2xl relative flex flex-col overflow-hidden"
@@ -680,7 +725,7 @@ export default function MembershipApplicationsPage({
                 </h2>
               </div>
               <button
-                onClick={() => setViewingOpportunity(null)}
+                onClick={closeOpportunityDetails}
                 className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
                 aria-label="Close details modal"
               >

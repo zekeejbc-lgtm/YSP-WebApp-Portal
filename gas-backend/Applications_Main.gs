@@ -19,6 +19,8 @@ const APPLICATIONS_CONFIG = {
     LINK: 8           // Column H
   }
 };
+const OPPORTUNITY_ID_PREFIX = 'YSPTBM-';
+const OPPORTUNITY_ID_DIGITS = 4;
 
 const APPLICANT_SYNC_CONFIG = {
   SETTINGS_SHEET_NAME: 'Membership_Applicant_Sync_Settings',
@@ -258,13 +260,17 @@ function getOpportunities() {
  * Add new opportunity
  */
 function addOpportunity(data) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
   try {
     const sheet = getOpportunitiesSheet();
     const lastRow = sheet.getLastRow();
     const newRow = lastRow + 1;
-    
-    // Generate ID: OPP-TIMESTAMP
-    const id = data.id || `OPP-${Date.now()}`;
+    const requestedId = String(data && data.id ? data.id : '').trim();
+    const id = requestedId && !doesOpportunityIdExist_(sheet, requestedId)
+      ? requestedId
+      : generateNextOpportunityId_(sheet);
 
     const values = [
       id,
@@ -292,7 +298,51 @@ function addOpportunity(data) {
       success: false,
       message: error.message
     };
+  } finally {
+    lock.releaseLock();
   }
+}
+
+function doesOpportunityIdExist_(sheet, id) {
+  var cleanId = String(id || '').trim();
+  if (!cleanId) return false;
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+
+  var idValues = sheet.getRange(2, APPLICATIONS_CONFIG.COLUMNS.ID, lastRow - 1, 1).getValues();
+  for (var i = 0; i < idValues.length; i++) {
+    var rowId = String(idValues[i][0] || '').trim();
+    if (rowId === cleanId) return true;
+  }
+  return false;
+}
+
+function generateNextOpportunityId_(sheet) {
+  var lastRow = sheet.getLastRow();
+  var yearSuffix = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy');
+  var maxSequence = 0;
+  var pattern = new RegExp('^' + OPPORTUNITY_ID_PREFIX + '(\\d{2})(\\d+)$');
+
+  if (lastRow > 1) {
+    var idValues = sheet.getRange(2, APPLICATIONS_CONFIG.COLUMNS.ID, lastRow - 1, 1).getValues();
+    for (var i = 0; i < idValues.length; i++) {
+      var rawId = String(idValues[i][0] || '').trim();
+      if (!rawId) continue;
+
+      var match = rawId.match(pattern);
+      if (!match) continue;
+      if (match[1] !== yearSuffix) continue;
+
+      var sequence = Number(match[2]);
+      if (!isNaN(sequence) && sequence > maxSequence) {
+        maxSequence = sequence;
+      }
+    }
+  }
+
+  var nextSequence = Utilities.formatString('%0' + OPPORTUNITY_ID_DIGITS + 'd', maxSequence + 1);
+  return OPPORTUNITY_ID_PREFIX + yearSuffix + nextSequence;
 }
 
 /**
