@@ -39,7 +39,32 @@ import {
 } from "../services/gasApplicationsService";
 
 const MANILA_TIME_ZONE = "Asia/Manila";
-const BE_A_MEMBER_PAGE_LINK = "/guest?page=MembershipApplications";
+const BE_A_MEMBER_PAGE_LINK = "/visitor?page=MembershipApplications";
+
+function normalizeRoleValue(role: string): string {
+  return String(role || "").trim().toLowerCase();
+}
+
+function roleToPathSlug(role: string): string {
+  const normalized = normalizeRoleValue(role);
+  if (!normalized) return "guest";
+  const slug = normalized
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "guest";
+}
+
+function hasOpportunityManagementAccess(role: string): boolean {
+  const normalized = normalizeRoleValue(role);
+  if (!normalized) return false;
+  if (["auditor", "admin", "assistant auditor 1", "assistant auditor 2", "assistant admin 1", "assistant admin 2", "founder"].includes(normalized)) {
+    return true;
+  }
+  if (normalized.includes("auditor") || normalized.includes("admin")) {
+    return true;
+  }
+  return false;
+}
 
 export interface ApplicationOpportunity {
   id: string;
@@ -90,22 +115,9 @@ export default function MembershipApplicationsPage({
   const [viewingOpportunity, setViewingOpportunity] = useState<ApplicationOpportunity | null>(null);
   const [isSavingOpportunity, setIsSavingOpportunity] = useState(false);
 
-  const isAdminOrAuditor = userRole === "admin" || userRole === "auditor";
+  const canManageOpportunities = hasOpportunityManagementAccess(userRole);
 
-  const getRolePathSegment = useCallback((role: string) => {
-    switch (role) {
-      case "auditor":
-        return "auditor";
-      case "admin":
-        return "admin";
-      case "head":
-        return "officer";
-      case "member":
-        return "member";
-      default:
-        return "guest";
-    }
-  }, []);
+  const getRolePathSegment = useCallback((role: string) => roleToPathSlug(role), []);
 
   const handleGoHome = useCallback(() => {
     onClose();
@@ -113,7 +125,7 @@ export default function MembershipApplicationsPage({
       navigate("/Home");
       return;
     }
-    navigate(`/${getRolePathSegment(userRole)}`);
+    navigate(`/${getRolePathSegment(userRole)}?page=Home`);
   }, [getRolePathSegment, isLoggedIn, navigate, onClose, userRole]);
 
   // Notify parent about modal state
@@ -154,7 +166,7 @@ export default function MembershipApplicationsPage({
   // Filter Logic
   const filteredOpportunities = opportunities.filter(opp => {
     // 1. Role-based visibility
-    if (!isAdminOrAuditor && opp.visibility === "hidden") return false;
+    if (!canManageOpportunities && opp.visibility === "hidden") return false;
     
     // 2. Search query
     if (searchQuery.trim()) {
@@ -178,7 +190,7 @@ export default function MembershipApplicationsPage({
     : filteredOpportunities;
     
   const archivedOpportunities = showArchivedSection
-    ? opportunities.filter(o => o.status === "archived" && (isAdminOrAuditor || o.visibility === "public"))
+    ? opportunities.filter(o => o.status === "archived" && (canManageOpportunities || o.visibility === "public"))
     : [];
 
   // Handlers
@@ -346,10 +358,13 @@ export default function MembershipApplicationsPage({
     if (!trimmed) return "";
 
     const guestAliases = new Set([
+      "/visitor",
+      "visitor",
       "/guest",
       "guest",
       "be-a-member",
       "be a member",
+      "/visitor?page=membershipapplications",
       "/guest?page=membershipapplications",
     ]);
     if (guestAliases.has(trimmed.toLowerCase())) {
@@ -358,7 +373,7 @@ export default function MembershipApplicationsPage({
 
     try {
       const url = new URL(trimmed);
-      if (url.pathname === "/guest") {
+      if (url.pathname === "/guest" || url.pathname === "/visitor") {
         const page = url.searchParams.get("page");
         if (!page) {
           return `${window.location.origin}${BE_A_MEMBER_PAGE_LINK}`;
@@ -367,7 +382,7 @@ export default function MembershipApplicationsPage({
       return url.toString();
     } catch {
       if (trimmed.startsWith("/")) {
-        if (trimmed.toLowerCase() === "/guest") {
+        if (trimmed.toLowerCase() === "/guest" || trimmed.toLowerCase() === "/visitor") {
           return `${window.location.origin}${BE_A_MEMBER_PAGE_LINK}`;
         }
         return `${window.location.origin}${trimmed}`;
@@ -408,7 +423,7 @@ export default function MembershipApplicationsPage({
   return (
     <PageLayout
       title="Membership & Opportunities"
-      subtitle={isAdminOrAuditor ? "Manage recruitment and opportunities" : "Join us and participate in our activities"}
+      subtitle={canManageOpportunities ? "Manage recruitment and opportunities" : "Join us and participate in our activities"}
       isDark={isDark}
       onClose={onClose}
       breadcrumbs={[
@@ -482,7 +497,7 @@ export default function MembershipApplicationsPage({
               </button>
 
               {/* Create Button (Admin) */}
-              {isAdminOrAuditor && (
+              {canManageOpportunities && (
                 <Button
                   variant="primary"
                   onClick={handleCreateOpportunity}
@@ -515,7 +530,7 @@ export default function MembershipApplicationsPage({
                       ? "No opportunities found matching your filters." 
                       : "No active opportunities available."}
                   </p>
-                  {isAdminOrAuditor && (
+                  {canManageOpportunities && (
                     <Button 
                       variant="ghost"
                       onClick={handleCreateOpportunity}
@@ -532,7 +547,7 @@ export default function MembershipApplicationsPage({
                     opp={opp}
                     viewMode={viewMode}
                     isDark={isDark}
-                    isAdminOrAuditor={isAdminOrAuditor}
+                    isAdminOrAuditor={canManageOpportunities}
                     getStatusColor={getStatusColor}
                     getStatusIcon={getStatusIcon}
                     formatDateTime={formatDateTime}
@@ -547,7 +562,7 @@ export default function MembershipApplicationsPage({
                 <OpportunityTable
                   opportunities={activeOpportunities}
                   isDark={isDark}
-                  isAdminOrAuditor={isAdminOrAuditor}
+                  isAdminOrAuditor={canManageOpportunities}
                   formatDateTime={formatDateTime}
                   getStatusColor={getStatusColor}
                   getStatusIcon={getStatusIcon}
@@ -584,7 +599,7 @@ export default function MembershipApplicationsPage({
                           opp={opp}
                           viewMode={viewMode}
                           isDark={isDark}
-                          isAdminOrAuditor={isAdminOrAuditor}
+                          isAdminOrAuditor={canManageOpportunities}
                           getStatusColor={getStatusColor}
                           getStatusIcon={getStatusIcon}
                           formatDateTime={formatDateTime}
@@ -600,7 +615,7 @@ export default function MembershipApplicationsPage({
                       <OpportunityTable
                         opportunities={archivedOpportunities}
                         isDark={isDark}
-                        isAdminOrAuditor={isAdminOrAuditor}
+                        isAdminOrAuditor={canManageOpportunities}
                         formatDateTime={formatDateTime}
                         getStatusColor={getStatusColor}
                         getStatusIcon={getStatusIcon}
@@ -648,7 +663,7 @@ export default function MembershipApplicationsPage({
                     {getStatusIcon(viewingOpportunity.status)}
                     {viewingOpportunity.status}
                   </span>
-                  {isAdminOrAuditor && (
+                  {canManageOpportunities && (
                     <span className="text-xs text-muted-foreground bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-full">
                       {viewingOpportunity.visibility === "public" ? "Public" : "Hidden"}
                     </span>
@@ -697,19 +712,19 @@ export default function MembershipApplicationsPage({
 
             {/* Footer Actions */}
             <div className="px-6 sm:px-8 py-4 border-t border-gray-200 dark:border-gray-800 flex gap-3 items-center shrink-0">
-              {(viewingOpportunity.status === "open" || isAdminOrAuditor || viewingOpportunity.status === "archived") && (
+              {(viewingOpportunity.status === "open" || canManageOpportunities || viewingOpportunity.status === "archived") && (
                 <Button
                   variant="primary"
                   onClick={() => openOpportunityLink(viewingOpportunity.link)}
                   icon={<ExternalLink className="w-4 h-4" />}
                   className="flex-1 justify-center py-3"
-                  disabled={viewingOpportunity.status !== "open" && !isAdminOrAuditor && viewingOpportunity.status !== "archived"}
+                  disabled={viewingOpportunity.status !== "open" && !canManageOpportunities && viewingOpportunity.status !== "archived"}
                 >
                   {viewingOpportunity.status === "open" ? "Apply Now" : "View Link"}
                 </Button>
               )}
 
-              {isAdminOrAuditor && (
+              {canManageOpportunities && (
                 <button
                   onClick={() => handleEditOpportunity(viewingOpportunity)}
                   className="p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"

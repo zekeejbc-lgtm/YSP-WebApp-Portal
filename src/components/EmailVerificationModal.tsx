@@ -190,9 +190,9 @@ export default function EmailVerificationModal({
   const handleVerifyOTP = async () => {
     const otpCode = otp.join("");
     
-    console.log('OTP array:', otp);
-    console.log('OTP code:', otpCode);
-    console.log('OTP length:', otpCode.length);
+    console.warn('OTP array:', otp);
+    console.warn('OTP code:', otpCode);
+    console.warn('OTP length:', otpCode.length);
     
     if (otpCode.length !== 6 || otp.some(d => d === "")) {
       setError("Please enter all 6 digits");

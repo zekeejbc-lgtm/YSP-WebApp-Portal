@@ -490,26 +490,48 @@ export async function checkDirectoryApiHealth(): Promise<boolean> {
  * Format role for display
  */
 export function getRoleDisplayName(role: string): string {
+  const normalized = String(role || '').trim().toLowerCase();
   const roleMap: Record<string, string> = {
     auditor: 'Auditor',
     admin: 'Admin',
+    'assistant auditor 1': 'Assistant Auditor 1',
+    'assistant auditor 2': 'Assistant Auditor 2',
+    'assistant admin 1': 'Assistant Admin 1',
+    'assistant admin 2': 'Assistant Admin 2',
+    founder: 'Founder',
     head: 'Head',
+    'tagum chapter president': 'Tagum Chapter President',
+    'barangay chapter president': 'Barangay Chapter President',
     member: 'Member',
+    volunteer: 'Volunteer',
+    suspended: 'Suspended',
+    banned: 'Banned',
     guest: 'Guest',
   };
-  return roleMap[role?.toLowerCase()] || role || 'Member';
+  return roleMap[normalized] || role || 'Member';
 }
 
 /**
  * Get role badge color
  */
 export function getRoleBadgeColor(role: string): string {
+  const normalized = String(role || '').trim().toLowerCase();
   const colorMap: Record<string, string> = {
     auditor: 'purple',
     admin: 'red',
+    'assistant auditor 1': 'amber',
+    'assistant auditor 2': 'amber',
+    'assistant admin 1': 'rose',
+    'assistant admin 2': 'rose',
+    founder: 'violet',
     head: 'orange',
+    'tagum chapter president': 'emerald',
+    'barangay chapter president': 'green',
     member: 'blue',
+    volunteer: 'indigo',
+    suspended: 'slate',
+    banned: 'zinc',
     guest: 'gray',
   };
-  return colorMap[role?.toLowerCase()] || 'gray';
+  return colorMap[normalized] || 'gray';
 }

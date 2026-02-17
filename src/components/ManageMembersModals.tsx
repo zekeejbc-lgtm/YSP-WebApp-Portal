@@ -8,12 +8,13 @@
  * =============================================================================
  */
 
-import { useState } from "react";
-import { X, Save, Edit, Loader2, Mail, Phone, Calendar, User as UserIcon, Hash, Briefcase, Users, Facebook, Instagram, Twitter, Globe, MapPin, CheckCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, Save, Edit3, Loader2, Mail, Phone, Calendar, User as UserIcon, Hash, Briefcase, Users, Facebook, Instagram, Twitter, Globe, MapPin, CheckCircle } from "lucide-react";
 import { DESIGN_TOKENS } from "./design-system";
 import { openEmailApp } from "../utils/externalLinks";
 import CustomDropdown from "./CustomDropdown";
 import { type UploadToastMessage } from "./UploadToast";
+import type { SystemRole } from "../types/app";
 
 export interface Member {
   id?: string;
@@ -57,9 +58,35 @@ interface AddMemberModalProps {
   isDark: boolean;
   onClose: () => void;
   onSave: (member: Member) => void;
+  availableRoles?: SystemRole[];
 }
 
-export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps) {
+const DEFAULT_ROLE_OPTIONS = [
+  { value: "Auditor", label: "Auditor" },
+  { value: "Admin", label: "Admin" },
+  { value: "Head", label: "Head" },
+  { value: "Member", label: "Member" },
+  { value: "Guest", label: "Guest" },
+  { value: "Suspended", label: "Suspended" },
+  { value: "Banned", label: "Banned" },
+];
+
+function getRoleOptions(availableRoles: SystemRole[] = [], currentRole?: string) {
+  const options = availableRoles.length
+    ? availableRoles.map((role) => ({
+        value: role.name,
+        label: role.name,
+      }))
+    : DEFAULT_ROLE_OPTIONS;
+
+  if (currentRole && !options.some((opt) => opt.value === currentRole)) {
+    options.push({ value: currentRole, label: currentRole });
+  }
+
+  return options;
+}
+
+export function AddMemberModal({ isDark, onClose, onSave, availableRoles = [] }: AddMemberModalProps) {
   const [formData, setFormData] = useState<Member>({
     name: "",
     position: "",
@@ -129,23 +156,13 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
               <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                 Position *
               </label>
-              <CustomDropdown
+              <input
+                type="text"
+                required
                 value={formData.position}
-                onChange={(value) => setFormData({ ...formData, position: value })}
-                options={[
-                  { value: "Tagum Chapter President", label: "Tagum Chapter President" },
-                  { value: "Membership and Internal Affairs Officer", label: "Membership and Internal Affairs Officer" },
-                  { value: "External Relations Officer", label: "External Relations Officer" },
-                  { value: "Secretariat and Documentation Officer", label: "Secretariat and Documentation Officer" },
-                  { value: "Finance and Treasury Officer", label: "Finance and Treasury Officer" },
-                  { value: "Program Development Officer", label: "Program Development Officer" },
-                  { value: "Communications and Marketing Officer", label: "Communications and Marketing Officer" },
-                  { value: "Committee Member", label: "Committee Member" },
-                  { value: "Member", label: "Member" },
-                  { value: "Volunteer", label: "Volunteer" },
-                ]}
-                isDark={isDark}
-                size="md"
+                onChange={(e) => setFormData({ ...formData, position: e.target.value })}
+                className="w-full px-4 py-2 rounded-lg border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none"
+                style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
               />
             </div>
 
@@ -156,15 +173,7 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
               <CustomDropdown
                 value={formData.role}
                 onChange={(value) => setFormData({ ...formData, role: value })}
-                options={[
-                  { value: "Auditor", label: "Auditor" },
-                  { value: "Admin", label: "Admin" },
-                  { value: "Head", label: "Head" },
-                  { value: "Member", label: "Member" },
-                  { value: "Guest", label: "Guest" },
-                  { value: "Suspended", label: "Suspended" },
-                  { value: "Banned", label: "Banned" },
-                ]}
+                options={getRoleOptions(availableRoles, formData.role)}
                 isDark={isDark}
                 size="md"
               />
@@ -272,6 +281,7 @@ interface EditMemberModalProps {
   member: Member;
   onClose: () => void;
   onSave: (member: Member, signal?: AbortSignal) => Promise<void>;
+  availableRoles?: SystemRole[];
   addUploadToast?: (message: UploadToastMessage) => void;
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
 }
@@ -281,6 +291,7 @@ export function EditMemberModal({
   member, 
   onClose, 
   onSave,
+  availableRoles = [],
   addUploadToast = defaultAddToast,
   updateUploadToast = defaultUpdateToast,
 }: EditMemberModalProps) {
@@ -418,23 +429,14 @@ export function EditMemberModal({
               <label className="block text-sm mb-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                 Position *
               </label>
-              <CustomDropdown
+              <input
+                type="text"
+                required
                 value={formData.position}
-                onChange={(value) => setFormData({ ...formData, position: value })}
-                options={[
-                  { value: "Tagum Chapter President", label: "Tagum Chapter President" },
-                  { value: "Membership and Internal Affairs Officer", label: "Membership and Internal Affairs Officer" },
-                  { value: "External Relations Officer", label: "External Relations Officer" },
-                  { value: "Secretariat and Documentation Officer", label: "Secretariat and Documentation Officer" },
-                  { value: "Finance and Treasury Officer", label: "Finance and Treasury Officer" },
-                  { value: "Program Development Officer", label: "Program Development Officer" },
-                  { value: "Communications and Marketing Officer", label: "Communications and Marketing Officer" },
-                  { value: "Committee Member", label: "Committee Member" },
-                  { value: "Member", label: "Member" },
-                  { value: "Volunteer", label: "Volunteer" },
-                ]}
-                isDark={isDark}
-                size="md"
+                onChange={(e) => setFormData({ ...formData, position: e.target.value })}
+                className="w-full px-4 py-2 rounded-lg border-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20 transition-all outline-none"
+                style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
+                disabled={isSaving}
               />
             </div>
 
@@ -445,15 +447,7 @@ export function EditMemberModal({
               <CustomDropdown
                 value={formData.role}
                 onChange={(value) => setFormData({ ...formData, role: value })}
-                options={[
-                  { value: "Auditor", label: "Auditor" },
-                  { value: "Admin", label: "Admin" },
-                  { value: "Head", label: "Head" },
-                  { value: "Member", label: "Member" },
-                  { value: "Guest", label: "Guest" },
-                  { value: "Suspended", label: "Suspended" },
-                  { value: "Banned", label: "Banned" },
-                ]}
+                options={getRoleOptions(availableRoles, formData.role)}
                 isDark={isDark}
                 size="md"
               />
@@ -524,8 +518,15 @@ export function EditMemberModal({
               type="submit"
               form="edit-member-form"
               disabled={isSaving}
-              className="px-6 py-2 rounded-lg bg-linear-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50"
-              style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+              className="px-6 py-2 rounded-lg text-white hover:shadow-lg transition-all flex items-center gap-2 disabled:cursor-not-allowed"
+              style={{
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                background: isSaving
+                  ? (isDark ? 'rgba(107, 114, 128, 0.9)' : 'rgba(156, 163, 175, 0.95)')
+                  : 'linear-gradient(90deg, #f6421f 0%, #ee8724 100%)',
+                color: '#ffffff',
+                opacity: 1,
+              }}
             >
               {isSaving ? (
                 <>
@@ -535,7 +536,7 @@ export function EditMemberModal({
               ) : (
                 <>
                   <Save className="w-4 h-4" />
-                  Save Changes
+                  Save
                 </>
               )}
             </button>
@@ -557,6 +558,14 @@ interface ViewMemberModalProps {
 export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberModalProps) {
   const displayEmail = (member.verifiedEmail || "").trim();
   const isPersonalEmailVerified = Boolean(member.emailVerified);
+  const [profileImageFailed, setProfileImageFailed] = useState(false);
+  const profilePicture = (member.profilePicture || "").trim();
+  const hasProfileImage = Boolean(profilePicture) && !profileImageFailed;
+  const fallbackInitial = member.name?.trim()?.charAt(0)?.toUpperCase() || "?";
+
+  useEffect(() => {
+    setProfileImageFailed(false);
+  }, [member.id, member.profilePicture]);
 
   const emergencyContactName =
     member.emergencyContactName ||
@@ -600,10 +609,13 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
           <div className="flex gap-2">
             <button
               onClick={onEdit}
-              className="px-4 py-2 rounded-lg bg-linear-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2"
-              style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+              className="px-4 py-2 rounded-lg text-white hover:shadow-lg transition-all flex items-center gap-2"
+              style={{
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                background: "linear-gradient(90deg, #f6421f 0%, #ee8724 100%)",
+              }}
             >
-              <Edit className="w-4 h-4" />
+              <Edit3 className="w-4 h-4" />
               Edit
             </button>
             <button
@@ -628,15 +640,16 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
                 border: '3px solid #ee8724',
               }}
             >
-              {member.profilePicture ? (
+              {hasProfileImage ? (
                 <img
-                  src={member.profilePicture}
+                  src={profilePicture}
                   alt={member.name}
                   className="w-full h-full object-cover"
                   style={{ borderRadius: '9999px' }}
+                  onError={() => setProfileImageFailed(true)}
                 />
               ) : (
-                member.name.charAt(0)
+                fallbackInitial
               )}
             </div>
             <div className="flex-1">

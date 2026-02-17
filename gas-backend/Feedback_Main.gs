@@ -39,14 +39,131 @@ function getUserRole_(username) {
   }
 }
 
-function requireAdminOrAuditor_(username, actionDescription) {
+function normalizeRoleValue_(roleName) {
+  return String(roleName || '').toLowerCase().trim();
+}
+
+function isRestrictedRoleStatus_(roleName, status) {
+  var role = normalizeRoleValue_(roleName);
+  var state = normalizeRoleValue_(status);
+  return role === 'banned' || role === 'suspended' || state === 'banned' || state === 'suspended';
+}
+
+function getSystemRoleRecord_(roleName) {
+  try {
+    var settingsId = PropertiesService.getScriptProperties().getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '';
+    if (!settingsId) return null;
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName('System_Config_Roles');
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var roleNameIdx = headers.indexOf('RoleName');
+    var powerLevelIdx = headers.indexOf('PowerLevel');
+    var permissionsIdx = headers.indexOf('Permissions');
+    if (roleNameIdx === -1) return null;
+
+    var target = normalizeRoleValue_(roleName);
+    for (var i = 1; i < values.length; i++) {
+      var rowName = normalizeRoleValue_(values[i][roleNameIdx]);
+      if (rowName !== target) continue;
+
+      var powerLevel = Number(values[i][powerLevelIdx]);
+      var permissions = {};
+      if (permissionsIdx !== -1 && values[i][permissionsIdx]) {
+        try {
+          permissions = JSON.parse(String(values[i][permissionsIdx]));
+        } catch (e) {
+          permissions = {};
+        }
+      }
+
+      return {
+        name: String(values[i][roleNameIdx] || ''),
+        powerLevel: isNaN(powerLevel) ? 0 : powerLevel,
+        permissions: permissions || {},
+      };
+    }
+
+    return null;
+  } catch (e) {
+    Logger.log('getSystemRoleRecord_ error: ' + e.toString());
+    return null;
+  }
+}
+
+function getUserRoleAndStatus_(username) {
+  if (!username) return { role: '', status: '' };
+  try {
+    var ssId = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
+    if (!ssId) return { role: '', status: '' };
+    var ss = SpreadsheetApp.openById(ssId);
+    var sheet = ss.getSheetByName('User Profiles');
+    if (!sheet) return { role: '', status: '' };
+
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0] || [];
+    var usernameIdx = headers.indexOf('Username');
+    var roleIdx = headers.indexOf('Role');
+    var statusIdx = headers.indexOf('Status');
+    if (usernameIdx === -1 || roleIdx === -1) return { role: '', status: '' };
+
+    var target = String(username).toLowerCase().trim();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][usernameIdx] || '').toLowerCase().trim() === target) {
+        return {
+          role: String(data[i][roleIdx] || '').toLowerCase().trim(),
+          status: statusIdx !== -1 ? String(data[i][statusIdx] || '').toLowerCase().trim() : '',
+        };
+      }
+    }
+    return { role: '', status: '' };
+  } catch (e) {
+    Logger.log('getUserRoleAndStatus_ error: ' + e.toString());
+    return { role: '', status: '' };
+  }
+}
+
+function hasFeedbackPermission_(roleName, permissionKey) {
+  var role = normalizeRoleValue_(roleName);
+  if (!role) return false;
+
+  // Backward compatibility
+  if (role === 'admin' || role === 'auditor' || role === 'head') return true;
+  if (role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1) return true;
+
+  var roleRecord = getSystemRoleRecord_(role);
+  if (!roleRecord) return false;
+
+  var level = Number(roleRecord.powerLevel) || 0;
+  var perms = roleRecord.permissions || {};
+  if (permissionKey && perms[permissionKey] === true) return true;
+  if (permissionKey === 'canAccessSystemTools') return level >= 8;
+  if (permissionKey === 'canEditContent') return level >= 8 || perms.canManageUsers === true;
+  if (permissionKey === 'canManageUsers') return level >= 8 || perms.canManageUsers === true;
+  return level >= 8;
+}
+
+function requireFeedbackPermission_(username, actionDescription, permissionKey) {
   if (!username) {
     return { success: false, status: 'error', message: 'Username is required for authorization', code: 400 };
   }
-  var role = getUserRole_(username);
-  if (role !== 'auditor' && role !== 'admin') {
-    return { success: false, status: 'error', message: 'Only admins or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+
+  var account = getUserRoleAndStatus_(username);
+  if (isRestrictedRoleStatus_(account.role, account.status)) {
+    return { success: false, status: 'error', message: 'Account is restricted', code: 403 };
   }
+
+  if (!hasFeedbackPermission_(account.role, permissionKey)) {
+    return {
+      success: false,
+      status: 'error',
+      message: 'Insufficient role permission to ' + (actionDescription || 'perform this action'),
+      code: 403
+    };
+  }
+
   return null;
 }
 
@@ -303,10 +420,19 @@ function doGet(e) {
 
   try {
     const action = String(e.parameter.action || '').trim();
+    const sessionToken = String(e.parameter.sessionToken || '').trim();
+    const tokenUser = verifyHmacToken_(sessionToken);
+    const sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+
+    if ((action === "initiate" || action === "migrateUrls") && sessionSecret && !tokenUser) {
+      return ContentService.createTextOutput(JSON.stringify({
+        success: false, status: "error", message: "Invalid or expired session token", code: 401
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
 
     if (action === "initiate") {
-      var initUser = String(e.parameter.username || '').trim();
-      var initAuth = requireAdminOrAuditor_(initUser, 'initialize feedback sheets');
+      var initUser = tokenUser ? String(tokenUser.username || '').trim() : String(e.parameter.username || '').trim();
+      var initAuth = requireFeedbackPermission_(initUser, 'initialize feedback sheets', 'canAccessSystemTools');
       if (initAuth) {
         return ContentService.createTextOutput(JSON.stringify(initAuth)).setMimeType(ContentService.MimeType.JSON);
       }
@@ -314,8 +440,8 @@ function doGet(e) {
     } else if (action === "getFeedbacks") {
       return getFeedbacks();
     } else if (action === "migrateUrls") {
-       var migrateUser = String(e.parameter.username || '').trim();
-       var migrateAuth = requireAdminOrAuditor_(migrateUser, 'migrate image URLs');
+       var migrateUser = tokenUser ? String(tokenUser.username || '').trim() : String(e.parameter.username || '').trim();
+       var migrateAuth = requireFeedbackPermission_(migrateUser, 'migrate image URLs', 'canAccessSystemTools');
        if (migrateAuth) {
          return ContentService.createTextOutput(JSON.stringify(migrateAuth)).setMimeType(ContentService.MimeType.JSON);
        }
@@ -375,9 +501,16 @@ function doPost(e) {
       data.username = tokenUser.username;
     }
 
-    // ---- Role checks: update/delete require admin+auditor; create/upload are open to authenticated users ----
+    var account = getUserRoleAndStatus_(data.username);
+    if (isRestrictedRoleStatus_(account.role, account.status)) {
+      return ContentService.createTextOutput(JSON.stringify({
+        success: false, status: "error", message: "Account is restricted", code: 403
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ---- Role checks: update/delete require content-management permission; create/upload require authenticated non-restricted users ----
     if (action === "updateFeedback" || action === "deleteFeedback") {
-      const authError = requireAdminOrAuditor_(data.username, action);
+      const authError = requireFeedbackPermission_(data.username, action, 'canEditContent');
       if (authError) {
         return ContentService.createTextOutput(JSON.stringify(authError)).setMimeType(ContentService.MimeType.JSON);
       }

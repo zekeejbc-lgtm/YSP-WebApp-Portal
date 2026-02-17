@@ -120,6 +120,35 @@ function doPost(e) {
       // Manual Export Access Logs (upload PDF from frontend)
       case 'uploadAccessLogsPDF':
         return handleUploadAccessLogsPDF(requestData.pdfBase64, requestData.fileName, requestData.username, requestData.exportType);
+
+      // Role Manager
+      case 'getSystemRoles': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'view system roles');
+        if (authError) return authError;
+        return createSuccessResponse(getSystemRoles());
+      }
+      case 'addSystemRole': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'add system role');
+        if (authError) return authError;
+        return createSuccessResponse(addSystemRole(requestData.data || requestData));
+      }
+      case 'updateSystemRole': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'update system role');
+        if (authError) return authError;
+        return createSuccessResponse(updateSystemRole(requestData.data || requestData));
+      }
+      case 'deleteSystemRole': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'delete system role');
+        if (authError) return authError;
+        return createSuccessResponse(deleteSystemRole(requestData.roleName));
+      }
+
+      // Universal ID Generation
+      case 'generateNextYSPId': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'generate YSP ID');
+        if (authError) return authError;
+        return createSuccessResponse({ idCode: generateNextYSPId() });
+      }
       
       // Debug
       case 'testConnection': {
@@ -567,6 +596,65 @@ function setSystemSetting(key, value, updatedBy) {
 
 const CACHE_VERSION_PROPERTY_KEY = 'cache_version';
 
+/**
+ * Generate the next YSP ID using format: YSPTC-YYXXX
+ * Example for first member of 2026: YSPTC-26001
+ */
+function generateNextYSPId() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    if (!SYSTEM_DATA_SPREADSHEET_ID) {
+      throw new Error('SYSTEM_DATA_SPREADSHEET_ID is not configured');
+    }
+
+    const ss = SpreadsheetApp.openById(SYSTEM_DATA_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName('User Profiles');
+    if (!sheet) {
+      throw new Error("Sheet 'User Profiles' not found");
+    }
+
+    const lastRow = sheet.getLastRow();
+    const lastColumn = sheet.getLastColumn();
+    if (lastRow < 1 || lastColumn < 1) {
+      return 'YSPTC-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy') + '001';
+    }
+
+    const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+    const idCodeIndex = headers.indexOf('ID Code');
+    if (idCodeIndex === -1) {
+      throw new Error("Column 'ID Code' not found in User Profiles");
+    }
+
+    const yearSuffix = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy');
+    let maxSeq = 0;
+
+    if (lastRow > 1) {
+      const idValues = sheet.getRange(2, idCodeIndex + 1, lastRow - 1, 1).getValues();
+      for (let i = 0; i < idValues.length; i++) {
+        const value = String(idValues[i][0] || '').trim();
+        if (!value) continue;
+
+        const match = value.match(/^YSPTC-(\d{2})(\d{3,})$/);
+        if (!match) continue;
+
+        if (match[1] !== yearSuffix) continue;
+
+        const seq = Number(match[2]);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
+      }
+    }
+
+    const nextSeq = maxSeq + 1;
+    return 'YSPTC-' + yearSuffix + Utilities.formatString('%03d', nextSeq);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function getUserRole_(username) {
   if (!username) return null;
 
@@ -596,6 +684,53 @@ function getUserRole_(username) {
   }
 }
 
+function normalizeRoleValue_(roleName) {
+  return String(roleName || '').toLowerCase().trim();
+}
+
+function getSystemRoleRecordByName_(roleName) {
+  try {
+    const settingsId = PropertiesService.getScriptProperties().getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '';
+    if (!settingsId) return null;
+    const ss = SpreadsheetApp.openById(settingsId);
+    const sheet = ss.getSheetByName('System_Config_Roles');
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0] || [];
+    const roleNameIdx = headers.indexOf('RoleName');
+    const powerLevelIdx = headers.indexOf('PowerLevel');
+    const permissionsIdx = headers.indexOf('Permissions');
+    if (roleNameIdx === -1) return null;
+
+    const target = normalizeRoleValue_(roleName);
+    for (let i = 1; i < values.length; i++) {
+      const rowName = normalizeRoleValue_(values[i][roleNameIdx]);
+      if (rowName !== target) continue;
+
+      const powerLevel = Number(values[i][powerLevelIdx]);
+      let permissions = {};
+      if (permissionsIdx !== -1 && values[i][permissionsIdx]) {
+        try {
+          permissions = JSON.parse(String(values[i][permissionsIdx]));
+        } catch (e) {
+          permissions = {};
+        }
+      }
+
+      return {
+        name: String(values[i][roleNameIdx] || ''),
+        powerLevel: isNaN(powerLevel) ? 0 : powerLevel,
+        permissions: permissions || {},
+      };
+    }
+    return null;
+  } catch (error) {
+    Logger.log('Error resolving system role record: ' + error.toString());
+    return null;
+  }
+}
+
 /**
  * Reusable role gate — returns an error response if the user is NOT an admin or auditor,
  * or null if the user is authorized. Usage:
@@ -606,10 +741,25 @@ function requireAdminOrAuditor_(username, actionDescription) {
   if (!username) {
     return createErrorResponse('Username is required', 400);
   }
-  const role = getUserRole_(username);
-  if (role !== 'auditor' && role !== 'admin') {
+  const role = normalizeRoleValue_(getUserRole_(username));
+  if (role === 'banned' || role === 'suspended') {
+    return createErrorResponse('Account is restricted', 403);
+  }
+
+  const roleRecord = getSystemRoleRecordByName_(role);
+  const hasLegacyAdminAccess = role === 'auditor' || role === 'admin' || role === 'head' || role.indexOf('auditor') !== -1 || role.indexOf('admin') !== -1;
+  const hasPermissionAccess = !!(
+    roleRecord &&
+    (
+      roleRecord.powerLevel >= 8 ||
+      roleRecord.permissions.canManageUsers === true ||
+      roleRecord.permissions.canAccessSystemTools === true
+    )
+  );
+
+  if (!hasLegacyAdminAccess && !hasPermissionAccess) {
     const desc = actionDescription || 'perform this action';
-    return createErrorResponse('Only auditors or admins can ' + desc, 403);
+    return createErrorResponse('Permission denied: cannot ' + desc, 403);
   }
   return null; // authorized
 }

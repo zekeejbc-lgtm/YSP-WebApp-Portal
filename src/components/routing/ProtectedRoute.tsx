@@ -7,9 +7,10 @@
 
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { Suspense, type ReactNode } from 'react';
+import { Suspense, type ReactNode, useEffect, useState } from 'react';
 import { LazyFallback } from '../SocialMediaIcon';
 import { useTheme } from '../../contexts/ThemeContext';
+import { authorizePageAccess } from '../../services/gasLoginService';
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -23,9 +24,40 @@ export function ProtectedRoute({
   requiredRoles,
   redirectToLogin = true 
 }: ProtectedRouteProps) {
-  const { isAuthenticated, sessionChecked, hasRoleAccess } = useAuth();
+  const { isAuthenticated, sessionChecked } = useAuth();
   const { isDark } = useTheme();
   const location = useLocation();
+  const [pageCheckPending, setPageCheckPending] = useState(true);
+  const [pageAllowed, setPageAllowed] = useState(false);
+
+  // Server-authoritative page access check for protected routes.
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+
+    // Only check when this is actually a protected/authenticated route context.
+    if (!sessionChecked || !isAuthenticated || !requiredRoles || requiredRoles.length === 0) {
+      return () => {
+        active = false;
+        controller.abort();
+      };
+    }
+
+    const runCheck = async () => {
+      setPageCheckPending(true);
+      const result = await authorizePageAccess(location.pathname, controller.signal);
+      if (!active) return;
+      setPageAllowed(result.success === true && result.allowed === true);
+      setPageCheckPending(false);
+    };
+
+    runCheck();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [sessionChecked, isAuthenticated, requiredRoles, location.pathname]);
 
   // Wait for session to be checked
   if (!sessionChecked) {
@@ -41,10 +73,20 @@ export function ProtectedRoute({
     return <Navigate to="/" replace />;
   }
 
-  // Check role access
-  if (requiredRoles && !hasRoleAccess(requiredRoles)) {
-    // User is logged in but doesn't have required role
-    // Redirect to home with access denied message
+  // Public pass-through safeguard (ProtectedRoute is normally used with requiredRoles).
+  if (!requiredRoles || requiredRoles.length === 0) {
+    return (
+      <Suspense fallback={<LazyFallback isDark={isDark} label="Loading..." />}>
+        {children}
+      </Suspense>
+    );
+  }
+
+  if (pageCheckPending) {
+    return <LazyFallback isDark={isDark} label="Authorizing access..." />;
+  }
+
+  if (!pageAllowed) {
     return <Navigate to="/" state={{ accessDenied: true }} replace />;
   }
 

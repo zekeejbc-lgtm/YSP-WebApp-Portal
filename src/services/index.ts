@@ -135,6 +135,7 @@ export {
   getEventAttendanceRecords,
   getMemberAttendanceHistory,
   getMembersForAttendance,
+  migrateAttendanceMemberIdsToHarmonizedCodes,
   clearMembersCache,
   validateGeofence,
   checkAttendanceApiHealth,
@@ -151,6 +152,7 @@ export {
   type ManualAttendanceResponse,
   type ExistingAttendanceResponse,
   type GeofenceValidationResponse,
+  type AttendanceIdHarmonizationMigrationResponse,
 } from './gasAttendanceService';
 
 // System Tools GAS Service

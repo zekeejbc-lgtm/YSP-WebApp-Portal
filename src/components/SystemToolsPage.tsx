@@ -17,7 +17,7 @@
  * =============================================================================
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
 import { toast } from "sonner";
 import { UploadToastMessage } from "./UploadToast";
@@ -32,7 +32,6 @@ import {
   type MaintenanceModeState,
 } from "../utils/maintenanceMode";
 import MaintenanceModeModal, { type MaintenanceFormData } from "./MaintenanceModeModal";
-import { MODAL_REGULATIONS, getHeaderGradient, getModalStyles } from "./modal-regulations";
 import {
   getSystemHealth,
   createDatabaseBackup,
@@ -43,11 +42,16 @@ import {
   enableMaintenanceModeBackend,
   disableMaintenanceModeBackend,
   clearAllMaintenanceBackend,
-  AVAILABLE_PAGES_BACKEND,
   type SystemHealthData,
   logCreate,
   logEdit,
+  getSystemRoles,
+  addSystemRole,
+  updateSystemRole,
+  deleteSystemRole,
 } from "../services/gasSystemToolsService";
+import type { PermissionSet, SystemRole } from "../types/app";
+import { DEFAULT_PERMISSIONS, PERMISSION_TOGGLE_DEFINITIONS } from "../types/app";
 
 import {
   Database,
@@ -67,6 +71,9 @@ import {
   Clock,
   Users,
   X,
+  Plus,
+  Pencil,
+  Save,
 } from "lucide-react";
 
 // Re-export modal components from dedicated file to maintain backward compatibility
@@ -82,6 +89,7 @@ interface SystemToolsPageProps {
   username?: string;
   addUploadToast?: (message: UploadToastMessage) => void;
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
+  onModalStateChange?: (isOpen: boolean) => void;
 }
 
 // Skeleton Components
@@ -178,6 +186,7 @@ export default function SystemToolsPage({
   username = 'admin',
   addUploadToast,
   updateUploadToast,
+  onModalStateChange,
 }: SystemToolsPageProps) {
   // Loading states
   const [isLoadingHealth, setIsLoadingHealth] = useState(true);
@@ -190,6 +199,42 @@ export default function SystemToolsPage({
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
   const [showCacheRefreshModal, setShowCacheRefreshModal] = useState(false);
   const [selectedPage, setSelectedPage] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"operations" | "roles">("operations");
+  const [roles, setRoles] = useState<SystemRole[]>([]);
+  const [isRolesLoading, setIsRolesLoading] = useState(false);
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [editingRole, setEditingRole] = useState<SystemRole | null>(null);
+  const [roleForm, setRoleForm] = useState<SystemRole>({
+    name: "",
+    powerLevel: 1,
+    color: "#3b82f6",
+    description: "",
+    permissions: { ...DEFAULT_PERMISSIONS },
+  });
+
+  const corePermissions = useMemo(
+    () => PERMISSION_TOGGLE_DEFINITIONS.filter((item) => item.group === "core"),
+    []
+  );
+  const pagePermissions = useMemo(
+    () => PERMISSION_TOGGLE_DEFINITIONS.filter((item) => item.group === "pages"),
+    []
+  );
+  const functionPermissions = useMemo(
+    () => PERMISSION_TOGGLE_DEFINITIONS.filter((item) => item.group === "functions"),
+    []
+  );
+  const knownPermissionKeys = useMemo(
+    () => new Set(PERMISSION_TOGGLE_DEFINITIONS.map((item) => item.key)),
+    []
+  );
+  const customPermissionKeys = useMemo(
+    () =>
+      Object.keys(roleForm.permissions || {}).filter(
+        (key) => !knownPermissionKeys.has(key)
+      ),
+    [roleForm.permissions, knownPermissionKeys]
+  );
 
   // Helper functions for progress toast
   const showProgressToast = (id: string, title: string, message: string, progress: number, onCancel?: () => void) => {
@@ -263,11 +308,179 @@ export default function SystemToolsPage({
     }
   }, []);
 
+  const fetchRoles = useCallback(async (withProgress = false) => {
+    const toastId = "roles-sync-" + Date.now();
+    setIsRolesLoading(true);
+    if (withProgress) {
+      showProgressToast(toastId, "Role Sync", "Syncing roles from backend...", 10);
+    }
+    try {
+      if (withProgress) {
+        updateProgressToast(toastId, { progress: 45, message: "Fetching latest roles..." });
+      }
+      const loadedRoles = await getSystemRoles();
+      setRoles(
+        [...loadedRoles].sort((a, b) => b.powerLevel - a.powerLevel || a.name.localeCompare(b.name))
+      );
+      if (withProgress) {
+        updateProgressToast(toastId, {
+          status: "success",
+          progress: 100,
+          title: "Role Sync Complete",
+          message: `${loadedRoles.length} role(s) loaded.`,
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching system roles:", error);
+      toast.error("Failed to fetch system roles");
+      setRoles([]);
+      if (withProgress) {
+        updateProgressToast(toastId, {
+          status: "error",
+          progress: 100,
+          title: "Role Sync Failed",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    } finally {
+      setIsRolesLoading(false);
+    }
+  }, []);
+
   // Initial data fetch
   useEffect(() => {
     fetchSystemHealth();
     fetchMaintenanceMode();
-  }, [fetchSystemHealth, fetchMaintenanceMode]);
+    fetchRoles();
+  }, [fetchSystemHealth, fetchMaintenanceMode, fetchRoles]);
+
+  useEffect(() => {
+    const anyModalOpen = showRoleModal || showMaintenanceModal || showCacheRefreshModal;
+    onModalStateChange?.(anyModalOpen);
+  }, [showRoleModal, showMaintenanceModal, showCacheRefreshModal, onModalStateChange]);
+
+  useEffect(() => {
+    return () => {
+      onModalStateChange?.(false);
+    };
+  }, [onModalStateChange]);
+
+  const openAddRoleModal = () => {
+    setEditingRole(null);
+    setRoleForm({
+      name: "",
+      powerLevel: 1,
+      color: "#3b82f6",
+      description: "",
+      permissions: { ...DEFAULT_PERMISSIONS },
+    });
+    setShowRoleModal(true);
+  };
+
+  const openEditRoleModal = (roleToEdit: SystemRole) => {
+    setEditingRole(roleToEdit);
+    setRoleForm({
+      name: roleToEdit.name,
+      powerLevel: roleToEdit.powerLevel,
+      color: roleToEdit.color,
+      description: roleToEdit.description || "",
+      permissions: {
+        ...DEFAULT_PERMISSIONS,
+        ...roleToEdit.permissions,
+      },
+    });
+    setShowRoleModal(true);
+  };
+
+  const handleSaveRole = async () => {
+    const cleanName = roleForm.name.trim();
+    if (!cleanName) {
+      toast.error("Role name is required");
+      return;
+    }
+
+    const toastId = "role-save-" + Date.now();
+    showProgressToast(
+      toastId,
+      editingRole ? "Update Role" : "Add Role",
+      editingRole ? "Saving role changes..." : "Creating role...",
+      10
+    );
+
+    try {
+      updateProgressToast(toastId, { progress: 50, message: "Syncing with backend..." });
+      if (editingRole) {
+        await updateSystemRole({
+          ...roleForm,
+          name: cleanName,
+          originalName: editingRole.name,
+        });
+        toast.success("Role updated successfully");
+      } else {
+        await addSystemRole({
+          ...roleForm,
+          name: cleanName,
+        });
+        toast.success("Role added successfully");
+      }
+
+      updateProgressToast(toastId, {
+        status: "success",
+        progress: 100,
+        title: editingRole ? "Role Updated" : "Role Added",
+        message: `"${cleanName}" synced successfully.`,
+      });
+
+      setShowRoleModal(false);
+      setEditingRole(null);
+      await fetchRoles(false);
+    } catch (error) {
+      console.error("Error saving role:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to save role");
+      updateProgressToast(toastId, {
+        status: "error",
+        progress: 100,
+        title: "Role Save Failed",
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  };
+
+  const handleDeleteRole = async (roleToDelete: SystemRole) => {
+    if (!confirm(`Delete role "${roleToDelete.name}"?`)) return;
+
+    const toastId = "role-delete-" + Date.now();
+    showProgressToast(toastId, "Delete Role", `Deleting "${roleToDelete.name}"...`, 15);
+
+    try {
+      updateProgressToast(toastId, { progress: 55, message: "Syncing delete to backend..." });
+      await deleteSystemRole(roleToDelete.name);
+      toast.success("Role deleted successfully");
+      updateProgressToast(toastId, {
+        status: "success",
+        progress: 100,
+        title: "Role Deleted",
+        message: `"${roleToDelete.name}" removed successfully.`,
+      });
+      await fetchRoles(false);
+    } catch (error) {
+      console.error("Error deleting role:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to delete role");
+      updateProgressToast(toastId, {
+        status: "error",
+        progress: 100,
+        title: "Delete Failed",
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  };
+
+  const getPermissionSummary = (permissionSet: PermissionSet) => {
+    const enabledCount = (Object.keys(permissionSet) as Array<keyof PermissionSet>).filter(
+      (key) => permissionSet[key]
+    ).length;
+    return `${enabledCount}/${Object.keys(permissionSet).length} enabled`;
+  };
 
   const handleBackupDatabase = async () => {
     const toastId = 'backup-' + Date.now();
@@ -1051,6 +1264,41 @@ export default function SystemToolsPage({
         )}
       </div>
 
+      <div className="mb-6">
+        <div
+          className="inline-flex rounded-xl p-1 border"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.7)",
+            borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.1)",
+          }}
+        >
+          <button
+            className="px-4 py-2 rounded-lg text-sm transition-all"
+            onClick={() => setActiveTab("operations")}
+            style={{
+              background: activeTab === "operations" ? DESIGN_TOKENS.colors.brand.red : "transparent",
+              color: activeTab === "operations" ? "#ffffff" : isDark ? "#d1d5db" : "#374151",
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            }}
+          >
+            System Operations
+          </button>
+          <button
+            className="px-4 py-2 rounded-lg text-sm transition-all"
+            onClick={() => setActiveTab("roles")}
+            style={{
+              background: activeTab === "roles" ? DESIGN_TOKENS.colors.brand.red : "transparent",
+              color: activeTab === "roles" ? "#ffffff" : isDark ? "#d1d5db" : "#374151",
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            }}
+          >
+            Role Manager
+          </button>
+        </div>
+      </div>
+
+      {activeTab === "operations" ? (
+      <>
       {/* System Tools Section */}
       <div className="mb-8">
         <h2
@@ -1404,6 +1652,372 @@ export default function SystemToolsPage({
             </div>
           </div>
         </div>
+      </>
+      ) : (
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+              fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            }}
+          >
+            Role Manager
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Refresh roles"
+              title="Refresh roles"
+              onClick={() => fetchRoles(true)}
+              disabled={isRolesLoading}
+              className="p-2 rounded-lg transition-all disabled:opacity-50 hover:scale-105 active:scale-95"
+              style={{
+                background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.9)",
+                border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.1)"}`,
+              }}
+            >
+              <RefreshCw className={`w-4 h-4 ${isRolesLoading ? "animate-spin" : ""}`} />
+            </button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={openAddRoleModal}
+              icon={<Plus className="w-4 h-4" />}
+            >
+              Add Role
+            </Button>
+          </div>
+        </div>
+
+        <div
+          className="rounded-xl border overflow-hidden"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(255, 255, 255, 0.75)",
+            borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+          }}
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead
+                style={{
+                  background: isDark ? "rgba(15, 23, 42, 0.8)" : "rgba(243, 244, 246, 0.9)",
+                }}
+              >
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs uppercase tracking-wider">Role Name</th>
+                  <th className="px-4 py-3 text-left text-xs uppercase tracking-wider">Power Level</th>
+                  <th className="px-4 py-3 text-left text-xs uppercase tracking-wider">Color</th>
+                  <th className="px-4 py-3 text-left text-xs uppercase tracking-wider">Permissions</th>
+                  <th className="px-4 py-3 text-right text-xs uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isRolesLoading ? (
+                  <tr>
+                    <td className="px-4 py-6 text-sm text-muted-foreground" colSpan={5}>
+                      Loading roles...
+                    </td>
+                  </tr>
+                ) : roles.length === 0 ? (
+                  <tr>
+                    <td className="px-4 py-6 text-sm text-muted-foreground" colSpan={5}>
+                      No roles found.
+                    </td>
+                  </tr>
+                ) : (
+                  roles.map((roleItem) => (
+                    <tr key={roleItem.name} className="border-t" style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.08)" }}>
+                      <td className="px-4 py-3 text-sm">
+                        <span className="font-medium">{roleItem.name}</span>
+                        {roleItem.description ? (
+                          <p className="text-xs text-muted-foreground mt-1">{roleItem.description}</p>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3 text-sm">{roleItem.powerLevel}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="inline-block w-4 h-4 rounded border"
+                            style={{ backgroundColor: roleItem.color, borderColor: "rgba(0,0,0,0.2)" }}
+                          />
+                          <span>{roleItem.color}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm">{getPermissionSummary(roleItem.permissions)}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            aria-label={`Edit ${roleItem.name}`}
+                            title={`Edit ${roleItem.name}`}
+                            onClick={() => openEditRoleModal(roleItem)}
+                            className="p-2 rounded-lg transition-all hover:scale-105 active:scale-95"
+                            style={{
+                              background: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.9)",
+                              border: `1px solid ${isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.1)"}`,
+                            }}
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${roleItem.name}`}
+                            title={`Delete ${roleItem.name}`}
+                            onClick={() => handleDeleteRole(roleItem)}
+                            className="p-2 rounded-lg transition-all hover:scale-105 active:scale-95"
+                            style={{
+                              background: isDark ? "rgba(239, 68, 68, 0.12)" : "rgba(254, 242, 242, 0.9)",
+                              border: `1px solid ${isDark ? "rgba(248, 113, 113, 0.35)" : "rgba(239, 68, 68, 0.3)"}`,
+                              color: "#ef4444",
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {showRoleModal && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+          style={{
+            background: isDark ? "rgba(0, 0, 0, 0.65)" : "rgba(17, 24, 39, 0.45)",
+            backdropFilter: "blur(6px)",
+          }}
+          onClick={() => setShowRoleModal(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl border max-h-[90vh] overflow-hidden flex flex-col"
+            style={{
+              background: isDark ? "rgba(15, 23, 42, 0.95)" : "rgba(255, 255, 255, 0.98)",
+              borderColor: isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.12)",
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              className="sticky top-0 z-20 flex items-center justify-between px-6 py-4 border-b"
+              style={{
+                background: isDark ? "rgba(15, 23, 42, 0.98)" : "rgba(255, 255, 255, 0.98)",
+                borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.08)",
+              }}
+            >
+              <h3
+                style={{
+                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                }}
+              >
+                {editingRole ? "Edit Role" : "Add Role"}
+              </h3>
+              <button
+                type="button"
+                aria-label="Close role editor"
+                title="Close"
+                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 border"
+                style={{
+                  borderColor: isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.12)",
+                }}
+                onClick={() => setShowRoleModal(false)}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-6 py-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm mb-2">Role Name</label>
+                <input
+                  type="text"
+                  value={roleForm.name}
+                  onChange={(event) => setRoleForm({ ...roleForm, name: event.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-2">Power Level</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={roleForm.powerLevel}
+                  onChange={(event) =>
+                    setRoleForm({ ...roleForm, powerLevel: Number(event.target.value || 0) })
+                  }
+                  className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-2">Color</label>
+                <input
+                  type="color"
+                  value={roleForm.color}
+                  onChange={(event) => setRoleForm({ ...roleForm, color: event.target.value })}
+                  className="w-full h-10 rounded-lg border bg-white dark:bg-gray-800"
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-2">Description</label>
+                <input
+                  type="text"
+                  value={roleForm.description || ""}
+                  onChange={(event) => setRoleForm({ ...roleForm, description: event.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
+                />
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold mb-3">Core Permissions</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                {corePermissions.map((permission) => (
+                  <label
+                    key={permission.key}
+                    className="flex items-center justify-between p-3 rounded-lg border"
+                    style={{
+                      borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                      background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
+                    }}
+                  >
+                    <span className="text-sm">{permission.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={!!roleForm.permissions[permission.key]}
+                      onChange={(event) =>
+                        setRoleForm({
+                          ...roleForm,
+                          permissions: {
+                            ...roleForm.permissions,
+                            [permission.key]: event.target.checked,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <h4 className="text-sm font-semibold mb-3">Page Access (including sub-pages)</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                {pagePermissions.map((permission) => (
+                  <label
+                    key={permission.key}
+                    className="flex items-center justify-between p-3 rounded-lg border"
+                    style={{
+                      borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                      background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
+                    }}
+                  >
+                    <span className="text-sm">{permission.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={!!roleForm.permissions[permission.key]}
+                      onChange={(event) =>
+                        setRoleForm({
+                          ...roleForm,
+                          permissions: {
+                            ...roleForm.permissions,
+                            [permission.key]: event.target.checked,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <h4 className="text-sm font-semibold mb-3">Function Access</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {functionPermissions.map((permission) => (
+                  <label
+                    key={permission.key}
+                    className="flex items-center justify-between p-3 rounded-lg border"
+                    style={{
+                      borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                      background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
+                    }}
+                  >
+                    <span className="text-sm">{permission.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={!!roleForm.permissions[permission.key]}
+                      onChange={(event) =>
+                        setRoleForm({
+                          ...roleForm,
+                          permissions: {
+                            ...roleForm.permissions,
+                            [permission.key]: event.target.checked,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+
+              {customPermissionKeys.length > 0 ? (
+                <>
+                  <h4 className="text-sm font-semibold mt-4 mb-3">Custom Permissions</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {customPermissionKeys.map((key) => (
+                      <label
+                        key={key}
+                        className="flex items-center justify-between p-3 rounded-lg border"
+                        style={{
+                          borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                          background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
+                        }}
+                      >
+                        <span className="text-sm">{key}</span>
+                        <input
+                          type="checkbox"
+                          checked={!!roleForm.permissions[key]}
+                          onChange={(event) =>
+                            setRoleForm({
+                              ...roleForm,
+                              permissions: {
+                                ...roleForm.permissions,
+                                [key]: event.target.checked,
+                              },
+                            })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+            </div>
+
+            <div
+              className="sticky bottom-0 z-20 flex justify-end gap-2 px-6 py-4 border-t"
+              style={{
+                background: isDark ? "rgba(15, 23, 42, 0.98)" : "rgba(255, 255, 255, 0.98)",
+                borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.08)",
+              }}
+            >
+              <Button variant="secondary" onClick={() => setShowRoleModal(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleSaveRole} icon={<Save className="w-4 h-4" />}>
+                Save Role
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Maintenance Mode Configuration Modal */}
       <MaintenanceModeModal

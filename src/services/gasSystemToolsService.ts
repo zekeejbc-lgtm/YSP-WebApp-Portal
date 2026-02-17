@@ -12,6 +12,7 @@
 /// <reference types="vite/client" />
 
 import { getSessionToken, getStoredUser } from './gasLoginService';
+import type { SystemRole } from '../types/app';
 
 // =================== TYPES ===================
 
@@ -103,7 +104,7 @@ const GAS_API_URL =
   '';
 
 // Debug: Log API URL on load (silenced in production)
-// console.log('[SystemTools] API URL configured:', GAS_API_URL ? GAS_API_URL.substring(0, 60) + '...' : 'NOT SET');
+// console.warn('[SystemTools] API URL configured:', GAS_API_URL ? GAS_API_URL.substring(0, 60) + '...' : 'NOT SET');
 
 // Cache keys
 const CACHE_VERSION_KEY = 'ysp_cache_version';
@@ -776,6 +777,26 @@ export interface ManualExportResult {
   folderUrl?: string;
   exportType?: string;
   timestamp: string;
+}
+
+// =================== ROLE MANAGER ===================
+
+export async function getSystemRoles(): Promise<SystemRole[]> {
+  return callSystemToolsAPI<SystemRole[]>('getSystemRoles');
+}
+
+export async function addSystemRole(data: SystemRole): Promise<{ success: boolean; message: string; role: SystemRole }> {
+  return callSystemToolsAPI<{ success: boolean; message: string; role: SystemRole }>('addSystemRole', { data });
+}
+
+export async function updateSystemRole(
+  data: SystemRole & { originalName?: string }
+): Promise<{ success: boolean; message: string; role: SystemRole }> {
+  return callSystemToolsAPI<{ success: boolean; message: string; role: SystemRole }>('updateSystemRole', { data });
+}
+
+export async function deleteSystemRole(roleName: string): Promise<{ success: boolean; message: string; deletedRole: string }> {
+  return callSystemToolsAPI<{ success: boolean; message: string; deletedRole: string }>('deleteSystemRole', { roleName });
 }
 
 /**

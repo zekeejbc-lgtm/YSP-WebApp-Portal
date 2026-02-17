@@ -170,7 +170,7 @@ export function saveEventsToLocalStorage(events: EventData[]): void {
   try {
     localStorage.setItem(EVENTS_CACHE_KEY, JSON.stringify(events));
     localStorage.setItem(EVENTS_CACHE_TS_KEY, String(Date.now()));
-    console.log(`📦 Cached ${events.length} events to localStorage`);
+    console.warn(`📦 Cached ${events.length} events to localStorage`);
   } catch (error) {
     console.warn('Failed to cache events to localStorage:', error);
   }
@@ -1001,7 +1001,7 @@ export async function checkIsTargetRecipient(
   // Try local cache first (fast, works offline)
   const localResult = checkIsTargetRecipientLocal(eventId, memberId);
   if (localResult !== null) {
-    console.log(`📦 Recipient check from cache: ${memberId} -> ${localResult.isTarget ? 'Target' : 'External'}`);
+    console.warn(`📦 Recipient check from cache: ${memberId} -> ${localResult.isTarget ? 'Target' : 'External'}`);
     return {
       isTarget: localResult.isTarget,
       isRecipient: localResult.isTarget, // Alias for backward compatibility
@@ -1010,7 +1010,7 @@ export async function checkIsTargetRecipient(
   }
   
   // Fall back to network call
-  console.log(`🌐 Recipient check from network: ${eventId}, ${memberId}`);
+  console.warn(`🌐 Recipient check from network: ${eventId}, ${memberId}`);
   const response = await gasGet<{ isRecipient: boolean; recipientType: string }>('checkIsTargetRecipient', { 
     eventId, 
     memberId 

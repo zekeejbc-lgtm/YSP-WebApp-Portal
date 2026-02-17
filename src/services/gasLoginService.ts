@@ -15,7 +15,7 @@ export interface LoginUser {
   username: string;
   email: string;
   name: string;
-  role: 'auditor' | 'admin' | 'head' | 'member' | 'suspended' | 'banned' | 'guest';
+  role: string;
   status: string;
   position: string;
   profilePic: string;
@@ -33,6 +33,8 @@ export interface SessionVerifyResponse {
   valid: boolean;
   timestamp: string;
 }
+
+export type SessionVerificationState = 'valid' | 'expired' | 'unreachable';
 
 // User Profile interface matching the backend data
 export interface UserProfile {
@@ -96,6 +98,37 @@ export interface ProfileUpdateResponse {
   updatedCount?: number;
   skippedFields?: string[];
   notFoundFields?: string[];
+  error?: string;
+  code?: number;
+}
+
+export interface CreateUserAccountPayload {
+  username: string;
+  password: string;
+  fullName: string;
+  email: string;
+  role: string;
+  position: string;
+  committee: string;
+  chapter?: string;
+  membershipType?: string;
+  contactNumber?: string;
+  idCode?: string;
+}
+
+export interface CreateUserAccountResponse {
+  success: boolean;
+  message?: string;
+  user?: {
+    username: string;
+    fullName: string;
+    email: string;
+    idCode: string;
+    role: string;
+    position: string;
+    committee: string;
+    chapter: string;
+  };
   error?: string;
   code?: number;
 }
@@ -316,7 +349,7 @@ export async function fetchUserProfile(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -409,6 +442,7 @@ export async function updateUserProfile(
       body: JSON.stringify({
         action: 'updateProfile',
         username: username.trim(),
+        targetUsername: username.trim(),
         profileData: profileData,
         sessionToken: getSessionToken(),
       }),
@@ -417,7 +451,7 @@ export async function updateUserProfile(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -442,7 +476,7 @@ export async function updateUserProfile(
 
   } catch (error) {
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof LoginAPIError) {
       throw error;
@@ -522,6 +556,7 @@ export async function updateUserProfileAsAdmin(
       body: JSON.stringify({
         action: 'updateProfile',
         username: username.trim(),
+        targetUsername: username.trim(),
         adminUsername: adminUsername.trim(),
         profileData: profileData,
         sessionToken: getSessionToken(),
@@ -531,7 +566,7 @@ export async function updateUserProfileAsAdmin(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -556,7 +591,7 @@ export async function updateUserProfileAsAdmin(
 
   } catch (error) {
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof LoginAPIError) {
       throw error;
@@ -671,7 +706,7 @@ export async function uploadProfilePicture(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -898,6 +933,47 @@ export async function verifySession(): Promise<boolean> {
   }
 }
 
+/**
+ * Verify session with backend and preserve network-failure distinction.
+ * - valid: backend confirms token is still valid
+ * - expired: backend reached and token is invalid/expired
+ * - unreachable: network/timeout/server response was not usable
+ */
+export async function getSessionVerificationState(): Promise<SessionVerificationState> {
+  const token = getSessionToken();
+  if (!token || !LOGIN_CONFIG.API_URL) {
+    return 'expired';
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'verifySession',
+        sessionToken: token,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return 'unreachable';
+    }
+
+    const data: SessionVerifyResponse = await response.json();
+    return data.valid ? 'valid' : 'expired';
+  } catch {
+    return 'unreachable';
+  }
+}
+
 // =================== ROLE HELPERS ===================
 
 /**
@@ -905,17 +981,117 @@ export async function verifySession(): Promise<boolean> {
  * @param role - Role identifier
  * @returns Display name
  */
-export function getRoleDisplayName(role: LoginUser['role']): string {
-  const roleNames: Record<LoginUser['role'], string> = {
+export function getRoleDisplayName(role: string): string {
+  const normalized = String(role || '').trim().toLowerCase();
+  const roleNames: Record<string, string> = {
     auditor: 'Auditor',
     admin: 'Administrator',
     head: 'Committee Head',
+    founder: 'Founder',
     member: 'Member',
+    volunteer: 'Volunteer',
     suspended: 'Suspended',
     banned: 'Banned',
     guest: 'Guest',
   };
-  return roleNames[role] || 'Unknown';
+  return roleNames[normalized] || role || 'Unknown';
+}
+
+/**
+ * Create a user account (admin/auditor/privileged role only).
+ */
+export async function createUserAccount(
+  payload: CreateUserAccountPayload,
+  signal?: AbortSignal
+): Promise<CreateUserAccountResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    throw new LoginAPIError(
+      'Login service not configured',
+      LoginErrorCodes.NO_API_URL
+    );
+  }
+
+  const currentUser = getStoredUser();
+  const sessionToken = getSessionToken();
+  if (!currentUser || !sessionToken) {
+    throw new LoginAPIError(
+      'Authentication required',
+      LoginErrorCodes.INVALID_RESPONSE
+    );
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'createUserAccount',
+        sessionToken,
+        username: currentUser.username,
+        data: payload,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onExternalAbort);
+    }
+
+    if (!response.ok) {
+      throw new LoginAPIError(
+        `Server responded with status ${response.status}`,
+        LoginErrorCodes.SERVER_ERROR,
+        response.status
+      );
+    }
+
+    const data: CreateUserAccountResponse = await response.json();
+    if (!data.success) {
+      throw new LoginAPIError(
+        data.error || 'Failed to create account',
+        LoginErrorCodes.SERVER_ERROR,
+        data.code
+      );
+    }
+    return data;
+  } catch (error) {
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+    if (error instanceof LoginAPIError) {
+      throw error;
+    }
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        throw new LoginAPIError(
+          'Request timed out. Please try again.',
+          LoginErrorCodes.TIMEOUT_ERROR
+        );
+      }
+      throw new LoginAPIError(
+        error.message || 'Network error occurred',
+        LoginErrorCodes.NETWORK_ERROR
+      );
+    }
+    throw new LoginAPIError(
+      'An unexpected error occurred',
+      LoginErrorCodes.SERVER_ERROR
+    );
+  }
 }
 
 /**
@@ -923,8 +1099,14 @@ export function getRoleDisplayName(role: LoginUser['role']): string {
  * @param role - Role to check
  * @returns boolean
  */
-export function hasAdminAccess(role: LoginUser['role']): boolean {
-  return ['auditor', 'admin'].includes(role);
+export function hasAdminAccess(role: string): boolean {
+  const normalized = String(role || '').trim().toLowerCase();
+  return (
+    normalized === 'auditor' ||
+    normalized === 'admin' ||
+    normalized.includes('auditor') ||
+    normalized.includes('admin')
+  );
 }
 
 /**
@@ -932,8 +1114,14 @@ export function hasAdminAccess(role: LoginUser['role']): boolean {
  * @param role - Role to check
  * @returns boolean
  */
-export function hasLeadershipAccess(role: LoginUser['role']): boolean {
-  return ['auditor', 'admin', 'head'].includes(role);
+export function hasLeadershipAccess(role: string): boolean {
+  const normalized = String(role || '').trim().toLowerCase();
+  return (
+    hasAdminAccess(normalized) ||
+    normalized === 'head' ||
+    normalized === 'founder' ||
+    normalized.includes('president')
+  );
 }
 
 /**
@@ -941,18 +1129,28 @@ export function hasLeadershipAccess(role: LoginUser['role']): boolean {
  * @param role - Role to check
  * @returns boolean
  */
-export function isRestricted(role: LoginUser['role']): boolean {
-  return ['suspended', 'banned'].includes(role);
+export function isRestricted(role: string): boolean {
+  const normalized = String(role || '').trim().toLowerCase();
+  return normalized === 'suspended' || normalized === 'banned';
 }
 
 // =================== ROLE CHECKING ===================
 
 export interface RoleCheckResponse {
   success: boolean;
-  role?: LoginUser['role'];
+  role?: string;
   status?: string;
   name?: string;
   timestamp?: string;
+  error?: string;
+}
+
+export interface PageAccessResponse {
+  success: boolean;
+  allowed?: boolean;
+  pagePath?: string;
+  role?: string;
+  checkedAt?: string;
   error?: string;
 }
 
@@ -1001,7 +1199,7 @@ export async function checkUserRole(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1011,6 +1209,72 @@ export async function checkUserRole(
     const data = await response.json();
     return data;
 
+  } catch (error) {
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+/**
+ * Ask backend to authorize current user's access to a route path.
+ * This is server-authoritative and prevents simple frontend role spoofing.
+ */
+export async function authorizePageAccess(
+  pagePath: string,
+  signal?: AbortSignal
+): Promise<PageAccessResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'API not configured' };
+  }
+
+  const user = getStoredUser();
+  const token = getSessionToken();
+  if (!user || !token) {
+    return { success: false, error: 'Authentication required' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'authorizePageAccess',
+        username: user.username,
+        pagePath,
+        sessionToken: token,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
   } catch (error) {
     if (signal) {
       signal.removeEventListener('abort', () => {});
@@ -1068,7 +1332,7 @@ export async function verifyPassword(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1085,7 +1349,7 @@ export async function verifyPassword(
   } catch (error) {
     console.error('verifyPassword Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { valid: false, error: 'Request timed out' };
@@ -1141,7 +1405,7 @@ export async function changePassword(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1158,7 +1422,7 @@ export async function changePassword(
   } catch (error) {
     console.error('changePassword Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
@@ -1255,7 +1519,7 @@ export async function sendVerificationOTP(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1267,7 +1531,7 @@ export async function sendVerificationOTP(
   } catch (error) {
     console.error('sendVerificationOTP Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
@@ -1322,7 +1586,7 @@ export async function verifyOTP(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1334,7 +1598,7 @@ export async function verifyOTP(
   } catch (error) {
     console.error('verifyOTP Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
@@ -1386,7 +1650,7 @@ export async function checkEmailVerified(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1398,7 +1662,7 @@ export async function checkEmailVerified(
   } catch (error) {
     console.error('checkEmailVerified Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
@@ -1445,7 +1709,7 @@ export async function lookupPasswordResetUser(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1457,7 +1721,7 @@ export async function lookupPasswordResetUser(
   } catch (error) {
     console.error('lookupPasswordResetUser Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
@@ -1505,7 +1769,7 @@ export async function sendPasswordResetOTP(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1517,7 +1781,7 @@ export async function sendPasswordResetOTP(
   } catch (error) {
     console.error('sendPasswordResetOTP Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
@@ -1567,7 +1831,7 @@ export async function verifyPasswordResetOTP(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1579,7 +1843,7 @@ export async function verifyPasswordResetOTP(
   } catch (error) {
     console.error('verifyPasswordResetOTP Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
@@ -1629,7 +1893,7 @@ export async function resetPasswordWithToken(
 
     clearTimeout(timeoutId);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
 
     if (!response.ok) {
@@ -1644,7 +1908,7 @@ export async function resetPasswordWithToken(
   } catch (error) {
     console.error('resetPasswordWithToken Error:', error);
     if (signal) {
-      signal.removeEventListener('abort', onExternalAbort);
+      signal.removeEventListener('abort', () => {});
     }
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
@@ -1661,17 +1925,20 @@ export default {
   fetchUserProfile,
   updateUserProfile,
   updateUserProfileAsAdmin,
+  createUserAccount,
   storeSession,
   getSessionToken,
   getStoredUser,
   clearSession,
   hasActiveSession,
   verifySession,
+  getSessionVerificationState,
   getRoleDisplayName,
   hasAdminAccess,
   hasLeadershipAccess,
   isRestricted,
   checkUserRole,
+  authorizePageAccess,
   verifyPassword,
   changePassword,
   sendVerificationOTP,
@@ -1683,3 +1950,4 @@ export default {
   resetPasswordWithToken,
   LoginErrorCodes,
 };
+

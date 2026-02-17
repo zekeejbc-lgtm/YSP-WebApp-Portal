@@ -2427,7 +2427,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
             href={`mailto:${part.replace(/\+/g, '%2B')}`}
             onClick={(e) => {
               e.preventDefault();
-              console.log('[Email Debug] ChatBot email link clicked:', part);
+              console.warn('[Email Debug] ChatBot email link clicked:', part);
               openEmailApp(part);
             }}
             style={{

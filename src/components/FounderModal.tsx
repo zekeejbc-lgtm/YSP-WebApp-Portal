@@ -1149,7 +1149,7 @@ export default function FounderModal({
                         href={`mailto:${founderData.contact.email?.replace(/\+/g, '%2B')}`}
                         onClick={(e) => {
                           e.preventDefault();
-                          console.log('[Email Debug] FounderModal email link clicked:', founderData.contact.email);
+                          console.warn('[Email Debug] FounderModal email link clicked:', founderData.contact.email);
                           if (founderData.contact.email) openEmailApp(founderData.contact.email);
                         }}
                         className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] transition-colors truncate block"

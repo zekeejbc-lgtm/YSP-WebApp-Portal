@@ -30,13 +30,15 @@ import {
   DirectoryErrorCodes,
   clearDirectoryCache,
 } from "../services/gasDirectoryService";
-import { updateUserProfileAsAdmin, type UserProfile } from "../services/gasLoginService";
+import { createUserAccount, updateUserProfileAsAdmin, type UserProfile } from "../services/gasLoginService";
 import {
   getSyncedApplicantSheet,
   getApplicantImageDataUrl,
   syncApplicantSheet,
   type SyncedApplicantSheetData,
 } from "../services/gasApplicationsService";
+import { getSystemRoles } from "../services/gasSystemToolsService";
+import type { SystemRole } from "../types/app";
 import { useLocation, useNavigate } from "react-router-dom";
 
 // =================== SKELETON COMPONENTS ===================
@@ -610,7 +612,7 @@ function logApplicantFrontDebug(
   const data = "fullData" in applicationOrData ? applicationOrData.fullData : applicationOrData;
   const hasSocial = Boolean(data.facebook || data.instagram || data.twitter);
   const normalizedProfilePicture = normalizeProfileImageUrl(data.profilePicture);
-  console.log(`[Applicants UI Debug] ${label}`, {
+  console.warn(`[Applicants UI Debug] ${label}`, {
     name: data.fullName,
     email: data.email,
     address: previewDebugValue(data.address),
@@ -682,6 +684,7 @@ export default function ManageMembersPage({
 
   const [members, setMembers] = useState<Member[]>([]);
   const [allMembers, setAllMembers] = useState<Member[]>([]);
+  const [availableRoles, setAvailableRoles] = useState<SystemRole[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -701,6 +704,28 @@ export default function ManageMembersPage({
   const isPendingPageView = queryParams.get("view") === "pending";
   const selectedApplicantIdInUrl = queryParams.get("applicantId") || "";
 
+  const roleColorMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    availableRoles.forEach((role) => {
+      map[role.name.toLowerCase()] = role.color || "#10b981";
+    });
+    return map;
+  }, [availableRoles]);
+
+  const roleFilterOptions = useMemo(() => {
+    const roleNames = new Set<string>();
+    availableRoles.forEach((role) => roleNames.add(role.name));
+    members.forEach((member) => {
+      if (member.role) roleNames.add(member.role);
+    });
+
+    const sorted = Array.from(roleNames).sort((a, b) => a.localeCompare(b));
+    return [
+      { value: "all", label: "All Roles" },
+      ...sorted.map((roleName) => ({ value: roleName, label: roleName })),
+    ];
+  }, [availableRoles, members]);
+
   const addUploadToast = useCallback((message: UploadToastMessage) => {
     setUploadToastMessages(prev => [...prev, message]);
   }, []);
@@ -718,7 +743,7 @@ export default function ManageMembersPage({
   const applySyncedApplicants = useCallback((data?: SyncedApplicantSheetData) => {
     if (!data) return;
     if (APPLICANT_MAPPING_DEBUG) {
-      console.log("[Applicants UI Debug] synced payload summary", {
+      console.warn("[Applicants UI Debug] synced payload summary", {
         sheetName: data.sheetName || "",
         rowCount: Number(data.rowCount || 0),
         headerCount: Array.isArray(data.headers) ? data.headers.length : 0,
@@ -937,6 +962,18 @@ export default function ManageMembersPage({
   }, [loadSyncedApplicants]);
 
   useEffect(() => {
+    const loadRoles = async () => {
+      try {
+        const roles = await getSystemRoles();
+        setAvailableRoles(roles);
+      } catch (error) {
+        console.error("Failed to load system roles for Manage Members:", error);
+      }
+    };
+    loadRoles();
+  }, []);
+
+  useEffect(() => {
     if (!hasInitializedRef.current) {
       hasInitializedRef.current = true;
       return;
@@ -984,6 +1021,18 @@ export default function ManageMembersPage({
   const selectedApplicantForTrail =
     pendingApplicationsList.find((app) => app.id === selectedApplicantIdInUrl) || null;
   const viewToggleLabel = viewMode === "table" ? "Table View" : "Tile View";
+
+  const getRoleBadgeStyle = useCallback(
+    (roleName: string) => {
+      const color = roleColorMap[String(roleName || "").toLowerCase()] || "#10b981";
+      return {
+        backgroundColor: `${color}20`,
+        color,
+        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+      };
+    },
+    [roleColorMap]
+  );
 
   const [exportType, setExportType] = useState("");
 
@@ -1829,13 +1878,7 @@ export default function ManageMembersPage({
             <CustomDropdown
               value={filterRole}
               onChange={setFilterRole}
-              options={[
-                { value: "all", label: "All Roles" },
-                { value: "Admin", label: "Admin" },
-                { value: "Officer", label: "Officer" },
-                { value: "Member", label: "Member" },
-                { value: "Volunteer", label: "Volunteer" },
-              ]}
+              options={roleFilterOptions}
               isDark={isDark}
               size="md"
               className="min-w-[180px]"
@@ -1957,21 +2000,7 @@ export default function ManageMembersPage({
                   <div className="flex flex-wrap gap-2 mb-3">
                     <span
                       className="px-2 py-1 rounded-full text-xs"
-                      style={{
-                        backgroundColor:
-                          member.role === "Admin"
-                            ? "#f6421f20"
-                            : member.role === "Officer"
-                            ? "#ee872420"
-                            : "#10b98120",
-                        color:
-                          member.role === "Admin"
-                            ? "#f6421f"
-                            : member.role === "Officer"
-                            ? "#ee8724"
-                            : "#10b981",
-                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                      }}
+                      style={getRoleBadgeStyle(member.role)}
                     >
                       {member.role}
                     </span>
@@ -2094,21 +2123,7 @@ export default function ManageMembersPage({
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span
                           className="px-2 py-1 rounded-full text-xs"
-                          style={{
-                            backgroundColor:
-                              member.role === "Admin"
-                                ? "#f6421f20"
-                                : member.role === "Officer"
-                                ? "#ee872420"
-                                : "#10b98120",
-                            color:
-                              member.role === "Admin"
-                                ? "#f6421f"
-                                : member.role === "Officer"
-                                ? "#ee8724"
-                                : "#10b981",
-                            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                          }}
+                          style={getRoleBadgeStyle(member.role)}
                         >
                           {member.role}
                         </span>
@@ -2199,6 +2214,7 @@ export default function ManageMembersPage({
           key={selectedApplication.id}
           application={selectedApplication}
           isDark={isDark}
+          availableRoles={availableRoles}
           onClose={clearApplicantTrail}
           onApprove={handleApproveApplication}
           onReject={handleRejectApplication}
@@ -2211,6 +2227,7 @@ export default function ManageMembersPage({
       {showAddMemberModal && (
         <AddMemberModal
           isDark={isDark}
+          availableRoles={availableRoles}
           onClose={() => setShowAddMemberModal(false)}
           onSave={(newMember) => {
             setMembers([...members, { ...newMember, id: `MEM-00${members.length + 1}`, dateJoined: new Date().toISOString().split('T')[0] }]);
@@ -2225,6 +2242,7 @@ export default function ManageMembersPage({
         <EditMemberModal
           isDark={isDark}
           member={selectedMember}
+          availableRoles={availableRoles}
           onClose={() => {
             setShowEditMemberModal(false);
             setSelectedMember(null);
@@ -2291,6 +2309,7 @@ export default function ManageMembersPage({
         <AccountCreationModal
           isOpen={showAccountModal}
           isDark={isDark}
+          availableRoles={availableRoles}
           applicantData={selectedApplication?.fullData ?? {
             fullName: "",
             email: "",
@@ -2298,9 +2317,30 @@ export default function ManageMembersPage({
             desiredRole: "",
           }}
           onClose={() => setShowAccountModal(false)}
-          onCreateAccount={(_data) => {
-             // ... handle creation
-             setShowAccountModal(false);
+          onCreateAccount={async (accountData) => {
+            if (!selectedApplication) return;
+            try {
+              const result = await createUserAccount({
+                username: accountData.username,
+                password: accountData.password,
+                fullName: selectedApplication.fullData.fullName || selectedApplication.name,
+                email: selectedApplication.fullData.email || selectedApplication.email,
+                role: accountData.role,
+                position: accountData.position,
+                committee: accountData.committee,
+                chapter: selectedApplication.fullData.chapter || "Tagum Chapter",
+                membershipType: "Regular",
+                contactNumber: selectedApplication.fullData.phone || selectedApplication.phone || "",
+              });
+
+              setShowAccountModal(false);
+              toast.success("Account Created Successfully!", {
+                description: `Generated ID: ${result.user?.idCode || "N/A"}`,
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Failed to create account";
+              toast.error("Account creation failed", { description: message });
+            }
           }}
         />
       )}
@@ -2319,6 +2359,7 @@ export default function ManageMembersPage({
 interface ApplicationPanelProps {
   application: PendingApplication;
   isDark: boolean;
+  availableRoles: SystemRole[];
   onClose: () => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
@@ -2329,6 +2370,7 @@ interface ApplicationPanelProps {
 function ApplicationPanel({
   application,
   isDark,
+  availableRoles,
   onClose,
   onApprove,
   onReject,
@@ -2418,16 +2460,38 @@ function ApplicationPanel({
     }
   };
 
-  const handleAccountCreation = (accountData: any) => {
-    console.log("Account created:", accountData);
+  const handleAccountCreation = async (accountData: {
+    username: string;
+    password: string;
+    committee: string;
+    role: string;
+    position: string;
+  }) => {
+    try {
+      const result = await createUserAccount({
+        username: accountData.username,
+        password: accountData.password,
+        fullName: data.fullName || application.name,
+        email: data.email || application.email,
+        role: accountData.role,
+        position: accountData.position,
+        committee: accountData.committee,
+        chapter: data.chapter || "Tagum Chapter",
+        membershipType: "Regular",
+        contactNumber: data.phone || application.phone || "",
+      });
 
-    toast.success("Account Created Successfully!", {
-      description: `Welcome email sent to ${data.email}`,
-    });
+      toast.success("Account Created Successfully!", {
+        description: `Generated ID: ${result.user?.idCode || "N/A"}`,
+      });
 
-    setShowAccountModal(false);
-    onApprove(application.id);
-    onClose();
+      setShowAccountModal(false);
+      onApprove(application.id);
+      onClose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create account";
+      toast.error("Account creation failed", { description: message });
+    }
   };
 
   return (
@@ -2721,6 +2785,7 @@ function ApplicationPanel({
         <AccountCreationModal
           isOpen={showAccountModal}
           isDark={isDark}
+          availableRoles={availableRoles}
           applicantData={data}
           onClose={() => setShowAccountModal(false)}
           onCreateAccount={handleAccountCreation}

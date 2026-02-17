@@ -307,7 +307,7 @@ export default function MyQRIDPage({
           }
         }
 
-        console.log('[MyQRIDPage] Profile completeness:', { 
+        console.warn('[MyQRIDPage] Profile completeness:', { 
           emailVerified, 
           missingFields,
           requiredFieldsCount: REQUIRED_DIRECTORY_FIELDS.length
@@ -348,11 +348,11 @@ export default function MyQRIDPage({
         // FETCH FRESH DATA FIRST before deciding what to show
         try {
           const profileResponse = await fetchUserProfile(storedUser.username);
-          console.log('[MyQRIDPage] Profile response:', profileResponse);
+          console.warn('[MyQRIDPage] Profile response:', profileResponse);
           
           if (profileResponse.success && profileResponse.profile) {
             const p = profileResponse.profile;
-            console.log('[MyQRIDPage] Raw profile data:', {
+            console.warn('[MyQRIDPage] Raw profile data:', {
               birthday: p.birthday,
               contactNumber: p.contactNumber,
               emergencyContactName: p.emergencyContactName,
@@ -381,7 +381,7 @@ export default function MyQRIDPage({
             }
           } else if (cachedProfile?.data) {
             // Fetch returned no data, use cache as fallback
-            console.log('[MyQRIDPage] Using cached profile as fallback');
+            console.warn('[MyQRIDPage] Using cached profile as fallback');
             const p = cachedProfile.data;
             emailVerified = p.emailVerified || false;
             setIsEmailVerified(emailVerified);
@@ -405,7 +405,7 @@ export default function MyQRIDPage({
           
           // Use cache as fallback if available
           if (cachedProfile?.data) {
-            console.log('[MyQRIDPage] Using cached profile after fetch error');
+            console.warn('[MyQRIDPage] Using cached profile after fetch error');
             const p = cachedProfile.data;
             emailVerified = p.emailVerified || false;
             setIsEmailVerified(emailVerified);
@@ -450,7 +450,7 @@ export default function MyQRIDPage({
       
       // Check if already cached
       if (cachedFrontCard && cachedBackCard) {
-        console.log('[MyQRIDPage] ID cards already in memory cache');
+        console.warn('[MyQRIDPage] ID cards already in memory cache');
         return;
       }
       
@@ -459,12 +459,12 @@ export default function MyQRIDPage({
       if (cached) {
         setCachedFrontCard(cached.front);
         setCachedBackCard(cached.back);
-        console.log('[MyQRIDPage] Loaded ID cards from localStorage cache');
+        console.warn('[MyQRIDPage] Loaded ID cards from localStorage cache');
         return;
       }
       
       // Generate in background
-      console.log('[MyQRIDPage] Pre-generating ID cards in background...');
+      console.warn('[MyQRIDPage] Pre-generating ID cards in background...');
       try {
         const frontCanvas = await generateIDCardFront();
         const backCanvas = await generateIDCardBack();
@@ -474,7 +474,7 @@ export default function MyQRIDPage({
         setCachedFrontCard(frontDataUrl);
         setCachedBackCard(backDataUrl);
         cacheIDCard(userData.idCode, frontDataUrl, backDataUrl);
-        console.log('[MyQRIDPage] ID cards pre-generated and cached');
+        console.warn('[MyQRIDPage] ID cards pre-generated and cached');
       } catch (e) {
         console.warn('[MyQRIDPage] Background ID card generation failed:', e);
       }
@@ -505,7 +505,7 @@ export default function MyQRIDPage({
     if (!hasValue(userData?.emergencyContactNumber)) missing.push('Emergency Contact Number');
     
     // Debug log to help identify issues
-    console.log('[MyQRIDPage] Profile completeness check:', {
+    console.warn('[MyQRIDPage] Profile completeness check:', {
       fullName: userData?.fullName,
       idCode: userData?.idCode,
       position: userData?.position,
@@ -562,7 +562,7 @@ export default function MyQRIDPage({
         version: ID_CARD_CACHE_VERSION
       };
       localStorage.setItem(`${ID_CARD_CACHE_KEY}_${idCode}`, JSON.stringify(cacheData));
-      console.log('[MyQRIDPage] ID card cached successfully, version:', ID_CARD_CACHE_VERSION);
+      console.warn('[MyQRIDPage] ID card cached successfully, version:', ID_CARD_CACHE_VERSION);
     } catch (e) {
       console.warn('[MyQRIDPage] Failed to cache ID card:', e);
     }
@@ -578,10 +578,10 @@ export default function MyQRIDPage({
         if (data.version === ID_CARD_CACHE_VERSION && 
             data.timestamp && 
             Date.now() - data.timestamp < 24 * 60 * 60 * 1000) {
-          console.log('[MyQRIDPage] Using cached ID card, version:', data.version);
+          console.warn('[MyQRIDPage] Using cached ID card, version:', data.version);
           return { front: data.front, back: data.back };
         } else {
-          console.log('[MyQRIDPage] Cache invalidated - version mismatch or expired. Cached:', data.version, 'Current:', ID_CARD_CACHE_VERSION);
+          console.warn('[MyQRIDPage] Cache invalidated - version mismatch or expired. Cached:', data.version, 'Current:', ID_CARD_CACHE_VERSION);
           // Clear old cache
           localStorage.removeItem(`${ID_CARD_CACHE_KEY}_${idCode}`);
         }
@@ -644,8 +644,8 @@ export default function MyQRIDPage({
     return new Promise((resolve, reject) => {
       // Convert Google Drive URL to accessible format
       const accessibleUrl = getAccessibleImageUrl(src);
-      console.log('[loadImage] Original URL:', src.substring(0, 80));
-      console.log('[loadImage] Accessible URL:', accessibleUrl.substring(0, 80));
+      console.warn('[loadImage] Original URL:', src.substring(0, 80));
+      console.warn('[loadImage] Accessible URL:', accessibleUrl.substring(0, 80));
       
       const img = new Image();
       
@@ -656,7 +656,7 @@ export default function MyQRIDPage({
       img.referrerPolicy = 'no-referrer';
       
       img.onload = () => {
-        console.log('[loadImage] Successfully loaded:', accessibleUrl.substring(0, 50) + '...');
+        console.warn('[loadImage] Successfully loaded:', accessibleUrl.substring(0, 50) + '...');
         resolve(img);
       };
       img.onerror = (e) => {
@@ -670,7 +670,7 @@ export default function MyQRIDPage({
                               src.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/);
           if (fileIdMatch) {
             const altUrl = `https://drive.google.com/thumbnail?id=${fileIdMatch[1]}&sz=w500`;
-            console.log('[loadImage] Trying thumbnail fallback:', altUrl);
+            console.warn('[loadImage] Trying thumbnail fallback:', altUrl);
             const img2 = new Image();
             img2.crossOrigin = 'anonymous';
             img2.referrerPolicy = 'no-referrer';
@@ -889,12 +889,12 @@ export default function MyQRIDPage({
     ctx.fill();
 
     // Load and draw profile picture
-    console.log('Profile Picture URL:', userData.profilePictureURL);
+    console.warn('Profile Picture URL:', userData.profilePictureURL);
     if (userData.profilePictureURL) {
       try {
-        console.log('Attempting to load profile picture...');
+        console.warn('Attempting to load profile picture...');
         const photo = await loadImage(userData.profilePictureURL);
-        console.log('Profile picture loaded successfully:', photo.width, 'x', photo.height);
+        console.warn('Profile picture loaded successfully:', photo.width, 'x', photo.height);
         ctx.save();
         ctx.beginPath();
         ctx.arc(photoX + photoSize/2, photoY + photoSize/2, photoSize/2 - 2*scale, 0, Math.PI * 2);
@@ -926,7 +926,7 @@ export default function MyQRIDPage({
         ctx.fillText(userData.fullName.charAt(0).toUpperCase(), photoX + photoSize/2, photoY + photoSize/2);
       }
     } else {
-      console.log('No profile picture URL available');
+      console.warn('No profile picture URL available');
       ctx.fillStyle = '#d1d5db';
       ctx.beginPath();
       ctx.arc(photoX + photoSize/2, photoY + photoSize/2, photoSize/2 - 2*scale, 0, Math.PI * 2);
@@ -1312,7 +1312,7 @@ export default function MyQRIDPage({
 
       // Check if we have cached cards in state
       if (cachedFrontCard && cachedBackCard) {
-        console.log('[MyQRIDPage] Using in-memory cached cards');
+        console.warn('[MyQRIDPage] Using in-memory cached cards');
         frontDataUrl = cachedFrontCard;
         backDataUrl = cachedBackCard;
         

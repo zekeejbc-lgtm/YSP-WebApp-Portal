@@ -73,7 +73,9 @@
     getStoredUser,
     hasActiveSession,
     verifySession,
+    getSessionVerificationState,
     checkUserRole,
+    authorizePageAccess,
     LoginErrorCodes,
   } from "./services/gasLoginService";
   // ADDED getMaintenanceModeFromBackend HERE:
@@ -143,6 +145,40 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
    * - ./components/SocialMediaIcon (detectSocialPlatform, SocialIcon, LazyFallback)
    * - ./types/app (PendingApplication, NavPage, NavGroup, etc.)
    */
+
+  const PAGE_BACKEND_PATHS: Record<string, string> = {
+    feedback: "feedback",
+    "membership-editor": "admin/members",
+    "officer-directory": "directory",
+    "attendance-dashboard": "attendance/dashboard",
+    "attendance-recording": "attendance/recording",
+    "manage-events": "events",
+    "my-qr-id": "my-qrid",
+    "attendance-transparency": "attendance/transparency",
+    "my-profile": "profile",
+    announcements: "announcements",
+    "issuance-center": "issuance",
+    "access-logs": "admin/logs",
+    "system-tools": "admin/tools",
+    "manage-members": "admin/members",
+    settings: "settings",
+  };
+
+  const PUBLIC_PAGE_IDS = new Set([
+    "home",
+    "about",
+    "projects",
+    "contact",
+    "org-chart",
+    "feedback",
+    "membership-applications",
+    "login",
+    "founder",
+    "developer",
+  ]);
+
+  const PAGE_ACCESS_DEBUG = false;
+  const SIDEBAR_DEBUG_TOAST_ID = "sidebar-pages-debug";
 
   export default function App() {
     const LAST_VIEW_KEY = "ysp_last_view";
@@ -229,6 +265,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     newRole: string;
   } | null>(null);
   const roleCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sessionExpiryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // URL Sync - Bridges boolean navigation states with URL routing
   // Provides deepLinkParams for item-specific navigation (feedback ID, event ID, etc.)
@@ -428,6 +465,65 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     };
   }, [isAdmin, userRole, userName]);
 
+  // Session Expiry Polling Effect
+  // Detects server-confirmed session expiry during active use.
+  useEffect(() => {
+    if (!sessionChecked || !isAdmin || userRole === "guest") {
+      if (sessionExpiryIntervalRef.current) {
+        clearInterval(sessionExpiryIntervalRef.current);
+        sessionExpiryIntervalRef.current = null;
+      }
+      return;
+    }
+
+    let isMounted = true;
+    let isChecking = false;
+
+    const checkSessionExpiry = async () => {
+      if (!isMounted || isChecking || !hasActiveSession()) return;
+
+      isChecking = true;
+      try {
+        const state = await getSessionVerificationState();
+        if (!isMounted) return;
+
+        if (state === "expired") {
+          const storedUser = getStoredUser();
+          handleSessionExpired(storedUser?.username || userUsername);
+          toast.error("Session expired", {
+            description: "Your session ended while using the app. Please log in again.",
+          });
+
+          if (sessionExpiryIntervalRef.current) {
+            clearInterval(sessionExpiryIntervalRef.current);
+            sessionExpiryIntervalRef.current = null;
+          }
+        }
+      } finally {
+        isChecking = false;
+      }
+    };
+
+    const initialTimeout = setTimeout(() => {
+      if (isMounted) {
+        void checkSessionExpiry();
+      }
+    }, 10000);
+
+    sessionExpiryIntervalRef.current = setInterval(() => {
+      void checkSessionExpiry();
+    }, 30000);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(initialTimeout);
+      if (sessionExpiryIntervalRef.current) {
+        clearInterval(sessionExpiryIntervalRef.current);
+        sessionExpiryIntervalRef.current = null;
+      }
+    };
+  }, [handleSessionExpired, isAdmin, sessionChecked, userRole, userUsername]);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -500,19 +596,38 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     const [uploadToastMessages, setUploadToastMessages] = useState<UploadToastMessage[]>([]);
     
     // Upload Toast Helper Functions
-    const addUploadToast = (message: UploadToastMessage) => {
+    const addUploadToast = useCallback((message: UploadToastMessage) => {
       setUploadToastMessages(prev => [...prev.filter(m => m.id !== message.id), message]);
-    };
+    }, []);
     
-    const updateUploadToast = (id: string, updates: Partial<UploadToastMessage>) => {
+    const updateUploadToast = useCallback((id: string, updates: Partial<UploadToastMessage>) => {
       setUploadToastMessages(prev => 
         prev.map(m => m.id === id ? { ...m, ...updates } : m)
       );
-    };
+    }, []);
     
-    const removeUploadToast = (id: string) => {
+    const removeUploadToast = useCallback((id: string) => {
       setUploadToastMessages(prev => prev.filter(m => m.id !== id));
-    };
+    }, []);
+
+    const updateSidebarDebugToast = useCallback(
+      (payload: {
+        status: UploadToastMessage["status"];
+        progress: number;
+        message: string;
+        title?: string;
+      }) => {
+        addUploadToast({
+          id: SIDEBAR_DEBUG_TOAST_ID,
+          title: payload.title || "Loading Pages...",
+          message: payload.message,
+          status: payload.status,
+          progress: payload.progress,
+          progressLabel: "Loading pages...",
+        });
+      },
+      [addUploadToast]
+    );
 
     const [activePage, setActivePage] = useState<string>("home");
     const [openDropdown, setOpenDropdown] = useState<string | null>(null);
@@ -571,6 +686,56 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     
     // Manage Members Modal State (to hide chatbot)
     const [manageMembersModalOpen, setManageMembersModalOpen] = useState(false);
+    
+    // System Tools Modal State (to hide chatbot)
+    const [systemToolsModalOpen, setSystemToolsModalOpen] = useState(false);
+    const [isAccessMatrixLoading, setIsAccessMatrixLoading] = useState(false);
+    const [hasResolvedSidebarAccess, setHasResolvedSidebarAccess] = useState(false);
+    const [pageAccessByPath, setPageAccessByPath] = useState<Record<string, boolean>>({});
+    const isAccessMatrixLoadingRef = useRef(false);
+    const hasResolvedSidebarAccessRef = useRef(false);
+
+    useEffect(() => {
+      isAccessMatrixLoadingRef.current = isAccessMatrixLoading;
+    }, [isAccessMatrixLoading]);
+
+    useEffect(() => {
+      hasResolvedSidebarAccessRef.current = hasResolvedSidebarAccess;
+    }, [hasResolvedSidebarAccess]);
+
+    const prepareSidebarBootstrap = useCallback(() => {
+      setHasResolvedSidebarAccess(false);
+      updateSidebarDebugToast({
+        status: "loading",
+        progress: 10,
+        message: "initializing",
+      });
+    }, [updateSidebarDebugToast]);
+
+    const waitForPostLoginRender = useCallback(async () => {
+      const nextPaint = () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        });
+
+      await nextPaint();
+
+      const start = Date.now();
+      const maxWaitMs = 8000;
+      while (!hasResolvedSidebarAccessRef.current && Date.now() - start < maxWaitMs) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 60));
+      }
+
+      await nextPaint();
+    }, []);
+
+    const isPageAllowed = useCallback((pageId: string): boolean => {
+      if (PUBLIC_PAGE_IDS.has(pageId)) return true;
+      const path = PAGE_BACKEND_PATHS[pageId];
+      if (!path) return true;
+      if (!isAdmin || userRole === "guest") return false;
+      return pageAccessByPath[path] === true;
+    }, [isAdmin, pageAccessByPath, userRole]);
 
     useEffect(() => {
       const handleAttendanceTransparencyModal = (event: Event) => {
@@ -582,6 +747,216 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         window.removeEventListener("attendance-transparency-modal", handleAttendanceTransparencyModal as EventListener);
       };
     }, []);
+
+    useEffect(() => {
+      if (!showSystemTools) {
+        setSystemToolsModalOpen(false);
+      }
+    }, [showSystemTools]);
+
+    useEffect(() => {
+      if (!sessionChecked) {
+        setHasResolvedSidebarAccess(false);
+        removeUploadToast(SIDEBAR_DEBUG_TOAST_ID);
+        return;
+      }
+
+      if (!isAdmin || userRole === "guest") {
+        if (PAGE_ACCESS_DEBUG) {
+          console.warn("[AccessDebug] Skipping protected access matrix (user not authenticated for protected pages)", {
+            sessionChecked,
+            isAdmin,
+            userRole,
+            userUsername,
+          });
+        }
+        setIsAccessMatrixLoading(false);
+        setHasResolvedSidebarAccess(true);
+        setPageAccessByPath({});
+        removeUploadToast(SIDEBAR_DEBUG_TOAST_ID);
+        return;
+      }
+
+      let cancelled = false;
+      const controller = new AbortController();
+      const syncAccess = async () => {
+        setHasResolvedSidebarAccess(false);
+        updateSidebarDebugToast({
+          status: "loading",
+          progress: 35,
+          message: "authorizing sidebar pages",
+        });
+        setIsAccessMatrixLoading(true);
+        const nextAccess: Record<string, boolean> = {};
+        const paths = Array.from(new Set(Object.values(PAGE_BACKEND_PATHS)));
+        const detailedResults: Array<{
+          path: string;
+          allowed: boolean;
+          success?: boolean;
+          role?: string;
+          checkedAt?: string;
+          error?: string;
+        }> = [];
+
+        if (PAGE_ACCESS_DEBUG) {
+          console.warn("[AccessDebug] Starting backend page-access matrix sync");
+          console.warn("[AccessDebug] User context", {
+            isAdmin,
+            userRole,
+            userUsername,
+            paths,
+          });
+        }
+
+        await Promise.all(
+          paths.map(async (path) => {
+            try {
+              const result = await authorizePageAccess("/" + path, controller.signal);
+              nextAccess[path] = result.success === true && result.allowed === true;
+              detailedResults.push({
+                path,
+                allowed: nextAccess[path],
+                success: result.success,
+                role: result.role,
+                checkedAt: result.checkedAt,
+                error: result.error,
+              });
+              if (PAGE_ACCESS_DEBUG) {
+                console.warn("[AccessDebug] authorizePageAccess result", {
+                  requestPath: "/" + path,
+                  path,
+                  allowed: nextAccess[path],
+                  response: result,
+                });
+              }
+            } catch {
+              nextAccess[path] = false;
+              detailedResults.push({
+                path,
+                allowed: false,
+                success: false,
+                error: "request_failed_or_aborted",
+              });
+              if (PAGE_ACCESS_DEBUG) {
+                console.warn("[AccessDebug] authorizePageAccess request failed", {
+                  requestPath: "/" + path,
+                  path,
+                  allowed: false,
+                });
+              }
+            }
+          })
+        );
+
+        if (!cancelled) {
+          if (PAGE_ACCESS_DEBUG) {
+            const allowedPaths = Object.entries(nextAccess)
+              .filter(([, allowed]) => allowed)
+              .map(([path]) => path);
+            const deniedPaths = Object.entries(nextAccess)
+              .filter(([, allowed]) => !allowed)
+              .map(([path]) => path);
+            console.warn("[AccessDebug] Final page access matrix", nextAccess);
+            console.warn("[AccessDebug] Detailed results", detailedResults);
+            console.warn("[AccessDebug] Allowed paths", allowedPaths);
+            console.warn("[AccessDebug] Denied paths", deniedPaths);
+            console.warn("[AccessDebug] End backend page-access matrix sync");
+          }
+          setPageAccessByPath(nextAccess);
+          setIsAccessMatrixLoading(false);
+          setHasResolvedSidebarAccess(true);
+          updateSidebarDebugToast({
+            status: "success",
+            progress: 100,
+            message: "sidebar pages loaded",
+          });
+          setTimeout(() => removeUploadToast(SIDEBAR_DEBUG_TOAST_ID), 4000);
+        }
+      };
+
+      syncAccess();
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }, [isAdmin, removeUploadToast, sessionChecked, updateSidebarDebugToast, userRole, userUsername]);
+
+    useEffect(() => {
+      if (!sessionChecked) return;
+
+      let blocked = false;
+      const closeIfBlocked = (
+        isOpen: boolean,
+        pageId: string,
+        closePage: () => void
+      ) => {
+        if (isOpen && !isPageAllowed(pageId)) {
+          if (PAGE_ACCESS_DEBUG) {
+            const backendPath = PAGE_BACKEND_PATHS[pageId];
+            console.warn("[AccessDebug] Force-closing unauthorized page", {
+              pageId,
+              backendPath,
+              userRole,
+              isAdmin,
+              pageAccessValue: backendPath ? pageAccessByPath[backendPath] : undefined,
+              currentAccessMatrix: pageAccessByPath,
+            });
+          }
+          closePage();
+          blocked = true;
+        }
+      };
+
+      closeIfBlocked(showMembershipApplicationsPage, "membership-editor", () => setShowMembershipApplicationsPage(false));
+      closeIfBlocked(showOfficerDirectory, "officer-directory", () => setShowOfficerDirectory(false));
+      closeIfBlocked(showAttendanceDashboard, "attendance-dashboard", () => setShowAttendanceDashboard(false));
+      closeIfBlocked(showAttendanceRecording, "attendance-recording", () => setShowAttendanceRecording(false));
+      closeIfBlocked(showManageEvents, "manage-events", () => setShowManageEvents(false));
+      closeIfBlocked(showMyQRID, "my-qr-id", () => setShowMyQRID(false));
+      closeIfBlocked(showAttendanceTransparency, "attendance-transparency", () => setShowAttendanceTransparency(false));
+      closeIfBlocked(showMyProfile, "my-profile", () => setShowMyProfile(false));
+      closeIfBlocked(showAnnouncements, "announcements", () => setShowAnnouncements(false));
+      closeIfBlocked(showIssuanceCenter, "issuance-center", () => setShowIssuanceCenter(false));
+      closeIfBlocked(showAccessLogs, "access-logs", () => setShowAccessLogs(false));
+      closeIfBlocked(showSystemTools, "system-tools", () => setShowSystemTools(false));
+      closeIfBlocked(showManageMembers, "manage-members", () => setShowManageMembers(false));
+      closeIfBlocked(showSettings, "settings", () => setShowSettings(false));
+
+      if (blocked) {
+        if (PAGE_ACCESS_DEBUG) {
+          console.warn("[AccessDebug] Redirecting to home after unauthorized page attempt");
+        }
+        setActivePage("home");
+        setAccessLogsModalOpen(false);
+        setIssuanceModalOpen(false);
+        setAttendanceDashboardModalOpen(false);
+        setManageEventsModalOpen(false);
+        setAttendanceTransparencyModalOpen(false);
+        setMembershipAppsModalOpen(false);
+        setManageMembersModalOpen(false);
+        setSystemToolsModalOpen(false);
+      }
+    }, [
+      isPageAllowed,
+      sessionChecked,
+      showMembershipApplicationsPage,
+      showOfficerDirectory,
+      showAttendanceDashboard,
+      showAttendanceRecording,
+      showManageEvents,
+      showMyQRID,
+      showAttendanceTransparency,
+      showMyProfile,
+      showAnnouncements,
+      showIssuanceCenter,
+      showAccessLogs,
+      showSystemTools,
+      showManageMembers,
+      showSettings,
+      pageAccessByPath,
+      isAdmin,
+      userRole,
+    ]);
     
     // Homepage Content - Fetched from GAS Backend
     const [homepageContent, setHomepageContent] = useState<HomepageMainContent & {
@@ -650,6 +1025,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
             if (valid) {
               // Restore user data only when session is still valid
+              prepareSidebarBootstrap();
               setIsAdmin(true);
               setUserRole(storedUser.role);
               setUserName(storedUser.name);
@@ -666,6 +1042,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             if (!isMounted) return;
 
             // Fallback to local session when verification endpoint is unreachable
+            prepareSidebarBootstrap();
             setIsAdmin(true);
             setUserRole(storedUser.role);
             setUserName(storedUser.name);
@@ -686,7 +1063,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       return () => {
         isMounted = false;
       };
-    }, [handleSessionExpired]);
+    }, [handleSessionExpired, prepareSidebarBootstrap]);
 
     // Fetch homepage content from GAS backend on mount - with cache-first for instant loading
     useEffect(() => {
@@ -1464,14 +1841,29 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         auditor: 5,     // Highest access
       };
 
-      const userLevel = roleHierarchy[userRole] || 0;
+      const normalizedUserRole = (userRole || "").toLowerCase().trim();
+      const inferCustomRoleLevel = (role: string): number => {
+        if (!role) return 0;
+        if (roleHierarchy[role] !== undefined) return roleHierarchy[role];
+        if (role.includes("auditor")) return 5;
+        if (role.includes("admin")) return 4;
+        if (role.includes("president") || role.includes("head")) return 3;
+        if (role.includes("member") || role.includes("volunteer")) return 2;
+        if (role.includes("guest")) return 1;
+        // Any authenticated non-restricted custom role gets at least member-level visibility.
+        if (isAdmin && role !== "banned" && role !== "suspended") return 2;
+        return 0;
+      };
+
+      const userLevel = inferCustomRoleLevel(normalizedUserRole);
       
       // Check if user's role level meets ANY of the required roles
       return requiredRoles.some(role => {
-        const requiredLevel = roleHierarchy[role] || 0;
+        const normalizedRequiredRole = (role || "").toLowerCase().trim();
+        const requiredLevel = roleHierarchy[normalizedRequiredRole] || 0;
         return userLevel >= requiredLevel;
       });
-    }, [userRole]);
+    }, [isAdmin, userRole]);
 
     // Filter groups and pages based on user role
     const visibleGroups = useMemo(() => {
@@ -1574,6 +1966,10 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           ],
         }];
       }
+
+      if (isAccessMatrixLoading) {
+        return [];
+      }
       
       return navigationGroups
         .filter((group) => {
@@ -1586,11 +1982,38 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           ...group,
           pages: group.pages.filter((page) => {
             // Use role hierarchy to check access
-            return hasRoleAccess(page.roles);
+            return hasRoleAccess(page.roles) && isPageAllowed(page.id);
           }),
         }))
         .filter((group) => group.pages.length > 0);
-    }, [hasRoleAccess, isAdmin, navigationGroups, userRole]);
+    }, [hasRoleAccess, isAdmin, isAccessMatrixLoading, isPageAllowed, navigationGroups, userRole]);
+
+    useEffect(() => {
+      if (!PAGE_ACCESS_DEBUG || isAccessMatrixLoading) return;
+      const allProtectedPageIds = Object.keys(PAGE_BACKEND_PATHS);
+      const visiblePageIds = visibleGroups.flatMap((group) => group.pages.map((page) => page.id));
+      const hiddenProtectedPageIds = allProtectedPageIds.filter(
+        (pageId) => !visiblePageIds.includes(pageId) && !PUBLIC_PAGE_IDS.has(pageId)
+      );
+
+      console.warn("[AccessDebug] Sidebar visibility resolution");
+      console.warn("[AccessDebug] User context", {
+        isAdmin,
+        userRole,
+        userUsername,
+      });
+      console.warn("[AccessDebug] Visible page IDs", visiblePageIds);
+      console.warn("[AccessDebug] Hidden protected page IDs", hiddenProtectedPageIds);
+      console.warn("[AccessDebug] Current matrix", pageAccessByPath);
+      console.warn("[AccessDebug] End sidebar visibility resolution");
+    }, [
+      isAccessMatrixLoading,
+      isAdmin,
+      userRole,
+      userUsername,
+      visibleGroups,
+      pageAccessByPath,
+    ]);
 
     const toggleDark = useCallback(() => {
       setIsDark(!isDark);
@@ -2077,6 +2500,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
           // Handle SUSPENDED accounts - minimal access warning
           if (user.role === 'suspended') {
+            prepareSidebarBootstrap();
             setIsAdmin(true); // Allow login but limited
             setUserRole('suspended');
             setUserName(user.name);
@@ -2085,6 +2509,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             setUserIdCode(user.id || '');
             setUserPosition(user.position || '');
             setUserProfilePicture(user.profilePic || '');
+            await waitForPostLoginRender();
             setShowLoginPanel(false);
             toast.warning('Account Suspended', {
               description: 'Your account has limited access. Contact admin for full restoration.',
@@ -2093,6 +2518,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           }
 
           // Normal login for all other roles
+          prepareSidebarBootstrap();
           setIsAdmin(true);
           setUserRole(user.role);
           setUserName(user.name);
@@ -2101,6 +2527,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           setUserIdCode(user.id || '');
           setUserPosition(user.position || '');
           setUserProfilePicture(user.profilePic || '');
+          await waitForPostLoginRender();
           setShowLoginPanel(false);
 
           // Log successful login to Access Logs
@@ -2182,6 +2609,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           return;
         }
 
+        prepareSidebarBootstrap();
         setIsAdmin(true);
         setUserRole(storedUser.role);
         setUserName(storedUser.name);
@@ -2190,6 +2618,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         setUserIdCode(storedUser.id || '');
         setUserPosition(storedUser.position || '');
         setUserProfilePicture(storedUser.profilePic || '');
+        await waitForPostLoginRender();
         setShowLoginPanel(false);
         toast.success('Welcome back!', {
           description: storedUser.name ? `Signed in as ${storedUser.name}` : 'Signed in.',
@@ -2378,23 +2807,24 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
     const currentView = useMemo(() => {
       if (showFeedbackPage) return "feedback";
-      if (showMembershipApplicationsPage) return "membership-editor";
+      if (showMembershipApplicationsPage && isPageAllowed("membership-editor")) return "membership-editor";
       if (showMembershipApplications) return "membership-applications";
-      if (showOfficerDirectory) return "officer-directory";
-      if (showAttendanceDashboard) return "attendance-dashboard";
-      if (showAttendanceRecording) return "attendance-recording";
-      if (showManageEvents) return "manage-events";
-      if (showMyQRID) return "my-qrid";
-      if (showAttendanceTransparency) return "attendance-transparency";
-      if (showMyProfile) return "my-profile";
-      if (showAnnouncements) return "announcements";
-      if (showAccessLogs) return "access-logs";
-      if (showSystemTools) return "system-tools";
-      if (showManageMembers) return "manage-members";
-      if (showSettings) return "settings";
+      if (showOfficerDirectory && isPageAllowed("officer-directory")) return "officer-directory";
+      if (showAttendanceDashboard && isPageAllowed("attendance-dashboard")) return "attendance-dashboard";
+      if (showAttendanceRecording && isPageAllowed("attendance-recording")) return "attendance-recording";
+      if (showManageEvents && isPageAllowed("manage-events")) return "manage-events";
+      if (showMyQRID && isPageAllowed("my-qr-id")) return "my-qrid";
+      if (showAttendanceTransparency && isPageAllowed("attendance-transparency")) return "attendance-transparency";
+      if (showMyProfile && isPageAllowed("my-profile")) return "my-profile";
+      if (showAnnouncements && isPageAllowed("announcements")) return "announcements";
+      if (showAccessLogs && isPageAllowed("access-logs")) return "access-logs";
+      if (showSystemTools && isPageAllowed("system-tools")) return "system-tools";
+      if (showManageMembers && isPageAllowed("manage-members")) return "manage-members";
+      if (showSettings && isPageAllowed("settings")) return "settings";
       return activePage;
     }, [
       activePage,
+      isPageAllowed,
       showAccessLogs,
       showAnnouncements,
       showAttendanceDashboard,
@@ -2443,108 +2873,117 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       // FIXED SECTION START
       // FIXED SECTION START
       case "membership-editor":
-        if (hasRoleAccess(["admin", "auditor"])) { 
+        if (isPageAllowed("membership-editor")) {
           setActivePage("membership-editor");
           setShowMembershipApplicationsPage(true);
           return true;
         }
+        if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
         return false;
       // FIXED SECTION END
       // FIXED SECTION END
 
       case "officer-directory":
-          // CHANGED: "member" -> "head"
-          if (hasRoleAccess(["head"])) { 
+          if (isPageAllowed("officer-directory")) {
             setActivePage("officer-directory");
             setShowOfficerDirectory(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "attendance-dashboard":
-          if (hasRoleAccess(["head"])) {
+          if (isPageAllowed("attendance-dashboard")) {
             setActivePage("attendance-dashboard");
             setShowAttendanceDashboard(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "attendance-recording":
-          if (hasRoleAccess(["head"])) {
+          if (isPageAllowed("attendance-recording")) {
             setActivePage("attendance-recording");
             setShowAttendanceRecording(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "manage-events":
-          if (hasRoleAccess(["admin"])) {
+          if (isPageAllowed("manage-events")) {
             setActivePage("manage-events");
             setShowManageEvents(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "my-qrid":
-          if (hasRoleAccess(["member"])) {
+          if (isPageAllowed("my-qr-id")) {
             setActivePage("my-qrid");
             setShowMyQRID(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "attendance-transparency":
-          if (hasRoleAccess(["member"])) {
+          if (isPageAllowed("attendance-transparency")) {
             setActivePage("attendance-transparency");
             setShowAttendanceTransparency(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "my-profile":
-          if (isAdmin || userRole === "suspended") {
+          if (isPageAllowed("my-profile")) {
             setActivePage("my-profile");
             setShowMyProfile(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "announcements":
-          if (hasRoleAccess(["member"])) {
+          if (isPageAllowed("announcements")) {
             setActivePage("announcements");
             setShowAnnouncements(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "access-logs":
-          if (hasRoleAccess(["auditor"])) {
+          if (isPageAllowed("access-logs")) {
             setActivePage("access-logs");
             setShowAccessLogs(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "system-tools":
-          // CHANGED: "admin" -> "auditor"
-          if (hasRoleAccess(["auditor"])) {
+          if (isPageAllowed("system-tools")) {
             setActivePage("system-tools");
             setShowSystemTools(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "manage-members":
-          if (hasRoleAccess(["admin"])) {
+          if (isPageAllowed("manage-members")) {
             setActivePage("manage-members");
             setShowManageMembers(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         case "settings":
-          if (hasRoleAccess(["member"])) {
+          if (isPageAllowed("settings")) {
             setActivePage("settings");
             setShowSettings(true);
             return true;
           }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
         default:
           return false;
       }
     }, [
-      hasRoleAccess,
-      isAdmin,
-      userRole,
+      isPageAllowed,
       setActivePage,
       setShowAccessLogs,
       setShowAnnouncements,
@@ -2561,6 +3000,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       setShowOfficerDirectory,
       setShowSettings,
       setShowSystemTools,
+      userRole,
+      isAdmin,
+      pageAccessByPath,
     ]);
 
     useEffect(() => {
@@ -2747,7 +3189,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || attendanceTransparencyModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal || membershipAppsModalOpen || manageMembersModalOpen}
+        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || attendanceTransparencyModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal || membershipAppsModalOpen || manageMembersModalOpen || systemToolsModalOpen}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
         isDark={isDark}
@@ -2838,7 +3280,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Membership Applications page if flag is true
-    if (showMembershipApplicationsPage) {
+    if (showMembershipApplicationsPage && isPageAllowed("membership-editor")) {
       if (isPageInMaintenance("membership-editor")) {
         const config = getPageMaintenanceConfig("membership-editor");
         return (
@@ -2898,7 +3340,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Officer Directory page
-    if (showOfficerDirectory) {
+    if (showOfficerDirectory && isPageAllowed("officer-directory")) {
       if (isPageInMaintenance("officer-directory")) {
         const config = getPageMaintenanceConfig("officer-directory");
         return (
@@ -2949,7 +3391,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Attendance Dashboard page
-    if (showAttendanceDashboard) {
+    if (showAttendanceDashboard && isPageAllowed("attendance-dashboard")) {
       if (isPageInMaintenance("attendance-dashboard")) {
         const config = getPageMaintenanceConfig("attendance-dashboard");
         return (
@@ -3011,7 +3453,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
     // Show QR Scanner page
     // Show Attendance Recording page (combined QR + Manual)
-    if (showAttendanceRecording) {
+    if (showAttendanceRecording && isPageAllowed("attendance-recording")) {
       if (isPageInMaintenance("attendance-recording")) {
         const config = getPageMaintenanceConfig("attendance-recording");
         return (
@@ -3042,7 +3484,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Manage Events page
-    if (showManageEvents) {
+    if (showManageEvents && isPageAllowed("manage-events")) {
       if (isPageInMaintenance("manage-events")) {
         const config = getPageMaintenanceConfig("manage-events");
         return (
@@ -3074,7 +3516,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show My QR ID page
-    if (showMyQRID) {
+    if (showMyQRID && isPageAllowed("my-qr-id")) {
       if (isPageInMaintenance("my-qrid")) {
         const config = getPageMaintenanceConfig("my-qrid");
         return (
@@ -3106,7 +3548,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Attendance Transparency page
-    if (showAttendanceTransparency) {
+    if (showAttendanceTransparency && isPageAllowed("attendance-transparency")) {
       if (isPageInMaintenance("attendance-transparency")) {
         const config = getPageMaintenanceConfig("attendance-transparency");
         return (
@@ -3131,7 +3573,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show My Profile page
-    if (showMyProfile) {
+    if (showMyProfile && isPageAllowed("my-profile")) {
       if (isPageInMaintenance("my-profile")) {
         const config = getPageMaintenanceConfig("my-profile");
         return (
@@ -3173,7 +3615,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Announcements page
-    if (showAnnouncements) {
+    if (showAnnouncements && isPageAllowed("announcements")) {
       if (isPageInMaintenance("announcements")) {
         const config = getPageMaintenanceConfig("announcements");
         return (
@@ -3205,7 +3647,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Issuance Center page
-    if (showIssuanceCenter) {
+    if (showIssuanceCenter && isPageAllowed("issuance-center")) {
       if (isPageInMaintenance("issuance")) {
         const config = getPageMaintenanceConfig("issuance");
         return (
@@ -3240,7 +3682,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Access Logs page
-    if (showAccessLogs) {
+    if (showAccessLogs && isPageAllowed("access-logs")) {
       if (isPageInMaintenance("access-logs")) {
         const config = getPageMaintenanceConfig("access-logs");
         return (
@@ -3274,7 +3716,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show System Tools page
-    if (showSystemTools) {
+    if (showSystemTools && isPageAllowed("system-tools")) {
       if (isPageInMaintenance("system-tools")) {
         const config = getPageMaintenanceConfig("system-tools");
         return (
@@ -3297,6 +3739,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               username={userUsername || 'admin'}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
+              onModalStateChange={setSystemToolsModalOpen}
             />
           </Suspense>
           <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
@@ -3306,7 +3749,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Manage Members page
-    if (showManageMembers) {
+    if (showManageMembers && isPageAllowed("manage-members")) {
       if (isPageInMaintenance("manage-members")) {
         const config = getPageMaintenanceConfig("manage-members");
         return (
@@ -3323,7 +3766,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading members..." />}>
-            <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userName} onModalStateChange={setManageMembersModalOpen} />
+            <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userUsername || userName} onModalStateChange={setManageMembersModalOpen} />
           </Suspense>
           {chatbot}
         </>
@@ -3357,7 +3800,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     }
 
     // Show Settings page
-    if (showSettings) {
+    if (showSettings && isPageAllowed("settings")) {
       if (isPageInMaintenance("settings")) {
         const config = getPageMaintenanceConfig("settings");
         return (
@@ -3563,6 +4006,19 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           userProfilePicture={userProfilePicture}
           onToggleDark={toggleDark}
           onProfileClick={() => {
+            if (!isPageAllowed("my-profile")) {
+              if (PAGE_ACCESS_DEBUG) {
+                console.warn("[AccessDebug] Profile click blocked", {
+                  pageId: "my-profile",
+                  backendPath: PAGE_BACKEND_PATHS["my-profile"],
+                  userRole,
+                  isAdmin,
+                  pageAccessByPath,
+                });
+              }
+              setIsSidebarOpen(false);
+              return;
+            }
             setActivePage("my-profile");
             setShowMyProfile(true);
             setIsSidebarOpen(false);

@@ -832,6 +832,162 @@ function getMembersForAttendance(search, limit) {
   }
 }
 
+/**
+ * Migrate legacy attendance MemberID values to harmonized ID codes.
+ * Source of truth for latest IDs:
+ * 1) Directory sheet (if it has Name/ID Code columns)
+ * 2) User Profiles sheet fallback
+ *
+ * Migration strategy:
+ * - Keep already harmonized MemberID values
+ * - Match attendance rows by MemberName -> latest ID Code
+ * - Update EventAttendance.MemberID in batch
+ */
+function migrateAttendanceMemberIdsToHarmonizedCodes() {
+  try {
+    const attendanceSs = SpreadsheetApp.openById(getAttendanceSpreadsheetId());
+    const attendanceSheet = attendanceSs.getSheetByName('EventAttendance');
+    if (!attendanceSheet || attendanceSheet.getLastRow() < 2) {
+      return { success: true, updated: 0, skipped: 0, unresolved: 0, message: 'No attendance rows to migrate.' };
+    }
+
+    const lastCol = attendanceSheet.getLastColumn();
+    const data = attendanceSheet.getRange(1, 1, attendanceSheet.getLastRow(), lastCol).getValues();
+    const headers = data[0];
+
+    const memberIdCol = findHeaderIndex_(headers, ['MemberID']);
+    const memberNameCol = findHeaderIndex_(headers, ['MemberName']);
+    if (memberIdCol < 0 || memberNameCol < 0) {
+      return { success: false, error: 'EventAttendance is missing MemberID or MemberName column.' };
+    }
+
+    const idLookup = buildHarmonizedIdLookup_();
+    if (Object.keys(idLookup.byName).length === 0) {
+      return { success: false, error: 'No harmonized ID codes found in Directory/User Profiles.' };
+    }
+
+    const idColValues = data.slice(1).map(function (row) {
+      return [String(row[memberIdCol] || '').trim()];
+    });
+
+    let updated = 0;
+    let skipped = 0;
+    let unresolved = 0;
+    const unresolvedRows = [];
+
+    for (var i = 1; i < data.length; i++) {
+      const row = data[i];
+      const existingMemberId = String(row[memberIdCol] || '').trim();
+      const memberName = String(row[memberNameCol] || '').trim();
+
+      if (isHarmonizedIdCode_(existingMemberId)) {
+        skipped++;
+        continue;
+      }
+
+      const normalizedName = normalizeNameForLookup_(memberName);
+      const mappedId = normalizedName ? idLookup.byName[normalizedName] : '';
+
+      if (!mappedId) {
+        unresolved++;
+        if (unresolvedRows.length < 25) {
+          unresolvedRows.push({
+            row: i + 1,
+            memberName: memberName,
+            currentMemberId: existingMemberId
+          });
+        }
+        continue;
+      }
+
+      if (mappedId === existingMemberId) {
+        skipped++;
+        continue;
+      }
+
+      idColValues[i - 1][0] = mappedId;
+      updated++;
+    }
+
+    if (updated > 0) {
+      attendanceSheet.getRange(2, memberIdCol + 1, idColValues.length, 1).setValues(idColValues);
+    }
+
+    return {
+      success: true,
+      updated: updated,
+      skipped: skipped,
+      unresolved: unresolved,
+      unresolvedSample: unresolvedRows
+    };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
+function buildHarmonizedIdLookup_() {
+  const lookup = { byName: {} };
+  const loginSs = SpreadsheetApp.openById(getLoginSpreadsheetId());
+
+  // Preferred: Directory sheet (as requested)
+  const directorySheet = loginSs.getSheetByName('Directory');
+  if (directorySheet && directorySheet.getLastRow() >= 2) {
+    const dirData = directorySheet.getDataRange().getValues();
+    const dirHeaders = dirData[0];
+    const dirNameCol = findHeaderIndex_(dirHeaders, ['Name', 'Full name', 'Full Name']);
+    const dirIdCol = findHeaderIndex_(dirHeaders, ['ID Code', 'ID']);
+
+    if (dirNameCol >= 0 && dirIdCol >= 0) {
+      for (var i = 1; i < dirData.length; i++) {
+        const name = normalizeNameForLookup_(dirData[i][dirNameCol]);
+        const idCode = String(dirData[i][dirIdCol] || '').trim();
+        if (!name || !isHarmonizedIdCode_(idCode)) continue;
+        lookup.byName[name] = idCode;
+      }
+    }
+  }
+
+  // Fallback/augment: User Profiles
+  const profilesSheet = loginSs.getSheetByName('User Profiles');
+  if (profilesSheet && profilesSheet.getLastRow() >= 2) {
+    const profileData = profilesSheet.getDataRange().getValues();
+    const profileHeaders = profileData[0];
+    const nameCol = findHeaderIndex_(profileHeaders, ['Full name', 'Full Name', 'Name']);
+    const idCol = findHeaderIndex_(profileHeaders, ['ID Code', 'ID']);
+
+    if (nameCol >= 0 && idCol >= 0) {
+      for (var j = 1; j < profileData.length; j++) {
+        const nameKey = normalizeNameForLookup_(profileData[j][nameCol]);
+        const latestId = String(profileData[j][idCol] || '').trim();
+        if (!nameKey || !isHarmonizedIdCode_(latestId)) continue;
+        lookup.byName[nameKey] = latestId;
+      }
+    }
+  }
+
+  return lookup;
+}
+
+function findHeaderIndex_(headers, candidates) {
+  const normalizedHeaders = headers.map(function (h) {
+    return String(h || '').trim().toLowerCase();
+  });
+  for (var i = 0; i < candidates.length; i++) {
+    const target = String(candidates[i] || '').trim().toLowerCase();
+    const idx = normalizedHeaders.indexOf(target);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function normalizeNameForLookup_(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isHarmonizedIdCode_(value) {
+  return /^YSPTC-\d{2}\d{3,}$/i.test(String(value || '').trim());
+}
+
 // =====================================================
 // HELPER FUNCTIONS
 // =====================================================

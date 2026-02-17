@@ -8,13 +8,13 @@
  * - Handles browser back/forward buttons
  * - Checks authentication before opening protected pages
  * - Stores intended destination for post-login redirect
- * - Indicates user role in the URL path (/guest, /member, /admin, etc.)
+ * - Indicates user role in the URL path (/visitor, /member, /admin, etc.)
  * 
  * URL Format:
- * - Home: /{role}/home
+ * - Home: /{role}?page=Home
  * - Pages: /{role}?page={PageName}
  * Examples:
- *   - /guest?page=Feedback
+ *   - /visitor?page=Feedback
  *   - /member?page=MyProfile
  *   - /admin?page=ManageMembers
  */
@@ -110,6 +110,7 @@ const PAGE_ALIASES: Record<string, string> = {
 
 function normalizePageName(pageName: string | null): string | null {
   if (!pageName) return null;
+  if (pageName === 'Home') return null;
   return PAGE_ALIASES[pageName] || pageName;
 }
 
@@ -165,24 +166,52 @@ interface UseUrlSyncOptions {
   sessionChecked?: boolean;
 }
 
+function normalizeRoleValue(role: string): string {
+  return String(role || '').trim().toLowerCase();
+}
+
+function roleToPathSlug(role: string): string {
+  const normalized = normalizeRoleValue(role);
+  if (!normalized) return 'guest';
+  const slug = normalized
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'guest';
+}
+
+function normalizeRoleForAccess(role: string): UserRole {
+  const normalized = normalizeRoleValue(role);
+  if (!normalized) return 'guest';
+  if (normalized.includes('auditor')) return 'auditor';
+  if (normalized.includes('admin')) return 'admin';
+  if (
+    normalized === 'head' ||
+    normalized === 'officer' ||
+    normalized === 'founder' ||
+    normalized.includes('president')
+  ) {
+    return 'head';
+  }
+  if (normalized === 'member' || normalized === 'volunteer' || normalized.includes('member')) {
+    return 'member';
+  }
+  if (normalized === 'guest' || normalized === 'suspended' || normalized === 'banned') {
+    return 'guest';
+  }
+  return 'guest';
+}
+
 /**
  * Get the display role for the URL path
  */
 function getRolePathSegment(userRole: string, isLoggedIn: boolean): string {
-  if (!isLoggedIn) return 'guest';
-  
-  switch (userRole) {
-    case 'auditor': return 'auditor';
-    case 'admin': return 'admin';
-    case 'head': return 'officer';
-    case 'member': return 'member';
-    default: return 'guest';
-  }
+  if (!isLoggedIn) return 'visitor';
+  return roleToPathSlug(userRole);
 }
 
 function getHomePath(isLoggedIn: boolean, userRole: string): string {
   if (!isLoggedIn) return '/Home';
-  return `/${getRolePathSegment(userRole, isLoggedIn)}/home`;
+  return `/${getRolePathSegment(userRole, isLoggedIn)}?page=Home`;
 }
 
 /**
@@ -212,7 +241,7 @@ export function useUrlSync({
     
     if (!isLoggedIn) return false;
     
-    const userLevel = ROLE_HIERARCHY[userRole as UserRole] || 0;
+    const userLevel = ROLE_HIERARCHY[normalizeRoleForAccess(userRole)] || 0;
     const requiredLevel = ROLE_HIERARCHY[requiredRole] || 0;
     
     return userLevel >= requiredLevel;

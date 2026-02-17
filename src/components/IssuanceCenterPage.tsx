@@ -1060,7 +1060,7 @@ export default function IssuanceCenterPage({
         if (cached && cached.length > 0) {
           setMembers(cached);
           // Silenced: repetitive cache hit log
-          // console.log(`[Issuance] Loaded ${cached.length} members from cache`);
+          // console.warn(`[Issuance] Loaded ${cached.length} members from cache`);
           setIsLoadingMembers(false);
           return;
         }
@@ -1298,7 +1298,7 @@ export default function IssuanceCenterPage({
       setSelectedIssuance(fullData);
       
       // Debug log silenced for production
-      // console.log('[Issuance Debug] Full data loaded:', {
+      // console.warn('[Issuance Debug] Full data loaded:', {
       //   issuanceId: fullData.IssuanceID,
       //   title: fullData.Title,
       //   recipientsCount: fullData.Recipients?.length || 0,

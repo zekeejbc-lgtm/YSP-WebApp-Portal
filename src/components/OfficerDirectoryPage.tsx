@@ -821,7 +821,7 @@ export default function OfficerDirectoryPage({
                           href={`mailto:${displayEmail?.replace(/\+/g, '%2B')}`}
                           onClick={(e) => {
                             e.preventDefault();
-                            console.log('[Email Debug] OfficerDirectory email link clicked:', displayEmail);
+                            console.warn('[Email Debug] OfficerDirectory email link clicked:', displayEmail);
                             if (displayEmail) openEmailApp(displayEmail);
                           }}
                           className={`text-sm ${isDark ? "text-white" : "text-gray-900"} hover:underline underline-offset-2 break-all`}
@@ -878,7 +878,7 @@ export default function OfficerDirectoryPage({
               <Button
                 variant="primary"
                 onClick={() => {
-                  console.log('[Email Debug] OfficerDirectory Send Email button clicked:', displayEmail);
+                  console.warn('[Email Debug] OfficerDirectory Send Email button clicked:', displayEmail);
                   openEmailApp(displayEmail);
                 }}
               >

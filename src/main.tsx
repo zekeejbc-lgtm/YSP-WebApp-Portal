@@ -14,10 +14,11 @@ validateEnv();
 
 if (import.meta.env.PROD) {
   const noop = () => {};
-  console.log = noop;
-  console.info = noop;
-  console.warn = noop;
-  console.debug = noop;
+  const appConsole = globalThis.console;
+  appConsole.log = noop;
+  appConsole.info = noop;
+  appConsole.warn = noop;
+  appConsole.debug = noop;
 }
 
 // Wrapped App with HelmetProvider, ErrorBoundary, and BrowserRouter
@@ -74,7 +75,7 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (refreshing) return;
     refreshing = true;
-    console.log("New service worker controller detected, reloading...");
+    console.warn("New service worker controller detected, reloading...");
     window.location.reload();
   });
 

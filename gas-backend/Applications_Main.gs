@@ -2010,16 +2010,71 @@ function getUserRole_(username) {
   }
 }
 
+function getSystemRoleRecordByName_(roleName) {
+  try {
+    var settingsId = PropertiesService.getScriptProperties().getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '';
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName('System_Config_Roles');
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var roleNameIdx = headers.indexOf('RoleName');
+    var powerLevelIdx = headers.indexOf('PowerLevel');
+    var permissionsIdx = headers.indexOf('Permissions');
+    if (roleNameIdx === -1) return null;
+
+    var target = String(roleName || '').toLowerCase().trim();
+    for (var i = 1; i < values.length; i++) {
+      var rowRoleName = String(values[i][roleNameIdx] || '').toLowerCase().trim();
+      if (rowRoleName !== target) continue;
+
+      var powerLevel = Number(values[i][powerLevelIdx]);
+      var permissions = {};
+      if (permissionsIdx !== -1 && values[i][permissionsIdx]) {
+        try {
+          permissions = JSON.parse(String(values[i][permissionsIdx]));
+        } catch (e) {
+          permissions = {};
+        }
+      }
+      return {
+        name: String(values[i][roleNameIdx] || ''),
+        powerLevel: isNaN(powerLevel) ? 0 : powerLevel,
+        permissions: permissions || {},
+      };
+    }
+    return null;
+  } catch (e) {
+    console.error('[Applications Auth] Failed to resolve system role record:', e);
+    return null;
+  }
+}
+
 function requireAdminOrAuditor_(username, actionDescription) {
   if (!username) {
     console.error('[Applications Auth] Missing username for action:', actionDescription);
     return { success: false, error: 'Username is required', code: 400 };
   }
   var role = getUserRole_(username);
-  if (role !== 'auditor' && role !== 'admin') {
+  var roleRecord = getSystemRoleRecordByName_(role);
+  var hasLegacyAdminAccess = role === 'auditor' || role === 'admin';
+  var hasPermissionAccess = !!(
+    roleRecord &&
+    (
+      roleRecord.powerLevel >= 8 ||
+      roleRecord.permissions.canApproveMembers === true ||
+      roleRecord.permissions.canManageUsers === true
+    )
+  );
+
+  if (!hasLegacyAdminAccess && !hasPermissionAccess) {
     console.error('[Applications Auth] Permission denied.', {
       username: username,
       role: role,
+      roleRecord: roleRecord,
       action: actionDescription
     });
     return { success: false, error: 'Permission denied', code: 403 };

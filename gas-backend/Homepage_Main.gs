@@ -214,6 +214,53 @@
     }
   }
 
+  function normalizeRoleValue_(roleName) {
+    return String(roleName || '').toLowerCase().trim();
+  }
+
+  function getSystemRoleRecordByName_(roleName) {
+    try {
+      var settingsId = PropertiesService.getScriptProperties().getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '';
+      if (!settingsId) return null;
+      var ss = SpreadsheetApp.openById(settingsId);
+      var sheet = ss.getSheetByName('System_Config_Roles');
+      if (!sheet || sheet.getLastRow() < 2) return null;
+
+      var values = sheet.getDataRange().getValues();
+      var headers = values[0] || [];
+      var roleNameIdx = headers.indexOf('RoleName');
+      var powerLevelIdx = headers.indexOf('PowerLevel');
+      var permissionsIdx = headers.indexOf('Permissions');
+      if (roleNameIdx === -1) return null;
+
+      var target = normalizeRoleValue_(roleName);
+      for (var i = 1; i < values.length; i++) {
+        var rowName = normalizeRoleValue_(values[i][roleNameIdx]);
+        if (rowName !== target) continue;
+
+        var powerLevel = Number(values[i][powerLevelIdx]);
+        var permissions = {};
+        if (permissionsIdx !== -1 && values[i][permissionsIdx]) {
+          try {
+            permissions = JSON.parse(String(values[i][permissionsIdx]));
+          } catch (e) {
+            permissions = {};
+          }
+        }
+
+        return {
+          name: String(values[i][roleNameIdx] || ''),
+          powerLevel: isNaN(powerLevel) ? 0 : powerLevel,
+          permissions: permissions || {},
+        };
+      }
+      return null;
+    } catch (e) {
+      Logger.log('getSystemRoleRecordByName_ error: ' + e.toString());
+      return null;
+    }
+  }
+
   /**
    * Reusable role gate — returns an error object if NOT admin/auditor, null if authorized.
    */
@@ -221,9 +268,22 @@
     if (!username) {
       return { success: false, error: 'Username is required for authorization', code: 400 };
     }
-    var role = getUserRole_(username);
-    if (role !== 'auditor' && role !== 'admin') {
-      return { success: false, error: 'Only admins or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+    var role = normalizeRoleValue_(getUserRole_(username));
+    if (role === 'banned' || role === 'suspended') {
+      return { success: false, error: 'Account is restricted', code: 403 };
+    }
+    var roleRecord = getSystemRoleRecordByName_(role);
+    var hasLegacyAdminAccess = role === 'auditor' || role === 'admin' || role === 'head' || role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1;
+    var hasPermissionAccess = !!(
+      roleRecord &&
+      (
+        roleRecord.powerLevel >= 8 ||
+        roleRecord.permissions.canEditContent === true ||
+        roleRecord.permissions.canManageUsers === true
+      )
+    );
+    if (!hasLegacyAdminAccess && !hasPermissionAccess) {
+      return { success: false, error: 'Permission denied: cannot ' + (actionDescription || 'perform this action'), code: 403 };
     }
     return null;
   }

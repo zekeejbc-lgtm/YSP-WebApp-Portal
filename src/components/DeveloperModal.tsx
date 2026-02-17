@@ -1231,7 +1231,7 @@ export default function DeveloperModal({
                       href={`mailto:${developerData.contact.email?.replace(/\+/g, '%2B')}`}
                       onClick={(e) => {
                         e.preventDefault();
-                        console.log('[Email Debug] DeveloperModal email link clicked:', developerData.contact.email);
+                        console.warn('[Email Debug] DeveloperModal email link clicked:', developerData.contact.email);
                         if (developerData.contact.email) openEmailApp(developerData.contact.email);
                       }}
                       className="text-sm text-gray-900 dark:text-white hover:text-[#f6421f] dark:hover:text-[#f6421f] transition-colors truncate block"

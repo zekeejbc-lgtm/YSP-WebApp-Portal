@@ -107,7 +107,7 @@ function handleSearchOfficers(query) {
       // Skip suspended and banned users from directory search
       const status = getDirectoryValue(row, idx.status).toLowerCase();
       const role = getDirectoryValue(row, idx.role).toLowerCase();
-      if (status === 'banned' || status === 'suspended' || role === 'banned' || role === 'suspended') {
+      if (isRestrictedRoleStatus_(role, status)) {
         continue;
       }
 
@@ -179,7 +179,7 @@ function handleGetOfficerByIdCode(idCode) {
         // Check if officer is banned/suspended
         const status = getDirectoryValue(row, idx.status).toLowerCase();
         const role = getDirectoryValue(row, idx.role).toLowerCase();
-        if (status === 'banned' || role === 'banned') {
+        if (isRestrictedRoleStatus_(role, status)) {
           return createErrorResponse('This officer profile is not available', 404);
         }
 
@@ -233,7 +233,7 @@ function handleGetAllOfficers(page, limit) {
       // Skip suspended and banned users
       const status = getDirectoryValue(row, idx.status).toLowerCase();
       const role = getDirectoryValue(row, idx.role).toLowerCase();
-      if (status === 'banned' || status === 'suspended' || role === 'banned' || role === 'suspended') {
+      if (isRestrictedRoleStatus_(role, status)) {
         continue;
       }
 

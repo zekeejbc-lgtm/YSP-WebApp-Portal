@@ -1206,7 +1206,7 @@ export default function AccessLogsPage({
 
       // Log success
       if (result.fileUrl) {
-        console.log('Manual export saved to:', result.fileUrl);
+        console.warn('Manual export saved to:', result.fileUrl);
       }
 
       setTimeout(() => removeUploadToast(toastId), 4000);

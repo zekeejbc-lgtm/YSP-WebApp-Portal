@@ -1118,7 +1118,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       const merged = Array.from(existingMap.values());
       localStorage.setItem(MEMBERS_CACHE_KEY, JSON.stringify(merged));
       localStorage.setItem(MEMBERS_CACHE_TS_KEY, String(Date.now()));
-      console.log(`📦 Saved ${merged.length} members to cache (${membersToCache.length} updated/added)`);
+      console.warn(`📦 Saved ${merged.length} members to cache (${membersToCache.length} updated/added)`);
     } catch (error) {
       console.warn("Cache write failed:", error);
       // Ignore cache write failures (e.g., storage full or disabled).
@@ -1188,7 +1188,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       const frontendCached = relevantCached.map(convertToFrontendEvent);
       const sortedCached = sortEventsByPriority(frontendCached);
       setEvents(sortedCached);
-      console.log(`📦 Loaded ${sortedCached.length} events from localStorage cache`);
+      console.warn(`📦 Loaded ${sortedCached.length} events from localStorage cache`);
     }
     
     if (showToast) {
@@ -1425,7 +1425,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         setLocationPermission("granted");
         
         // Log for debugging
-        console.log(`📍 Location update: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)} (±${Math.round(position.coords.accuracy)}m)`);
+        console.warn(`📍 Location update: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)} (±${Math.round(position.coords.accuracy)}m)`);
       },
       (error) => {
         console.error("Geolocation error:", error);
@@ -1484,7 +1484,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     // First, get a single fresh position to verify GPS is working
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        console.log(`🔄 Force GPS result: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)} (±${Math.round(position.coords.accuracy)}m)`);
+        console.warn(`🔄 Force GPS result: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)} (±${Math.round(position.coords.accuracy)}m)`);
         
         setUserLocation({
           lat: position.coords.latitude,
@@ -2003,12 +2003,12 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
   // Prefetch and permanently cache all members when an event is selected
   const prefetchAndCacheAllMembers = async () => {
     try {
-      console.log("📦 Pre-caching all members for attendance...");
+      console.warn("📦 Pre-caching all members for attendance...");
       
       // First, load from localStorage cache
       const cachedMembers = loadMembersFromCache();
       if (cachedMembers && cachedMembers.length > 0) {
-        console.log(`📦 Found ${cachedMembers.length} members in localStorage cache`);
+        console.warn(`📦 Found ${cachedMembers.length} members in localStorage cache`);
         cachedMembers.forEach(cacheMember);
         setMembers(cachedMembers);
       }
@@ -2016,7 +2016,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       // Then fetch from backend to get any new members (in background)
       if (isOnline) {
         const fetchedMembers = await getMembersForAttendance(undefined, 1000); // Get all members
-        console.log(`📦 Fetched ${fetchedMembers.length} members from backend`);
+        console.warn(`📦 Fetched ${fetchedMembers.length} members from backend`);
         
         // Cache each member in memory
         fetchedMembers.forEach(cacheMember);
@@ -2028,7 +2028,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         const merged = loadMembersFromCache() || fetchedMembers;
         setMembers(merged);
         
-        console.log(`📦 Total cached members: ${merged.length}`);
+        console.warn(`📦 Total cached members: ${merged.length}`);
       }
     } catch (error) {
       console.error("Failed to prefetch members:", error);
@@ -2617,7 +2617,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         if (scanPauseRef.current || isProcessingScanRef.current) return;
         isProcessingScanRef.current = true;
 
-        console.log("QR Code scanned:", decodedText);
+        console.warn("QR Code scanned:", decodedText);
 
         // Process the scanned QR code (member ID)
         await processQRScan(decodedText.trim());
@@ -2640,7 +2640,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         qrCodeSuccessCallback,
         (errorMessage) => {
           // QR code parse error - this is called frequently, just ignore
-          // console.log("QR parse error:", errorMessage);
+          // console.warn("QR parse error:", errorMessage);
         }
       );
 
@@ -2658,7 +2658,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
 
   // Stop QR scanning - with improved mobile handling
   const handleStopScanning = async () => {
-    console.log("🛑 Stop scanning requested, current state:", {
+    console.warn("🛑 Stop scanning requested, current state:", {
       hasScanner: !!qrScannerRef.current,
       isScanning,
     });
@@ -2675,10 +2675,10 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     if (qrScannerRef.current) {
       try {
         const state = qrScannerRef.current.getState();
-        console.log("🛑 Scanner state:", state);
+        console.warn("🛑 Scanner state:", state);
         if (state === Html5QrcodeScannerState.SCANNING || state === Html5QrcodeScannerState.PAUSED) {
           await qrScannerRef.current.stop();
-          console.log("🛑 Scanner stopped successfully");
+          console.warn("🛑 Scanner stopped successfully");
         }
       } catch (error) {
         console.error("Error stopping scanner:", error);

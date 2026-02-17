@@ -193,8 +193,8 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
 
   try {
     // Silenced: verbose fetch logs
-    // console.log('[GAS Homepage] Fetching content from GAS...');
-    // console.log('[GAS Homepage] API URL:', GAS_CONFIG.HOMEPAGE_API_URL.substring(0, 50) + '...');
+    // console.warn('[GAS Homepage] Fetching content from GAS...');
+    // console.warn('[GAS Homepage] API URL:', GAS_CONFIG.HOMEPAGE_API_URL.substring(0, 50) + '...');
     
     // Create AbortController for timeout
     const controller = new AbortController();
@@ -595,7 +595,7 @@ export const fetchHomepageOtherContent = async (): Promise<HomepageOtherContent>
 
   try {
     // Silenced: verbose fetch log
-    // console.log('[GAS Homepage_Other] Fetching content from GAS...');
+    // console.warn('[GAS Homepage_Other] Fetching content from GAS...');
     
     // Create AbortController for timeout
     const controller = new AbortController();

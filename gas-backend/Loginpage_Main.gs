@@ -389,9 +389,10 @@ function doPost(e) {
         return handleGetProfile(requestData.username);
       // Inside doPost switch statement:
       case 'updateProfile':
-     // We pass a 3rd argument: the requester (adminUsername) if it exists, otherwise the user themselves
+        // Keep requester from verified token username; target user comes from payload.
+        const targetUsername = requestData.targetUsername || requestData.username;
         const requester = requestData.adminUsername || requestData.username;
-        return handleUpdateProfile(requestData.username, requestData.profileData, requester);
+        return handleUpdateProfile(targetUsername, requestData.profileData, requester);
       case 'uploadProfilePicture':
         return handleUploadProfilePicture(requestData);
       case 'verifyPassword':
@@ -440,6 +441,32 @@ function doPost(e) {
         return handleDisableMaintenanceMode(requestData.pageId, requestData.username);
       case 'clearAllMaintenance':
         return handleClearAllMaintenance(requestData.username);
+      case 'getSystemRoles':
+        return createSuccessResponse(getSystemRoles());
+      case 'addSystemRole':
+        if (!canManageUsersByRole_(getUserRoleForLoginActions_(requestData.username))) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return createSuccessResponse(addSystemRole(requestData.data || requestData));
+      case 'updateSystemRole':
+        if (!canManageUsersByRole_(getUserRoleForLoginActions_(requestData.username))) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return createSuccessResponse(updateSystemRole(requestData.data || requestData));
+      case 'deleteSystemRole':
+        if (!canManageUsersByRole_(getUserRoleForLoginActions_(requestData.username))) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return createSuccessResponse(deleteSystemRole(requestData.roleName));
+      case 'generateNextYSPId':
+        if (!canManageUsersByRole_(getUserRoleForLoginActions_(requestData.username))) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return createSuccessResponse({ idCode: generateNextHarmonizedYspId_() });
+      case 'authorizePageAccess':
+        return handleAuthorizePageAccess(requestData.username, requestData.pagePath || requestData.pageKey);
+      case 'createUserAccount':
+        return handleCreateUserAccount(requestData.data || {}, requestData.username);
       default:
         return createErrorResponse('Invalid action', 400);
     }
@@ -551,27 +578,19 @@ function handleLogin(username, password) {
       return createErrorResponse('Invalid username or password', 401);
     }
 
-    // Get role directly from Role column (U) - values: Auditor, Admin, Head, Member, Suspended, Banned, Guest
+    // Role is dynamic; keep normalized text but do not force to a fixed enum.
     let role = idx.role > -1 ? (userRow[idx.role] || '').toString().trim().toLowerCase() : 'member';
-    
-    // Normalize role to expected values
-    const validRoles = ['auditor', 'admin', 'head', 'member', 'suspended', 'banned', 'guest'];
-    if (!validRoles.includes(role)) {
-      role = 'member'; // Default to member if role is invalid or empty
-    }
+    if (!role) role = 'member';
 
     // Get status from Status column (AL) if available, otherwise derive from role
     let status = idx.status > -1 ? (userRow[idx.status] || '').toString().toLowerCase().trim() : 'active';
     
-    // If role is banned or suspended, reflect that in status
-    if (role === 'banned') {
-      status = 'banned';
-    } else if (role === 'suspended') {
-      status = 'suspended';
+    if (isRestrictedRoleStatus_(role, status)) {
+      status = role === 'banned' ? 'banned' : 'suspended';
     }
 
     // Handle BANNED accounts - no access
-    if (role === 'banned' || status === 'banned') {
+    if (String(status || '').toLowerCase().trim() === 'banned') {
       return createErrorResponse('This account has been permanently banned. Contact admin for assistance.', 403);
     }
 
@@ -707,16 +726,11 @@ function handleCheckUserRole(username) {
         let role = idx.role > -1 ? (data[i][idx.role] || '').toString().trim().toLowerCase() : 'member';
         let status = idx.status > -1 ? (data[i][idx.status] || '').toString().toLowerCase().trim() : 'active';
         const name = idx.name > -1 ? (data[i][idx.name] || '').toString() : '';
-        
-        // Normalize role to expected values
-        const validRoles = ['auditor', 'admin', 'head', 'member', 'suspended', 'banned', 'guest'];
-        if (!validRoles.includes(role)) {
-          role = 'member';
+
+        if (!role) role = 'member';
+        if (isRestrictedRoleStatus_(role, status)) {
+          status = role === 'banned' ? 'banned' : 'suspended';
         }
-        
-        // Sync status with role if needed
-        if (role === 'banned') status = 'banned';
-        else if (role === 'suspended') status = 'suspended';
         
         return createSuccessResponse({
           success: true,
@@ -733,6 +747,226 @@ function handleCheckUserRole(username) {
   } catch (error) {
     Logger.log('handleCheckUserRole Error: ' + error.toString());
     return createErrorResponse('Failed to check role: ' + error.message, 500);
+  }
+}
+
+function normalizeRoleValue_(roleName) {
+  return String(roleName || '').toLowerCase().trim();
+}
+
+function isRestrictedRoleStatus_(roleName, status) {
+  const role = normalizeRoleValue_(roleName);
+  const state = normalizeRoleValue_(status);
+  return role === 'banned' || role === 'suspended' || state === 'banned' || state === 'suspended';
+}
+
+function getSystemRoleRecordForLogin_(roleName) {
+  try {
+    const settingsId = PropertiesService.getScriptProperties().getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '';
+    if (!settingsId) return null;
+    const ss = SpreadsheetApp.openById(settingsId);
+    const sheet = ss.getSheetByName('System_Config_Roles');
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0] || [];
+    const roleNameIdx = headers.indexOf('RoleName');
+    const powerLevelIdx = headers.indexOf('PowerLevel');
+    const permissionsIdx = headers.indexOf('Permissions');
+    if (roleNameIdx === -1) return null;
+
+    const target = normalizeRoleValue_(roleName);
+    for (let i = 1; i < values.length; i++) {
+      const rowName = normalizeRoleValue_(values[i][roleNameIdx]);
+      if (rowName !== target) continue;
+
+      const powerLevel = Number(values[i][powerLevelIdx]);
+      let permissions = {};
+      if (permissionsIdx !== -1 && values[i][permissionsIdx]) {
+        try {
+          permissions = JSON.parse(String(values[i][permissionsIdx]));
+        } catch (e) {
+          permissions = {};
+        }
+      }
+      return {
+        name: String(values[i][roleNameIdx] || ''),
+        powerLevel: isNaN(powerLevel) ? 0 : powerLevel,
+        permissions: permissions || {},
+      };
+    }
+    return null;
+  } catch (error) {
+    Logger.log('getSystemRoleRecordForLogin_ Error: ' + error.toString());
+    return null;
+  }
+}
+
+function canManageUsersByRole_(roleName) {
+  const role = normalizeRoleValue_(roleName);
+  if (!role) return false;
+
+  // Backward compatibility for old role names.
+  if (role === 'admin' || role === 'auditor' || role === 'head') return true;
+  if (role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1) return true;
+
+  const roleRecord = getSystemRoleRecordForLogin_(role);
+  if (!roleRecord) return false;
+  return !!(
+    roleRecord.powerLevel >= 8 ||
+    (roleRecord.permissions && roleRecord.permissions.canManageUsers === true)
+  );
+}
+
+function getUserRoleForLoginActions_(username) {
+  if (!username) return '';
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) return '';
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0] || [];
+    const usernameIdx = headers.indexOf('Username');
+    const roleIdx = headers.indexOf('Role');
+    if (usernameIdx === -1 || roleIdx === -1) return '';
+
+    const target = normalizeRoleValue_(username);
+    for (let i = 1; i < data.length; i++) {
+      const rowUsername = normalizeRoleValue_(data[i][usernameIdx]);
+      if (rowUsername === target) {
+        return normalizeRoleValue_(data[i][roleIdx]);
+      }
+    }
+    return '';
+  } catch (error) {
+    Logger.log('getUserRoleForLoginActions_ Error: ' + error.toString());
+    return '';
+  }
+}
+
+function normalizePagePathForAccess_(pagePath) {
+  const raw = String(pagePath || '').trim().toLowerCase();
+  if (!raw) return '';
+  return raw.replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
+function canAccessPathByRole_(roleName, pagePath) {
+  const role = normalizeRoleValue_(roleName);
+  const path = normalizePagePathForAccess_(pagePath);
+  if (!path || path === 'home') return true;
+  if (role === 'banned' || role === 'suspended') return false;
+
+  const roleRecord = getSystemRoleRecordForLogin_(role);
+  const level = roleRecord ? Number(roleRecord.powerLevel) || 0 : 0;
+  const perms = roleRecord && roleRecord.permissions ? roleRecord.permissions : {};
+  const has = function(key) {
+    return !!(perms && perms[key] === true);
+  };
+  const pagePermissionMap = {
+    'home': 'page_home',
+    'feedback': 'page_feedback',
+    'my-qrid': 'page_my_qrid',
+    'attendance/transparency': 'page_attendance_transparency',
+    'profile': 'page_profile',
+    'announcements': 'page_announcements',
+    'issuance': 'page_issuance',
+    'applications': 'page_applications',
+    'settings': 'page_settings',
+    'directory': 'page_directory',
+    'attendance/dashboard': 'page_attendance_dashboard',
+    'attendance/recording': 'page_attendance_recording',
+    'events': 'page_events',
+    'admin/members': 'page_admin_members',
+    'admin/logs': 'page_admin_logs',
+    'admin/tools': 'page_admin_tools',
+  };
+  const explicitPageKey = pagePermissionMap[path];
+  if (explicitPageKey) {
+    if (Object.prototype.hasOwnProperty.call(perms || {}, explicitPageKey)) {
+      return has(explicitPageKey);
+    }
+  }
+
+  // Public page
+  if (path === 'feedback') return true;
+
+  // Member pages
+  if (
+    path === 'my-qrid' ||
+    path === 'attendance/transparency' ||
+    path === 'profile' ||
+    path === 'announcements' ||
+    path === 'issuance' ||
+    path === 'applications' ||
+    path === 'settings'
+  ) {
+    if (roleRecord) return level >= 2;
+    return role !== 'guest';
+  }
+
+  // Leadership pages
+  if (
+    path === 'directory' ||
+    path === 'attendance/dashboard' ||
+    path === 'attendance/recording'
+  ) {
+    if (roleRecord) return level >= 5 || has('canEditContent') || has('canApproveMembers');
+    return role === 'admin' || role === 'auditor' || role === 'head' || role.indexOf('president') !== -1;
+  }
+
+  // Admin pages
+  if (path === 'events') {
+    if (roleRecord) return level >= 8 || has('canManageEvents');
+    return role === 'admin' || role === 'auditor' || role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1;
+  }
+
+  if (path === 'admin/members') {
+    if (roleRecord) return level >= 8 || has('canManageUsers');
+    return role === 'admin' || role === 'auditor' || role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1;
+  }
+
+  // Auditor pages
+  if (path === 'admin/logs') {
+    if (roleRecord) return level >= 10;
+    return role === 'auditor' || role.indexOf('auditor') !== -1;
+  }
+
+  if (path === 'admin/tools') {
+    if (roleRecord) return level >= 8 || has('canAccessSystemTools');
+    return role === 'admin' || role === 'auditor' || role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1;
+  }
+
+  // Unknown routes default deny for protected checks.
+  return false;
+}
+
+function handleAuthorizePageAccess(username, pagePath) {
+  if (!username) {
+    return createErrorResponse('Username is required', 400);
+  }
+  const normalizedPath = normalizePagePathForAccess_(pagePath);
+  if (!normalizedPath) {
+    return createErrorResponse('Page path is required', 400);
+  }
+
+  try {
+    const role = getUserRoleForLoginActions_(username);
+    if (!role) {
+      return createErrorResponse('User role not found', 404);
+    }
+
+    const allowed = canAccessPathByRole_(role, normalizedPath);
+    return createSuccessResponse({
+      success: true,
+      allowed: allowed,
+      pagePath: normalizedPath,
+      role: role,
+      checkedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    Logger.log('handleAuthorizePageAccess Error: ' + error.toString());
+    return createErrorResponse('Failed to authorize page access: ' + error.message, 500);
   }
 }
 
@@ -953,7 +1187,7 @@ function handleUpdateProfile(username, profileData, requesterUsername) {
       }
     }
 
-    const isPrivileged = ['admin', 'head', 'auditor'].includes(requesterRole);
+    const isPrivileged = canManageUsersByRole_(requesterRole);
 
     // === 3. DEFINE PROTECTED FIELDS ===
     // Start with the standard list that normal members cannot touch
@@ -969,6 +1203,12 @@ function handleUpdateProfile(username, profileData, requesterUsername) {
 
     // === 4. FIND TARGET USER ===
     const usernameLower = username.toLowerCase().trim();
+
+    // Non-privileged users can only update their own profile.
+    if (!isPrivileged && requesterLower !== usernameLower) {
+      return createErrorResponse('Permission denied', 403);
+    }
+
     let rowIndex = -1;
     
     for (let i = 1; i < data.length; i++) {
@@ -1088,6 +1328,140 @@ function handleUpdateProfile(username, profileData, requesterUsername) {
   } catch (error) {
     Logger.log('handleUpdateProfile Error: ' + error.toString());
     return createErrorResponse('Failed to update profile: ' + error.message, 500);
+  }
+}
+
+/**
+ * Create a new user account in User Profiles with auto-generated YSP ID.
+ * Requires requester to have user-management permission.
+ * @param {Object} data - Account payload
+ * @param {string} requesterUsername - Username from verified session token
+ * @returns {TextOutput} JSON response
+ */
+function handleCreateUserAccount(data, requesterUsername) {
+  try {
+    const requesterRole = getUserRoleForLoginActions_(requesterUsername);
+    if (!canManageUsersByRole_(requesterRole)) {
+      return createErrorResponse('Permission denied', 403);
+    }
+
+    const username = String(data.username || '').trim();
+    const plainPassword = String(data.password || '');
+    const fullName = String(data.fullName || '').trim();
+    const email = String(data.email || '').trim();
+    const role = String(data.role || 'Member').trim();
+    const position = String(data.position || 'Member').trim();
+    const committee = String(data.committee || '').trim();
+    const chapter = String(data.chapter || 'Tagum Chapter').trim();
+    const membershipType = String(data.membershipType || 'Regular').trim();
+    const contactNumber = String(data.contactNumber || '').trim();
+
+    if (!username) return createErrorResponse('Username is required', 400);
+    if (!plainPassword || plainPassword.length < 8) {
+      return createErrorResponse('Password must be at least 8 characters', 400);
+    }
+    if (!fullName) return createErrorResponse('Full name is required', 400);
+    if (!email) return createErrorResponse('Email is required', 400);
+
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) return createErrorResponse('User database not found', 500);
+
+    const dataRange = sheet.getDataRange().getValues();
+    const headers = dataRange[0] || [];
+    if (!headers.length) return createErrorResponse('User sheet headers are missing', 500);
+
+    const idx = {
+      timestamp: headers.indexOf('Timestamp'),
+      username: headers.indexOf('Username'),
+      password: headers.indexOf('Password'),
+      salt: headers.indexOf('Salt'),
+      fullName: headers.indexOf('Full name'),
+      email: headers.indexOf('Email Address'),
+      idCode: headers.indexOf('ID Code'),
+      position: headers.indexOf('Position'),
+      role: headers.indexOf('Role'),
+      status: headers.indexOf('Status'),
+      committee: headers.indexOf('Committee'),
+      chapter: headers.indexOf('Chapter'),
+      membershipType: headers.indexOf('Membership Type'),
+      dateJoined: headers.indexOf('Date Joined'),
+      contactNumber: headers.indexOf('Contact Number'),
+    };
+
+    if (idx.username === -1 || idx.password === -1 || idx.fullName === -1 || idx.email === -1) {
+      return createErrorResponse('Required columns are missing in User Profiles sheet', 500);
+    }
+
+    const usernameLower = username.toLowerCase();
+    const emailLower = email.toLowerCase();
+
+    for (let i = 1; i < dataRange.length; i++) {
+      const rowUsername = String(dataRange[i][idx.username] || '').toLowerCase().trim();
+      const rowEmail = idx.email > -1 ? String(dataRange[i][idx.email] || '').toLowerCase().trim() : '';
+      if (rowUsername && rowUsername === usernameLower) {
+        return createErrorResponse('Username already exists', 409);
+      }
+      if (rowEmail && rowEmail === emailLower) {
+        return createErrorResponse('Email already exists', 409);
+      }
+    }
+
+    let idCode = String(data.idCode || '').trim();
+    if (!idCode) {
+      idCode = generateNextHarmonizedYspId_();
+    }
+
+    if (idx.idCode > -1) {
+      for (let i = 1; i < dataRange.length; i++) {
+        const rowIdCode = String(dataRange[i][idx.idCode] || '').trim();
+        if (rowIdCode && rowIdCode.toLowerCase() === idCode.toLowerCase()) {
+          return createErrorResponse('Generated ID already exists, please retry', 409);
+        }
+      }
+    }
+
+    const passwordHash = hashString(plainPassword);
+    const salt = generateSalt();
+    const saltedHash = hashWithSalt(passwordHash, salt);
+    const dateJoined = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+
+    const newRow = new Array(headers.length).fill('');
+    if (idx.timestamp > -1) newRow[idx.timestamp] = new Date();
+    if (idx.username > -1) newRow[idx.username] = username;
+    if (idx.password > -1) newRow[idx.password] = saltedHash;
+    if (idx.salt > -1) newRow[idx.salt] = salt;
+    if (idx.fullName > -1) newRow[idx.fullName] = fullName;
+    if (idx.email > -1) newRow[idx.email] = email;
+    if (idx.idCode > -1) newRow[idx.idCode] = idCode;
+    if (idx.position > -1) newRow[idx.position] = position;
+    if (idx.role > -1) newRow[idx.role] = role;
+    if (idx.status > -1) newRow[idx.status] = 'Active';
+    if (idx.committee > -1) newRow[idx.committee] = committee;
+    if (idx.chapter > -1) newRow[idx.chapter] = chapter;
+    if (idx.membershipType > -1) newRow[idx.membershipType] = membershipType;
+    if (idx.dateJoined > -1) newRow[idx.dateJoined] = dateJoined;
+    if (idx.contactNumber > -1) newRow[idx.contactNumber] = contactNumber;
+
+    sheet.appendRow(newRow);
+
+    return createSuccessResponse({
+      success: true,
+      message: 'Account created successfully',
+      user: {
+        username: username,
+        fullName: fullName,
+        email: email,
+        idCode: idCode,
+        role: role,
+        position: position,
+        committee: committee,
+        chapter: chapter,
+      },
+    });
+  } catch (error) {
+    Logger.log('handleCreateUserAccount Error: ' + error.toString());
+    return createErrorResponse('Failed to create account: ' + error.message, 500);
   }
 }
 
@@ -1349,6 +1723,61 @@ function deleteOldProfilePicture(fileUrl) {
 }
 
 // =================== HELPER FUNCTIONS ===================
+
+/**
+ * Generate the next harmonized YSP ID from User Profiles.
+ * Format: YSPTC-YYXXX (example: YSPTC-26001)
+ * Uses a script lock to prevent duplicate IDs during concurrent requests.
+ * @returns {string} Generated ID code
+ */
+function generateNextHarmonizedYspId_() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) {
+      throw new Error('User database not found');
+    }
+
+    const lastRow = sheet.getLastRow();
+    const lastColumn = sheet.getLastColumn();
+    const yearSuffix = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy');
+
+    if (lastRow < 1 || lastColumn < 1) {
+      return 'YSPTC-' + yearSuffix + '001';
+    }
+
+    const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+    const idCodeIndex = headers.indexOf('ID Code');
+    if (idCodeIndex === -1) {
+      throw new Error("Column 'ID Code' not found in User Profiles");
+    }
+
+    let maxSeq = 0;
+    if (lastRow > 1) {
+      const idValues = sheet.getRange(2, idCodeIndex + 1, lastRow - 1, 1).getValues();
+      for (let i = 0; i < idValues.length; i++) {
+        const value = String(idValues[i][0] || '').trim();
+        if (!value) continue;
+
+        const match = value.match(/^YSPTC-(\d{2})(\d{3,})$/);
+        if (!match) continue;
+        if (match[1] !== yearSuffix) continue;
+
+        const seq = Number(match[2]);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
+      }
+    }
+
+    return 'YSPTC-' + yearSuffix + Utilities.formatString('%03d', maxSeq + 1);
+  } finally {
+    lock.releaseLock();
+  }
+}
 
 /**
  * Hash a string using SHA-256 (matches Loginpage_Hash.gs implementation)

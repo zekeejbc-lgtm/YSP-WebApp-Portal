@@ -148,7 +148,151 @@
     }
   }
 
-  // =================== 4. SMART CONVERSION HELPERS ===================
+  // =================== 4. ONE-TIME ID MIGRATION ===================
+
+  /**
+  * Optional safety backup before running ID migration.
+  * Creates a full copy of User Profiles in the same spreadsheet.
+  */
+  function backupUserProfilesBeforeIdMigration() {
+    const ss = SpreadsheetApp.openById(DIR_SPREADSHEET_ID);
+    const src = ss.getSheetByName(SOURCE_SHEET_NAME);
+    if (!src) throw new Error('Source sheet not found: ' + SOURCE_SHEET_NAME);
+
+    const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+    const copyName = SOURCE_SHEET_NAME + '_Backup_' + stamp;
+    const copy = src.copyTo(ss).setName(copyName);
+    ss.setActiveSheet(copy);
+    ss.moveActiveSheet(ss.getNumSheets());
+    Logger.log('Backup created: ' + copyName);
+    return copyName;
+  }
+
+  /**
+  * One-time migration from legacy/position-based IDs to harmonized IDs.
+  * New format: YSPTC-YYXXX
+  *
+  * Rules:
+  * - Keep already-harmonized IDs as-is
+  * - Migrate legacy IDs (or empty IDs) to new format
+  * - Year suffix uses Date Joined when available, otherwise current year
+  * - Sequence is collision-safe per year
+  */
+  function migrateLegacyIdCodesToHarmonized() {
+    const ss = SpreadsheetApp.openById(DIR_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(SOURCE_SHEET_NAME);
+    if (!sheet) throw new Error('Source sheet not found: ' + SOURCE_SHEET_NAME);
+
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) {
+      Logger.log('No data rows found for migration.');
+      return { success: true, migrated: 0, skipped: 0, message: 'No data rows found.' };
+    }
+
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const idCol = headers.indexOf('ID Code');
+    const usernameCol = headers.indexOf('Username');
+    const fullNameCol = headers.indexOf('Full name');
+    const dateJoinedCol = headers.indexOf('Date Joined');
+    if (idCol === -1) throw new Error("Column 'ID Code' not found in User Profiles");
+
+    const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    const currentYearSuffix = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy');
+
+    // Build per-year max sequence from existing harmonized IDs.
+    const maxSeqByYear = {};
+    for (let i = 0; i < data.length; i++) {
+      const idValue = String(data[i][idCol] || '').trim();
+      const match = idValue.match(/^YSPTC-(\d{2})(\d{3,})$/);
+      if (!match) continue;
+      const yy = match[1];
+      const seq = Number(match[2]);
+      if (isNaN(seq)) continue;
+      if (!maxSeqByYear[yy] || seq > maxSeqByYear[yy]) {
+        maxSeqByYear[yy] = seq;
+      }
+    }
+
+    let migrated = 0;
+    let skipped = 0;
+    let untouchedEmptyRows = 0;
+    const idWrites = [];
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const existingId = String(row[idCol] || '').trim();
+      const username = usernameCol > -1 ? String(row[usernameCol] || '').trim() : '';
+      const fullName = fullNameCol > -1 ? String(row[fullNameCol] || '').trim() : '';
+
+      // Skip blank rows
+      if (!username && !fullName && !existingId) {
+        idWrites.push([existingId]);
+        untouchedEmptyRows++;
+        continue;
+      }
+
+      // Keep already harmonized IDs
+      if (/^YSPTC-\d{2}\d{3,}$/.test(existingId)) {
+        idWrites.push([existingId]);
+        skipped++;
+        continue;
+      }
+
+      const yy = deriveYearSuffixForMigration_(dateJoinedCol > -1 ? row[dateJoinedCol] : '', currentYearSuffix);
+      const nextSeq = (maxSeqByYear[yy] || 0) + 1;
+      maxSeqByYear[yy] = nextSeq;
+      const newId = 'YSPTC-' + yy + Utilities.formatString('%03d', nextSeq);
+
+      idWrites.push([newId]);
+      migrated++;
+    }
+
+    // Batch update IDs
+    sheet.getRange(2, idCol + 1, idWrites.length, 1).setValues(idWrites);
+    // Keep Directory sheet ordering in sync after ID changes.
+    refreshDirectory();
+
+    Logger.log('=== ID Migration Complete ===');
+    Logger.log('Migrated legacy/missing IDs: ' + migrated);
+    Logger.log('Skipped (already harmonized): ' + skipped);
+    Logger.log('Untouched blank rows: ' + untouchedEmptyRows);
+    Logger.log('Total processed rows: ' + data.length);
+
+    return {
+      success: true,
+      migrated: migrated,
+      skipped: skipped,
+      untouchedEmptyRows: untouchedEmptyRows,
+      totalRows: data.length
+    };
+  }
+
+  function deriveYearSuffixForMigration_(value, fallbackYearSuffix) {
+    // Native date cell
+    if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+      return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yy');
+    }
+
+    const raw = String(value || '').trim();
+    if (!raw) return fallbackYearSuffix;
+
+    // Try standard Date parsing first
+    const parsed = new Date(raw);
+    if (!isNaN(parsed.getTime())) {
+      return Utilities.formatDate(parsed, Session.getScriptTimeZone(), 'yy');
+    }
+
+    // Fallback: extract 4-digit year (e.g., 2024) from strings
+    const yearMatch = raw.match(/\b(20\d{2})\b/);
+    if (yearMatch) {
+      return yearMatch[1].slice(2);
+    }
+
+    return fallbackYearSuffix;
+  }
+
+  // =================== 5. SMART CONVERSION HELPERS ===================
 
   /**
   * Converts input to M or F.

@@ -923,7 +923,7 @@ export default function MaintenanceScreen({
                 href="mailto:ysptagumchapter%2Bmaintenance@gmail.com"
                 onClick={(e) => {
                   e.preventDefault();
-                  console.log('[Email Debug] MaintenanceScreen email clicked: ysptagumchapter+maintenance@gmail.com');
+                  console.warn('[Email Debug] MaintenanceScreen email clicked: ysptagumchapter+maintenance@gmail.com');
                   openEmailApp('ysptagumchapter+maintenance@gmail.com');
                 }}
                 className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110 active:scale-95 shadow-md"

@@ -357,50 +357,34 @@ function migratePasswordsToSalted() {
 // =================== HELPER FUNCTIONS ===================
 
 function generateUniqueID(sheet, position, colIndex) {
-  const idMap = {
-    "Tagum Chapter President": { prefix: "YSPTPR", fixed: "100" },
-    "Membership and Internal Affairs Officer": { prefix: "YSPTIR", fixed: "200" },
-    "External Relations Officer": { prefix: "YSPTER", fixed: "300" },
-    "Secretary and Documentation Officer": { prefix: "YSPTSD", fixed: "400" },
-    "Finance and Treasury Officer": { prefix: "YSPTFR", fixed: "500" },
-    "Program Development Officer": { prefix: "YSPTPD", fixed: "600" },
-    "Communications and Marketing Officer": { prefix: "YSPTCM", fixed: "700" },
-    "Volunteer Member": { prefix: "YSPTVM", start: 801, end: 899 },
-    "Member": { prefix: "YSPTMB", start: 901, end: 999 },
-    "Committee Member: Membership and Internal Affairs": { prefix: "YSPTIR", start: 201, end: 299 },
-    "Committee Member: External Relations": { prefix: "YSPTER", start: 301, end: 399 },
-    "Committee Member: Secretariat and Documentation": { prefix: "YSPTSD", start: 401, end: 499 },
-    "Committee Member: Finance and Treasury": { prefix: "YSPTFR", start: 501, end: 599 },
-    "Committee Member: Program Development": { prefix: "YSPTPD", start: 601, end: 699 },
-    "Committee Member: Communications and Marketing": { prefix: "YSPTCM", start: 701, end: 799 }
-  };
+  // Keep legacy trigger behavior (ID is assigned when Position is set),
+  // but remove legacy position-based ID format.
+  if (!position) return { fullID: null, numericID: null };
 
-  const role = idMap[position];
-  if (!role) return { fullID: null, numericID: null };
+  const yearSuffix = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy');
+  const lastRow = sheet.getLastRow();
+  let maxSeq = 0;
 
-  if (role.fixed) {
-    return { 
-      fullID: `${role.prefix}-25${role.fixed}`, 
-      numericID: `25${role.fixed}` 
-    };
-  }
-
-  const existingIDs = sheet.getRange(2, colIndex, sheet.getLastRow()).getValues().flat().filter(String);
-  const usedNumbers = existingIDs.map(id => {
-    const parts = id.split("-25");
-    return parts.length === 2 ? parseInt(parts[1], 10) : null;
-  }).filter(n => !isNaN(n));
-
-  for (let n = role.start; n <= role.end; n++) {
-    if (!usedNumbers.includes(n)) {
-      const suffix = String(n).padStart(3, '0');
-      return { 
-        fullID: `${role.prefix}-25${suffix}`, 
-        numericID: `25${suffix}` 
-      };
+  if (lastRow > 1) {
+    const existingIDs = sheet.getRange(2, colIndex, lastRow - 1, 1).getValues().flat();
+    for (let i = 0; i < existingIDs.length; i++) {
+      const value = String(existingIDs[i] || '').trim();
+      const match = value.match(/^YSPTC-(\d{2})(\d{3,})$/);
+      if (!match) continue;
+      if (match[1] !== yearSuffix) continue;
+      const seq = Number(match[2]);
+      if (!isNaN(seq) && seq > maxSeq) {
+        maxSeq = seq;
+      }
     }
   }
-  return { fullID: "Range Full", numericID: "Full" };
+
+  const nextSeq = maxSeq + 1;
+  const numericPart = yearSuffix + Utilities.formatString('%03d', nextSeq);
+  return {
+    fullID: 'YSPTC-' + numericPart,
+    numericID: numericPart
+  };
 }
 
 // =================== PROFESSIONAL EMAIL ENGINE ===================

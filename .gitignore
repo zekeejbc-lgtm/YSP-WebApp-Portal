@@ -3,31 +3,27 @@ node_modules/
 .pnp
 .pnp.js
 
-# Testing
-coverage/
-
-# Build
+# Build artifacts
 dist/
 build/
+coverage/
 
-# Environment variables
+# Environment files
 .env
 .env.*
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+!.env.example
 
-# Debug logs
+# Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Editor directories and files
+# IDE/editor
+.idea/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
-.idea/
 *.suo
 *.ntvs*
 *.njsproj
@@ -38,17 +34,10 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# TypeScript cache
+# Tooling/cache
 *.tsbuildinfo
-
-# Vercel
 .vercel
-
-# Misc
-*.log
-
-# Qodo
 .qodo/
 
-# GAS Backend Secrets (API Keys)
+# GAS secrets
 gas-backend/Secrets.gs

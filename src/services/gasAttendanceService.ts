@@ -140,6 +140,19 @@ export interface GeofenceValidationResponse {
   radius?: number;
 }
 
+export interface AttendanceIdHarmonizationMigrationResponse {
+  success: boolean;
+  updated: number;
+  skipped: number;
+  unresolved: number;
+  unresolvedSample?: Array<{
+    row: number;
+    memberName: string;
+    currentMemberId: string;
+  }>;
+  error?: string;
+}
+
 export interface GASAttendanceResponse<T = unknown> {
   success: boolean;
   data?: T;
@@ -606,6 +619,27 @@ export async function validateGeofence(eventId: string, lat: number, lng: number
     distance: (response as unknown as GeofenceValidationResponse).distance,
     radius: (response as unknown as GeofenceValidationResponse).radius,
   };
+}
+
+/**
+ * Admin-only migration:
+ * Update EventAttendance.MemberID to the latest harmonized ID codes
+ * by matching attendance MemberName against Directory/User Profiles.
+ */
+export async function migrateAttendanceMemberIdsToHarmonizedCodes(): Promise<AttendanceIdHarmonizationMigrationResponse> {
+  const response = await gasPost<AttendanceIdHarmonizationMigrationResponse>(
+    'migrateAttendanceMemberIdsToHarmonizedCodes',
+    {}
+  );
+
+  if (!response.success) {
+    throw new AttendanceAPIError(
+      AttendanceErrorCodes.SERVER_ERROR,
+      response.error || 'Failed to migrate attendance MemberID codes'
+    );
+  }
+
+  return response as AttendanceIdHarmonizationMigrationResponse;
 }
 
 // =====================================================

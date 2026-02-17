@@ -51,9 +51,9 @@ export function DebugPill() {
 
   // Console log to confirm it's rendering
   useEffect(() => {
-    console.log('🔴 DEBUG PILL IS RENDERING!!! 🔴');
-    console.log('Position:', position);
-    console.log('Z-index: 2147483647');
+    console.warn('🔴 DEBUG PILL IS RENDERING!!! 🔴');
+    console.warn('Position:', position);
+    console.warn('Z-index: 2147483647');
   }, []);
 
   // Load saved position from localStorage

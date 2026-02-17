@@ -95,13 +95,73 @@ function getUserRole_(username) {
   }
 }
 
+function normalizeRoleValue_(roleName) {
+  return String(roleName || '').toLowerCase().trim();
+}
+
+function getSystemRoleRecordByName_(roleName) {
+  try {
+    var settingsId = PropertiesService.getScriptProperties().getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '';
+    if (!settingsId) return null;
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName('System_Config_Roles');
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var roleNameIdx = headers.indexOf('RoleName');
+    var powerLevelIdx = headers.indexOf('PowerLevel');
+    var permissionsIdx = headers.indexOf('Permissions');
+    if (roleNameIdx === -1) return null;
+
+    var target = normalizeRoleValue_(roleName);
+    for (var i = 1; i < values.length; i++) {
+      var rowName = normalizeRoleValue_(values[i][roleNameIdx]);
+      if (rowName !== target) continue;
+
+      var powerLevel = Number(values[i][powerLevelIdx]);
+      var permissions = {};
+      if (permissionsIdx !== -1 && values[i][permissionsIdx]) {
+        try {
+          permissions = JSON.parse(String(values[i][permissionsIdx]));
+        } catch (e) {
+          permissions = {};
+        }
+      }
+
+      return {
+        name: String(values[i][roleNameIdx] || ''),
+        powerLevel: isNaN(powerLevel) ? 0 : powerLevel,
+        permissions: permissions || {},
+      };
+    }
+    return null;
+  } catch (e) {
+    Logger.log('getSystemRoleRecordByName_ error: ' + e.toString());
+    return null;
+  }
+}
+
 function requireAdminOrAuditor_(username, actionDescription) {
   if (!username) {
     return { success: false, error: 'Username is required for authorization', code: 400 };
   }
-  var role = getUserRole_(username);
-  if (role !== 'auditor' && role !== 'admin') {
-    return { success: false, error: 'Only admins or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+  var role = normalizeRoleValue_(getUserRole_(username));
+  if (role === 'banned' || role === 'suspended') {
+    return { success: false, error: 'Account is restricted', code: 403 };
+  }
+  var roleRecord = getSystemRoleRecordByName_(role);
+  var hasLegacyAdminAccess = role === 'auditor' || role === 'admin' || role === 'head' || role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1;
+  var hasPermissionAccess = !!(
+    roleRecord &&
+    (
+      roleRecord.powerLevel >= 8 ||
+      roleRecord.permissions.canManageUsers === true ||
+      roleRecord.permissions.canAccessSystemTools === true
+    )
+  );
+  if (!hasLegacyAdminAccess && !hasPermissionAccess) {
+    return { success: false, error: 'Permission denied: cannot ' + (actionDescription || 'perform this action'), code: 403 };
   }
   return null;
 }
@@ -110,10 +170,23 @@ function requireHeadOrAbove_(username, actionDescription) {
   if (!username) {
     return { success: false, error: 'Username is required for authorization', code: 400 };
   }
-  var role = getUserRole_(username);
-  // Allow head, officer, admin, and auditor to record attendance
-  if (role !== 'head' && role !== 'officer' && role !== 'admin' && role !== 'auditor') {
-    return { success: false, error: 'Only heads, officers, admins, or auditors can ' + (actionDescription || 'perform this action'), code: 403 };
+  var role = normalizeRoleValue_(getUserRole_(username));
+  if (role === 'banned' || role === 'suspended') {
+    return { success: false, error: 'Account is restricted', code: 403 };
+  }
+  var roleRecord = getSystemRoleRecordByName_(role);
+  var hasLegacyHeadAccess = role === 'head' || role === 'officer' || role === 'admin' || role === 'auditor' || role.indexOf('president') !== -1;
+  var hasPermissionAccess = !!(
+    roleRecord &&
+    (
+      roleRecord.powerLevel >= 5 ||
+      roleRecord.permissions.canManageEvents === true ||
+      roleRecord.permissions.canEditContent === true ||
+      roleRecord.permissions.canApproveMembers === true
+    )
+  );
+  if (!hasLegacyHeadAccess && !hasPermissionAccess) {
+    return { success: false, error: 'Permission denied: cannot ' + (actionDescription || 'perform this action'), code: 403 };
   }
   return null;
 }
@@ -246,6 +319,13 @@ function doGet(e) {
         result = migrateEventsSchema();
         break;
       }
+      case 'migrateAttendanceMemberIdsToHarmonizedCodes': {
+        var migrateAttendanceUser = sanitizeEventsParam_(params.username, 100);
+        var migrateAttendanceAuth = requireAdminOrAuditor_(migrateAttendanceUser, 'migrate attendance member ids');
+        if (migrateAttendanceAuth) { result = migrateAttendanceAuth; break; }
+        result = migrateAttendanceMemberIdsToHarmonizedCodes();
+        break;
+      }
       default:
         result = { success: false, error: 'Invalid action' };
     }
@@ -320,7 +400,7 @@ function doPost(e) {
 
     // ---- Role-based access control ----
     var username = sanitizeEventsParam_(params.username, 100);
-    var adminOnlyActions = ['createEvent', 'updateEvent', 'deleteEvent', 'duplicateEvent', 'cancelEvent', 'addEventRecipient', 'addEventRecipients', 'updateAttendanceStatus'];
+    var adminOnlyActions = ['createEvent', 'updateEvent', 'deleteEvent', 'duplicateEvent', 'cancelEvent', 'addEventRecipient', 'addEventRecipients', 'updateAttendanceStatus', 'migrateAttendanceMemberIdsToHarmonizedCodes'];
     var headActions = ['recordAttendance', 'bulkRecordAttendance', 'recordTimeIn', 'recordTimeOut', 'recordManualAttendance'];
     if (adminOnlyActions.indexOf(action) !== -1) {
       var authError = requireAdminOrAuditor_(username, action);
@@ -376,6 +456,9 @@ function doPost(e) {
         break;
       case 'addEventRecipients':
         result = addEventRecipients(sanitizeEventsParam_(params.eventId, 100), params.recipients);
+        break;
+      case 'migrateAttendanceMemberIdsToHarmonizedCodes':
+        result = migrateAttendanceMemberIdsToHarmonizedCodes();
         break;
       default:
         result = { success: false, error: 'Invalid action' };

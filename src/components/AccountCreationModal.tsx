@@ -2,25 +2,17 @@
  * =============================================================================
  * ACCOUNT CREATION MODAL
  * =============================================================================
- * 
+ *
  * Modal for creating accounts when approving membership applications.
- * Features:
- * - Username generation/customization
- * - Password generation
- * - Committee designation
- * - Role assignment (Admin, Auditor, User, Banned)
- * - Position selection
- * - Email notification preview
- * 
- * Mobile and Desktop Responsive
  * =============================================================================
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { X, User, Lock, Briefcase, Shield, Mail, CheckCircle, RefreshCw, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { Button, DESIGN_TOKENS } from "./design-system";
-import { MODAL_REGULATIONS, getModalStyles } from "./modal-regulations";
+import { getModalStyles } from "./modal-regulations";
+import type { SystemRole } from "../types/app";
 
 interface AccountCreationModalProps {
   isOpen: boolean;
@@ -38,8 +30,194 @@ interface AccountCreationModalProps {
     committee: string;
     role: string;
     position: string;
-  }) => void;
+  }) => void | Promise<void>;
+  availableRoles?: SystemRole[];
 }
+
+const FALLBACK_ROLES: SystemRole[] = [
+  {
+    name: "Auditor",
+    powerLevel: 10,
+    color: "#f59e0b",
+    permissions: {
+      canManageUsers: true,
+      canAccessSystemTools: true,
+      canExportData: true,
+      canEditContent: true,
+      canApproveMembers: true,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Assistant Auditor 1",
+    powerLevel: 9,
+    color: "#d97706",
+    permissions: {
+      canManageUsers: true,
+      canAccessSystemTools: true,
+      canExportData: true,
+      canEditContent: true,
+      canApproveMembers: true,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Assistant Auditor 2",
+    powerLevel: 9,
+    color: "#d97706",
+    permissions: {
+      canManageUsers: true,
+      canAccessSystemTools: true,
+      canExportData: true,
+      canEditContent: true,
+      canApproveMembers: true,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Admin",
+    powerLevel: 8,
+    color: "#ef4444",
+    permissions: {
+      canManageUsers: true,
+      canAccessSystemTools: true,
+      canExportData: true,
+      canEditContent: true,
+      canApproveMembers: true,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Assistant Admin 1",
+    powerLevel: 7,
+    color: "#dc2626",
+    permissions: {
+      canManageUsers: true,
+      canAccessSystemTools: true,
+      canExportData: false,
+      canEditContent: true,
+      canApproveMembers: true,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Assistant Admin 2",
+    powerLevel: 7,
+    color: "#dc2626",
+    permissions: {
+      canManageUsers: true,
+      canAccessSystemTools: true,
+      canExportData: false,
+      canEditContent: true,
+      canApproveMembers: true,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Founder",
+    powerLevel: 6,
+    color: "#7c3aed",
+    permissions: {
+      canManageUsers: false,
+      canAccessSystemTools: false,
+      canExportData: false,
+      canEditContent: true,
+      canApproveMembers: true,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Tagum Chapter President",
+    powerLevel: 5,
+    color: "#059669",
+    permissions: {
+      canManageUsers: false,
+      canAccessSystemTools: false,
+      canExportData: false,
+      canEditContent: true,
+      canApproveMembers: true,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Barangay Chapter President",
+    powerLevel: 4,
+    color: "#10b981",
+    permissions: {
+      canManageUsers: false,
+      canAccessSystemTools: false,
+      canExportData: false,
+      canEditContent: true,
+      canApproveMembers: false,
+      canManageEvents: true,
+    },
+  },
+  {
+    name: "Member",
+    powerLevel: 2,
+    color: "#3b82f6",
+    permissions: {
+      canManageUsers: false,
+      canAccessSystemTools: false,
+      canExportData: false,
+      canEditContent: false,
+      canApproveMembers: false,
+      canManageEvents: false,
+    },
+  },
+  {
+    name: "Volunteer",
+    powerLevel: 2,
+    color: "#6366f1",
+    permissions: {
+      canManageUsers: false,
+      canAccessSystemTools: false,
+      canExportData: false,
+      canEditContent: false,
+      canApproveMembers: false,
+      canManageEvents: false,
+    },
+  },
+  {
+    name: "Guest",
+    powerLevel: 1,
+    color: "#9ca3af",
+    permissions: {
+      canManageUsers: false,
+      canAccessSystemTools: false,
+      canExportData: false,
+      canEditContent: false,
+      canApproveMembers: false,
+      canManageEvents: false,
+    },
+  },
+  {
+    name: "Suspended",
+    powerLevel: 0,
+    color: "#6b7280",
+    permissions: {
+      canManageUsers: false,
+      canAccessSystemTools: false,
+      canExportData: false,
+      canEditContent: false,
+      canApproveMembers: false,
+      canManageEvents: false,
+    },
+  },
+  {
+    name: "Banned",
+    powerLevel: 0,
+    color: "#1f2937",
+    permissions: {
+      canManageUsers: false,
+      canAccessSystemTools: false,
+      canExportData: false,
+      canEditContent: false,
+      canApproveMembers: false,
+      canManageEvents: false,
+    },
+  },
+];
 
 export default function AccountCreationModal({
   isOpen,
@@ -47,12 +225,13 @@ export default function AccountCreationModal({
   isDark,
   applicantData,
   onCreateAccount,
+  availableRoles = [],
 }: AccountCreationModalProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [committee, setCommittee] = useState("");
-  const [role, setRole] = useState("User");
+  const [role, setRole] = useState("Member");
   const [position, setPosition] = useState("");
 
   const committees = [
@@ -67,55 +246,23 @@ export default function AccountCreationModal({
     "Communications & Media",
   ];
 
-  const roles = [
-    { value: "Admin", label: "Admin", color: "#ef4444" },
-    { value: "Auditor", label: "Auditor", color: "#f59e0b" },
-    { value: "User", label: "User", color: "#10b981" },
-    { value: "Banned", label: "Banned", color: "#6b7280" },
-  ];
+  const roleOptions = useMemo(() => {
+    const source = availableRoles.length > 0 ? availableRoles : FALLBACK_ROLES;
+    return [...source].sort((a, b) => {
+      if (b.powerLevel !== a.powerLevel) return b.powerLevel - a.powerLevel;
+      return a.name.localeCompare(b.name);
+    });
+  }, [availableRoles]);
 
-  const positions = [
-    // Executive Positions
-    "Chapter President",
-    "Vice President",
-    "Secretary",
-    "Treasurer",
-    "Auditor",
-    
-    // Committee Heads
-    "Committee Chairperson",
-    "Vice Chairperson",
-    "Committee Secretary",
-    
-    // Officers
-    "Project Coordinator",
-    "Events Coordinator",
-    "Communications Officer",
-    "Outreach Officer",
-    "Training Officer",
-    
-    // Members
-    "Active Member",
-    "Volunteer Member",
-    "Associate Member",
-  ];
-
-  // Generate username from full name
   const generateUsername = (name: string): string => {
     const cleaned = name.toLowerCase().replace(/[^a-z\s]/g, "");
-    const parts = cleaned.split(" ").filter(p => p);
-    
-    if (parts.length === 1) {
-      return parts[0];
-    } else if (parts.length === 2) {
-      return parts[0] + "." + parts[1];
-    } else {
-      // First name + last name
-      return parts[0] + "." + parts[parts.length - 1];
-    }
+    const parts = cleaned.split(" ").filter((p) => p);
+
+    if (parts.length === 1) return parts[0];
+    if (parts.length === 2) return `${parts[0]}.${parts[1]}`;
+    return `${parts[0]}.${parts[parts.length - 1]}`;
   };
 
-  // Generate random password
   const generatePassword = (): string => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
     let pass = "";
@@ -125,19 +272,17 @@ export default function AccountCreationModal({
     return pass;
   };
 
-  // Initialize form when modal opens
   useEffect(() => {
     if (isOpen && applicantData) {
       setUsername(generateUsername(applicantData.fullName));
       setPassword(generatePassword());
       setCommittee(applicantData.committeePreference);
-      setRole("User");
-      setPosition(applicantData.desiredRole === "Officer" ? "Project Coordinator" : "Active Member");
+      setRole(roleOptions[0]?.name || "Member");
+      setPosition(applicantData.desiredRole === "Officer" ? "Documentation Officer" : "Member");
     }
-  }, [isOpen, applicantData]);
+  }, [isOpen, applicantData, roleOptions]);
 
   const handleSubmit = () => {
-    // Validation
     if (!username) {
       toast.error("Username is required");
       return;
@@ -148,6 +293,10 @@ export default function AccountCreationModal({
     }
     if (!committee) {
       toast.error("Committee designation is required");
+      return;
+    }
+    if (!role) {
+      toast.error("System role is required");
       return;
     }
     if (!position) {
@@ -192,7 +341,6 @@ export default function AccountCreationModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div
           className="p-4 md:p-6 border-b"
           style={{
@@ -212,9 +360,7 @@ export default function AccountCreationModal({
               >
                 Create Member Account
               </h2>
-              <p className="text-sm text-muted-foreground mt-1">
-                for {applicantData.fullName}
-              </p>
+              <p className="text-sm text-muted-foreground mt-1">for {applicantData.fullName}</p>
             </div>
             <button
               onClick={onClose}
@@ -225,9 +371,7 @@ export default function AccountCreationModal({
           </div>
         </div>
 
-        {/* Body - Scrollable */}
         <div className="p-4 md:p-6 overflow-y-auto flex-1 space-y-6" style={{ minHeight: 0 }}>
-          {/* Username */}
           <div>
             <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <User className="w-4 h-4 text-[#f6421f]" />
@@ -250,12 +394,9 @@ export default function AccountCreationModal({
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Lowercase letters, numbers, dots, and underscores only
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Lowercase letters, numbers, dots, and underscores only</p>
           </div>
 
-          {/* Password */}
           <div>
             <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Lock className="w-4 h-4 text-[#ee8724]" />
@@ -269,7 +410,7 @@ export default function AccountCreationModal({
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full px-4 py-2 pr-10 rounded-lg border bg-white dark:bg-gray-800 focus:ring-2 focus:ring-[#10b981] outline-none"
                   style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}
-                  placeholder="••••••••••••"
+                  placeholder="************"
                 />
                 <button
                   onClick={() => setShowPassword(!showPassword)}
@@ -286,12 +427,9 @@ export default function AccountCreationModal({
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Minimum 8 characters. Click refresh to generate a secure password.
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Minimum 8 characters. Click refresh to generate a secure password.</p>
           </div>
 
-          {/* Committee Designation */}
           <div>
             <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Briefcase className="w-4 h-4 text-[#fbcb29]" />
@@ -310,44 +448,29 @@ export default function AccountCreationModal({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-muted-foreground mt-1">
-              Preferred: {applicantData.committeePreference}
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Preferred: {applicantData.committeePreference}</p>
           </div>
 
-          {/* Role */}
           <div>
             <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Shield className="w-4 h-4 text-[#f6421f]" />
               System Role *
             </label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {roles.map((r) => (
-                <button
-                  key={r.value}
-                  onClick={() => setRole(r.value)}
-                  className={`px-4 py-2 rounded-lg border-2 transition-all ${
-                    role === r.value
-                      ? "shadow-lg"
-                      : "hover:border-gray-300 dark:hover:border-gray-600"
-                  }`}
-                  style={{
-                    borderColor: role === r.value ? r.color : isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-                    background: role === r.value ? `${r.color}20` : "transparent",
-                    color: role === r.value ? r.color : "inherit",
-                    fontWeight: role === r.value ? DESIGN_TOKENS.typography.fontWeight.semibold : DESIGN_TOKENS.typography.fontWeight.medium,
-                  }}
-                >
-                  {r.label}
-                </button>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="w-full px-4 py-2 rounded-lg border bg-white dark:bg-gray-800 focus:ring-2 focus:ring-[#10b981] outline-none"
+              style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}
+            >
+              <option value="">Select Role</option>
+              {roleOptions.map((roleOption) => (
+                <option key={roleOption.name} value={roleOption.name}>
+                  {roleOption.name} (Level {roleOption.powerLevel})
+                </option>
               ))}
-            </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              <strong>Admin:</strong> Full access • <strong>Auditor:</strong> View & review • <strong>User:</strong> Standard access • <strong>Banned:</strong> No access
-            </p>
+            </select>
           </div>
 
-          {/* Position */}
           <div>
             <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Briefcase className="w-4 h-4 text-[#10b981]" />
@@ -360,38 +483,61 @@ export default function AccountCreationModal({
               style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}
             >
               <option value="">Select Position</option>
-              <optgroup label="Executive Positions">
-                {positions.slice(0, 5).map((pos) => (
-                  <option key={pos} value={pos}>
-                    {pos}
-                  </option>
-                ))}
+              <optgroup label="Executive Council">
+                <option value="Tagum Chapter President">Tagum Chapter President</option>
+                <option value="Membership and Internal Affairs Officer">Membership and Internal Affairs Officer</option>
+                <option value="External Relations Officer">External Relations Officer</option>
+                <option value="Secretary and Documentation Officer">Secretary and Documentation Officer</option>
+                <option value="Finance and Treasury Officer">Finance and Treasury Officer</option>
+                <option value="Communications and Marketing Officer">Communications and Marketing Officer</option>
+                <option value="Program Development Officer">Program Development Officer</option>
               </optgroup>
-              <optgroup label="Committee Leadership">
-                {positions.slice(5, 8).map((pos) => (
-                  <option key={pos} value={pos}>
-                    {pos}
-                  </option>
-                ))}
+              <optgroup label="Secretariat and Documentation Committee">
+                <option value="Documentation Officer">Documentation Officer</option>
+                <option value="Records and Filing Officer">Records and Filing Officer</option>
+                <option value="Schedule and Agenda Encoder">Schedule and Agenda Encoder</option>
               </optgroup>
-              <optgroup label="Officers">
-                {positions.slice(8, 13).map((pos) => (
-                  <option key={pos} value={pos}>
-                    {pos}
-                  </option>
-                ))}
+              <optgroup label="Finance and Treasury Committee">
+                <option value="Funds and Disbursement Officer">Funds and Disbursement Officer</option>
+                <option value="Documentation and Liquidation Officer">Documentation and Liquidation Officer</option>
               </optgroup>
-              <optgroup label="Members">
-                {positions.slice(13).map((pos) => (
-                  <option key={pos} value={pos}>
-                    {pos}
-                  </option>
-                ))}
+              <optgroup label="Communications and Marketing Committee">
+                <option value="Communications and Media Visuals Officer">Communications and Media Visuals Officer</option>
+                <option value="Marketing and Social Media Management Officer">Marketing and Social Media Management Officer</option>
+                <option value="Visual Documentation Specialist">Visual Documentation Specialist</option>
+                <option value="Digital Content Production Specialist">Digital Content Production Specialist</option>
+              </optgroup>
+              <optgroup label="External Relations Committee">
+                <option value="External Affairs Liaison Officer">External Affairs Liaison Officer</option>
+                <option value="Communications and Public Relations Officer">Communications and Public Relations Officer</option>
+                <option value="Monitoring and Reporting Officer">Monitoring and Reporting Officer</option>
+                <option value="Strategic Partnership Relations Officer">Strategic Partnership Relations Officer</option>
+              </optgroup>
+              <optgroup label="Membership and Internal Affairs Committee">
+                <option value="Conduct and Membership Officer">Conduct and Membership Officer</option>
+                <option value="Internal Resource Custodian">Internal Resource Custodian</option>
+                <option value="Engagement and Welfare Officer">Engagement and Welfare Officer</option>
+                <option value="Recognition and Awards Officer">Recognition and Awards Officer</option>
+                <option value="Volunteer and Designation Officer">Volunteer and Designation Officer</option>
+              </optgroup>
+              <optgroup label="Program Development Committee">
+                <option value="Community Engagement Officer">Community Engagement Officer</option>
+                <option value="Documentation and Reporting Officer">Documentation and Reporting Officer</option>
+              </optgroup>
+              <optgroup label="Chapter Leadership">
+                <option value="Barangay Chapter President">Barangay Chapter President</option>
+              </optgroup>
+              <optgroup label="General">
+                <option value="Member">Member</option>
+                <option value="Committee Member">Committee Member</option>
+                <option value="Volunteer">Volunteer</option>
+                <option value="Guest">Guest</option>
+                <option value="Suspended">Suspended</option>
+                <option value="Banned">Banned</option>
               </optgroup>
             </select>
           </div>
 
-          {/* Email Notification Preview */}
           <div
             className="p-4 rounded-lg border"
             style={{
@@ -401,9 +547,7 @@ export default function AccountCreationModal({
           >
             <div className="flex items-center gap-2 mb-3">
               <Mail className="w-4 h-4 text-[#10b981]" />
-              <h4 style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
-                Email Notification Preview
-              </h4>
+              <h4 style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>Email Notification Preview</h4>
             </div>
             <div className="text-sm space-y-2 text-muted-foreground">
               <p><strong>To:</strong> {applicantData.email}</p>
@@ -414,7 +558,7 @@ export default function AccountCreationModal({
                 <div className="my-3 p-3 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
                   <p className="text-xs mb-1"><strong>Your Account Details:</strong></p>
                   <p className="text-xs">Username: <strong>{username || "[username]"}</strong></p>
-                  <p className="text-xs">Password: <strong>{showPassword ? password : "••••••••••••"}</strong></p>
+                  <p className="text-xs">Password: <strong>{showPassword ? password : "************"}</strong></p>
                   <p className="text-xs mt-2">Committee: <strong>{committee || "[committee]"}</strong></p>
                   <p className="text-xs">Position: <strong>{position || "[position]"}</strong></p>
                   <p className="text-xs">Role: <strong>{role}</strong></p>
@@ -425,7 +569,6 @@ export default function AccountCreationModal({
           </div>
         </div>
 
-        {/* Footer */}
         <div
           className="p-4 md:p-6 border-t flex flex-col sm:flex-row gap-3"
           style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}
@@ -442,7 +585,7 @@ export default function AccountCreationModal({
               background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
             }}
           >
-            Create Account & Send Email
+            Create Account and Send Email
           </Button>
         </div>
       </div>

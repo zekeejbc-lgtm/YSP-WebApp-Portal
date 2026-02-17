@@ -29,17 +29,18 @@ import { clearUserProfileCache } from '../services/localStorageCache';
 import { toast } from 'sonner';
 import { determineRoleChangeType, type RoleChangeType } from '../components/CacheRefreshModals';
 
-// Role hierarchy for access control
-const ROLE_HIERARCHY: Record<string, number> = {
-  banned: 0,
-  suspended: 1,
-  guest: 2,
-  member: 2,
-  head: 3,
-  officer: 3,
-  admin: 4,
-  auditor: 5,
-};
+function inferRoleLevel(roleValue: string): number {
+  const role = String(roleValue || '').toLowerCase().trim();
+  if (!role) return 0;
+  if (role === 'banned' || role === 'suspended') return 0;
+  if (role.includes('auditor')) return 10;
+  if (role.includes('admin')) return 8;
+  if (role.includes('founder')) return 6;
+  if (role.includes('president') || role === 'head' || role === 'officer') return 5;
+  if (role === 'member' || role === 'volunteer') return 2;
+  if (role === 'guest') return 1;
+  return 2;
+}
 
 export interface AuthUser {
   name: string;
@@ -156,11 +157,10 @@ export function AuthProvider({ children, onCacheClearRequest }: AuthProviderProp
   // Role-based access check
   const hasRoleAccess = useCallback((requiredRoles: string[] | undefined): boolean => {
     if (!requiredRoles || requiredRoles.length === 0) return true;
-    
-    const userLevel = ROLE_HIERARCHY[userRole] || 0;
-    
-    return requiredRoles.some(role => {
-      const requiredLevel = ROLE_HIERARCHY[role] || 0;
+
+    const userLevel = inferRoleLevel(userRole);
+    return requiredRoles.some((requiredRole) => {
+      const requiredLevel = inferRoleLevel(requiredRole);
       return userLevel >= requiredLevel;
     });
   }, [userRole]);
@@ -422,7 +422,7 @@ export function AuthProvider({ children, onCacheClearRequest }: AuthProviderProp
           }
         }
       } catch (error) {
-        console.debug('[AuthContext] Role polling error (ignored):', error);
+        console.warn('[AuthContext] Role polling error (ignored):', error);
       }
     };
 
@@ -474,5 +474,3 @@ export function useAuth() {
   return context;
 }
 
-// Export role hierarchy for use in route guards
-export { ROLE_HIERARCHY };
