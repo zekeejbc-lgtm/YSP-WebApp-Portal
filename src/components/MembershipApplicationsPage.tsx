@@ -3,53 +3,48 @@
  * MEMBERSHIP APPLICATIONS PAGE
  * =============================================================================
  * 
- * Admin/Auditor View: Editor to manage application settings (Open/Close)
- * Public View: Application form when open, closed message when closed
+ * Enhanced View: List of Opportunities with filters, view modes, and improved UI.
  * 
  * Features:
- * - Open/Close applications toggle (Admin/Auditor only)
- * - Stats display (Open Positions, Total Applicants, Available Slots)
- * - Create new application opportunities (Admin/Auditor only)
- * - Manage application settings
- * - Public registration form integration
+ * - View Modes: Grid (Tile) vs List (Table)
+ * - Filtering: Status (All, Open, Closed, etc.)
+ * - Search: Real-time text search
+ * - Skeleton Loading: Loading state on mount
+ * - Detail View: Modal for viewing full details
  * 
  * =============================================================================
  */
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
-  Plus, Edit, Trash2, Users, BarChart3, AlertCircle, 
-  UserPlus, CheckCircle, X, Lock, Unlock, Settings,
-  ClipboardList, Calendar, Clock, GripVertical, Eye, EyeOff,
-  Type, AlignLeft, Mail, Phone, List, Circle, Square, 
-  FileText, Upload, ChevronDown, ChevronUp
+  Plus, Edit, Trash2, Calendar, Clock, ExternalLink,
+  Lock, Unlock, Archive, CheckCircle, Eye, EyeOff,
+  AlertCircle, ChevronDown, Search,
+  LayoutGrid, List as ListIcon, Filter, X, RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";
-import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
-import MembershipRegistrationModal from "./MembershipRegistrationModal";
+import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import CreateOpportunityModalEnhanced from "./CreateOpportunityModalEnhanced";
-import ApplyToOpportunityModal from "./ApplyToOpportunityModal";
-import CustomizeMembershipFormModal, { MembershipFormField } from "./CustomizeMembershipFormModal";
+import CustomDropdown from "./CustomDropdown";
+import { SkeletonCardGrid } from "./SkeletonCard";
+import { type UploadToastMessage } from "./UploadToast";
+import { 
+  fetchOpportunities, 
+  addOpportunity, 
+  updateOpportunity, 
+  deleteOpportunity 
+} from "../services/gasApplicationsService";
 
-interface ApplicationOpportunity {
+export interface ApplicationOpportunity {
   id: string;
   title: string;
   description: string;
-  committee: string;
-  availableSlots: number;
-  deadline: string;
-  status: "open" | "closed";
-  customFields?: CustomField[];
-}
-
-interface CustomField {
-  id: string;
-  label: string;
-  type: "text" | "textarea" | "email" | "phone" | "select" | "radio" | "checkbox" | "date" | "file";
-  required: boolean;
-  enabled: boolean;
-  options?: string[]; // for select, radio, checkbox
-  placeholder?: string;
+  startDate: string; // ISO string or "YYYY-MM-DDTHH:mm"
+  endDate: string;   // ISO string or "YYYY-MM-DDTHH:mm"
+  status: "open" | "closed" | "completed" | "archived";
+  visibility: "public" | "hidden";
+  link: string;
 }
 
 interface MembershipApplicationsPageProps {
@@ -57,766 +52,914 @@ interface MembershipApplicationsPageProps {
   isDark: boolean;
   userRole: string;
   isLoggedIn?: boolean;
-  pendingApplications: any[];
-  setPendingApplications: (apps: any[]) => void;
+  pendingApplications?: unknown[];
+  setPendingApplications?: (apps: unknown[]) => void;
   username?: string;
+  onModalStateChange?: (isOpen: boolean) => void;
+  addUploadToast?: (message: UploadToastMessage) => void;
+  updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
+  removeUploadToast?: (id: string) => void;
 }
 
 export default function MembershipApplicationsPage({
   onClose,
   isDark,
   userRole,
-  isLoggedIn = false,
-  pendingApplications,
-  setPendingApplications,
-  username = "admin",
+  onModalStateChange,
+  addUploadToast = () => {},
+  updateUploadToast = () => {},
+  removeUploadToast = () => {},
 }: MembershipApplicationsPageProps) {
-  // Global application status
-  const [applicationsOpen, setApplicationsOpen] = useState(true);
-  
-  // Application opportunities
-  const [opportunities, setOpportunities] = useState<ApplicationOpportunity[]>([
-    {
-      id: "OPP-001",
-      title: "Community Development Officer",
-      description: "Lead community outreach programs and coordinate volunteer activities",
-      committee: "Community Development",
-      availableSlots: 2,
-      deadline: "2025-12-31",
-      status: "open",
-    },
-    {
-      id: "OPP-002",
-      title: "Environmental Conservation Volunteer",
-      description: "Join tree planting campaigns and coastal cleanup initiatives",
-      committee: "Environmental Conservation",
-      availableSlots: 8,
-      deadline: "2025-12-25",
-      status: "open",
-    },
-  ]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isArchivedOpen, setIsArchivedOpen] = useState(false);
+  const [opportunities, setOpportunities] = useState<ApplicationOpportunity[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Modals
-  const [showRegistrationModal, setShowRegistrationModal] = useState(false);
-  const [showCreateOpportunityModal, setShowCreateOpportunityModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingOpportunity, setEditingOpportunity] = useState<ApplicationOpportunity | null>(null);
-  const [showApplyModal, setShowApplyModal] = useState(false);
-  const [selectedOpportunity, setSelectedOpportunity] = useState<ApplicationOpportunity | null>(null);
-  const [showCustomizeFormModal, setShowCustomizeFormModal] = useState(false);
+  const [viewingOpportunity, setViewingOpportunity] = useState<ApplicationOpportunity | null>(null);
+  const [isSavingOpportunity, setIsSavingOpportunity] = useState(false);
 
-  // Membership Form Fields Configuration
-  const [membershipFormFields, setMembershipFormFields] = useState<MembershipFormField[]>([
-    // Personal Information
-    { id: "fullName", label: "Full name", type: "text", required: true, enabled: true, category: "personal", systemField: true, order: 1, placeholder: "Enter your full name" },
-    { id: "dateOfBirth", label: "Date of Birth", type: "date", required: true, enabled: true, category: "personal", order: 2 },
-    { id: "age", label: "Age", type: "number", required: true, enabled: true, category: "personal", order: 3, placeholder: "Enter your age" },
-    
-    // Demographics
-    { id: "sexGender", label: "Sex/Gender", type: "select", required: true, enabled: true, category: "demographics", order: 4, options: ["Male", "Female", "Non-binary", "Prefer not to say"] },
-    { id: "pronouns", label: "Pronouns", type: "select", required: false, enabled: true, category: "demographics", order: 5, options: ["He/Him", "She/Her", "They/Them", "Other"] },
-    { id: "civilStatus", label: "Civil Status", type: "select", required: true, enabled: true, category: "demographics", order: 6, options: ["Single", "Married", "Widowed", "Separated", "Divorced"] },
-    { id: "religion", label: "Religion", type: "text", required: false, enabled: true, category: "demographics", order: 7, placeholder: "Enter your religion" },
-    { id: "nationality", label: "Nationality", type: "text", required: true, enabled: true, category: "demographics", order: 8, placeholder: "Enter your nationality" },
-    
-    // Contact Information
-    { id: "email", label: "Email Address", type: "email", required: true, enabled: true, category: "contact", systemField: true, order: 9, placeholder: "your.email@example.com" },
-    { id: "personalEmail", label: "Personal Email Address", type: "email", required: false, enabled: true, category: "contact", order: 10, placeholder: "personal.email@example.com" },
-    { id: "phone", label: "Contact Number", type: "phone", required: true, enabled: true, category: "contact", systemField: true, order: 11, placeholder: "+63 XXX XXX XXXX" },
-    
-    // Address
-    { id: "address", label: "Address", type: "text", required: true, enabled: true, category: "address", order: 12, placeholder: "Street Address" },
-    { id: "barangay", label: "Barangay", type: "text", required: true, enabled: true, category: "address", order: 13, placeholder: "Barangay" },
-    { id: "city", label: "City", type: "text", required: true, enabled: true, category: "address", order: 14, placeholder: "City" },
-    { id: "province", label: "Province", type: "text", required: true, enabled: true, category: "address", order: 15, placeholder: "Province" },
-    { id: "zipCode", label: "Zip Code", type: "text", required: false, enabled: true, category: "address", order: 16, placeholder: "0000" },
-    
-    // Social Media
-    { id: "facebook", label: "Facebook", type: "url", required: false, enabled: true, category: "social", order: 17, placeholder: "https://facebook.com/username" },
-    { id: "instagram", label: "Instagram", type: "url", required: false, enabled: true, category: "social", order: 18, placeholder: "https://instagram.com/username" },
-    { id: "twitter", label: "Twitter", type: "url", required: false, enabled: true, category: "social", order: 19, placeholder: "https://twitter.com/username" },
-    
-    // Emergency Contact
-    { id: "emergencyName", label: "Emergency Contact Name", type: "text", required: true, enabled: true, category: "emergency", order: 20, placeholder: "Enter emergency contact name" },
-    { id: "emergencyRelation", label: "Emergency Contact Relation", type: "text", required: true, enabled: true, category: "emergency", order: 21, placeholder: "Relationship (Mother, Father, Sibling, etc.)" },
-    { id: "emergencyNumber", label: "Emergency Contact Number", type: "phone", required: true, enabled: true, category: "emergency", order: 22, placeholder: "+63 XXX XXX XXXX" },
-    
-    // YSP Information
-    { id: "chapter", label: "Chapter", type: "select", required: true, enabled: true, category: "ysp", order: 23, options: ["Tagum Chapter", "Davao Chapter", "Manila Chapter"] },
-    { id: "committee", label: "Committee", type: "select", required: true, enabled: true, category: "ysp", order: 24, options: ["Community Development", "Environmental Conservation", "Education & Training", "Health & Wellness", "Communications & Media"] },
-    { id: "position", label: "Position", type: "text", required: false, enabled: false, category: "ysp", order: 25, placeholder: "Desired position" },
-    { id: "role", label: "Role", type: "select", required: false, enabled: false, category: "ysp", order: 26, options: ["Member", "Volunteer", "Officer"] },
-    { id: "membershipType", label: "Membership Type", type: "select", required: false, enabled: false, category: "ysp", order: 27, options: ["Regular", "Associate", "Honorary"] },
-    { id: "dateJoined", label: "Date Joined", type: "date", required: false, enabled: false, category: "ysp", order: 28 },
-    { id: "status", label: "Status", type: "select", required: false, enabled: false, category: "system", systemField: true, order: 29, options: ["Active", "Inactive", "Pending"] },
-    
-    // Privacy & Agreements
-    { id: "dataPrivacyAgreement", label: "DATA PRIVACY AGREEMENT", type: "checkbox", required: true, enabled: true, category: "privacy", order: 30, options: ["I agree to the Data Privacy Agreement"] },
-    { id: "dataPrivacyAcknowledgment", label: "Data Privacy Acknowledgment", type: "checkbox", required: true, enabled: true, category: "privacy", order: 31, options: ["I acknowledge the data privacy terms"] },
-    { id: "declarationTruthfulness", label: "Declaration of Truthfulness and Responsibility", type: "checkbox", required: true, enabled: true, category: "privacy", order: 32, options: ["I declare that all information provided is true and accurate"] },
-    { id: "prohibitionAcknowledgment", label: "Do you understand that by prohibiting the collection of your personal information, your application will not be processed?", type: "radio", required: true, enabled: true, category: "privacy", order: 33, options: ["Yes, I understand", "No"], conditionalField: true, showWhen: { fieldId: "dataPrivacyAgreement", condition: "unchecked" } },
-    
-    // Account Creation
-    { id: "username", label: "Username", type: "text", required: true, enabled: true, category: "account", systemField: true, order: 34, placeholder: "Choose a unique username" },
-    { id: "password", label: "Password", type: "password", required: true, enabled: true, category: "account", systemField: true, order: 35, placeholder: "Create a secure password (min 8 characters)" },
-    { id: "profilePictureURL", label: "Profile Picture", type: "file", required: true, enabled: true, category: "account", systemField: true, order: 36, placeholder: "Upload your profile picture" },
-    
-    // System Fields (Admin Only)
-    { id: "idCode", label: "ID Code", type: "text", required: false, enabled: false, category: "system", systemField: true, order: 37, placeholder: "Auto-generated ID" },
-    { id: "timestamp", label: "Timestamp", type: "text", required: false, enabled: false, category: "system", systemField: true, order: 38 },
-  ]);
+  const isAdminOrAuditor = userRole === "admin" || userRole === "auditor";
 
-  // Calculate stats
-  const totalApplicants = pendingApplications?.length || 0;
-  const openPositions = opportunities.filter(o => o.status === "open").length;
-  const availableSlots = opportunities.reduce((sum, o) => sum + o.availableSlots, 0);
+  // Notify parent about modal state
+  useEffect(() => {
+    onModalStateChange?.(showCreateModal || !!viewingOpportunity);
+  }, [showCreateModal, viewingOpportunity, onModalStateChange]);
+
+  // Fetch data on mount
+  const loadOpportunities = useCallback(async () => {
+    setIsRefreshing(true);
+    // Don't set isLoading(true) here to avoid flashing skeleton on refresh.
+    setIsLoading((prev) => (opportunities.length === 0 ? true : prev));
+    
+    const result = await fetchOpportunities();
+    if (result.success && result.data) {
+      setOpportunities(result.data);
+    } else {
+      console.error("[MembershipApplications] Failed to load opportunities:", result.error);
+      toast.error(result.error || "Failed to load opportunities");
+    }
+    setIsLoading(false);
+    setIsRefreshing(false);
+  }, [opportunities.length]);
+
+  // Fetch data on mount
+  useEffect(() => {
+    loadOpportunities();
+  }, [loadOpportunities]);
+
+  // Filter Logic
+  const filteredOpportunities = opportunities.filter(opp => {
+    // 1. Role-based visibility
+    if (!isAdminOrAuditor && opp.visibility === "hidden") return false;
+    
+    // 2. Search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      if (!opp.title.toLowerCase().includes(query) && !opp.description.toLowerCase().includes(query)) {
+        return false;
+      }
+    }
+
+    // 3. Status Filter
+    if (filterStatus !== "all" && opp.status !== filterStatus) return false;
+
+    return true;
+  });
+
+  // Separate active vs archived only if "All" is selected (default view)
+  const showArchivedSection = filterStatus === "all" && !searchQuery;
+  
+  const activeOpportunities = showArchivedSection
+    ? filteredOpportunities.filter(o => o.status !== "archived")
+    : filteredOpportunities;
+    
+  const archivedOpportunities = showArchivedSection
+    ? opportunities.filter(o => o.status === "archived" && (isAdminOrAuditor || o.visibility === "public"))
+    : [];
 
   // Handlers
-  const handleToggleApplications = () => {
-    setApplicationsOpen(!applicationsOpen);
-    toast.success(
-      applicationsOpen 
-        ? "Applications Closed" 
-        : "Applications Opened",
-      {
-        description: applicationsOpen
-          ? "New registrations are now disabled"
-          : "New registrations are now enabled"
-      }
-    );
-  };
-
   const handleCreateOpportunity = () => {
     setEditingOpportunity(null);
-    setShowCreateOpportunityModal(true);
+    setShowCreateModal(true);
   };
 
   const handleEditOpportunity = (opp: ApplicationOpportunity) => {
     setEditingOpportunity(opp);
-    setShowCreateOpportunityModal(true);
+    setShowCreateModal(true);
+    setViewingOpportunity(null); // Close view modal if open
   };
 
-  const handleDeleteOpportunity = (id: string) => {
+  const handleDeleteOpportunity = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this opportunity?")) return;
+
+    // Optimistic update
+    const prevOpportunities = [...opportunities];
     setOpportunities(opportunities.filter(o => o.id !== id));
-    toast.success("Opportunity deleted");
+    if (viewingOpportunity?.id === id) setViewingOpportunity(null);
+
+    const toastId = toast.loading("Deleting opportunity...");
+    const result = await deleteOpportunity(id);
+
+    if (result.success) {
+      toast.success("Opportunity deleted", { id: toastId });
+    } else {
+      console.error("[MembershipApplications] Failed to delete opportunity:", { id, error: result.error });
+      setOpportunities(prevOpportunities); // Revert
+      toast.error(result.error || "Failed to delete", { id: toastId });
+    }
   };
 
-  const handleToggleOpportunityStatus = (id: string) => {
-    setOpportunities(
-      opportunities.map(o =>
-        o.id === id ? { ...o, status: o.status === "open" ? "closed" : "open" } : o
-      )
-    );
-    toast.success("Status updated");
-  };
-
-  const handleRegistrationSubmit = (formData: any) => {
-    // Add to pending applications
-    const newApplication = {
-      id: `APP-${String((pendingApplications?.length || 0) + 1).padStart(3, "0")}`,
-      name: formData.fullName,
-      email: formData.email,
-      phone: formData.phone,
-      dateApplied: new Date().toISOString().split("T")[0],
-      committee: formData.committeePreference,
-      status: "pending" as const,
-      fullData: formData,
-    };
-
-    setPendingApplications([...(pendingApplications || []), newApplication]);
+  const handleToggleVisibility = async (opp: ApplicationOpportunity) => {
+    const newVisibility = opp.visibility === "public" ? "hidden" : "public";
     
-    toast.success("Application Submitted Successfully!", {
-      description: "Your application is now pending review by our admin team.",
-    });
+    // Optimistic update
+    const prevOpportunities = [...opportunities];
+    setOpportunities(opportunities.map(o => o.id === opp.id ? { ...o, visibility: newVisibility } : o));
+    if (viewingOpportunity?.id === opp.id) setViewingOpportunity({ ...viewingOpportunity, visibility: newVisibility });
 
-    setShowRegistrationModal(false);
+    const result = await updateOpportunity(opp.id, { visibility: newVisibility });
+
+    if (result.success) {
+      toast.success(`Opportunity is now ${newVisibility.toUpperCase()}`);
+    } else {
+      console.error("[MembershipApplications] Failed to update visibility:", {
+        id: opp.id,
+        visibility: newVisibility,
+        error: result.error,
+      });
+      setOpportunities(prevOpportunities); // Revert
+      if (viewingOpportunity?.id === opp.id) setViewingOpportunity(opp);
+      toast.error(result.error || "Failed to update visibility");
+    }
   };
 
-  const isAdminOrAuditor = userRole === "admin" || userRole === "auditor";
+  const handleSaveOpportunity = async (opp: ApplicationOpportunity) => {
+    const isEditing = Boolean(editingOpportunity);
+    const toastId = `${isEditing ? "opportunity-update" : "opportunity-create"}-${Date.now()}`;
+    setIsSavingOpportunity(true);
+
+    addUploadToast({
+      id: toastId,
+      title: isEditing ? "Updating Opportunity" : "Creating Opportunity",
+      message: "Preparing data...",
+      status: "loading",
+      progress: 10,
+    });
+    
+    try {
+      if (isEditing) {
+        updateUploadToast(toastId, { progress: 45, message: "Syncing updates to backend..." });
+        const result = await updateOpportunity(opp.id, opp);
+
+        if (!result.success) {
+          console.error("[MembershipApplications] Failed to update opportunity:", {
+            id: opp.id,
+            error: result.error,
+          });
+          updateUploadToast(toastId, {
+            status: "error",
+            message: result.error || "Operation failed",
+            progress: 100,
+          });
+          setTimeout(() => removeUploadToast(toastId), 5000);
+          toast.error(result.error || "Operation failed");
+          return;
+        }
+
+        updateUploadToast(toastId, { progress: 80, message: "Updating local list..." });
+        setOpportunities((prev) => prev.map((o) => (o.id === opp.id ? opp : o)));
+        toast.success("Opportunity updated successfully");
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { id, ...newOppData } = opp; // Remove ID for creation, let backend assign
+        updateUploadToast(toastId, { progress: 45, message: "Syncing to backend..." });
+        const result = await addOpportunity(newOppData);
+
+        if (!result.success) {
+          console.error("[MembershipApplications] Failed to create opportunity:", result.error);
+          updateUploadToast(toastId, {
+            status: "error",
+            message: result.error || "Operation failed",
+            progress: 100,
+          });
+          setTimeout(() => removeUploadToast(toastId), 5000);
+          toast.error(result.error || "Operation failed");
+          return;
+        }
+
+        updateUploadToast(toastId, { progress: 80, message: "Updating local list..." });
+        const createdOpportunity = result.data;
+        if (!createdOpportunity) {
+          console.error("[MembershipApplications] Create succeeded but no data returned.");
+          updateUploadToast(toastId, {
+            status: "error",
+            message: "Opportunity was created but no data was returned",
+            progress: 100,
+          });
+          setTimeout(() => removeUploadToast(toastId), 5000);
+          toast.error("Operation failed");
+          return;
+        }
+        setOpportunities((prev) => [...prev, createdOpportunity]);
+        toast.success("Opportunity created successfully");
+      }
+
+      updateUploadToast(toastId, {
+        progress: 100,
+        message: isEditing ? "Update complete" : "Creation complete",
+        status: "success",
+      });
+      setTimeout(() => removeUploadToast(toastId), 3000);
+      setShowCreateModal(false);
+      setEditingOpportunity(null);
+    } catch (error) {
+      console.error("[MembershipApplications] Unexpected save error:", error);
+      updateUploadToast(toastId, {
+        status: "error",
+        message: "An unexpected error occurred",
+        progress: 100,
+      });
+      setTimeout(() => removeUploadToast(toastId), 5000);
+      toast.error("An unexpected error occurred");
+    } finally {
+      setIsSavingOpportunity(false);
+    }
+  };
+
+  const formatDateTime = (dateStr: string) => {
+    if (!dateStr) return "N/A";
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    });
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "open": return DESIGN_TOKENS.colors.status.success;
+      case "closed": return DESIGN_TOKENS.colors.status.error;
+      case "completed": return "#3b82f6";
+      case "archived": return "#6b7280";
+      default: return "#6b7280";
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "open": return <Unlock className="w-3.5 h-3.5" />;
+      case "closed": return <Lock className="w-3.5 h-3.5" />;
+      case "completed": return <CheckCircle className="w-3.5 h-3.5" />;
+      case "archived": return <Archive className="w-3.5 h-3.5" />;
+      default: return <AlertCircle className="w-3.5 h-3.5" />;
+    }
+  };
 
   return (
     <PageLayout
-      title="Membership Applications"
-      subtitle={isAdminOrAuditor ? "Manage membership application settings" : "Apply for positions and join our team"}
+      title="Membership & Opportunities"
+      subtitle={isAdminOrAuditor ? "Manage recruitment and opportunities" : "Join us and participate in our activities"}
       isDark={isDark}
       onClose={onClose}
       breadcrumbs={[
         { label: "Home", onClick: onClose },
-        { label: "Membership Applications", onClick: undefined },
+        { label: "Opportunities", onClick: undefined },
       ]}
-      actions={
-        isAdminOrAuditor ? (
-          <div className="flex flex-wrap gap-2 justify-end">
-            <Button
-              variant={applicationsOpen ? "secondary" : "primary"}
-              onClick={handleToggleApplications}
-              icon={applicationsOpen ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />}
-              size="sm"
-              style={
-                applicationsOpen
-                  ? undefined
-                  : {
-                      background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                    }
-              }
-            >
-              <span className="hidden sm:inline">{applicationsOpen ? "Close" : "Open"}</span>
-              <span className="sm:hidden">{applicationsOpen ? "Close" : "Open"}</span>
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleCreateOpportunity}
-              icon={<Plus className="w-5 h-5" />}
-              size="sm"
-            >
-              <span className="hidden sm:inline">Create</span>
-            </Button>
-          </div>
-        ) : null
-      }
     >
-      {/* Admin/Auditor Editor View */}
-      {isAdminOrAuditor && (
-        <>
-          {/* Global Status Banner */}
-          <div
-            className="rounded-xl p-6 border mb-6"
-            style={{
-              background: applicationsOpen
-                ? isDark
-                  ? "rgba(16, 185, 129, 0.1)"
-                  : "rgba(16, 185, 129, 0.05)"
-                : isDark
-                ? "rgba(239, 68, 68, 0.1)"
-                : "rgba(239, 68, 68, 0.05)",
-              borderColor: applicationsOpen ? "#10b981" : "#ef4444",
-            }}
-          >
-            <div className="flex items-center gap-3">
-              {applicationsOpen ? (
-                <CheckCircle className="w-6 h-6 text-green-500" />
-              ) : (
-                <Lock className="w-6 h-6 text-red-500" />
-              )}
-              <div className="flex-1">
-                <h3
-                  style={{
-                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                    color: applicationsOpen ? "#10b981" : "#ef4444",
-                  }}
+      <div className="space-y-6">
+        {/* Controls Header */}
+        <div className="flex flex-col gap-4">
+          {/* Row 1: Search - Full width */}
+          <div className="relative w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search opportunities..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 rounded-xl border bg-white dark:bg-gray-800 focus:ring-2 focus:ring-[#f6421f] outline-none transition-all shadow-sm"
+              style={{ 
+                borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
+              }}
+            />
+          </div>
+
+          {/* Row 2: Filters & View Mode */}
+          <div className="flex flex-wrap justify-between items-center w-full gap-3">
+            {/* Left side: Filter */}
+            <div className="w-48">
+              <CustomDropdown
+                value={filterStatus}
+                onChange={setFilterStatus}
+                options={[
+                  { value: "all", label: "All Status" },
+                  { value: "open", label: "Open" },
+                  { value: "closed", label: "Closed" },
+                  { value: "completed", label: "Completed" },
+                  { value: "archived", label: "Archived" },
+                ]}
+                isDark={isDark}
+                size="md"
+              />
+            </div>
+
+            {/* Right side: Actions */}
+            <div className="flex gap-2 items-center">
+              {/* Refresh Button */}
+              <button
+                onClick={loadOpportunities}
+                disabled={isRefreshing}
+                className="p-2.5 rounded-xl border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all shadow-sm flex items-center justify-center min-w-[44px]"
+                style={{ 
+                  borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                }}
+                title="Refresh List"
+              >
+                <RefreshCw className={`w-5 h-5 ${isRefreshing ? "animate-spin" : ""}`} />
+              </button>
+
+              {/* View Mode Toggle */}
+              <button
+                onClick={() => setViewMode(viewMode === "grid" ? "list" : "grid")}
+                className="p-2.5 rounded-xl border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all shadow-sm flex items-center justify-center min-w-[44px]"
+                style={{ 
+                  borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                }}
+                title={viewMode === "grid" ? "Switch to List View" : "Switch to Grid View"}
+              >
+                {viewMode === "grid" ? <ListIcon className="w-5 h-5" /> : <LayoutGrid className="w-5 h-5" />}
+              </button>
+
+              {/* Create Button (Admin) */}
+              {isAdminOrAuditor && (
+                <Button
+                  variant="primary"
+                  onClick={handleCreateOpportunity}
+                  icon={<Plus className="w-5 h-5" />}
+                  size="md"
                 >
-                  Applications {applicationsOpen ? "Open" : "Closed"}
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {applicationsOpen
-                    ? "New membership registrations are currently being accepted"
-                    : "New membership registrations are currently disabled"}
-                </p>
-              </div>
+                  Create
+                </Button>
+              )}
             </div>
           </div>
+        </div>
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            {/* Open Positions */}
-            <div
-              className="rounded-xl p-6 border"
-              style={{
-                background: isDark ? "rgba(30, 41, 59, 0.7)" : "rgba(255, 255, 255, 0.7)",
-                backdropFilter: "blur(20px)",
-                borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-              }}
-            >
-              <div className="flex items-center gap-3 mb-2">
-                <CheckCircle className="w-5 h-5 text-green-500" />
-                <p className="text-sm text-muted-foreground">Open Positions</p>
-              </div>
-              <h3
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
-                  color: "#10b981",
-                }}
-              >
-                {openPositions}
-              </h3>
-            </div>
-
-            {/* Total Applicants */}
-            <div
-              className="rounded-xl p-6 border"
-              style={{
-                background: isDark ? "rgba(30, 41, 59, 0.7)" : "rgba(255, 255, 255, 0.7)",
-                backdropFilter: "blur(20px)",
-                borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-              }}
-            >
-              <div className="flex items-center gap-3 mb-2">
-                <Users className="w-5 h-5" style={{ color: DESIGN_TOKENS.colors.brand.red }} />
-                <p className="text-sm text-muted-foreground">Total Applicants</p>
-              </div>
-              <h3
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
-                  color: DESIGN_TOKENS.colors.brand.red,
-                }}
-              >
-                {totalApplicants}
-              </h3>
-            </div>
-
-            {/* Available Slots */}
-            <div
-              className="rounded-xl p-6 border"
-              style={{
-                background: isDark ? "rgba(30, 41, 59, 0.7)" : "rgba(255, 255, 255, 0.7)",
-                backdropFilter: "blur(20px)",
-                borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-              }}
-            >
-              <div className="flex items-center gap-3 mb-2">
-                <BarChart3 className="w-5 h-5" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
-                <p className="text-sm text-muted-foreground">Available Slots</p>
-              </div>
-              <h3
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h1}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
-                  color: DESIGN_TOKENS.colors.brand.orange,
-                }}
-              >
-                {availableSlots}
-              </h3>
-            </div>
-          </div>
-
-          {/* Membership Registration Section */}
-          {applicationsOpen && (
-            <div className="mb-6">
-              <h3
-                className="mb-4"
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                }}
-              >
-                Membership Registration
-              </h3>
-              <div
-                className="rounded-xl p-8 border cursor-pointer hover:shadow-lg transition-all"
-                style={{
-                  background: `linear-gradient(135deg, ${
-                    isDark ? "rgba(246, 66, 31, 0.1)" : "rgba(246, 66, 31, 0.05)"
-                  } 0%, ${isDark ? "rgba(238, 135, 36, 0.1)" : "rgba(238, 135, 36, 0.05)"} 100%)`,
-                  borderColor: DESIGN_TOKENS.colors.brand.orange,
-                }}
-                onClick={() => setShowRegistrationModal(true)}
-              >
-                <div className="flex items-center gap-4">
-                  <div
-                    className="rounded-full p-4"
-                    style={{
-                      background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                    }}
-                  >
-                    <UserPlus className="w-8 h-8 text-white" />
+        {/* Content Area */}
+        {isLoading ? (
+          <SkeletonCardGrid count={3} />
+        ) : (
+          <div className="space-y-8">
+            {/* Active Opportunities */}
+            <div className={viewMode === "grid" ? "grid grid-cols-1 lg:grid-cols-2 gap-6" : "space-y-4"}>
+              {activeOpportunities.length === 0 ? (
+                <div className={`col-span-full rounded-xl p-12 border text-center ${
+                  isDark ? "bg-gray-800/50 border-white/10" : "bg-white border-gray-200"
+                }`}>
+                  <div className="w-16 h-16 mx-auto rounded-full bg-gray-100 dark:bg-gray-700/50 flex items-center justify-center mb-4">
+                     <Filter className="w-8 h-8 text-gray-400" />
                   </div>
-                  <div className="flex-1">
-                    <h3
-                      className="mb-2"
-                      style={{
-                        fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                        fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
-                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                        color: DESIGN_TOKENS.colors.brand.red,
-                      }}
+                  <p className="text-muted-foreground">
+                    {searchQuery || filterStatus !== 'all' 
+                      ? "No opportunities found matching your filters." 
+                      : "No active opportunities available."}
+                  </p>
+                  {isAdminOrAuditor && (
+                    <Button 
+                      variant="ghost"
+                      onClick={handleCreateOpportunity}
+                      className="mt-2 text-[#f6421f]"
                     >
-                      Become a Member of YSP Tagum
-                    </h3>
-                    <p className="text-muted-foreground">
-                      Submit your membership registration application to join our organization
-                    </p>
-                  </div>
-                  <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                    {(userRole === "admin" || userRole === "auditor") && (
-                      <Button
-                        variant="secondary"
-                        icon={<Settings className="w-5 h-5" />}
-                        onClick={() => setShowCustomizeFormModal(true)}
-                      >
-                        <span className="hidden sm:inline">Customize Form</span>
-                      </Button>
-                    )}
-                    <Button
-                      variant="primary"
-                      icon={<UserPlus className="w-5 h-5" />}
-                      onClick={() => setShowRegistrationModal(true)}
-                    >
-                      Apply Now
+                      Create one now
                     </Button>
-                  </div>
+                  )}
                 </div>
-              </div>
+              ) : viewMode === "grid" ? (
+                activeOpportunities.map((opp) => (
+                  <OpportunityCard
+                    key={opp.id}
+                    opp={opp}
+                    viewMode={viewMode}
+                    isDark={isDark}
+                    isAdminOrAuditor={isAdminOrAuditor}
+                    getStatusColor={getStatusColor}
+                    getStatusIcon={getStatusIcon}
+                    formatDateTime={formatDateTime}
+                    onClick={() => setViewingOpportunity(opp)}
+                    onToggleVisibility={handleToggleVisibility}
+                    onEdit={handleEditOpportunity}
+                    onDelete={handleDeleteOpportunity}
+                  />
+                ))
+              ) : (
+                <OpportunityTable
+                  opportunities={activeOpportunities}
+                  isDark={isDark}
+                  isAdminOrAuditor={isAdminOrAuditor}
+                  formatDateTime={formatDateTime}
+                  getStatusColor={getStatusColor}
+                  getStatusIcon={getStatusIcon}
+                  onView={(opp) => setViewingOpportunity(opp)}
+                  onToggleVisibility={handleToggleVisibility}
+                  onEdit={handleEditOpportunity}
+                  onDelete={handleDeleteOpportunity}
+                />
+              )}
             </div>
-          )}
 
-          {/* Application Opportunities List */}
-          <div className="space-y-4">
-            <h3
-              style={{
-                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-              }}
-            >
-              Application Opportunities
-            </h3>
-
-            {opportunities.map((opp) => (
-              <div
-                key={opp.id}
-                className="rounded-xl p-6 border cursor-pointer hover:shadow-lg transition-all"
-                onClick={() => {
-                  setSelectedOpportunity(opp);
-                  setShowApplyModal(true);
-                }}
-                style={{
-                  background: isDark ? "rgba(30, 41, 59, 0.7)" : "rgba(255, 255, 255, 0.7)",
-                  backdropFilter: "blur(20px)",
-                  borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-                }}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h4
-                        style={{
-                          fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                          fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
-                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                        }}
-                      >
-                        {opp.title}
-                      </h4>
-                      <span
-                        className="px-3 py-1 rounded-full text-xs"
-                        style={{
-                          backgroundColor: opp.status === "open" ? "#10b98120" : "#6b728020",
-                          color: opp.status === "open" ? "#10b981" : "#6b7280",
-                          fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                        }}
-                      >
-                        {opp.status.toUpperCase()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-3">{opp.description}</p>
-                    <div className="flex flex-wrap gap-4 text-sm">
-                      <div className="flex items-center gap-2">
-                        <ClipboardList className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-muted-foreground">{opp.committee}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-muted-foreground">{opp.availableSlots} slots</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-muted-foreground">
-                          Deadline: {new Date(opp.deadline).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
+            {/* Archived Section (Collapsible) */}
+            {showArchivedSection && archivedOpportunities.length > 0 && (
+              <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
+                <button
+                  onClick={() => setIsArchivedOpen(!isArchivedOpen)}
+                  className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 group w-full"
+                >
+                  <div className={`p-1 rounded-full bg-gray-100 dark:bg-gray-800 transition-transform duration-300 ${isArchivedOpen ? 'rotate-180' : ''}`}>
+                    <ChevronDown className="w-4 h-4" />
                   </div>
+                  <span className="font-semibold text-lg">Archived Opportunities ({archivedOpportunities.length})</span>
+                </button>
 
-                  {/* Action Buttons - Stop propagation to prevent triggering card click */}
-                  <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      onClick={() => handleToggleOpportunityStatus(opp.id)}
-                      className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                      title={opp.status === "open" ? "Close" : "Open"}
-                    >
-                      {opp.status === "open" ? (
-                        <Lock className="w-5 h-5 text-red-500" />
-                      ) : (
-                        <Unlock className="w-5 h-5 text-green-500" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleEditOpportunity(opp)}
-                      className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                      title="Edit"
-                    >
-                      <Edit className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteOpportunity(opp.id)}
-                      className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-5 h-5 text-red-500" />
-                    </button>
+                {isArchivedOpen && (
+                  <div className={`animate-in fade-in slide-in-from-top-4 duration-300 ${
+                    viewMode === "grid" ? "grid grid-cols-1 lg:grid-cols-2 gap-6" : "space-y-4"
+                  }`}>
+                    {viewMode === "grid" ? (
+                      archivedOpportunities.map((opp) => (
+                        <OpportunityCard
+                          key={opp.id}
+                          opp={opp}
+                          viewMode={viewMode}
+                          isDark={isDark}
+                          isAdminOrAuditor={isAdminOrAuditor}
+                          getStatusColor={getStatusColor}
+                          getStatusIcon={getStatusIcon}
+                          formatDateTime={formatDateTime}
+                          onClick={() => setViewingOpportunity(opp)}
+                          onToggleVisibility={handleToggleVisibility}
+                          onEdit={handleEditOpportunity}
+                          onDelete={handleDeleteOpportunity}
+                          isArchived={true}
+                        />
+                      ))
+                    ) : (
+                      <OpportunityTable
+                        opportunities={archivedOpportunities}
+                        isDark={isDark}
+                        isAdminOrAuditor={isAdminOrAuditor}
+                        formatDateTime={formatDateTime}
+                        getStatusColor={getStatusColor}
+                        getStatusIcon={getStatusIcon}
+                        onView={(opp) => setViewingOpportunity(opp)}
+                        onToggleVisibility={handleToggleVisibility}
+                        onEdit={handleEditOpportunity}
+                        onDelete={handleDeleteOpportunity}
+                      />
+                    )}
                   </div>
-                </div>
-              </div>
-            ))}
-
-            {opportunities.length === 0 && (
-              <div
-                className="rounded-xl p-12 border text-center"
-                style={{
-                  background: isDark ? "rgba(30, 41, 59, 0.7)" : "rgba(255, 255, 255, 0.7)",
-                  backdropFilter: "blur(20px)",
-                  borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-                }}
-              >
-                <ClipboardList className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-                <p className="text-muted-foreground">No application opportunities yet</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Click "Create New Opportunity" to add positions
-                </p>
+                )}
               </div>
             )}
           </div>
-        </>
-      )}
+        )}
+      </div>
 
-      {/* Public View (Guest/Member) */}
-      {!isAdminOrAuditor && (
-        <>
-          {applicationsOpen ? (
-            <>
-              {/* Membership Registration Section */}
-              {applicationsOpen && (
-                <div className="mb-6">
-                  <h3
-                    className="mb-4"
+      {/* View Detail Modal */}
+      {viewingOpportunity && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-10000 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setViewingOpportunity(null)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border max-h-[90vh] shadow-2xl relative flex flex-col overflow-hidden"
+            style={{
+              background: isDark ? "rgba(17, 24, 39, 0.95)" : "rgba(255, 255, 255, 0.98)",
+              borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-6 sm:px-8 py-5 border-b border-gray-200 dark:border-gray-800 flex items-start justify-between gap-4 shrink-0">
+              <div className="pr-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <span
+                    className="px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 uppercase tracking-wide w-fit"
                     style={{
-                      fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                      fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                      backgroundColor: `${getStatusColor(viewingOpportunity.status)}15`,
+                      color: getStatusColor(viewingOpportunity.status),
+                      border: `1px solid ${getStatusColor(viewingOpportunity.status)}30`,
                     }}
                   >
-                    Membership Registration
-                  </h3>
-                  <div
-                    className="rounded-xl p-8 border cursor-pointer hover:shadow-lg transition-all"
-                    style={{
-                      background: `linear-gradient(135deg, ${
-                        isDark ? "rgba(246, 66, 31, 0.1)" : "rgba(246, 66, 31, 0.05)"
-                      } 0%, ${isDark ? "rgba(238, 135, 36, 0.1)" : "rgba(238, 135, 36, 0.05)"} 100%)`,
-                      borderColor: DESIGN_TOKENS.colors.brand.orange,
-                    }}
-                    onClick={() => setShowRegistrationModal(true)}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div
-                        className="rounded-full p-4"
-                        style={{
-                          background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                        }}
-                      >
-                        <UserPlus className="w-8 h-8 text-white" />
-                      </div>
-                      <div className="flex-1">
-                        <h3
-                          className="mb-2"
-                          style={{
-                            fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                            fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
-                            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                            color: DESIGN_TOKENS.colors.brand.red,
-                          }}
-                        >
-                          Become a Member of YSP Tagum
-                        </h3>
-                        <p className="text-muted-foreground">
-                          Submit your membership registration application to join our organization
-                        </p>
-                      </div>
-                      <Button
-                        variant="primary"
-                        icon={<UserPlus className="w-5 h-5" />}
-                      >
-                        Apply Now
-                      </Button>
-                    </div>
-                  </div>
+                    {getStatusIcon(viewingOpportunity.status)}
+                    {viewingOpportunity.status}
+                  </span>
+                  {isAdminOrAuditor && (
+                    <span className="text-xs text-muted-foreground bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-full">
+                      {viewingOpportunity.visibility === "public" ? "Public" : "Hidden"}
+                    </span>
+                  )}
                 </div>
-              )}
-
-              {/* Application Opportunities List */}
-              <div className="space-y-4">
-                <h3
+                <h2
+                  className="text-2xl sm:text-3xl font-bold leading-tight"
                   style={{
                     fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
-                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    color: DESIGN_TOKENS.colors.brand.orange,
                   }}
                 >
-                  Application Opportunities
-                </h3>
-
-                {opportunities
-                  .filter((opp) => opp.status === "open")
-                  .map((opp) => (
-                    <div
-                      key={opp.id}
-                      className="rounded-xl p-6 border cursor-pointer hover:shadow-lg transition-all"
-                      onClick={() => {
-                        setSelectedOpportunity(opp);
-                        setShowApplyModal(true);
-                      }}
-                      style={{
-                        background: isDark ? "rgba(30, 41, 59, 0.7)" : "rgba(255, 255, 255, 0.7)",
-                        backdropFilter: "blur(20px)",
-                        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-                      }}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <h4
-                          style={{
-                            fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                            fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
-                            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                          }}
-                        >
-                          {opp.title}
-                        </h4>
-                        <span
-                          className="px-3 py-1 rounded-full text-xs"
-                          style={{
-                            backgroundColor: "#10b98120",
-                            color: "#10b981",
-                            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                          }}
-                        >
-                          OPEN
-                        </span>
-                      </div>
-                      <p className="text-sm text-muted-foreground mb-3">{opp.description}</p>
-                      <div className="flex flex-wrap gap-4 text-sm">
-                        <div className="flex items-center gap-2">
-                          <ClipboardList className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-muted-foreground">{opp.committee}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Users className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-muted-foreground">{opp.availableSlots} slots available</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-muted-foreground">
-                            Apply by {new Date(opp.deadline).toLocaleDateString()}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                  {viewingOpportunity.title}
+                </h2>
               </div>
-            </>
-          ) : (
-            /* Applications Closed Message */
-            <div
-              className="rounded-xl p-12 border text-center"
-              style={{
-                background: isDark ? "rgba(239, 68, 68, 0.1)" : "rgba(254, 226, 226, 0.8)",
-                borderColor: "#ef4444",
-              }}
-            >
-              <Lock className="w-16 h-16 mx-auto text-red-500 mb-4" />
-              <h3
-                className="mb-2"
-                style={{
-                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
-                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                  color: "#ef4444",
-                }}
+              <button
+                onClick={() => setViewingOpportunity(null)}
+                className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                aria-label="Close details modal"
               >
-                Applications Currently Closed
-              </h3>
-              <p className="text-muted-foreground">
-                Membership applications are not being accepted at this time. Please check back later.
-              </p>
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
             </div>
-          )}
-        </>
+
+            {/* Modal Content */}
+            <div className="space-y-6 px-6 sm:px-8 py-6 overflow-y-auto flex-1">
+              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground p-4 bg-gray-50 dark:bg-white/5 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-[#f6421f]" />
+                  <span className="font-medium text-foreground">Start:</span>
+                  <span>{formatDateTime(viewingOpportunity.startDate)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#f6421f]" />
+                  <span className="font-medium text-foreground">End:</span>
+                  <span>{formatDateTime(viewingOpportunity.endDate)}</span>
+                </div>
+              </div>
+
+              <div className="prose dark:prose-invert max-w-none">
+                <p className="whitespace-pre-line text-lg leading-relaxed text-gray-600 dark:text-gray-300 text-justify">
+                  {viewingOpportunity.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="px-6 sm:px-8 py-4 border-t border-gray-200 dark:border-gray-800 flex gap-3 items-center shrink-0">
+              {(viewingOpportunity.status === "open" || isAdminOrAuditor || viewingOpportunity.status === "archived") && (
+                <Button
+                  variant="primary"
+                  onClick={() => window.open(viewingOpportunity.link, "_blank")}
+                  icon={<ExternalLink className="w-4 h-4" />}
+                  className="flex-1 justify-center py-3"
+                  disabled={viewingOpportunity.status !== "open" && !isAdminOrAuditor && viewingOpportunity.status !== "archived"}
+                >
+                  {viewingOpportunity.status === "open" ? "Apply Now" : "View Link"}
+                </Button>
+              )}
+
+              {isAdminOrAuditor && (
+                <button
+                  onClick={() => handleEditOpportunity(viewingOpportunity)}
+                  className="p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
+                  title="Edit"
+                  aria-label="Edit opportunity"
+                >
+                  <Edit className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
-      {/* Registration Modal */}
-      {showRegistrationModal && (
-        <MembershipRegistrationModal
-          isOpen={showRegistrationModal}
-          onClose={() => setShowRegistrationModal(false)}
-          isDark={isDark}
-          onSubmit={handleRegistrationSubmit}
-        />
-      )}
-
-      {/* Create/Edit Opportunity Modal */}
-      {showCreateOpportunityModal && (
+      {/* Create/Edit Modal */}
+      {showCreateModal && (
         <CreateOpportunityModalEnhanced
-          isOpen={showCreateOpportunityModal}
+          isOpen={showCreateModal}
           onClose={() => {
-            setShowCreateOpportunityModal(false);
+            setShowCreateModal(false);
             setEditingOpportunity(null);
           }}
           isDark={isDark}
           opportunity={editingOpportunity}
-          onSave={(opp) => {
-            if (editingOpportunity) {
-              // Edit existing
-              setOpportunities(
-                opportunities.map((o) => (o.id === opp.id ? opp : o))
-              );
-              toast.success("Opportunity updated");
-            } else {
-              // Create new
-              const newOpp = {
-                ...opp,
-                id: `OPP-${String(opportunities.length + 1).padStart(3, "0")}`,
-              };
-              setOpportunities([...opportunities, newOpp]);
-              toast.success("Opportunity created");
-            }
-            setShowCreateOpportunityModal(false);
-            setEditingOpportunity(null);
-          }}
-        />
-      )}
-
-      {/* Apply to Opportunity Modal */}
-      {showApplyModal && selectedOpportunity && (
-        <ApplyToOpportunityModal
-          isOpen={showApplyModal}
-          onClose={() => setShowApplyModal(false)}
-          isDark={isDark}
-          opportunity={selectedOpportunity}
-          onSubmit={handleRegistrationSubmit}
-        />
-      )}
-
-      {/* Customize Form Modal */}
-      {showCustomizeFormModal && (
-        <CustomizeMembershipFormModal
-          isOpen={showCustomizeFormModal}
-          onClose={() => setShowCustomizeFormModal(false)}
-          isDark={isDark}
-          fields={membershipFormFields}
-          onSave={(fields) => {
-            setMembershipFormFields(fields);
-            toast.success("Form customized successfully");
-            setShowCustomizeFormModal(false);
-          }}
-          username={username}
+          onSave={handleSaveOpportunity}
+          isSaving={isSavingOpportunity}
         />
       )}
     </PageLayout>
+  );
+}
+
+// Sub-component for rendering an opportunity card
+function OpportunityCard({
+  opp,
+  viewMode,
+  isDark,
+  isAdminOrAuditor,
+  getStatusColor,
+  getStatusIcon,
+  formatDateTime,
+  onClick,
+  onToggleVisibility,
+  onEdit,
+  onDelete,
+  isArchived = false
+}: {
+  opp: ApplicationOpportunity;
+  viewMode: "grid" | "list";
+  isDark: boolean;
+  isAdminOrAuditor: boolean;
+  getStatusColor: (s: string) => string;
+  getStatusIcon: (s: string) => React.ReactNode;
+  formatDateTime: (d: string) => string;
+  onClick: () => void;
+  onToggleVisibility: (o: ApplicationOpportunity) => void;
+  onEdit: (o: ApplicationOpportunity) => void;
+  onDelete: (id: string) => void;
+  isArchived?: boolean;
+}) {
+  const isList = viewMode === "list";
+  const glassStyle = getGlassStyle(isDark);
+
+  return (
+    <div
+      onClick={onClick}
+      className={`
+        relative overflow-hidden rounded-xl border transition-all duration-300 group cursor-pointer
+        ${isList ? "p-4" : "p-6 flex flex-col h-full"}
+        hover:border-[#f6421f]/30
+        ${(isAdminOrAuditor && opp.visibility === "hidden") || isArchived ? "opacity-75 grayscale-[0.3]" : ""}
+        hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/20 hover:-translate-y-0.5
+      `}
+      style={{
+        ...glassStyle,
+        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+      }}
+    >
+      <div className={`flex ${isList ? "items-center gap-6" : "flex-col gap-4 h-full"}`}>
+        
+        {/* Status Indicator Stripe */}
+        <div 
+          className="absolute left-0 top-0 bottom-0 w-1 transition-all group-hover:w-1.5"
+          style={{ backgroundColor: getStatusColor(opp.status) }} 
+        />
+
+        {/* Main Content */}
+        <div className="flex-1 min-w-0 pl-2">
+          <div className="flex items-start justify-between gap-4 mb-2">
+            <h3
+              className={`font-bold text-lg leading-tight pr-2 whitespace-normal wrap-break-word ${isDark ? "text-gray-100" : "text-gray-900"}`}
+              title={opp.title}
+            >
+              {opp.title}
+            </h3>
+            
+            {/* Badges */}
+            <div className="flex gap-2 shrink-0">
+              <span
+                className="px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 uppercase tracking-wide"
+                style={{
+                  backgroundColor: `${getStatusColor(opp.status)}15`,
+                  color: getStatusColor(opp.status),
+                  border: `1px solid ${getStatusColor(opp.status)}30`,
+                }}
+              >
+                {getStatusIcon(opp.status)}
+                {opp.status}
+              </span>
+              
+              {isAdminOrAuditor && (
+                <span
+                  className="px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-600"
+                >
+                  {opp.visibility === "public" ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <p className={`text-sm text-muted-foreground ${isList ? "line-clamp-1" : "line-clamp-2 mb-4"}`}>
+            {opp.description}
+          </p>
+
+          <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
+            <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-800/60 px-2 py-1 rounded-md">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>{formatDateTime(opp.startDate)}</span>
+            </div>
+            {!isList && <span className="text-gray-300 dark:text-gray-700 hidden sm:inline">•</span>}
+            <div className="flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5" />
+              <span>Ends {formatDateTime(opp.endDate)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions - Stop Propagation to prevent opening modal when clicking buttons */}
+        <div 
+          className={`flex ${isList ? "flex-row items-center" : "flex-col justify-end mt-auto pt-4 border-t border-gray-100 dark:border-gray-700/50"} gap-2`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Public: Apply Button (Active only, or view link if admin/archived) */}
+          {(opp.status === "open" || isAdminOrAuditor || opp.status === "archived") && (
+            <Button
+              variant={opp.status === "open" ? "primary" : "secondary"}
+              onClick={() => window.open(opp.link, "_blank")}
+              icon={<ExternalLink className="w-4 h-4" />}
+              size="sm"
+              className={isList ? "" : "w-full justify-center"}
+              disabled={opp.status !== "open" && !isAdminOrAuditor && opp.status !== "archived"}
+            >
+              {opp.status === "open" ? "Apply Now" : "View Link"}
+            </Button>
+          )}
+
+          {/* Admin Actions */}
+          {isAdminOrAuditor && (
+            <div className={`flex gap-1 ${isList ? "pl-3 border-l border-gray-200 dark:border-gray-700" : "justify-end w-full"}`}>
+              <button
+                onClick={() => onToggleVisibility(opp)}
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                title={opp.visibility === "public" ? "Hide from public" : "Show to public"}
+              >
+                {opp.visibility === "public" ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={() => onEdit(opp)}
+                className="p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
+                title="Edit"
+              >
+                <Edit className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => onDelete(opp.id)}
+                className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+                title="Delete"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OpportunityTable({
+  opportunities,
+  isDark,
+  isAdminOrAuditor,
+  formatDateTime,
+  getStatusColor,
+  getStatusIcon,
+  onView,
+  onToggleVisibility,
+  onEdit,
+  onDelete,
+}: {
+  opportunities: ApplicationOpportunity[];
+  isDark: boolean;
+  isAdminOrAuditor: boolean;
+  formatDateTime: (d: string) => string;
+  getStatusColor: (s: string) => string;
+  getStatusIcon: (s: string) => React.ReactNode;
+  onView: (o: ApplicationOpportunity) => void;
+  onToggleVisibility: (o: ApplicationOpportunity) => void;
+  onEdit: (o: ApplicationOpportunity) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div
+      className="overflow-x-auto rounded-xl border"
+      style={{
+        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+        background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.5)",
+      }}
+    >
+      <table className="w-full min-w-[880px]">
+        <thead className="bg-gray-100 dark:bg-gray-800">
+          <tr>
+            <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+              Title
+            </th>
+            <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+              Status
+            </th>
+            <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+              Visibility
+            </th>
+            <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+              Start
+            </th>
+            <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+              End
+            </th>
+            <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-muted-foreground" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          {opportunities.map((opp) => (
+            <tr key={opp.id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+              <td className="px-4 py-4">
+                <button
+                  onClick={() => onView(opp)}
+                  className="text-left w-full group"
+                  title={opp.title}
+                >
+                  <div
+                    className="text-sm group-hover:text-[#f6421f] transition-colors whitespace-normal wrap-break-word"
+                    style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
+                  >
+                    {opp.title}
+                  </div>
+                  <div className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                    {opp.description}
+                  </div>
+                </button>
+              </td>
+              <td className="px-4 py-4 whitespace-nowrap">
+                <span
+                  className="px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1.5 uppercase tracking-wide"
+                  style={{
+                    backgroundColor: `${getStatusColor(opp.status)}15`,
+                    color: getStatusColor(opp.status),
+                    border: `1px solid ${getStatusColor(opp.status)}30`,
+                  }}
+                >
+                  {getStatusIcon(opp.status)}
+                  {opp.status}
+                </span>
+              </td>
+              <td className="px-4 py-4 whitespace-nowrap text-sm text-muted-foreground">
+                {opp.visibility === "public" ? "Public" : "Hidden"}
+              </td>
+              <td className="px-4 py-4 whitespace-nowrap text-sm text-muted-foreground">
+                {formatDateTime(opp.startDate)}
+              </td>
+              <td className="px-4 py-4 whitespace-nowrap text-sm text-muted-foreground">
+                {formatDateTime(opp.endDate)}
+              </td>
+              <td className="px-4 py-4 whitespace-nowrap">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => onView(opp)}
+                    className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                    title="View"
+                    aria-label="View opportunity"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  {(opp.status === "open" || isAdminOrAuditor || opp.status === "archived") && (
+                    <button
+                      onClick={() => window.open(opp.link, "_blank")}
+                      className="p-2 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-900/20 text-gray-500 hover:text-orange-600 dark:text-gray-400 dark:hover:text-orange-400 transition-colors"
+                      title={opp.status === "open" ? "Apply now" : "View link"}
+                      aria-label={opp.status === "open" ? "Apply now" : "View link"}
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </button>
+                  )}
+                  {isAdminOrAuditor && (
+                    <>
+                      <button
+                        onClick={() => onToggleVisibility(opp)}
+                        className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                        title={opp.visibility === "public" ? "Hide from public" : "Show to public"}
+                        aria-label={opp.visibility === "public" ? "Hide from public" : "Show to public"}
+                      >
+                        {opp.visibility === "public" ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                      <button
+                        onClick={() => onEdit(opp)}
+                        className="p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
+                        title="Edit"
+                        aria-label="Edit opportunity"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => onDelete(opp.id)}
+                        className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+                        title="Delete"
+                        aria-label="Delete opportunity"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

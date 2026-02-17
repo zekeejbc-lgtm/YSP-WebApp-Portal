@@ -249,7 +249,7 @@ export function AddMemberModal({ isDark, onClose, onSave }: AddMemberModalProps)
             </button>
             <button
               type="submit"
-              className="px-6 py-2 rounded-lg bg-gradient-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2"
+              className="px-6 py-2 rounded-lg bg-linear-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2"
               style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
             >
               <Save className="w-4 h-4" />
@@ -364,7 +364,7 @@ export function EditMemberModal({
       >
         {/* Sticky Header */}
         <div
-          className="flex items-center justify-between p-6 border-b flex-shrink-0"
+          className="flex items-center justify-between p-6 border-b shrink-0"
           style={{
             borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
           }}
@@ -505,7 +505,7 @@ export function EditMemberModal({
 
         {/* Sticky Footer with Action Buttons */}
         <div
-          className="p-6 border-t flex-shrink-0"
+          className="p-6 border-t shrink-0"
           style={{
             borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
           }}
@@ -524,7 +524,7 @@ export function EditMemberModal({
               type="submit"
               form="edit-member-form"
               disabled={isSaving}
-              className="px-6 py-2 rounded-lg bg-gradient-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50"
+              className="px-6 py-2 rounded-lg bg-linear-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50"
               style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
             >
               {isSaving ? (
@@ -584,7 +584,7 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
         onClick={(e) => e.stopPropagation()}
       >
         <div
-          className="flex items-center justify-between p-6 border-b flex-shrink-0"
+          className="flex items-center justify-between p-6 border-b shrink-0"
           style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
         >
           <h3
@@ -600,7 +600,7 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
           <div className="flex gap-2">
             <button
               onClick={onEdit}
-              className="px-4 py-2 rounded-lg bg-gradient-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2"
+              className="px-4 py-2 rounded-lg bg-linear-to-r from-[#f6421f] to-[#ee8724] text-white hover:shadow-lg transition-all flex items-center gap-2"
               style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}
             >
               <Edit className="w-4 h-4" />
@@ -619,7 +619,7 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
           {/* Profile Header */}
           <div className="flex gap-6 mb-6 pb-6 border-b" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
             <div
-              className="rounded-full flex items-center justify-center bg-gradient-to-br from-[#f6421f] to-[#ee8724] text-white overflow-hidden"
+              className="rounded-full flex items-center justify-center bg-linear-to-br from-[#f6421f] to-[#ee8724] text-white overflow-hidden"
               style={{
                 width: '100px',
                 height: '100px',
@@ -716,7 +716,7 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
                         href={`mailto:${displayEmail?.replace(/\+/g, '%2B')}`}
                         onClick={(e) => {
                           e.preventDefault();
-                          console.log('[Email Debug] ManageMembers email link clicked:', displayEmail);
+                          console.warn('[Email Debug] ManageMembers email link clicked:', displayEmail);
                           if (displayEmail) openEmailApp(displayEmail);
                         }}
                         className={`text-sm ${isDark ? "text-white" : "text-gray-900"} hover:underline underline-offset-2 break-all`}

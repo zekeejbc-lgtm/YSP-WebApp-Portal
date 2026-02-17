@@ -13,7 +13,7 @@
  * =============================================================================
  */
 
-import { X, RefreshCw, AlertTriangle } from "lucide-react";
+import { X, RefreshCw, AlertTriangle, LogIn } from "lucide-react";
 import { DESIGN_TOKENS, Button } from "./design-system";
 import { MODAL_REGULATIONS, getHeaderGradient, getModalStyles } from "./modal-regulations";
 
@@ -138,6 +138,111 @@ export function CacheRefreshModal({ isOpen, isDark, onConfirm, onClose }: CacheR
             Not Now
           </Button>
           <Button variant="primary" size="sm" onClick={onConfirm}>
+            Hard Refresh
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =================== SESSION RECOVERY MODAL ===================
+
+export interface SessionRecoveryModalProps {
+  isOpen: boolean;
+  isDark: boolean;
+  onRelogin: () => void;
+  onHardRefresh: () => void;
+}
+
+export function SessionRecoveryModal({
+  isOpen,
+  isDark,
+  onRelogin,
+  onHardRefresh,
+}: SessionRecoveryModalProps) {
+  if (!isOpen) return null;
+
+  const modalStyles = getModalStyles(isDark, "small");
+
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4 md:p-8"
+      style={{
+        background: modalStyles.overlay.background,
+        backdropFilter: modalStyles.overlay.backdropFilter,
+        zIndex: 99999999,
+      }}
+    >
+      <div
+        className="w-full overflow-hidden"
+        style={{
+          maxWidth: modalStyles.panel.maxWidth,
+          maxHeight: MODAL_REGULATIONS.panel.maxHeight,
+          background: modalStyles.panel.background,
+          backdropFilter: modalStyles.panel.backdropFilter,
+          border: `${modalStyles.panel.borderWidth} solid ${modalStyles.panel.borderColor}`,
+          borderRadius: modalStyles.panel.borderRadius,
+          boxShadow: modalStyles.panel.boxShadow,
+          transition: MODAL_REGULATIONS.transitions.normal,
+        }}
+      >
+        <div
+          className="flex items-center gap-3 px-4 py-4 md:px-6 border-b"
+          style={{
+            background: getHeaderGradient(isDark, "red"),
+            borderColor: modalStyles.header.borderColor,
+          }}
+        >
+          <div
+            className="p-2 rounded-lg"
+            style={{
+              backgroundColor: "rgba(239, 68, 68, 0.2)",
+              color: "#ef4444",
+            }}
+          >
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <h2
+            className="text-base md:text-lg"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            }}
+          >
+            Session Expired
+          </h2>
+        </div>
+
+        <div className="px-4 py-5 md:px-6">
+          <p
+            className="text-sm md:text-base"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
+              color: isDark ? "#e5e7eb" : "#374151",
+            }}
+          >
+            Your session token is no longer valid. Please choose one option below to continue.
+          </p>
+          <p
+            className="mt-3 text-xs md:text-sm"
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.body,
+              color: isDark ? "#9ca3af" : "#6b7280",
+            }}
+          >
+            Re-login opens the sign-in panel. Hard refresh clears local app data and reloads the app.
+          </p>
+        </div>
+
+        <div
+          className="flex flex-col gap-2 px-4 py-4 md:px-6 border-t sm:flex-row sm:justify-end"
+          style={{ borderColor: modalStyles.footer.borderColor }}
+        >
+          <Button variant="secondary" size="sm" onClick={onRelogin} icon={<LogIn className="w-4 h-4" />}>
+            Re-login
+          </Button>
+          <Button variant="primary" size="sm" onClick={onHardRefresh} icon={<RefreshCw className="w-4 h-4" />}>
             Hard Refresh
           </Button>
         </div>

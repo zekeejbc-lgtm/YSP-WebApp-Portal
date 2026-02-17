@@ -89,7 +89,7 @@
   stopCacheVersionPolling,
 } from "./services/gasSystemToolsService";
   // 👈 ADD THIS IMPORT
-import { CacheRefreshModal, RoleChangeModal, determineRoleChangeType, type RoleChangeType } from "./components/CacheRefreshModals";
+import { CacheRefreshModal, RoleChangeModal, SessionRecoveryModal, determineRoleChangeType, type RoleChangeType } from "./components/CacheRefreshModals";
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
@@ -218,6 +218,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
   const appVersion = import.meta.env.VITE_APP_VERSION || "1.0.0";
   const [showCacheRefreshModal, setShowCacheRefreshModal] = useState(false);
+  const [showSessionRecoveryModal, setShowSessionRecoveryModal] = useState(false);
   const [hardRefreshMode, setHardRefreshMode] = useState<"standard" | "full">("standard");
 
   // Role Change Modal State
@@ -278,6 +279,24 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     setShowCacheRefreshModal(true);
   };
 
+  const handleSessionExpired = useCallback((username?: string) => {
+    if (username) {
+      clearUserProfileCache(username);
+    }
+    clearSession();
+    setIsAdmin(false);
+    setUserRole("guest");
+    setUserName("");
+    setUserUsername("");
+    setUserEmail("");
+    setUserIdCode("");
+    setUserPosition("");
+    setUserProfilePicture("");
+    setActivePage("home");
+    setShowLoginPanel(false);
+    setShowSessionRecoveryModal(true);
+  }, []);
+
   const handleDismissHardRefresh = () => {
     setShowCacheRefreshModal(false);
     setHardRefreshMode("standard");
@@ -288,6 +307,16 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     const preserveSession = hardRefreshMode !== "full";
     setHardRefreshMode("standard");
     await forceClearAllCaches({ preserveSession });
+  };
+
+  const handleReloginFromSessionRecovery = () => {
+    setShowSessionRecoveryModal(false);
+    setShowLoginPanel(true);
+  };
+
+  const handleHardRefreshFromSessionRecovery = async () => {
+    setShowSessionRecoveryModal(false);
+    await forceClearAllCaches({ preserveSession: false });
   };
 
   // Role Change Handlers
@@ -304,8 +333,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       const storedUser = getStoredUser();
       if (storedUser?.username) {
         clearUserProfileCache(storedUser.username);
-        // eslint-disable-next-line no-console
-        console.log('[App] Cleared profile cache on ban');
       }
       
       clearSession();
@@ -533,6 +560,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     // Attendance Transparency Modal State (to hide chatbot when modals are open)
     const [attendanceTransparencyModalOpen, setAttendanceTransparencyModalOpen] = useState(false);
 
+    // Membership Applications Modal State (to hide chatbot)
+    const [membershipAppsModalOpen, setMembershipAppsModalOpen] = useState(false);
+
     useEffect(() => {
       const handleAttendanceTransparencyModal = (event: Event) => {
         const detail = (event as CustomEvent).detail as { open?: boolean } | undefined;
@@ -600,20 +630,54 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
     // Restore session on mount
     useEffect(() => {
-      const storedUser = getStoredUser();
-      if (storedUser && hasActiveSession()) {
-        // Restore user data from stored session
-        setIsAdmin(true);
-        setUserRole(storedUser.role);
-        setUserName(storedUser.name);
-        setUserUsername(storedUser.username); // Store actual username for API calls
-        setUserEmail(storedUser.email || '');
-        setUserIdCode(storedUser.id || '');
-        setUserPosition(storedUser.position || '');
-        setUserProfilePicture(storedUser.profilePic || '');
-      }
-      setSessionChecked(true);
-    }, []);
+      let isMounted = true;
+
+      const restoreSession = async () => {
+        const storedUser = getStoredUser();
+        if (storedUser && hasActiveSession()) {
+          try {
+            const valid = await verifySession();
+            if (!isMounted) return;
+
+            if (valid) {
+              // Restore user data only when session is still valid
+              setIsAdmin(true);
+              setUserRole(storedUser.role);
+              setUserName(storedUser.name);
+              setUserUsername(storedUser.username); // Store actual username for API calls
+              setUserEmail(storedUser.email || '');
+              setUserIdCode(storedUser.id || '');
+              setUserPosition(storedUser.position || '');
+              setUserProfilePicture(storedUser.profilePic || '');
+            } else {
+              handleSessionExpired(storedUser.username);
+            }
+          } catch (error) {
+            console.warn("[App] Session verification skipped during restore:", error);
+            if (!isMounted) return;
+
+            // Fallback to local session when verification endpoint is unreachable
+            setIsAdmin(true);
+            setUserRole(storedUser.role);
+            setUserName(storedUser.name);
+            setUserUsername(storedUser.username);
+            setUserEmail(storedUser.email || '');
+            setUserIdCode(storedUser.id || '');
+            setUserPosition(storedUser.position || '');
+            setUserProfilePicture(storedUser.profilePic || '');
+          }
+        }
+        if (isMounted) {
+          setSessionChecked(true);
+        }
+      };
+
+      restoreSession();
+
+      return () => {
+        isMounted = false;
+      };
+    }, [handleSessionExpired]);
 
     // Fetch homepage content from GAS backend on mount - with cache-first for instant loading
     useEffect(() => {
@@ -627,8 +691,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         // ===== STEP 1: Try to load from cache for instant display =====
         const cachedData = loadHomepageContentFromCache();
         if (cachedData) {
-          // eslint-disable-next-line no-console
-          console.log('[App] Loading homepage from cache (instant)');
           const { data: cached, isStale } = cachedData;
           
           // Apply cached data immediately
@@ -647,11 +709,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           if (!isStale) {
             // Cache is fresh, perform silent background sync
             setIsLoadingHomepage(false);
-            // eslint-disable-next-line no-console
-            console.log('[App] Homepage cache is fresh, performing background sync');
-          } else {
-            // eslint-disable-next-line no-console
-            console.log('[App] Homepage cache is stale, refreshing...');
           }
         }
         
@@ -696,8 +753,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             const hasChanged = hasHomepageContentChanged(newCacheData);
             
             if (hasChanged || !loadedFromCache) {
-              // eslint-disable-next-line no-console
-              console.log('[App] Homepage content changed, updating state');
               setHomepageContent(prev => {
                 const updated = {
                   ...prev,
@@ -718,9 +773,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               
               // Save to enhanced cache
               saveHomepageContentToCache(newCacheData);
-            } else {
-              // eslint-disable-next-line no-console
-              console.log('[App] Homepage content unchanged, skipping update');
             }
             
             setIsLoadingHomepage(false);
@@ -735,8 +787,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               setTimeout(() => removeUploadToast(toastId), 3000);
             } else if (loadedFromCache && hasChanged) {
               // Silent update completed with changes
-              // eslint-disable-next-line no-console
-              console.log('[App] Background sync completed - homepage updated');
             }
             return true;
           } catch (error) {
@@ -746,8 +796,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             if (retryCount < MAX_RETRIES) {
               retryCount++;
               const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount - 1); // Exponential backoff
-              // eslint-disable-next-line no-console
-              console.log(`[App] Retrying homepage load in ${delay}ms...`);
               
               if (shouldShowToast) {
                 updateUploadToast(toastId, {
@@ -824,8 +872,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         let loadedFromCache = false;
         
         if (cachedData) {
-          // eslint-disable-next-line no-console
-          console.log('[App] Loading projects from cache (instant)');
           const { data: cachedProjects, isStale } = cachedData;
           
           // Apply cached data immediately - map CachedProject to Project
@@ -847,11 +893,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           
           if (!isStale) {
             setIsLoadingProjects(false);
-            // eslint-disable-next-line no-console
-            console.log('[App] Projects cache is fresh, performing background sync');
-          } else {
-            // eslint-disable-next-line no-console
-            console.log('[App] Projects cache is stale, refreshing...');
           }
         }
         
@@ -886,27 +927,12 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             const changes = getProjectChanges(newProjects);
             
             if (changes.hasChanges) {
-              // eslint-disable-next-line no-console
-              console.log('[App] Projects changed:', {
-                added: changes.added.length,
-                updated: changes.updated.length,
-                deleted: changes.deleted.length,
-              });
-              
-              // Log deleted projects for debugging
-              if (changes.deleted.length > 0) {
-                // eslint-disable-next-line no-console
-                console.log('[App] Deleted project IDs:', changes.deleted);
-              }
               
               // Update state with fresh data
               setProjects(result.projects);
               
               // Save to cache
               saveProjectsToCache(newProjects);
-            } else {
-              // eslint-disable-next-line no-console
-              console.log('[App] Projects unchanged, skipping update');
             }
           }
         } catch (error) {
@@ -930,9 +956,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         let loadedFromCache = false;
         
         if (cachedData) {
-          // eslint-disable-next-line no-console
-          console.log('[App] Loading other content from cache (instant)');
-          const { data: cached, isStale } = cachedData;
+          const { data: cached } = cachedData;
           
           // Apply cached data immediately
           if (cached.orgChartUrl && cached.orgChartUrl.trim() !== '') {
@@ -946,13 +970,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           
           loadedFromCache = true;
           
-          if (!isStale) {
-            // eslint-disable-next-line no-console
-            console.log('[App] Other content cache is fresh, performing background sync');
-          } else {
-            // eslint-disable-next-line no-console
-            console.log('[App] Other content cache is stale, refreshing...');
-          }
+          // No UI loading state change needed here when loading cached other content.
         }
         
         // ===== STEP 2: Fetch from backend =====
@@ -989,8 +1007,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           const hasChanged = hasHomepageOtherChanged(newCacheData);
           
           if (hasChanged || !loadedFromCache) {
-            // eslint-disable-next-line no-console
-            console.log('[App] Other content changed, updating state');
             
             // 1. Update Org Chart State
             if (otherContent.orgChartUrl && otherContent.orgChartUrl.trim() !== '') {
@@ -1023,9 +1039,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             
             // Save to cache
             saveHomepageOtherToCache(newCacheData);
-          } else {
-            // eslint-disable-next-line no-console
-            console.log('[App] Other content unchanged, skipping update');
           }
         } catch (error) {
           console.error('[App] Error loading other content:', error);
@@ -1086,8 +1099,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           if (retryCount < MAX_RETRIES) {
             retryCount++;
             const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount - 1);
-            // eslint-disable-next-line no-console
-            console.log(`[App] Retrying homepage load in ${delay}ms...`);
             
             updateUploadToast(toastId, {
               status: 'loading',
@@ -1672,8 +1683,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               featured: p.featured,
             })) as CachedProject[];
             saveProjectsToCache(projectsToCache);
-            // eslint-disable-next-line no-console
-            console.log('[App] Updated projects cache after add/update');
           }
 
           updateUploadToast(toastId, {
@@ -1818,8 +1827,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             featured: p.featured,
           })) as CachedProject[];
           saveProjectsToCache(projectsToCache);
-          // eslint-disable-next-line no-console
-          console.log('[App] Updated projects cache after deletion');
         } else {
           // Fallback: remove from local state
           setProjects(projects.filter((p) => !selectedProjectIds.includes(p.projectId)));
@@ -1907,8 +1914,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               orgChartUrl: result.imageUrl,
             };
             saveHomepageOtherToCache(updatedOther);
-            // eslint-disable-next-line no-console
-            console.log('[App] Updated org chart in cache');
           }
           
           updateUploadToast(toastId, {
@@ -2164,16 +2169,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       try {
         const valid = await verifySession();
         if (!valid) {
-          // Clear profile cache on session expiration
-          if (storedUser.username) {
-            clearUserProfileCache(storedUser.username);
-            // eslint-disable-next-line no-console
-            console.log('[App] Cleared profile cache on session expiration');
-          }
-          clearSession();
-          toast.error('Session expired', {
-            description: 'Please log in again.',
-          });
+          handleSessionExpired(storedUser.username);
           return;
         }
 
@@ -2191,16 +2187,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         });
       } catch (error) {
         console.error('[App] Session verification failed:', error);
-        // Clear profile cache on session failure
-        if (storedUser.username) {
-          clearUserProfileCache(storedUser.username);
-          // eslint-disable-next-line no-console
-          console.log('[App] Cleared profile cache on session failure');
-        }
-        clearSession();
-        toast.error('Session check failed', {
-          description: 'Please log in again.',
-        });
+        handleSessionExpired(storedUser.username);
       }
     };
 
@@ -2213,8 +2200,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         const storedUser = getStoredUser();
         if (storedUser?.username) {
           clearUserProfileCache(storedUser.username);
-          // eslint-disable-next-line no-console
-          console.log('[App] Cleared profile cache on logout');
         }
       }
       
@@ -2314,8 +2299,6 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             contact: editedContent.contact,
           };
           saveHomepageOtherToCache(otherCacheData);
-          // eslint-disable-next-line no-console
-          console.log('[App] Updated homepage caches after save');
           
           toast.success('Homepage updated successfully!', {
             description: 'All sections have been saved to the database.',
@@ -2755,7 +2738,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || attendanceTransparencyModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal}
+        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || attendanceTransparencyModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal || membershipAppsModalOpen}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
         isDark={isDark}
@@ -2893,8 +2876,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               pendingApplications={pendingApplications}
               setPendingApplications={setPendingApplications}
               username={userUsername || 'admin'}
+              onModalStateChange={setMembershipAppsModalOpen}
+              addUploadToast={addUploadToast}
+              updateUploadToast={updateUploadToast}
+              removeUploadToast={removeUploadToast}
             />
           </Suspense>
+          <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
           {chatbot}
         </>
       );
@@ -3351,8 +3339,9 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
-            <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userUsername || 'admin'} />
+            <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userUsername || 'admin'} onModalStateChange={setMembershipAppsModalOpen} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
           </Suspense>
+          <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
           {chatbot}
         </>
       );
@@ -3414,6 +3403,12 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             isDark={isDark}
             onConfirm={handleConfirmHardRefresh}
             onClose={handleDismissHardRefresh}
+          />
+          <SessionRecoveryModal
+            isOpen={showSessionRecoveryModal}
+            isDark={isDark}
+            onRelogin={handleReloginFromSessionRecovery}
+            onHardRefresh={handleHardRefreshFromSessionRecovery}
           />
           {roleChangeInfo && (
             <RoleChangeModal
@@ -5658,6 +5653,12 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           isDark={isDark}
           onConfirm={handleConfirmHardRefresh}
           onClose={handleDismissHardRefresh}
+        />
+        <SessionRecoveryModal
+          isOpen={showSessionRecoveryModal}
+          isDark={isDark}
+          onRelogin={handleReloginFromSessionRecovery}
+          onHardRefresh={handleHardRefreshFromSessionRecovery}
         />
 
 {/* 👈 Role Change Modal - Shown when user's role is changed by admin */}

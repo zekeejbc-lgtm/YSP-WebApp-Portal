@@ -97,7 +97,6 @@ export function saveToCache<T>(key: string, data: T, version: string): void {
       checksum: generateChecksum(data),
     };
     localStorage.setItem(key, JSON.stringify(entry));
-    console.log(`[Cache] Saved to ${key}`);
   } catch (error) {
     console.error(`[Cache] Failed to save to ${key}:`, error);
   }
@@ -115,7 +114,6 @@ export function loadFromCache<T>(
   try {
     const stored = localStorage.getItem(key);
     if (!stored) {
-      console.log(`[Cache] No cache found for ${key}`);
       return null;
     }
 
@@ -123,7 +121,6 @@ export function loadFromCache<T>(
 
     // Check version
     if (!isCacheVersionValid(entry, currentVersion)) {
-      console.log(`[Cache] Version mismatch for ${key}, invalidating`);
       localStorage.removeItem(key);
       return null;
     }
@@ -131,7 +128,6 @@ export function loadFromCache<T>(
     // Check if stale (but still return data for instant loading)
     const isStale = isCacheExpired(entry, maxAge);
     
-    console.log(`[Cache] Loaded from ${key}, isStale: ${isStale}`);
     return { data: entry.data, isStale };
   } catch (error) {
     console.error(`[Cache] Failed to load from ${key}:`, error);
@@ -163,7 +159,6 @@ export function hasDataChanged<T>(key: string, newData: T): boolean {
 export function clearCache(key: string): void {
   try {
     localStorage.removeItem(key);
-    console.log(`[Cache] Cleared ${key}`);
   } catch (error) {
     console.error(`[Cache] Failed to clear ${key}:`, error);
   }
@@ -176,7 +171,6 @@ export function clearAllCaches(): void {
   Object.values(CACHE_KEYS).forEach(key => {
     clearCache(key);
   });
-  console.log('[Cache] All caches cleared');
 }
 
 // =================== USER PROFILE CACHE ===================
