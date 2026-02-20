@@ -9,5 +9,12 @@ Disallow: /polling
 Disallow: /polling-evaluations
 Disallow: /tabang-ta-bai
 
+# Reduce crawl waste on authenticated/admin surfaces
+Disallow: /admin
+Disallow: /auditor
+Disallow: /head
+Disallow: /member
+
 # Sitemap location
 Sitemap: https://www.youthservicephilippinestagum.me/sitemap.xml
+Host: www.youthservicephilippinestagum.me

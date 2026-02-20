@@ -40,7 +40,7 @@ export const CACHE_VERSIONS = {
   USER_PROFILE: '1.0.0',
   HOMEPAGE_CONTENT: '1.0.0',
   HOMEPAGE_OTHER: '1.0.0',
-  PROJECTS: '1.0.0',
+  PROJECTS: '1.0.1',
 } as const;
 
 // =================== CACHE DURATIONS ===================
@@ -343,6 +343,8 @@ export interface CachedProject {
   title: string;
   description: string;
   imageUrl: string;
+  link?: string;
+  linkText?: string;
   category: string;
   status: string;
   date: string;

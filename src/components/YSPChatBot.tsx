@@ -2357,10 +2357,31 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     }
 
     try {
+      const storedUser = getStoredUser();
+      const recentHistory = messages.slice(-8).map((m) => ({
+        role: m.sender === "bot" ? "assistant" : "user",
+        text: m.text,
+      }));
+
+      const contextParts: string[] = [];
+      if (currentPage) contextParts.push(`Current page: ${currentPage}`);
+      if (attendanceDashboardContext) {
+        contextParts.push(
+          `Attendance mode: ${attendanceDashboardContext.mode}, records: ${attendanceDashboardContext.statistics.totalRecords}`
+        );
+      }
+
       const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({
+          message: text,
+          contextPage: currentPage || "",
+          currentUrl: typeof window !== "undefined" ? window.location.href : "",
+          context: contextParts.join(" | "),
+          username: storedUser?.username || "",
+          history: recentHistory,
+        }),
       });
 
       const raw = await res.text();

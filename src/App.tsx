@@ -1,4 +1,5 @@
   import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
+  import { useLocation, useNavigate } from "react-router-dom";
   import { useUrlSync } from "./hooks/useUrlSync";
   import {
     Moon,
@@ -179,8 +180,78 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
   const PAGE_ACCESS_DEBUG = false;
   const SIDEBAR_DEBUG_TOAST_ID = "sidebar-pages-debug";
+  const PROJECT_ID_QUERY_PARAM = "projectId";
+  const SITE_ORIGIN = "https://www.youthservicephilippinestagum.me";
+  const SITE_NAME = "Youth Service Philippines - Tagum Chapter";
+  const DEFAULT_OG_IMAGE = "https://i.imgur.com/J4wddTW.png";
+
+  type SeoMeta = {
+    title: string;
+    description: string;
+    keywords: string;
+    canonicalPath: string;
+    noindex?: boolean;
+  };
+
+  const PUBLIC_SEO_BY_VIEW: Record<string, SeoMeta> = {
+    home: {
+      title: "YSP Tagum Portal | Youth Service Philippines - Tagum Chapter",
+      description:
+        "Official YSP Tagum Portal for Youth Service Philippines - Tagum Chapter. Join youth leadership, volunteer, and community service programs in Tagum City.",
+      keywords:
+        "YSP Tagum, Youth Service Philippines, Youth Service Philippines Tagum, Tagum youth volunteers, youth leadership Tagum",
+      canonicalPath: "/",
+    },
+    Feedback: {
+      title: "Feedback | YSP Tagum Portal",
+      description:
+        "Send feedback to Youth Service Philippines - Tagum Chapter to help improve our youth programs and services.",
+      keywords: "YSP Tagum feedback, Youth Service Philippines feedback",
+      canonicalPath: "/visitor?page=Feedback",
+    },
+    MembershipApplications: {
+      title: "Membership Application | YSP Tagum",
+      description:
+        "Apply to join Youth Service Philippines - Tagum Chapter and become part of youth leadership and community service initiatives.",
+      keywords:
+        "YSP Tagum membership, Youth Service Philippines application, join YSP Tagum",
+      canonicalPath: "/visitor?page=MembershipApplications",
+    },
+    Founder: {
+      title: "Founder | YSP Tagum",
+      description:
+        "Learn about the founder and leadership story behind Youth Service Philippines - Tagum Chapter.",
+      keywords: "YSP Tagum founder, Youth Service Philippines Tagum founder",
+      canonicalPath: "/visitor?page=Founder",
+    },
+    Developer: {
+      title: "Developer | YSP Tagum Portal",
+      description:
+        "Meet the developer and technical team behind the YSP Tagum Portal.",
+      keywords: "YSP Tagum developer, Youth Service Philippines portal developer",
+      canonicalPath: "/visitor?page=Developer",
+    },
+    Login: {
+      title: "Member Login | YSP Tagum Portal",
+      description:
+        "Secure login for Youth Service Philippines - Tagum Chapter members and officers.",
+      keywords: "YSP Tagum login, Youth Service Philippines member login",
+      canonicalPath: "/visitor?page=Login",
+      noindex: true,
+    },
+  };
+
+  const PRIVATE_SEO: SeoMeta = {
+    title: "YSP Tagum Portal",
+    description: "Youth Service Philippines - Tagum Chapter member portal.",
+    keywords: "YSP Tagum portal",
+    canonicalPath: "/",
+    noindex: true,
+  };
 
   export default function App() {
+    const location = useLocation();
+    const navigate = useNavigate();
     const LAST_VIEW_KEY = "ysp_last_view";
     const LAST_SCROLL_KEY = "ysp_last_scroll";
     const hasRestoredViewRef = useRef(false);
@@ -269,7 +340,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
   // URL Sync - Bridges boolean navigation states with URL routing
   // Provides deepLinkParams for item-specific navigation (feedback ID, event ID, etc.)
-  const { deepLinkParams, buildShareableUrl } = useUrlSync({
+  const { deepLinkParams, buildShareableUrl, currentPage } = useUrlSync({
     pageStates: {
       showFeedbackPage,
       showMembershipApplications,
@@ -315,6 +386,31 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     isLoggedIn: isAdmin || userRole !== 'guest',
     userRole,
     sessionChecked,
+  });
+
+  const seoMeta = useMemo(() => {
+    if (currentPage && PUBLIC_SEO_BY_VIEW[currentPage]) {
+      return PUBLIC_SEO_BY_VIEW[currentPage];
+    }
+    if (currentPage) return PRIVATE_SEO;
+    return PUBLIC_SEO_BY_VIEW.home || PRIVATE_SEO;
+  }, [currentPage]);
+
+  const canonicalUrl = `${SITE_ORIGIN}${seoMeta.canonicalPath}`;
+  const robotsContent = seoMeta.noindex
+    ? "noindex, nofollow, noarchive"
+    : "index, follow, max-image-preview:large";
+  const websiteJsonLd = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: SITE_NAME,
+    url: SITE_ORIGIN,
+    inLanguage: "en-PH",
+    potentialAction: {
+      "@type": "SearchAction",
+      target: `${SITE_ORIGIN}/visitor?page=Feedback`,
+      "query-input": "required name=search_term_string",
+    },
   });
 
   const handleRequestCacheClear = () => {
@@ -1267,6 +1363,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             title: cp.title,
             description: cp.description,
             imageUrl: cp.imageUrl,
+            link: cp.link,
+            linkText: cp.linkText,
             status: cp.status as 'Active' | 'Inactive',
             category: cp.category,
             date: cp.date,
@@ -1302,6 +1400,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               title: p.title,
               description: p.description,
               imageUrl: p.imageUrl,
+              link: p.link || '',
+              linkText: p.linkText || '',
               category: p.category || '',
               status: p.status,
               date: p.date || '',
@@ -2020,13 +2120,63 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       document.documentElement.classList.toggle("dark");
     }, [isDark]);
 
+    const syncProjectIdInUrl = useCallback(
+      (projectId?: string | null, replace = false) => {
+        const params = new URLSearchParams(location.search);
+        const normalizedId = String(projectId || "").trim();
+
+        if (normalizedId) params.set(PROJECT_ID_QUERY_PARAM, normalizedId);
+        else params.delete(PROJECT_ID_QUERY_PARAM);
+
+        const nextSearch = params.toString();
+        const currentSearch = location.search.startsWith("?")
+          ? location.search.slice(1)
+          : location.search;
+        if (nextSearch === currentSearch) return;
+
+        navigate(
+          {
+            pathname: location.pathname,
+            search: nextSearch ? `?${nextSearch}` : "",
+          },
+          { replace }
+        );
+      },
+      [location.pathname, location.search, navigate]
+    );
+
     const openProjectModal = useCallback((project: Project) => {
       setModalProject(project);
-    }, []);
+      const projectId = String(project?.projectId || "").trim();
+      if (projectId && projectId !== "org-chart") {
+        syncProjectIdInUrl(projectId, false);
+      }
+    }, [syncProjectIdInUrl]);
 
     const closeModal = useCallback(() => {
       setModalProject(null);
-    }, []);
+      syncProjectIdInUrl(null, true);
+    }, [syncProjectIdInUrl]);
+
+    useEffect(() => {
+      const projectId = new URLSearchParams(location.search).get(PROJECT_ID_QUERY_PARAM);
+      if (!projectId) {
+        if (modalProject && String(modalProject.projectId || "").trim() !== "org-chart") {
+          setModalProject(null);
+        }
+        return;
+      }
+
+      if (modalProject && String(modalProject.projectId || "").trim() === projectId) return;
+
+      const matchedProject = projects.find(
+        (project) => String(project.projectId || "").trim() === projectId
+      );
+      if (!matchedProject) return;
+
+      setModalProject(matchedProject);
+      if (activePage !== "projects") setActivePage("projects");
+    }, [activePage, location.search, modalProject, projects]);
 
     // Project Management Functions
     const handleUploadProject = async () => {
@@ -2107,6 +2257,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               title: p.title,
               description: p.description,
               imageUrl: p.imageUrl,
+              link: p.link || '',
+              linkText: p.linkText || '',
               category: p.category || '',
               status: p.status,
               date: p.date || '',
@@ -2251,6 +2403,8 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
             title: p.title,
             description: p.description,
             imageUrl: p.imageUrl,
+            link: p.link || '',
+            linkText: p.linkText || '',
             category: p.category || '',
             status: p.status,
             date: p.date || '',
@@ -3898,18 +4052,23 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
       {/* ⬇️ PASTE THIS BLOCK HERE ⬇️ */}
         <Helmet>
-          {/* ✅ UPDATED Title to match "YSP Tagum" search intent */}
-          <title>YSP Tagum Portal | Youth Service Philippines</title> 
-          
-          <meta 
-            name="description" 
-            content="Official portal of YSP Tagum (Youth Service Philippines - Tagum Chapter). Join us in youth leadership, community service, and nation-building initiatives." 
-          />
-          <meta 
-            name="keywords" 
-            content="YSP Tagum, YSP Tagum Portal, Youth Service Philippines Tagum, volunteer opportunities Tagum" 
-          />
-          <link rel="canonical" href="https://www.youthservicephilippinestagum.me/" />
+          <title>{seoMeta.title}</title>
+          <meta name="description" content={seoMeta.description} />
+          <meta name="keywords" content={seoMeta.keywords} />
+          <meta name="robots" content={robotsContent} />
+          <link rel="canonical" href={canonicalUrl} />
+          <meta property="og:type" content="website" />
+          <meta property="og:site_name" content={SITE_NAME} />
+          <meta property="og:title" content={seoMeta.title} />
+          <meta property="og:description" content={seoMeta.description} />
+          <meta property="og:url" content={canonicalUrl} />
+          <meta property="og:image" content={DEFAULT_OG_IMAGE} />
+          <meta property="og:locale" content="en_PH" />
+          <meta name="twitter:card" content="summary_large_image" />
+          <meta name="twitter:title" content={seoMeta.title} />
+          <meta name="twitter:description" content={seoMeta.description} />
+          <meta name="twitter:image" content={DEFAULT_OG_IMAGE} />
+          <script type="application/ld+json">{websiteJsonLd}</script>
         </Helmet>
         {/* ⬆️ END PASTE ⬆️ */}
 
@@ -5611,7 +5770,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               </div>
 
               {/* Fixed Footer with Action Button */}
-              {modalProject.link && modalProject.linkText && (
+              {modalProject.link && (
                 <div className="flex justify-center p-5 sm:p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-b-3xl">
                   <a
                     href={modalProject.link}
@@ -5627,7 +5786,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                     }}
                   >
                     <ExternalLink className="w-4 h-4 group-hover:rotate-45 transition-transform" />
-                    <span className="truncate">{modalProject.linkText}</span>
+                    <span className="truncate">{modalProject.linkText || suggestLinkTextFromUrl(modalProject.link)}</span>
                   </a>
                 </div>
               )}
