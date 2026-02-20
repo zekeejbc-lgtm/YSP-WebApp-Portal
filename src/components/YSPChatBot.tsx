@@ -2380,6 +2380,9 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
           currentUrl: typeof window !== "undefined" ? window.location.href : "",
           context: contextParts.join(" | "),
           username: storedUser?.username || "",
+          email: storedUser?.email || "",
+          userRole: storedUser?.role || userRole || "",
+          idCode: storedUser?.id || "",
           history: recentHistory,
         }),
       });

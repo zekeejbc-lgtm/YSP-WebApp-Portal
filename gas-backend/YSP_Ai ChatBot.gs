@@ -2,12 +2,8 @@
 // YSP AI BACKEND (SMART ROUTING + LOGGING)
 // ==========================================
 
-// Keep placeholders only. For production, store real keys in Script Properties:
+// Store Gemini API keys in Script Properties:
 // AI_CHATBOT_API_KEY, AI_CHATBOT_API_KEY_1..AI_CHATBOT_API_KEY_20
-const CHATBOT_API_KEY_PLACEHOLDERS = [
-  'PASTE_GEMINI_API_KEY_1',
-  'PASTE_GEMINI_API_KEY_2'
-];
 
 const CHATBOT_CONFIG = {
   MODEL_NAME: 'gemini-2.5-flash',
@@ -51,7 +47,7 @@ function doPost(e) {
     }
 
     var requestContext = extractChatRequestContext_(data);
-    var reviewUnknownsReply = handleReviewUnknownsCommand_(userMessage, requestContext);
+    var reviewUnknownsReply = handleReviewUnknownsCommand_(userMessage, requestContext, data);
     if (reviewUnknownsReply) {
       return createChatbotJsonResponse_({
         reply: reviewUnknownsReply
@@ -102,6 +98,9 @@ function extractChatRequestContext_(data) {
   var contextPage = toStringValue_(data.contextPage || data.currentPage || data.page);
   var currentUrl = toStringValue_(data.currentUrl || data.url || data.path);
   var username = toStringValue_(data.username || data.user || data.actor);
+  var email = toStringValue_(data.email || data.userEmail || '');
+  var idCode = toStringValue_(data.idCode || data.userIdCode || data.id || '');
+  var userRole = toStringValue_(data.userRole || data.role || '');
   var contextSnippet = toStringValue_(data.context || '');
   if (contextSnippet.length > CHATBOT_CONFIG.MAX_CONTEXT_CHARS) {
     contextSnippet = contextSnippet.slice(0, CHATBOT_CONFIG.MAX_CONTEXT_CHARS);
@@ -110,6 +109,9 @@ function extractChatRequestContext_(data) {
     currentPage: contextPage,
     currentUrl: currentUrl,
     username: username,
+    email: email,
+    idCode: idCode,
+    userRole: userRole,
     contextSnippet: contextSnippet
   };
 }
@@ -124,17 +126,11 @@ function resolveChatbotApiKeys_() {
     if (k) keys.push(k);
   }
 
-  for (var j = 0; j < CHATBOT_API_KEY_PLACEHOLDERS.length; j++) {
-    var fallback = toStringValue_(CHATBOT_API_KEY_PLACEHOLDERS[j]);
-    if (fallback) keys.push(fallback);
-  }
-
   var seen = {};
   var filtered = [];
-  for (var n = 0; n < keys.length; n++) {
-    var key = toStringValue_(keys[n]);
+  for (var j = 0; j < keys.length; j++) {
+    var key = toStringValue_(keys[j]);
     if (!key) continue;
-    if (key.indexOf('PASTE_GEMINI_API_KEY') !== -1) continue;
     if (seen[key]) continue;
     seen[key] = true;
     filtered.push(key);
@@ -239,7 +235,14 @@ function computeTokenSimilarity_(a, b) {
 }
 
 function getOrCreateUnknownSheet_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var unknownSheetSpreadsheetId = resolveUnknownLogSpreadsheetIdForChatbot_();
+  if (!unknownSheetSpreadsheetId) {
+    throw new Error(
+      'Chatbot spreadsheet is not configured. Set CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID or LOGIN_SPREADSHEET_ID in Script Properties.'
+    );
+  }
+
+  var ss = SpreadsheetApp.openById(unknownSheetSpreadsheetId);
   var sheet = ss.getSheetByName(CHATBOT_CONFIG.UNKNOWN_LOG_SHEET);
   if (!sheet) {
     sheet = ss.insertSheet(CHATBOT_CONFIG.UNKNOWN_LOG_SHEET);
@@ -1114,17 +1117,26 @@ function rewriteDirectoryQuestionWithGemini_(message, rows, idx) {
   }
 }
 
-function handleReviewUnknownsCommand_(message, context) {
+function handleReviewUnknownsCommand_(message, context, rawData) {
   var lower = toStringValue_(message).toLowerCase();
   if (!/^@review\s+unknowns\b/.test(lower)) return '';
 
   if (!isSystemToolsPage_(context.currentPage)) {
     return 'This command is available only in the System Tools page.';
   }
-  if (!context.username) {
+  if (!context.username && !context.email && !context.idCode) {
     return 'Please log in first before using this command.';
   }
-  if (!doesUserExistInLoginSheet_(context.username)) {
+  if (!doesUserExistInLoginSheet_(context)) {
+    var roleFromPayload = toStringValue_(rawData && (rawData.userRole || rawData.role));
+    var role = toStringValue_(context.userRole || roleFromPayload).toLowerCase();
+    var hasPrivilegedRole = role.indexOf('auditor') !== -1 || role.indexOf('admin') !== -1;
+    if (!hasPrivilegedRole) {
+      return 'Logged-in user was not found in the directory records.';
+    }
+  }
+
+  if (!hasReviewUnknownsAccess_(context, rawData)) {
     return 'Logged-in user was not found in the directory records.';
   }
 
@@ -1168,6 +1180,15 @@ function handleReviewUnknownsCommand_(message, context) {
   return lines.join('\n');
 }
 
+function hasReviewUnknownsAccess_(context, rawData) {
+  var roleFromPayload = toStringValue_(rawData && (rawData.userRole || rawData.role));
+  var role = toStringValue_(context.userRole || roleFromPayload).toLowerCase();
+  if (!role) return true;
+  if (role.indexOf('auditor') !== -1) return true;
+  if (role.indexOf('admin') !== -1) return true;
+  return false;
+}
+
 function isSystemToolsPage_(page) {
   var key = normalizePageKey_(page);
   return key.indexOf('systemtools') !== -1 || key === 'system tools';
@@ -1179,10 +1200,12 @@ function normalizePageKey_(value) {
     .replace(/[^a-z0-9]/g, '');
 }
 
-function doesUserExistInLoginSheet_(username) {
+function doesUserExistInLoginSheet_(context) {
   try {
-    var target = toStringValue_(username).toLowerCase();
-    if (!target) return false;
+    var username = toStringValue_(context && context.username).toLowerCase();
+    var email = toStringValue_(context && context.email).toLowerCase();
+    var idCode = normalizeDirectoryText(context && context.idCode);
+    if (!username && !email && !idCode) return false;
 
     var ssId = resolveLoginSpreadsheetIdForChatbot_();
     var sheetName = resolveLoginSheetNameForChatbot_();
@@ -1194,19 +1217,34 @@ function doesUserExistInLoginSheet_(username) {
 
     var data = sheet.getDataRange().getValues();
     var headers = data[0] || [];
-    var usernameIdx = headers.indexOf('Username');
-    if (usernameIdx === -1) return false;
+    var usernameIdx = findHeaderIndexByAliases_(headers, ['Username', 'User Name', 'username']);
+    var emailIdx = findHeaderIndexByAliases_(headers, ['Email Address', 'Email', 'email']);
+    var idCodeIdx = findHeaderIndexByAliases_(headers, ['ID Code', 'Id Code', 'ID', 'idcode']);
+    if (usernameIdx === -1 && emailIdx === -1 && idCodeIdx === -1) return false;
 
     for (var i = 1; i < data.length; i++) {
-      if (toStringValue_(data[i][usernameIdx]).toLowerCase() === target) {
-        return true;
-      }
+      if (usernameIdx !== -1 && username && toStringValue_(data[i][usernameIdx]).toLowerCase() === username) return true;
+      if (emailIdx !== -1 && email && toStringValue_(data[i][emailIdx]).toLowerCase() === email) return true;
+      if (idCodeIdx !== -1 && idCode && normalizeDirectoryText(data[i][idCodeIdx]) === idCode) return true;
     }
     return false;
   } catch (e) {
     Logger.log('doesUserExistInLoginSheet_ error: ' + e);
     return false;
   }
+}
+
+function findHeaderIndexByAliases_(headers, aliases) {
+  if (!headers || !headers.length) return -1;
+  var normalizedAliases = {};
+  for (var i = 0; i < aliases.length; i++) {
+    normalizedAliases[normalizeDirectoryText(aliases[i])] = true;
+  }
+  for (var j = 0; j < headers.length; j++) {
+    var h = normalizeDirectoryText(headers[j]);
+    if (h && normalizedAliases[h]) return j;
+  }
+  return -1;
 }
 
 function callGemini(msg, context, requestContext, history) {
@@ -1336,6 +1374,54 @@ function resolveLoginSheetNameForChatbot_() {
     }
   } catch (e) {}
   return CHATBOT_CONFIG.LOGIN_SHEET_NAME_FALLBACK;
+}
+
+function resolveUnknownLogSpreadsheetIdForChatbot_() {
+  try {
+    if (typeof CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID !== 'undefined' && CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID) {
+      return String(CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID);
+    }
+  } catch (e) {}
+
+  var props = PropertiesService.getScriptProperties();
+  var directId = toStringValue_(props.getProperty('CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID'));
+  if (directId) return directId;
+
+  return toStringValue_(resolveLoginSpreadsheetIdForChatbot_());
+}
+
+function debugChatbotSpreadsheetAccess() {
+  var output = {
+    ok: false,
+    checkedAt: new Date().toISOString(),
+    unknownLogSpreadsheetId: '',
+    unknownLogSheetName: CHATBOT_CONFIG.UNKNOWN_LOG_SHEET,
+    details: {}
+  };
+
+  try {
+    var spreadsheetId = resolveUnknownLogSpreadsheetIdForChatbot_();
+    output.unknownLogSpreadsheetId = spreadsheetId || '';
+    if (!spreadsheetId) {
+      throw new Error(
+        'No spreadsheet ID resolved. Configure CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID or LOGIN_SPREADSHEET_ID in Script Properties.'
+      );
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    output.details.spreadsheetName = ss.getName();
+    output.details.spreadsheetUrl = ss.getUrl();
+
+    var sheet = getOrCreateUnknownSheet_();
+    output.details.sheetName = sheet.getName();
+    output.details.sheetId = sheet.getSheetId();
+    output.ok = true;
+  } catch (error) {
+    output.error = String(error);
+  }
+
+  Logger.log(JSON.stringify(output, null, 2));
+  return output;
 }
 
 function toStringValue_(value) {
