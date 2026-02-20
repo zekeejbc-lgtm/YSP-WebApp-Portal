@@ -377,7 +377,7 @@ const LOCAL_KNOWLEDGE_BASE = [
   // --- MEMBERSHIP ---
   {
     keywords: ["how to join", "register", "sign up", "application", "requirements"],
-    answer: "Membership is open for ALL youth in Tagum City. To join, click the 'Be a Member!' button on the home page."
+    answer: "Membership is open for ALL youth in Tagum City. To join, click the 'Opportunities!' button on the home page."
   },
   {
     keywords: ["approval", "how long", "pending", "status"],

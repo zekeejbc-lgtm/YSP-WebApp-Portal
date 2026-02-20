@@ -82,6 +82,7 @@ interface PageSetterMap {
 const PAGE_TO_STATE: Record<string, keyof PageStateMap> = {
   'Feedback': 'showFeedbackPage',
   'MembershipApplications': 'showMembershipApplications',
+  'Opportunities': 'showMembershipApplications',
   'OfficerDirectory': 'showOfficerDirectory',
   'AttendanceDashboard': 'showAttendanceDashboard',
   'AttendanceRecording': 'showAttendanceRecording',
@@ -103,6 +104,8 @@ const PAGE_TO_STATE: Record<string, keyof PageStateMap> = {
 
 // Backward-compatible aliases for old/deprecated page names in URLs
 const PAGE_ALIASES: Record<string, string> = {
+  MembershipApplications: 'Opportunities',
+  membershipapplications: 'Opportunities',
   MembershipApplicationsPage: 'MembershipEditor',
   MembershipApplicationsEditor: 'MembershipEditor',
   MembershipApplicationsAdmin: 'MembershipEditor',
@@ -124,7 +127,7 @@ const STATE_TO_PAGE: Record<keyof PageStateMap, string> = Object.entries(PAGE_TO
 );
 
 // Public pages that don't require authentication
-const PUBLIC_PAGES = new Set(['Feedback', 'MembershipApplications', 'Founder', 'Developer', 'Login']);
+const PUBLIC_PAGES = new Set(['Feedback', 'MembershipApplications', 'Opportunities', 'Founder', 'Developer', 'Login']);
 
 // Role requirements for protected pages
 type UserRole = 'guest' | 'member' | 'head' | 'admin' | 'auditor';

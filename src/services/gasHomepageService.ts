@@ -270,7 +270,7 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
         subHeading: result.data.subHeading || '',
         tagline: result.data.tagline || 'Shaping the Future to a Greater Society',
         loginButtonText: 'Log In',
-        memberButtonText: 'Be a Member!',
+        memberButtonText: 'Opportunities!',
       },
       about: {
         title: result.data.aboutTitle || 'About Us',
@@ -456,7 +456,7 @@ export const getDefaultHomepageContent = (): HomepageMainContent => {
       subHeading: '',
       tagline: 'Shaping the Future to a Greater Society',
       loginButtonText: 'Log In',
-      memberButtonText: 'Be a Member!',
+      memberButtonText: 'Opportunities!',
     },
     about: {
       title: 'About Us',

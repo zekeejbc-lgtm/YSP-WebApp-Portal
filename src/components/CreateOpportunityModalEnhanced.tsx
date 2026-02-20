@@ -11,7 +11,7 @@ import { Button, DESIGN_TOKENS } from "./design-system";
 import { ApplicationOpportunity } from "./MembershipApplicationsPage";
 import CustomDropdown from "./CustomDropdown";
 
-const BE_A_MEMBER_PAGE_LINK = "/guest?page=MembershipApplications";
+const OPPORTUNITIES_PAGE_LINK = "/guest?page=Opportunities";
 
 interface CreateOpportunityModalProps {
   isOpen: boolean;
@@ -53,17 +53,20 @@ function normalizeOpportunityLinkInput(rawLink: string): string {
   const guestAliases = new Set([
     "/guest",
     "guest",
+    "opportunities",
+    "opportunity",
     "be-a-member",
     "be a member",
+    "/guest?page=opportunities",
     "/guest?page=membershipapplications",
   ]);
-  if (guestAliases.has(trimmed.toLowerCase())) return BE_A_MEMBER_PAGE_LINK;
+  if (guestAliases.has(trimmed.toLowerCase())) return OPPORTUNITIES_PAGE_LINK;
   return trimmed;
 }
 
 function isAllowedOpportunityLink(rawLink: string): boolean {
   const normalized = normalizeOpportunityLinkInput(rawLink);
-  if (normalized === BE_A_MEMBER_PAGE_LINK) return true;
+  if (normalized === OPPORTUNITIES_PAGE_LINK) return true;
   try {
     // Accept only absolute HTTP(S) for external links.
     const parsed = new URL(normalized);
@@ -105,7 +108,7 @@ export default function CreateOpportunityModalEnhanced({
       return;
     }
     if (!isAllowedOpportunityLink(formData.link)) {
-      toast.error("Use a valid URL (https://...) or /guest?page=MembershipApplications");
+      toast.error("Use a valid URL (https://...) or /guest?page=Opportunities");
       return;
     }
 
@@ -236,21 +239,21 @@ export default function CreateOpportunityModalEnhanced({
                 onChange={(e) => setFormData({ ...formData, link: e.target.value })}
                 className="w-full pl-10 pr-4 py-2 rounded-lg border bg-white dark:bg-gray-800 focus:ring-2 focus:ring-[#f6421f] outline-none"
                 style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}
-                placeholder="https://forms.google.com/... or /guest?page=MembershipApplications"
+                placeholder="https://forms.google.com/... or /guest?page=Opportunities"
               />
             </div>
             <div className="mt-2 flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setFormData({ ...formData, link: BE_A_MEMBER_PAGE_LINK })}
+                onClick={() => setFormData({ ...formData, link: OPPORTUNITIES_PAGE_LINK })}
                 className="px-3 py-1.5 rounded-lg text-xs border bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.12)" }}
               >
-                Use Be a Member page
+                Use Opportunities page
               </button>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Use external URL or set <code>/guest?page=MembershipApplications</code> for the Be a Member page.
+              Use external URL or set <code>/guest?page=Opportunities</code> for the Opportunities page.
             </p>
           </div>
 

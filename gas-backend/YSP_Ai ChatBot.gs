@@ -1391,39 +1391,144 @@ function resolveUnknownLogSpreadsheetIdForChatbot_() {
 }
 
 function debugChatbotSpreadsheetAccess() {
-  var output = {
-    ok: false,
-    checkedAt: new Date().toISOString(),
-    unknownLogSpreadsheetId: '',
-    unknownLogSheetName: CHATBOT_CONFIG.UNKNOWN_LOG_SHEET,
-    details: {}
-  };
-
-  try {
-    var spreadsheetId = resolveUnknownLogSpreadsheetIdForChatbot_();
-    output.unknownLogSpreadsheetId = spreadsheetId || '';
-    if (!spreadsheetId) {
-      throw new Error(
-        'No spreadsheet ID resolved. Configure CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID or LOGIN_SPREADSHEET_ID in Script Properties.'
-      );
-    }
-
-    var ss = SpreadsheetApp.openById(spreadsheetId);
-    output.details.spreadsheetName = ss.getName();
-    output.details.spreadsheetUrl = ss.getUrl();
-
-    var sheet = getOrCreateUnknownSheet_();
-    output.details.sheetName = sheet.getName();
-    output.details.sheetId = sheet.getSheetId();
-    output.ok = true;
-  } catch (error) {
-    output.error = String(error);
-  }
-
-  Logger.log(JSON.stringify(output, null, 2));
-  return output;
+  return debugChatbotHealthCheck();
 }
 
 function toStringValue_(value) {
   return String(value || '').trim();
+}
+
+function debugChatbotHealthCheck() {
+  var requiredScopes = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/script.external_request'
+  ];
+  var result = {
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    requiredScopes: requiredScopes,
+    auth: {},
+    properties: {},
+    spreadsheets: {
+      unknownLog: {},
+      login: {}
+    },
+    gemini: {}
+  };
+
+  result.auth = getAuthDiagnostics_(requiredScopes);
+  if (!result.auth.authorized) result.ok = false;
+
+  result.properties = getPropertyDiagnostics_();
+  if (!result.properties.hasUnknownOrLoginSpreadsheetId) result.ok = false;
+
+  result.spreadsheets.unknownLog = checkUnknownLogSpreadsheetAccess_();
+  if (!result.spreadsheets.unknownLog.ok) result.ok = false;
+
+  result.spreadsheets.login = checkLoginSpreadsheetAccess_();
+  if (!result.spreadsheets.login.ok) result.ok = false;
+
+  result.gemini = {
+    configuredKeyCount: resolveChatbotApiKeys_().length
+  };
+  if (result.gemini.configuredKeyCount < 1) result.ok = false;
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function getAuthDiagnostics_(scopes) {
+  var out = {
+    authorized: false,
+    status: 'UNKNOWN',
+    authorizationUrl: '',
+    error: ''
+  };
+  try {
+    var info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL, scopes);
+    var status = info.getAuthorizationStatus();
+    out.status = String(status);
+    out.authorized = status === ScriptApp.AuthorizationStatus.NOT_REQUIRED;
+    if (!out.authorized) {
+      out.authorizationUrl = info.getAuthorizationUrl() || '';
+    }
+  } catch (e) {
+    out.error = String(e);
+  }
+  return out;
+}
+
+function getPropertyDiagnostics_() {
+  var props = PropertiesService.getScriptProperties().getProperties();
+  var hasUnknown = !!toStringValue_(props.CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID);
+  var hasLogin = !!toStringValue_(props.LOGIN_SPREADSHEET_ID);
+  var loginSheetName = toStringValue_(props.LOGIN_SHEET_NAME);
+  return {
+    hasChatbotUnknownLogSpreadsheetId: hasUnknown,
+    hasLoginSpreadsheetId: hasLogin,
+    hasUnknownOrLoginSpreadsheetId: hasUnknown || hasLogin,
+    hasLoginSheetName: !!loginSheetName
+  };
+}
+
+function checkUnknownLogSpreadsheetAccess_() {
+  var out = {
+    ok: false,
+    spreadsheetId: '',
+    sheetName: CHATBOT_CONFIG.UNKNOWN_LOG_SHEET
+  };
+  try {
+    var spreadsheetId = resolveUnknownLogSpreadsheetIdForChatbot_();
+    out.spreadsheetId = spreadsheetId || '';
+    if (!spreadsheetId) {
+      out.error = 'No spreadsheet ID resolved for unknown logs.';
+      return out;
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    out.spreadsheetName = ss.getName();
+    out.spreadsheetUrl = ss.getUrl();
+
+    var sheet = getOrCreateUnknownSheet_();
+    out.sheetId = sheet.getSheetId();
+    out.lastRow = sheet.getLastRow();
+    out.ok = true;
+  } catch (e) {
+    out.error = String(e);
+  }
+  return out;
+}
+
+function checkLoginSpreadsheetAccess_() {
+  var out = {
+    ok: false,
+    spreadsheetId: '',
+    sheetName: ''
+  };
+  try {
+    var ssId = resolveLoginSpreadsheetIdForChatbot_();
+    out.spreadsheetId = ssId || '';
+    out.sheetName = resolveLoginSheetNameForChatbot_();
+    if (!ssId) {
+      out.error = 'LOGIN_SPREADSHEET_ID is not configured.';
+      return out;
+    }
+
+    var ss = SpreadsheetApp.openById(ssId);
+    out.spreadsheetName = ss.getName();
+    out.spreadsheetUrl = ss.getUrl();
+
+    var sheet = ss.getSheetByName(out.sheetName);
+    out.sheetFound = !!sheet;
+    if (!sheet) {
+      out.error = 'Login sheet tab not found: ' + out.sheetName;
+      return out;
+    }
+
+    out.lastRow = sheet.getLastRow();
+    out.ok = true;
+  } catch (e) {
+    out.error = String(e);
+  }
+  return out;
 }

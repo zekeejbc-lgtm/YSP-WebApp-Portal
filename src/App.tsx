@@ -210,12 +210,20 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       canonicalPath: "/visitor?page=Feedback",
     },
     MembershipApplications: {
-      title: "Membership Application | YSP Tagum",
+      title: "Opportunities | YSP Tagum",
       description:
-        "Apply to join Youth Service Philippines - Tagum Chapter and become part of youth leadership and community service initiatives.",
+        "Explore and apply for opportunities from Youth Service Philippines - Tagum Chapter.",
       keywords:
-        "YSP Tagum membership, Youth Service Philippines application, join YSP Tagum",
-      canonicalPath: "/visitor?page=MembershipApplications",
+        "YSP Tagum opportunities, Youth Service Philippines opportunities, join YSP Tagum",
+      canonicalPath: "/visitor?page=Opportunities",
+    },
+    Opportunities: {
+      title: "Opportunities | YSP Tagum",
+      description:
+        "Explore and apply for opportunities from Youth Service Philippines - Tagum Chapter.",
+      keywords:
+        "YSP Tagum opportunities, Youth Service Philippines opportunities, join YSP Tagum",
+      canonicalPath: "/visitor?page=Opportunities",
     },
     Founder: {
       title: "Founder | YSP Tagum",
@@ -1861,7 +1869,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           },
           {
             id: "membership-editor",
-            label: "Be a Member Editor",
+            label: "Opportunities Editor",
             action: () => {
               setActivePage("membership-editor");
               setShowMembershipApplicationsPage(true);
@@ -4458,7 +4466,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
               </>
             )}
 
-            {/* Button Group - Hide Login and Be a Member when logged in */}
+            {/* Button Group - Hide Login and Opportunities when logged in */}
             {!isAdmin && (
               <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mt-8">
                 {/* Primary Button - Log In */}
@@ -4476,7 +4484,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                   Log In
                 </button>
 
-                {/* Secondary Button - Be a Member */}
+                {/* Secondary Button - Opportunities */}
                 <button
                   onClick={() => setShowMembershipApplications(true)}
                   className="w-full sm:w-44 h-12 px-5 rounded-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-lg flex items-center justify-center"
@@ -4501,7 +4509,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
                     e.currentTarget.style.borderColor = "#f6421f";
                   }}
                 >
-                  Be a Member!
+                  Opportunities!
                 </button>
               </div>
             )}

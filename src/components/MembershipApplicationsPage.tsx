@@ -39,7 +39,7 @@ import {
 } from "../services/gasApplicationsService";
 
 const MANILA_TIME_ZONE = "Asia/Manila";
-const BE_A_MEMBER_PAGE_LINK = "/visitor?page=MembershipApplications";
+const OPPORTUNITIES_PAGE_LINK = "/visitor?page=Opportunities";
 
 function normalizeRoleValue(role: string): string {
   return String(role || "").trim().toLowerCase();
@@ -407,13 +407,17 @@ export default function MembershipApplicationsPage({
       "visitor",
       "/guest",
       "guest",
+      "opportunities",
+      "opportunity",
       "be-a-member",
       "be a member",
+      "/visitor?page=opportunities",
+      "/guest?page=opportunities",
       "/visitor?page=membershipapplications",
       "/guest?page=membershipapplications",
     ]);
     if (guestAliases.has(trimmed.toLowerCase())) {
-      return `${window.location.origin}${BE_A_MEMBER_PAGE_LINK}`;
+      return `${window.location.origin}${OPPORTUNITIES_PAGE_LINK}`;
     }
 
     try {
@@ -421,14 +425,14 @@ export default function MembershipApplicationsPage({
       if (url.pathname === "/guest" || url.pathname === "/visitor") {
         const page = url.searchParams.get("page");
         if (!page) {
-          return `${window.location.origin}${BE_A_MEMBER_PAGE_LINK}`;
+          return `${window.location.origin}${OPPORTUNITIES_PAGE_LINK}`;
         }
       }
       return url.toString();
     } catch {
       if (trimmed.startsWith("/")) {
         if (trimmed.toLowerCase() === "/guest" || trimmed.toLowerCase() === "/visitor") {
-          return `${window.location.origin}${BE_A_MEMBER_PAGE_LINK}`;
+          return `${window.location.origin}${OPPORTUNITIES_PAGE_LINK}`;
         }
         return `${window.location.origin}${trimmed}`;
       }
