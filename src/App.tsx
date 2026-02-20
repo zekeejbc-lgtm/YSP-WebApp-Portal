@@ -258,9 +258,9 @@ import MyQRIDPage from "./components/MyQRIDPage";
     noindex: true,
   };
 
-  export default function App() {
-    const location = useLocation();
-    const navigate = useNavigate();
+export default function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
     const LAST_VIEW_KEY = "ysp_last_view";
     const LAST_SCROLL_KEY = "ysp_last_scroll";
     const hasRestoredViewRef = useRef(false);
@@ -284,6 +284,15 @@ import MyQRIDPage from "./components/MyQRIDPage";
       };
       initMaintenanceMode();
     }, []);
+
+    // Support short deep-link format: /o/{opportunityId}
+    useEffect(() => {
+      const match = location.pathname.match(/^\/o\/([^/?#]+)/i);
+      if (!match) return;
+      const shortId = decodeURIComponent(match[1] || "").trim();
+      if (!shortId) return;
+      navigate(`/visitor?page=opp&id=${encodeURIComponent(shortId)}`, { replace: true });
+    }, [location.pathname, navigate]);
     // --- END NEW CODE ---
     // ... rest of your code
     const [isAdmin, setIsAdmin] = useState(false);

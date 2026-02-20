@@ -22,7 +22,7 @@ import {
   Plus, Edit, Trash2, Calendar, Clock, ExternalLink,
   Lock, Unlock, Archive, CheckCircle, Eye, EyeOff,
   AlertCircle, ChevronDown, Search,
-  LayoutGrid, List as ListIcon, Filter, X, RefreshCw
+  LayoutGrid, List as ListIcon, Filter, X, RefreshCw, Share2
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
@@ -549,6 +549,44 @@ export default function MembershipApplicationsPage({
     openSmartTarget(rawLink);
   };
 
+  const buildOpportunityShareLink = (opportunityId: string) => {
+    const id = String(opportunityId || "").trim();
+    if (!id) return "";
+    return `${window.location.origin}/o/${encodeURIComponent(id)}`;
+  };
+
+  const fallbackCopyText = (text: string) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.setAttribute("readonly", "");
+    textArea.style.position = "fixed";
+    textArea.style.opacity = "0";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textArea);
+  };
+
+  const copyOpportunityShareLink = async (opportunityId: string) => {
+    const shareLink = buildOpportunityShareLink(opportunityId);
+    if (!shareLink) {
+      toast.error("Unable to generate share link");
+      return;
+    }
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(shareLink);
+      } else {
+        fallbackCopyText(shareLink);
+      }
+      toast.success("Share link copied");
+    } catch (error) {
+      console.error("[MembershipApplications] Failed to copy share link:", error);
+      toast.error("Failed to copy link");
+    }
+  };
+
   const renderPressableDescription = (description: string) => {
     const text = String(description || "");
     const parts = text.split(DESCRIPTION_PRESSABLE_PATTERN);
@@ -894,6 +932,16 @@ export default function MembershipApplicationsPage({
 
             {/* Footer Actions */}
             <div className="px-6 sm:px-8 py-4 border-t border-gray-200 dark:border-gray-800 flex gap-3 items-center shrink-0">
+              <button
+                type="button"
+                onClick={() => copyOpportunityShareLink(viewingOpportunity.id)}
+                className="h-11 w-11 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-[#f6421f] transition-colors inline-flex items-center justify-center shrink-0"
+                title="Copy share link"
+                aria-label="Copy opportunity share link"
+              >
+                <Share2 className="w-5 h-5" />
+              </button>
+
               {(viewingOpportunity.status === "open" || canManageOpportunities || viewingOpportunity.status === "archived") && (
                 <Button
                   variant="primary"

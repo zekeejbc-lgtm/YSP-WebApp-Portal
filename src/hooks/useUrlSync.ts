@@ -106,6 +106,10 @@ const PAGE_TO_STATE: Record<string, keyof PageStateMap> = {
 const PAGE_ALIASES: Record<string, string> = {
   MembershipApplications: 'Opportunities',
   membershipapplications: 'Opportunities',
+  opp: 'Opportunities',
+  Opp: 'Opportunities',
+  opportunity: 'Opportunities',
+  opportunities: 'Opportunities',
   MembershipApplicationsPage: 'MembershipEditor',
   MembershipApplicationsEditor: 'MembershipEditor',
   MembershipApplicationsAdmin: 'MembershipEditor',
