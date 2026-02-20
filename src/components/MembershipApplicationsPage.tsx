@@ -15,7 +15,7 @@
  * =============================================================================
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -40,6 +40,38 @@ import {
 
 const MANILA_TIME_ZONE = "Asia/Manila";
 const OPPORTUNITIES_PAGE_LINK = "/visitor?page=Opportunities";
+const DESCRIPTION_PRESSABLE_PATTERN = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|#[A-Za-z0-9_][A-Za-z0-9_-]*)/g;
+
+type PressableTarget = {
+  kind: "web" | "email" | "hashtag";
+  href: string;
+};
+
+function splitTokenAffixes(token: string): { leading: string; core: string; trailing: string } {
+  let core = token || "";
+  let leading = "";
+  let trailing = "";
+
+  while (core && /^[([{'"`]/.test(core)) {
+    leading += core.charAt(0);
+    core = core.slice(1);
+  }
+
+  while (core && /[)\].,!?:;'"`]+$/.test(core)) {
+    trailing = core.slice(-1) + trailing;
+    core = core.slice(0, -1);
+  }
+
+  return { leading, core, trailing };
+}
+
+function isLikelyMobileClient(): boolean {
+  if (typeof window === "undefined") return false;
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+  const mobileUa = /Android|iPhone|iPad|iPod|Windows Phone|Mobile/i.test(ua);
+  const narrowScreen = window.matchMedia?.("(max-width: 768px)").matches || false;
+  return mobileUa || narrowScreen;
+}
 
 function normalizeRoleValue(role: string): string {
   return String(role || "").trim().toLowerCase();
@@ -116,6 +148,7 @@ export default function MembershipApplicationsPage({
   const [editingOpportunity, setEditingOpportunity] = useState<ApplicationOpportunity | null>(null);
   const [viewingOpportunity, setViewingOpportunity] = useState<ApplicationOpportunity | null>(null);
   const [isSavingOpportunity, setIsSavingOpportunity] = useState(false);
+  const isClosingOpportunityModalRef = useRef(false);
 
   const canManageOpportunities = hasOpportunityManagementAccess(userRole);
 
@@ -135,11 +168,13 @@ export default function MembershipApplicationsPage({
   }, [location.pathname, location.search, navigate, searchParams]);
 
   const openOpportunityDetails = useCallback((opportunity: ApplicationOpportunity) => {
+    isClosingOpportunityModalRef.current = false;
     setViewingOpportunity(opportunity);
     setOpportunityIdInUrl(opportunity.id);
   }, [setOpportunityIdInUrl]);
 
   const closeOpportunityDetails = useCallback(() => {
+    isClosingOpportunityModalRef.current = true;
     setViewingOpportunity(null);
     setOpportunityIdInUrl(null);
   }, [setOpportunityIdInUrl]);
@@ -371,9 +406,13 @@ export default function MembershipApplicationsPage({
   useEffect(() => {
     const deepLinkId = (searchParams.get("id") || "").trim();
     if (!deepLinkId) {
+      isClosingOpportunityModalRef.current = false;
       if (viewingOpportunity) {
         setViewingOpportunity(null);
       }
+      return;
+    }
+    if (isClosingOpportunityModalRef.current && !viewingOpportunity) {
       return;
     }
     if (opportunities.length === 0) return;
@@ -440,13 +479,107 @@ export default function MembershipApplicationsPage({
     }
   };
 
+  const resolvePressableTarget = (rawInput: string): PressableTarget | null => {
+    const value = String(rawInput || "").trim();
+    if (!value) return null;
+
+    // Email addresses and mailto links
+    if (/^mailto:/i.test(value)) {
+      const email = value.replace(/^mailto:/i, "").trim();
+      if (!email) return null;
+      return { kind: "email", href: `mailto:${email}` };
+    }
+    if (/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(value)) {
+      return { kind: "email", href: `mailto:${value}` };
+    }
+
+    // Hashtags become searchable links
+    const hashtagMatch = value.match(/^#([A-Za-z0-9_][A-Za-z0-9_-]{0,63})$/);
+    if (hashtagMatch) {
+      return {
+        kind: "hashtag",
+        href: `https://www.google.com/search?q=%23${encodeURIComponent(hashtagMatch[1])}`,
+      };
+    }
+
+    // Existing opportunity link resolution first (guest aliases, relative links)
+    const normalized = resolveOpportunityLink(value);
+
+    // Explicit protocol
+    if (/^https?:\/\//i.test(normalized)) {
+      return { kind: "web", href: normalized };
+    }
+
+    // "www." links
+    if (/^www\./i.test(normalized)) {
+      return { kind: "web", href: `https://${normalized}` };
+    }
+
+    // Bare domains: example.com/path
+    if (/^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:[/:?#].*)?$/.test(normalized)) {
+      return { kind: "web", href: `https://${normalized}` };
+    }
+
+    return null;
+  };
+
+  const openSmartTarget = (rawInput: string) => {
+    const target = resolvePressableTarget(rawInput);
+    if (!target) {
+      toast.error("Invalid or unsupported link");
+      return;
+    }
+
+    const shouldOpenInSameTab = isLikelyMobileClient();
+
+    // Mobile: use same-tab navigation so device can hand off to installed apps.
+    if (shouldOpenInSameTab || target.kind === "email") {
+      window.location.href = target.href;
+      return;
+    }
+
+    window.open(target.href, "_blank", "noopener,noreferrer");
+  };
+
   const openOpportunityLink = (rawLink: string) => {
-    const resolved = resolveOpportunityLink(rawLink);
-    if (!resolved) {
+    if (!(rawLink || "").trim()) {
       toast.error("No application link configured");
       return;
     }
-    window.open(resolved, "_blank", "noopener,noreferrer");
+    openSmartTarget(rawLink);
+  };
+
+  const renderPressableDescription = (description: string) => {
+    const text = String(description || "");
+    const parts = text.split(DESCRIPTION_PRESSABLE_PATTERN);
+
+    return parts.map((part, index) => {
+      if (!part) return null;
+      const { leading, core, trailing } = splitTokenAffixes(part);
+      const target = resolvePressableTarget(core);
+
+      if (!target) {
+        return <span key={`txt-${index}`}>{part}</span>;
+      }
+
+      return (
+        <span key={`link-${index}`}>
+          {leading}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              openSmartTarget(core);
+            }}
+            className="inline underline underline-offset-4 decoration-[#f6421f]/50 text-[#f6421f] hover:text-[#ee8724] transition-colors"
+            title={target.href}
+          >
+            {core}
+          </button>
+          {trailing}
+        </span>
+      );
+    });
   };
 
   const getStatusColor = (status: string) => {
@@ -704,7 +837,7 @@ export default function MembershipApplicationsPage({
                   className="text-2xl sm:text-3xl font-bold leading-tight"
                   style={{
                     fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                    color: DESIGN_TOKENS.colors.brand.orange,
+                    color: DESIGN_TOKENS.colors.brand.red,
                   }}
                 >
                   {viewingOpportunity.title}
@@ -754,7 +887,7 @@ export default function MembershipApplicationsPage({
 
               <div className="prose dark:prose-invert max-w-none">
                 <p className="whitespace-pre-line text-lg leading-relaxed text-gray-600 dark:text-gray-300 text-justify">
-                  {viewingOpportunity.description}
+                  {renderPressableDescription(viewingOpportunity.description)}
                 </p>
               </div>
             </div>

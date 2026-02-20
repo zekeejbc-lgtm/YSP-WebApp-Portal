@@ -23,6 +23,12 @@ function doPost(e) {
     const requestData = JSON.parse(e.postData.contents);
     const action = requestData.action;
     const PUBLIC_ACTIONS = ['getMaintenanceMode', 'getCacheVersion'];
+
+    // Dedicated cross-project Gemini key count endpoint (shared-secret only).
+    // This is intended for server-to-server audit aggregation.
+    if (action === 'getGeminiKeyAudit') {
+      return handleGetGeminiKeyAudit_(requestData);
+    }
     if (isRequestCancelled_(requestData)) {
       return createErrorResponse('Request cancelled', 499);
     }
@@ -430,7 +436,10 @@ const FEATURE_SCRIPT_PROPERTIES = [
   'PROFILE_PICTURES_FOLDER_ID',
   'BACKUPS_FOLDER_ID',
   'ACCESS_LOGS_ARCHIVE_FOLDER_ID',
-  'ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID'
+  'ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID',
+  'CHATBOT_GAS_AUDIT_URL',
+  'APPLICATIONS_GAS_AUDIT_URL',
+  'CROSS_GAS_AUDIT_SECRET'
 ];
 
 // =================== INITIALIZATION ===================
@@ -1471,8 +1480,52 @@ function getScriptPropertiesAudit_() {
     if (!toSafePropValue_(props[featureKey])) featureMissing.push(featureKey);
   }
 
-  var chatbotKeyCount = countConfiguredPrefixedKeys_(props, 'AI_CHATBOT_API_KEY');
-  var applicantKeyCount = countConfiguredPrefixedKeys_(props, 'GEMINI_API_KEY');
+  var localChatbot = getLocalGeminiAuditByPrefix_(props, 'AI_CHATBOT_API_KEY');
+  var localApplicant = getLocalGeminiAuditByPrefix_(props, 'GEMINI_API_KEY');
+  var chatbotKeyCount = localChatbot.count;
+  var applicantKeyCount = localApplicant.count;
+  var chatbotKeys = localChatbot.keys;
+  var applicantKeys = localApplicant.keys;
+  var notes = [
+    'Universal baseline keys are SESSION_SECRET_KEY, SECRET_API_KEY, LOGIN_SPREADSHEET_ID.',
+    'Gemini keys are detected from AI_CHATBOT_API_KEY* (chatbot) and GEMINI_API_KEY* (applicant mapping).'
+  ];
+
+  // Optional cross-project aggregation to avoid duplicating Gemini keys in System Tools project.
+  // Configure these Script Properties when Chatbot/Applications use separate GAS projects:
+  // - CHATBOT_GAS_AUDIT_URL
+  // - APPLICATIONS_GAS_AUDIT_URL
+  // - CROSS_GAS_AUDIT_SECRET
+  var crossSecret = toSafePropValue_(props.CROSS_GAS_AUDIT_SECRET);
+  var chatbotAuditUrl = toSafePropValue_(props.CHATBOT_GAS_AUDIT_URL);
+  var applicationsAuditUrl = toSafePropValue_(props.APPLICATIONS_GAS_AUDIT_URL);
+
+  if (crossSecret && chatbotAuditUrl) {
+    var chatbotRemote = fetchExternalGeminiAudit_(chatbotAuditUrl, crossSecret, 'chatbot');
+    if (chatbotRemote && chatbotRemote.success) {
+      chatbotKeyCount = chatbotRemote.count;
+      chatbotKeys = chatbotRemote.keys;
+      notes.push('Chatbot Gemini key audit source: external project endpoint.');
+    } else if (chatbotRemote && chatbotRemote.message) {
+      notes.push('Chatbot external Gemini audit unavailable: ' + chatbotRemote.message);
+    }
+  } else if (chatbotAuditUrl && !crossSecret) {
+    notes.push('Chatbot external Gemini audit not attempted: CROSS_GAS_AUDIT_SECRET is missing.');
+  }
+
+  if (crossSecret && applicationsAuditUrl) {
+    var applicationsRemote = fetchExternalGeminiAudit_(applicationsAuditUrl, crossSecret, 'applications');
+    if (applicationsRemote && applicationsRemote.success) {
+      applicantKeyCount = applicationsRemote.count;
+      applicantKeys = applicationsRemote.keys;
+      notes.push('Applicant Gemini key audit source: external project endpoint.');
+    } else if (applicationsRemote && applicationsRemote.message) {
+      notes.push('Applicant external Gemini audit unavailable: ' + applicationsRemote.message);
+    }
+  } else if (applicationsAuditUrl && !crossSecret) {
+    notes.push('Applicant external Gemini audit not attempted: CROSS_GAS_AUDIT_SECRET is missing.');
+  }
+
   var geminiTotalKeyCount = chatbotKeyCount + applicantKeyCount;
 
   return {
@@ -1491,8 +1544,8 @@ function getScriptPropertiesAudit_() {
       chatbotConfiguredCount: chatbotKeyCount,
       applicantConfiguredCount: applicantKeyCount,
       totalConfiguredCount: geminiTotalKeyCount,
-      chatbotConfiguredKeys: collectConfiguredPrefixedKeys_(props, 'AI_CHATBOT_API_KEY'),
-      applicantConfiguredKeys: collectConfiguredPrefixedKeys_(props, 'GEMINI_API_KEY')
+      chatbotConfiguredKeys: chatbotKeys,
+      applicantConfiguredKeys: applicantKeys
     },
     required: {
       configured: collectConfiguredKeys_(props, REQUIRED_SCRIPT_PROPERTIES),
@@ -1506,11 +1559,106 @@ function getScriptPropertiesAudit_() {
       configured: collectConfiguredKeys_(props, FEATURE_SCRIPT_PROPERTIES),
       missing: featureMissing
     },
-    notes: [
-      'Universal baseline keys are SESSION_SECRET_KEY, SECRET_API_KEY, LOGIN_SPREADSHEET_ID.',
-      'Gemini keys are detected from AI_CHATBOT_API_KEY* (chatbot) and GEMINI_API_KEY* (applicant mapping).'
-    ]
+    notes: notes
   };
+}
+
+function verifyCrossAuditSecret_(providedSecret) {
+  var expected = PropertiesService.getScriptProperties().getProperty('CROSS_GAS_AUDIT_SECRET') || '';
+  if (!expected) return false;
+  return String(providedSecret || '').trim() === String(expected).trim();
+}
+
+function resolveGeminiPrefixFromSource_(sourceValue, explicitPrefix) {
+  var requestedPrefix = String(explicitPrefix || '').trim();
+  if (requestedPrefix) return requestedPrefix;
+
+  var source = String(sourceValue || '').toLowerCase().trim();
+  if (source === 'chatbot') return 'AI_CHATBOT_API_KEY';
+  if (source === 'applications' || source === 'applicant') return 'GEMINI_API_KEY';
+  return 'GEMINI_API_KEY';
+}
+
+function handleGetGeminiKeyAudit_(requestData) {
+  try {
+    if (!verifyCrossAuditSecret_(requestData && requestData.auditSecret)) {
+      return createErrorResponse('Unauthorized audit request', 401);
+    }
+
+    var props = PropertiesService.getScriptProperties().getProperties() || {};
+    var prefix = resolveGeminiPrefixFromSource_(requestData && requestData.source, requestData && requestData.prefixBase);
+    var keys = collectConfiguredPrefixedKeys_(props, prefix);
+
+    return createSuccessResponse({
+      source: String(requestData && requestData.source || ''),
+      prefixBase: prefix,
+      count: keys.length,
+      keys: keys,
+      checkedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    return createErrorResponse('Failed to audit Gemini keys: ' + error.message, 500);
+  }
+}
+
+function getLocalGeminiAuditByPrefix_(props, baseKey) {
+  var keys = collectConfiguredPrefixedKeys_(props || {}, baseKey);
+  return {
+    count: keys.length,
+    keys: keys
+  };
+}
+
+function fetchExternalGeminiAudit_(url, sharedSecret, sourceName) {
+  try {
+    var endpoint = String(url || '').trim();
+    var secret = String(sharedSecret || '').trim();
+    if (!endpoint || !secret) {
+      return { success: false, message: 'Missing endpoint URL or shared secret' };
+    }
+
+    var payload = {
+      action: 'getGeminiKeyAudit',
+      auditSecret: secret,
+      source: String(sourceName || 'external')
+    };
+
+    var response = UrlFetchApp.fetch(endpoint, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    var code = response.getResponseCode();
+    var text = response.getContentText() || '';
+    if (code < 200 || code >= 300) {
+      return { success: false, message: 'HTTP ' + code };
+    }
+
+    var parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (parseError) {
+      return { success: false, message: 'Invalid JSON response from external audit endpoint' };
+    }
+
+    // Expected shape:
+    // { success: true, data: { count: number, keys: string[] } }
+    if (!parsed || parsed.success !== true || !parsed.data) {
+      return { success: false, message: parsed && parsed.error ? parsed.error : 'Unexpected response shape' };
+    }
+
+    var count = Number(parsed.data.count);
+    var keys = Array.isArray(parsed.data.keys) ? parsed.data.keys : [];
+    return {
+      success: true,
+      count: isNaN(count) ? keys.length : count,
+      keys: keys
+    };
+  } catch (error) {
+    return { success: false, message: error && error.message ? error.message : String(error) };
+  }
 }
 
 function collectConfiguredKeys_(props, keys) {
@@ -1530,12 +1678,42 @@ function collectConfiguredPrefixedKeys_(props, baseKey) {
   var out = [];
   var normalizedBase = String(baseKey || '').trim();
   if (!normalizedBase) return out;
+  var source = props || {};
+  var keys = Object.keys(source);
+  var seen = {};
 
-  if (toSafePropValue_(props[normalizedBase])) out.push(normalizedBase);
-  for (var i = 1; i <= 20; i++) {
-    var numbered = normalizedBase + '_' + i;
-    if (toSafePropValue_(props[numbered])) out.push(numbered);
+  // Support exact base key (e.g. AI_CHATBOT_API_KEY)
+  if (toSafePropValue_(source[normalizedBase])) {
+    out.push(normalizedBase);
+    seen[normalizedBase] = true;
   }
+
+  // Support numbered variants (e.g. AI_CHATBOT_API_KEY_1..N)
+  var numberedPrefix = normalizedBase + '_';
+  var numberedMatches = [];
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (key.indexOf(numberedPrefix) !== 0) continue;
+    var suffix = key.substring(numberedPrefix.length);
+    if (!/^\d+$/.test(suffix)) continue;
+    if (!toSafePropValue_(source[key])) continue;
+    numberedMatches.push(key);
+  }
+
+  // Keep deterministic ordering by numeric suffix
+  numberedMatches.sort(function(a, b) {
+    var aNum = parseInt(a.substring(numberedPrefix.length), 10);
+    var bNum = parseInt(b.substring(numberedPrefix.length), 10);
+    return aNum - bNum;
+  });
+
+  for (var j = 0; j < numberedMatches.length; j++) {
+    var matchedKey = numberedMatches[j];
+    if (seen[matchedKey]) continue;
+    out.push(matchedKey);
+    seen[matchedKey] = true;
+  }
+
   return out;
 }
 

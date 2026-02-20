@@ -101,6 +101,11 @@ function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
 
+    // Shared-secret endpoint for cross-project Gemini key audit (count + key names only).
+    if (payload.action === 'getGeminiKeyAudit') {
+      return createJsonResponse(handleGetGeminiKeyAuditForApplications_(payload));
+    }
+
     // ---- API key validation ----
     if (!validateApiKey_(payload.key)) {
       return createJsonResponse({ success: false, error: 'Invalid or missing API key', code: 401 });
@@ -163,6 +168,69 @@ function doPost(e) {
       error: error.message || 'Unknown error occurred'
     });
   }
+}
+
+function handleGetGeminiKeyAuditForApplications_(payload) {
+  if (!verifyCrossAuditSecretForApplications_(payload && payload.auditSecret)) {
+    return { success: false, error: 'Unauthorized audit request', code: 401 };
+  }
+
+  var props = PropertiesService.getScriptProperties().getProperties() || {};
+  var prefix = resolveGeminiPrefixForApplications_(payload && payload.source, payload && payload.prefixBase);
+  var keys = collectConfiguredPrefixedKeysForApplications_(props, prefix);
+  return {
+    success: true,
+    data: {
+      source: String(payload && payload.source || ''),
+      prefixBase: prefix,
+      count: keys.length,
+      keys: keys,
+      checkedAt: new Date().toISOString()
+    }
+  };
+}
+
+function verifyCrossAuditSecretForApplications_(providedSecret) {
+  var expected = String(PropertiesService.getScriptProperties().getProperty('CROSS_GAS_AUDIT_SECRET') || '').trim();
+  if (!expected) return false;
+  return String(providedSecret || '').trim() === expected;
+}
+
+function resolveGeminiPrefixForApplications_(sourceValue, explicitPrefix) {
+  var requestedPrefix = String(explicitPrefix || '').trim();
+  if (requestedPrefix) return requestedPrefix;
+  var source = String(sourceValue || '').toLowerCase().trim();
+  if (source === 'chatbot') return 'AI_CHATBOT_API_KEY';
+  return 'GEMINI_API_KEY';
+}
+
+function collectConfiguredPrefixedKeysForApplications_(props, baseKey) {
+  var out = [];
+  var normalizedBase = String(baseKey || '').trim();
+  if (!normalizedBase) return out;
+
+  var source = props || {};
+  var keys = Object.keys(source);
+  if (String(source[normalizedBase] || '').trim()) out.push(normalizedBase);
+
+  var numberedPrefix = normalizedBase + '_';
+  var numberedMatches = [];
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (key.indexOf(numberedPrefix) !== 0) continue;
+    var suffix = key.substring(numberedPrefix.length);
+    if (!/^\d+$/.test(suffix)) continue;
+    if (!String(source[key] || '').trim()) continue;
+    numberedMatches.push(key);
+  }
+
+  numberedMatches.sort(function(a, b) {
+    var aNum = parseInt(a.substring(numberedPrefix.length), 10);
+    var bNum = parseInt(b.substring(numberedPrefix.length), 10);
+    return aNum - bNum;
+  });
+
+  return out.concat(numberedMatches);
 }
 
 function getApplicantImageDataUrl_(imageUrl) {

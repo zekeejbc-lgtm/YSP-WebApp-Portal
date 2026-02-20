@@ -33,7 +33,7 @@
   } from "lucide-react";
   import { openEmailApp, openPhoneApp } from "./utils/externalLinks";
   import { suggestLinkTextFromUrl, normalizeThemeSongUrl } from "./utils/appHelpers";
-  import { detectSocialPlatform, SocialIcon } from "./components/SocialMediaIcon";
+  import { detectSocialPlatform, SocialIcon, LazyFallback } from "./components/SocialMediaIcon";
   import type { PendingApplication, NavGroup } from "./types/app";
   import {
     fetchHomepageContent,
@@ -1126,7 +1126,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
     const restoreSession = async () => {
       const storedUser = getStoredUser();
       if (storedUser && hasActiveSession()) {
-        // Show startup loader for active sessions during restore.
+        // On page refresh/hard refresh, show startup loader for authenticated sessions.
         setShowLoginPrepLoader(true);
         try {
           const valid = await verifySession();
@@ -3442,28 +3442,16 @@ import MyQRIDPage from "./components/MyQRIDPage";
           <LoadingScreen
             isDark={false}
             steps={loginPrepSteps}
+            statusPhrases={[
+              "Initializing...",
+              "Preparing the system...",
+              "Loading portal data and sidebars...",
+              "Finalizing startup...",
+            ]}
             onComplete={() => setShowLoginPrepLoader(false)}
           />
         )}
       </>
-    );
-
-    const getPageLoadingFallback = (pageName: string) => (
-      <LoadingScreen
-        isDark={isDark}
-        steps={[
-          {
-            id: `${pageName.toLowerCase().replace(/\s+/g, "-")}-loading`,
-            label: `Opening ${pageName}`,
-            status: "loading",
-          },
-        ]}
-        statusPhrases={[
-          `Opening ${pageName}...`,
-          `Preparing ${pageName}...`,
-          `Loading ${pageName} content...`,
-        ]}
-      />
     );
 
     // Show Full PWA Maintenance Screen (for non-admin users)
@@ -3530,7 +3518,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
               },
             }}
           />
-          <Suspense fallback={getPageLoadingFallback("Feedback")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading feedback..." />}>
             <FeedbackPage
               onClose={() => setShowFeedbackPage(false)}
               isAdmin={userRole === 'admin' || userRole === 'auditor'}
@@ -3588,7 +3576,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
               },
             }}
           />
-          <Suspense fallback={getPageLoadingFallback("Applications")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
             <MembershipApplicationsPage
               onClose={() => setShowMembershipApplicationsPage(false)}
               isDark={isDark}
@@ -3648,7 +3636,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
               },
             }}
           />
-          <Suspense fallback={getPageLoadingFallback("Officer Directory")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading directory..." />}>
             <OfficerDirectoryPage
               onClose={() => setShowOfficerDirectory(false)}
               isDark={isDark}
@@ -3699,7 +3687,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
               },
             }}
           />
-          <Suspense fallback={getPageLoadingFallback("Attendance Dashboard")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading dashboard..." />}>
             <AttendanceDashboardPage
               onClose={() => setShowAttendanceDashboard(false)}
               isDark={isDark}
@@ -3739,7 +3727,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Attendance Recording")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading attendance..." />}>
             <AttendanceRecordingPage 
               onClose={() => setShowAttendanceRecording(false)} 
               isDark={isDark}
@@ -3770,7 +3758,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Manage Events")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading events..." />}>
             <ManageEventsPage 
               onClose={() => setShowManageEvents(false)} 
               isDark={isDark} 
@@ -3834,7 +3822,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Attendance Transparency")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading attendance..." />}>
             <AttendanceTransparencyPage onClose={() => setShowAttendanceTransparency(false)} isDark={isDark} userName={userName} memberId={userIdCode} />
           </Suspense>
           {chatbot}
@@ -3859,7 +3847,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("My Profile")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading profile..." />}>
             <MyProfilePage 
               onClose={() => {
                 setShowMyProfile(false);
@@ -3901,7 +3889,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Announcements")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading announcements..." />}>
             <AnnouncementsPage 
               onClose={() => setShowAnnouncements(false)} 
               isDark={isDark} 
@@ -3933,7 +3921,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Issuance Center")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading issuance center..." />}>
             <IssuanceCenterPage 
               onClose={() => setShowIssuanceCenter(false)} 
               isDark={isDark} 
@@ -3968,7 +3956,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Access Logs")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading access logs..." />}>
             <AccessLogsPage 
               onClose={() => setShowAccessLogs(false)} 
               isDark={isDark} 
@@ -4002,7 +3990,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("System Tools")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading system tools..." />}>
             <SystemToolsPage 
               onClose={() => setShowSystemTools(false)} 
               isDark={isDark} 
@@ -4035,7 +4023,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Manage Members")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading members..." />}>
             <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userUsername || userName} onModalStateChange={setManageMembersModalOpen} />
           </Suspense>
           {chatbot}
@@ -4060,7 +4048,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Membership Applications")}>
+          <Suspense fallback={<LazyFallback isDark={isDark} label="Loading applications..." />}>
             <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin || userRole !== 'guest'} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userUsername || 'admin'} onModalStateChange={setMembershipAppsModalOpen} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
           </Suspense>
           <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
@@ -4108,7 +4096,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
               },
             }}
           />
-          <Suspense fallback={getPageLoadingFallback("Settings")}>
+          <Suspense fallback={null}>
             <SettingsPage
               onClose={() => setShowSettings(false)}
               isDark={isDark}

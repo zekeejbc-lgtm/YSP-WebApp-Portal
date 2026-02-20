@@ -1733,7 +1733,7 @@ function generateNextHarmonizedYspId_() {
       throw new Error("Column 'ID Code' not found in User Profiles");
     }
 
-    let maxSeq = 0;
+    const usedSeq = {};
     if (lastRow > 1) {
       const idValues = sheet.getRange(2, idCodeIndex + 1, lastRow - 1, 1).getValues();
       for (let i = 0; i < idValues.length; i++) {
@@ -1745,13 +1745,18 @@ function generateNextHarmonizedYspId_() {
         if (match[1] !== yearSuffix) continue;
 
         const seq = Number(match[2]);
-        if (!isNaN(seq) && seq > maxSeq) {
-          maxSeq = seq;
+        if (!isNaN(seq) && seq > 0) {
+          usedSeq[seq] = true;
         }
       }
     }
 
-    return 'YSPTC-' + yearSuffix + Utilities.formatString('%03d', maxSeq + 1);
+    let nextSeq = 1;
+    while (usedSeq[nextSeq]) {
+      nextSeq++;
+    }
+
+    return 'YSPTC-' + yearSuffix + Utilities.formatString('%03d', nextSeq);
   } finally {
     lock.releaseLock();
   }

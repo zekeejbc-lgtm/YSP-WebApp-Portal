@@ -259,8 +259,13 @@ async function callSystemToolsAPI<T>(
 
     return result.data as T;
   } catch (error) {
+    const isExpectedAccessLogAuthFailure =
+      action === 'logAccess' &&
+      error instanceof SystemToolsAPIError &&
+      error.code === SystemToolsErrorCodes.UNAUTHORIZED;
+
     // Only log errors for non-silent actions to reduce noise
-    if (!isSilentAction) {
+    if (!isSilentAction && !isExpectedAccessLogAuthFailure) {
       console.error('[SystemTools] API Error:', error);
     }
     if (error instanceof SystemToolsAPIError) {
@@ -764,6 +769,15 @@ export async function logAccess(params: LogAccessParams): Promise<boolean> {
     
     return true;
   } catch (error) {
+    const isExpectedLogoutAuthFailure =
+      error instanceof SystemToolsAPIError &&
+      error.code === SystemToolsErrorCodes.UNAUTHORIZED &&
+      params.actionType === 'logout';
+
+    if (isExpectedLogoutAuthFailure) {
+      return false;
+    }
+
     // Silently fail - access logging should not block user actions
     console.error('[AccessLog] Failed to log access:', error);
     return false;

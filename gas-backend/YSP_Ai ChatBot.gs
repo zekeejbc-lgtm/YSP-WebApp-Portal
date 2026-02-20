@@ -59,6 +59,12 @@ function doPost(e) {
         code: 400
       });
     }
+
+    // Shared-secret endpoint for cross-project Gemini key audit (count + key names only).
+    if (data.action === 'getGeminiKeyAudit') {
+      return createChatbotJsonResponse_(handleGetGeminiKeyAuditForChatbot_(data));
+    }
+
     var authResult = verifyChatbotRequestAuth_(data);
     if (!authResult.ok) {
       return createChatbotJsonResponse_({
@@ -127,6 +133,69 @@ function doPost(e) {
       source: deriveChatbotResponseSource_()
     });
   }
+}
+
+function handleGetGeminiKeyAuditForChatbot_(data) {
+  if (!verifyCrossAuditSecretForChatbot_(data && data.auditSecret)) {
+    return { success: false, error: 'Unauthorized audit request', code: 401 };
+  }
+
+  var props = PropertiesService.getScriptProperties().getProperties() || {};
+  var prefix = resolveGeminiPrefixForChatbot_(data && data.source, data && data.prefixBase);
+  var keys = collectConfiguredPrefixedKeysForChatbot_(props, prefix);
+  return {
+    success: true,
+    data: {
+      source: String(data && data.source || ''),
+      prefixBase: prefix,
+      count: keys.length,
+      keys: keys,
+      checkedAt: new Date().toISOString()
+    }
+  };
+}
+
+function verifyCrossAuditSecretForChatbot_(providedSecret) {
+  var expected = toStringValue_(PropertiesService.getScriptProperties().getProperty('CROSS_GAS_AUDIT_SECRET'));
+  if (!expected) return false;
+  return toStringValue_(providedSecret) === expected;
+}
+
+function resolveGeminiPrefixForChatbot_(sourceValue, explicitPrefix) {
+  var requestedPrefix = toStringValue_(explicitPrefix);
+  if (requestedPrefix) return requestedPrefix;
+  var source = toStringValue_(sourceValue).toLowerCase();
+  if (source === 'applications' || source === 'applicant') return 'GEMINI_API_KEY';
+  return 'AI_CHATBOT_API_KEY';
+}
+
+function collectConfiguredPrefixedKeysForChatbot_(props, baseKey) {
+  var out = [];
+  var normalizedBase = toStringValue_(baseKey);
+  if (!normalizedBase) return out;
+
+  var source = props || {};
+  var keys = Object.keys(source);
+  if (toStringValue_(source[normalizedBase])) out.push(normalizedBase);
+
+  var numberedPrefix = normalizedBase + '_';
+  var numberedMatches = [];
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (key.indexOf(numberedPrefix) !== 0) continue;
+    var suffix = key.substring(numberedPrefix.length);
+    if (!/^\d+$/.test(suffix)) continue;
+    if (!toStringValue_(source[key])) continue;
+    numberedMatches.push(key);
+  }
+
+  numberedMatches.sort(function(a, b) {
+    var aNum = parseInt(a.substring(numberedPrefix.length), 10);
+    var bNum = parseInt(b.substring(numberedPrefix.length), 10);
+    return aNum - bNum;
+  });
+
+  return out.concat(numberedMatches);
 }
 
 function beginChatbotRuntimeTrace_() {

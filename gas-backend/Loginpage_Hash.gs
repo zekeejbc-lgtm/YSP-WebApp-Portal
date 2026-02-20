@@ -77,12 +77,12 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
   };
 
   const position = (answers['Position'] || '').toString().trim();
-  const currentID = idx.id > -1 ? sheet.getRange(row, idx.id + 1).getValue() : null;
-  const isPositionEdit = (triggerSource === (idx.position + 1));
+  const currentID = idx.id > -1 ? String(sheet.getRange(row, idx.id + 1).getValue() || '').trim() : '';
   const isPasswordEdit = (triggerSource === (idx.pwd + 1));
   
   // --- 3. ID Generation ---
-  if (position && (triggerSource === 'CREATE' || isPositionEdit || !currentID)) {
+  // ID codes are permanent once assigned. Only generate when ID is still blank.
+  if (position && !currentID) {
     const result = generateUniqueID(sheet, position, idx.id + 1);
     if (result.fullID && result.fullID !== "Range Full") {
       sheet.getRange(row, idx.id + 1).setValue(result.fullID);
@@ -123,8 +123,8 @@ function processUser(sheet, row, headers, answers, triggerSource, e, editInfo) {
   const email = answers['Email Address'];
   if (!email) return;
 
-  // Scenario A: Welcome
-  if (triggerSource === 'CREATE' || triggerSource === (idx.position + 1)) {
+  // Scenario A: Welcome (new account creation only)
+  if (triggerSource === 'CREATE') {
     const finalID = sheet.getRange(row, idx.id + 1).getValue();
     sendYSPEmail(email, answers['Full name'], "WELCOME", {
       id: finalID,
@@ -361,30 +361,41 @@ function generateUniqueID(sheet, position, colIndex) {
   // but remove legacy position-based ID format.
   if (!position) return { fullID: null, numericID: null };
 
-  const yearSuffix = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy');
-  const lastRow = sheet.getLastRow();
-  let maxSeq = 0;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
 
-  if (lastRow > 1) {
-    const existingIDs = sheet.getRange(2, colIndex, lastRow - 1, 1).getValues().flat();
-    for (let i = 0; i < existingIDs.length; i++) {
-      const value = String(existingIDs[i] || '').trim();
-      const match = value.match(/^YSPTC-(\d{2})(\d{3,})$/);
-      if (!match) continue;
-      if (match[1] !== yearSuffix) continue;
-      const seq = Number(match[2]);
-      if (!isNaN(seq) && seq > maxSeq) {
-        maxSeq = seq;
+  try {
+    const yearSuffix = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy');
+    const lastRow = sheet.getLastRow();
+    const usedSeq = {};
+
+    if (lastRow > 1) {
+      const existingIDs = sheet.getRange(2, colIndex, lastRow - 1, 1).getValues().flat();
+      for (let i = 0; i < existingIDs.length; i++) {
+        const value = String(existingIDs[i] || '').trim();
+        const match = value.match(/^YSPTC-(\d{2})(\d{3,})$/);
+        if (!match) continue;
+        if (match[1] !== yearSuffix) continue;
+        const seq = Number(match[2]);
+        if (!isNaN(seq) && seq > 0) {
+          usedSeq[seq] = true;
+        }
       }
     }
-  }
 
-  const nextSeq = maxSeq + 1;
-  const numericPart = yearSuffix + Utilities.formatString('%03d', nextSeq);
-  return {
-    fullID: 'YSPTC-' + numericPart,
-    numericID: numericPart
-  };
+    let nextSeq = 1;
+    while (usedSeq[nextSeq]) {
+      nextSeq++;
+    }
+
+    const numericPart = yearSuffix + Utilities.formatString('%03d', nextSeq);
+    return {
+      fullID: 'YSPTC-' + numericPart,
+      numericID: numericPart
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // =================== PROFESSIONAL EMAIL ENGINE ===================

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react";
+import { createPortal } from "react-dom";
+import { CheckCircle2, AlertTriangle } from "lucide-react";
 
 // Loading step status types
 type StepStatus = "pending" | "loading" | "success" | "error";
@@ -19,47 +20,58 @@ interface LoadingScreenProps {
   logoUrl?: string;
   appName?: string;
   showDebug?: boolean;
+  statusPhrases?: string[];
 }
+
+// Extended loading phrases for dynamic text cycling
+const LOADING_PHRASES = [
+  "Initiating secure connection...",
+  "Preparing the portal...",
+  "Syncing Tagum Chapter data...",
+  "Loading visual resources...",
+  "Configuring dashboard...",
+  "Organizing projects and events...",
+  "Gathering community updates...",
+  "Finalizing setup..."
+];
 
 export default function LoadingScreen({
   isDark = false,
   steps,
   onComplete,
   logoUrl = "https://i.imgur.com/J4wddTW.png",
+  statusPhrases,
 }: LoadingScreenProps) {
   const [fadeOut, setFadeOut] = useState(false);
   const [showDevInfo, setShowDevInfo] = useState(false);
   const [devClickCount, setDevClickCount] = useState(0);
-
-  // Calculate overall progress
-  const completedSteps = steps.filter(
-    (s) => s.status === "success" || s.status === "error"
-  ).length;
-  // const progress = Math.min(Math.round((completedSteps / steps.length) * 100), 100);
+  const [phraseIndex, setPhraseIndex] = useState(0);
 
   // Check if there are any errors
   const hasErrors = steps.some((s) => s.status === "error");
   const allComplete = steps.every(
     (s) => s.status === "success" || s.status === "error"
   );
+  const activePhrases = statusPhrases?.length ? statusPhrases : LOADING_PHRASES;
 
-  // Current loading step for display
-  const currentStep = steps.find((s) => s.status === "loading") || 
-                      steps.find((s) => s.status === "pending") ||
-                      steps[steps.length - 1];
+  // Rotate loading text every 2.5 seconds
+  useEffect(() => {
+    if (allComplete) return;
+    const interval = setInterval(() => {
+      setPhraseIndex((prev) => (prev + 1) % activePhrases.length);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [activePhrases.length, allComplete]);
 
   // Get a user-friendly status message
   const getStatusMessage = () => {
-    if (allComplete && !hasErrors) return "Ready";
+    if (allComplete && !hasErrors) return "Portal Ready";
     if (allComplete && hasErrors) return "Partially Loaded";
     
-    switch (currentStep?.id) {
-      case "init": return "Starting...";
-      case "homepage": return "Syncing...";
-      case "assets": return "Resources...";
-      case "complete": return "Ready...";
-      default: return "Loading...";
-    }
+    const currentError = steps.find(s => s.status === "error");
+    if (currentError) return currentError.errorMessage || "Encountered an issue";
+    
+    return activePhrases[phraseIndex];
   };
 
   // Handle fade out when complete
@@ -83,138 +95,91 @@ export default function LoadingScreen({
       setShowDevInfo(!showDevInfo);
       setDevClickCount(0);
     }
-    // Reset click count after 2 seconds
     setTimeout(() => setDevClickCount(0), 2000);
   };
 
-  return (
+  const overlay = (
     <div
-      className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center overflow-hidden font-sans transition-opacity duration-500 ease-in-out ${
+      className={`fixed inset-0 z-[2147483647] flex flex-col items-center justify-center overflow-hidden transition-opacity duration-500 ease-in-out ${
         fadeOut ? "opacity-0 pointer-events-none" : "opacity-100"
-      } ${
-        isDark 
-          ? "bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-[#0a0a0a] to-black" 
-          : "bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-orange-50 via-white to-slate-50"
       }`}
+      style={{
+        background: isDark ? "#0f172a" : "#f8fafc",
+        zIndex: 2147483647,
+      }}
     >
-      {/* Ambient Pulsing Gradient Background */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-         <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-[100px] opacity-20 animate-pulse ${
-            isDark ? "bg-orange-600/30" : "bg-orange-400/30"
-         }`} style={{ animationDuration: '3s' }} />
+      {/* Exact Portal Background Blobs */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-orange-200/40 dark:bg-orange-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob" />
+        <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-yellow-200/40 dark:bg-yellow-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob animation-delay-2000" />
+        <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-red-200/40 dark:bg-red-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob animation-delay-4000" />
+        <div className="absolute bottom-0 right-1/3 w-96 h-96 bg-pink-200/40 dark:bg-pink-500/10 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-70 animate-blob animation-delay-6000" />
       </div>
 
-      {/* Main Content Container - Centered & Mobile Optimized */}
-      <div className="relative z-10 flex flex-col items-center justify-center w-full max-w-sm px-6 pb-12">
+      {/* Main Content Container */}
+      <div className="relative z-10 flex flex-col items-center justify-center w-full px-4 sm:px-6">
         
-        {/* Logo Container with Pulsing Shadow */}
+        {/* Dynamic Responsive Logo Container */}
         <div 
-          className="relative mb-12 cursor-pointer transition-transform duration-700 active:scale-95"
+          className="relative mb-6 sm:mb-8 cursor-pointer transition-transform duration-700 active:scale-95 flex items-center justify-center"
           onClick={handleLogoClick}
         >
-          {/* Intense Pulsing Orange Shadow */}
-          <div className={`absolute inset-0 rounded-full blur-2xl transition-all duration-1000 ${
-             !allComplete 
-               ? "animate-pulse opacity-40 scale-110 bg-orange-500" 
-               : "opacity-0 scale-100"
-          }`} />
-          
-          {/* Logo & Ring Wrapper */}
-          <div 
-            className="relative w-28 h-28 md:w-32 md:h-32 mx-auto"
-            style={{ width: '7rem', height: '7rem' }}
-          >
+          {/* Logo Wrapper with Modest Sizing */}
+          <div className="relative w-24 h-24 sm:w-28 sm:h-28 md:w-32 md:h-32 mx-auto flex items-center justify-center transition-all duration-300">
              <img
                src={logoUrl}
                alt="YSP Logo"
-               className="w-full h-full object-contain filter drop-shadow-xl z-20 relative p-1"
-               style={{ maxWidth: '100%', maxHeight: '100%' }}
+               className={`w-full h-full object-contain filter drop-shadow-xl z-20 relative transition-all duration-700 ${!allComplete ? "animate-pulse" : ""}`}
                draggable={false}
                onError={(e) => {
                  (e.target as HTMLImageElement).src =
-                   "https://ui-avatars.com/api/?name=YSP&size=128&background=f6421f&color=fff";
+                   "https://ui-avatars.com/api/?name=YSP&size=256&background=f6421f&color=fff";
                }}
              />
-             
-             {/* Dynamic Progress Ring */}
-             {!allComplete && (
-                <div className="absolute -inset-2 z-10">
-                  <svg className="w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 100 100">
-                    {/* Track */}
-                    <circle
-                      className={`${isDark ? "text-slate-800" : "text-slate-200"}`}
-                      strokeWidth="3"
-                      stroke="currentColor"
-                      fill="transparent"
-                      r="46"
-                      cx="50"
-                      cy="50"
-                    />
-                    {/* Progress Indicator */}
-                    <circle
-                      className="text-orange-500 transition-all duration-300 ease-in-out drop-shadow-[0_0_10px_rgba(249,115,22,0.5)]"
-                      strokeWidth="3"
-                      strokeDasharray={289}
-                      strokeDashoffset={289 - (289 * (completedSteps / steps.length))}
-                      strokeLinecap="round"
-                      stroke="currentColor"
-                      fill="transparent"
-                      r="46"
-                      cx="50"
-                      cy="50"
-                    />
-                  </svg>
-                </div>
-             )}
 
              {/* Success/Error Indicator Badge */}
              {allComplete && (
                <div className={`absolute -bottom-1 -right-1 p-2 rounded-full shadow-lg z-30 animate-in zoom-in duration-300 ${
                   hasErrors ? "bg-amber-500 text-white" : "bg-green-500 text-white"
                }`}>
-                 {hasErrors ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+                 {hasErrors ? <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5" /> : <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />}
                </div>
              )}
           </div>
         </div>
 
-        {/* Brand Name & Status - Mobile First Typography */}
-        <div className="text-center space-y-2 mb-8 w-full">
-           <h1 className={`text-2xl md:text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r ${
-              isDark 
-                ? "from-white via-orange-100 to-orange-200" 
-                : "from-slate-900 via-slate-800 to-slate-900"
-           }`}>
+        {/* Brand Name & Dynamic Text */}
+        <div className="text-center space-y-2 sm:space-y-3 mb-4 w-full px-4">
+           <h1 
+             className="text-xl sm:text-2xl md:text-3xl tracking-tight transition-all duration-300"
+             style={{
+               fontFamily: "var(--font-headings)",
+               fontWeight: "var(--font-weight-bold)",
+               color: "#f6421f",
+               letterSpacing: "-0.02em",
+             }}
+           >
               Youth Service Philippines
            </h1>
-           <div className="flex items-center justify-center gap-2">
-             <div className={`h-[1px] w-8 ${isDark ? "bg-orange-500/50" : "bg-orange-500/30"}`} />
-             <p className={`text-xs tracking-[0.2em] font-bold uppercase ${
-                isDark ? "text-orange-500" : "text-orange-600"
-             }`}>
+           <div className="flex items-center justify-center gap-2 md:gap-3">
+             <div className={`h-px w-8 sm:w-12 md:w-16 bg-linear-to-r from-transparent ${isDark ? "to-[#ee8724]/60" : "to-[#ee8724]/40"}`} />
+             <p className="text-[10px] sm:text-xs md:text-sm tracking-[0.2em] font-bold uppercase text-[#ee8724] transition-all duration-300">
                 Tagum Chapter
              </p>
-             <div className={`h-[1px] w-8 ${isDark ? "bg-orange-500/50" : "bg-orange-500/30"}`} />
+             <div className={`h-px w-8 sm:w-12 md:w-16 bg-linear-to-l from-transparent ${isDark ? "to-[#ee8724]/60" : "to-[#ee8724]/40"}`} />
            </div>
         </div>
 
-        {/* Minimal Status Text */}
-        <div className="h-6 flex items-center justify-center overflow-hidden">
-           <p className={`text-sm font-medium transition-all duration-500 animate-pulse ${
-              isDark ? "text-slate-500" : "text-slate-400"
-           }`}>
+        {/* Status Text Cycler */}
+        <div className="h-8 flex items-center justify-center overflow-hidden mt-2 sm:mt-4">
+           <p className={`text-sm sm:text-base font-medium transition-opacity duration-500 animate-pulse text-center px-4 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
               {getStatusMessage()}
            </p>
         </div>
 
       </div>
-
-      {/* Footer safe area */}
-      <div className={`absolute bottom-8 text-[10px] tracking-widest opacity-30 uppercase ${
-        isDark ? "text-white" : "text-black"
-      }`}>
-         v{import.meta.env.VITE_APP_VERSION || '1.0.0'}
-      </div>
     </div>
   );
+
+  return createPortal(overlay, document.body);
 }

@@ -342,7 +342,8 @@ const ORG_CHAPTER = "Tagum Chapter";
 const ORG_MOTTO = "Shaping the Future to a Greater Society";
 const ITEMS_PER_PAGE = 10;
 const MEMBERS_CACHE_KEY = "ysp_manage_members_cache";
-const APPLICANT_MAPPING_DEBUG = true;
+const APPLICANT_MAPPING_DEBUG =
+  import.meta.env.DEV && import.meta.env.VITE_DEBUG_APPLICANTS === "true";
 const APPLICANT_IMAGE_LINK_CACHE_KEY = "ysp_applicant_image_link_cache_v1";
 
 function getApplicantImageLinkCache(): Record<string, string> {
@@ -2851,5 +2852,6 @@ function DetailCard({ title, content, isDark }: DetailCardProps) {
     </div>
   );
 }
+
 
 

@@ -71,9 +71,60 @@
     <meta name="twitter:image" content="https://i.imgur.com/J4wddTW.png" />
 
     <link rel="canonical" href="https://www.youthservicephilippinestagum.me/" />
+    <style>
+      html, body, #root {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: #f8fafc;
+      }
+
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483646;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: #f8fafc;
+        transition: opacity 220ms ease;
+      }
+
+      #boot-splash.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #boot-splash img {
+        width: 64px;
+        height: 64px;
+        object-fit: contain;
+      }
+
+      #boot-splash .spinner {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border: 3px solid rgba(246, 66, 31, 0.2);
+        border-top-color: #f6421f;
+        animation: ysp-spin 0.8s linear infinite;
+      }
+
+      @keyframes ysp-spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
 
   <body>
+    <div id="boot-splash" aria-hidden="true">
+      <img src="https://i.imgur.com/J4wddTW.png" alt="" />
+      <div class="spinner"></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

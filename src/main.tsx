@@ -35,6 +35,16 @@ createRoot(rootEl).render(
   </ErrorBoundary>
 );
 
+// Hide the static boot splash once React has painted.
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    const splash = document.getElementById("boot-splash");
+    if (!splash) return;
+    splash.classList.add("hidden");
+    setTimeout(() => splash.remove(), 260);
+  });
+});
+
 let updateToastId: string | number | undefined;
 let updateToastActive = false;
 let shouldReloadOnControllerChange = false;

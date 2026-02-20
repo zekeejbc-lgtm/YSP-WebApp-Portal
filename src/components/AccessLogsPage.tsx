@@ -201,6 +201,7 @@ const GAS_SYSTEM_TOOLS_API_URL =
   import.meta.env.VITE_GAS_SYSTEM_TOOLS_API_URL ||
   import.meta.env.VITE_GAS_LOGIN_API_URL ||
   '';
+const GAS_API_KEY = import.meta.env.VITE_GAS_API_KEY || '';
 const ITEMS_PER_PAGE = 10;
 
 export default function AccessLogsPage({
@@ -293,6 +294,7 @@ export default function AccessLogsPage({
         },
         body: JSON.stringify({
           action: 'getAccessLogs',
+          key: GAS_API_KEY,
           page: 1,
           limit: 200,
           filterType: selectedType !== 'all' ? selectedType : null,

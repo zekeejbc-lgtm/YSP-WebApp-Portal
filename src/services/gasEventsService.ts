@@ -12,6 +12,13 @@
 
 import { getSessionToken } from './gasLoginService';
 
+const EVENTS_DEBUG_LOGS = import.meta.env.DEV && import.meta.env.VITE_DEBUG_EVENTS === 'true';
+const logEventsDebug = (...args: unknown[]) => {
+  if (EVENTS_DEBUG_LOGS) {
+    console.warn(...args);
+  }
+};
+
 // =====================================================
 // TYPES
 // =====================================================
@@ -170,9 +177,9 @@ export function saveEventsToLocalStorage(events: EventData[]): void {
   try {
     localStorage.setItem(EVENTS_CACHE_KEY, JSON.stringify(events));
     localStorage.setItem(EVENTS_CACHE_TS_KEY, String(Date.now()));
-    console.warn(`📦 Cached ${events.length} events to localStorage`);
+    logEventsDebug(`📦 Cached ${events.length} events to localStorage`);
   } catch (error) {
-    console.warn('Failed to cache events to localStorage:', error);
+    logEventsDebug('Failed to cache events to localStorage:', error);
   }
 }
 
@@ -1005,7 +1012,7 @@ export async function checkIsTargetRecipient(
   // Try local cache first (fast, works offline)
   const localResult = checkIsTargetRecipientLocal(eventId, memberId);
   if (localResult !== null) {
-    console.warn(`📦 Recipient check from cache: ${memberId} -> ${localResult.isTarget ? 'Target' : 'External'}`);
+    logEventsDebug(`📦 Recipient check from cache: ${memberId} -> ${localResult.isTarget ? 'Target' : 'External'}`);
     return {
       isTarget: localResult.isTarget,
       isRecipient: localResult.isTarget, // Alias for backward compatibility
@@ -1014,7 +1021,7 @@ export async function checkIsTargetRecipient(
   }
   
   // Fall back to network call
-  console.warn(`🌐 Recipient check from network: ${eventId}, ${memberId}`);
+  logEventsDebug(`🌐 Recipient check from network: ${eventId}, ${memberId}`);
   const response = await gasGet<{ isRecipient: boolean; recipientType: string }>('checkIsTargetRecipient', { 
     eventId, 
     memberId 
@@ -1085,3 +1092,7 @@ export function parseEventRecipients(recipientsJson: string | undefined): EventR
 export function stringifyEventRecipients(recipients: EventRecipients): string {
   return JSON.stringify(recipients);
 }
+
+
+
+
