@@ -37,6 +37,7 @@ createRoot(rootEl).render(
 
 let updateToastId: string | number | undefined;
 let updateToastActive = false;
+let shouldReloadOnControllerChange = false;
 
 const updateSW = registerSW({
   immediate: true,
@@ -49,6 +50,7 @@ const updateSW = registerSW({
       action: {
         label: "Refresh",
         onClick: () => {
+          shouldReloadOnControllerChange = true;
           updateSW(true);
           if (updateToastId !== undefined) {
             toast.dismiss(updateToastId);
@@ -69,11 +71,11 @@ const OFFLINE_QUEUE_TOAST_COOLDOWN_MS = 5000;
 const OFFLINE_SYNC_TOAST_COOLDOWN_MS = 5000;
 
 if ("serviceWorker" in navigator) {
-  // Auto-reload when a new service worker takes control
-  // This is the most reliable way to ensure users get the latest version
+  // Reload only when the user explicitly accepted an app update.
+  // Avoids reloads on first SW install (which can happen around offline-ready toasts).
   let refreshing = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (refreshing) return;
+    if (!shouldReloadOnControllerChange || refreshing) return;
     refreshing = true;
     console.warn("New service worker controller detected, reloading...");
     window.location.reload();

@@ -52,6 +52,17 @@ function doGet(e) {
       return createJsonResponse({ success: true, status: 'healthy' });
     }
 
+    // Public read endpoint for Opportunities page
+    if (action === 'getOpportunities') {
+      const opportunities = getOpportunities();
+      return createJsonResponse({
+        success: true,
+        data: opportunities,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Any non-public GET action remains authenticated
     const sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
     if (!sessionSecret) {
       return createJsonResponse({
@@ -66,15 +77,6 @@ function doGet(e) {
         success: false,
         error: 'Invalid or expired session token',
         code: 401
-      });
-    }
-
-    if (action === 'getOpportunities') {
-      const opportunities = getOpportunities();
-      return createJsonResponse({
-        success: true,
-        data: opportunities,
-        timestamp: new Date().toISOString()
       });
     }
 

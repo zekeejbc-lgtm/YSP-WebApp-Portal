@@ -2975,7 +2975,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       if (showAttendanceDashboard && isPageAllowed("attendance-dashboard")) return "attendance-dashboard";
       if (showAttendanceRecording && isPageAllowed("attendance-recording")) return "attendance-recording";
       if (showManageEvents && isPageAllowed("manage-events")) return "manage-events";
-      if (showMyQRID && isPageAllowed("my-qr-id")) return "my-qrid";
+      if (showMyQRID && isPageAllowed("my-qr-id")) return "my-qr-id";
       if (showAttendanceTransparency && isPageAllowed("attendance-transparency")) return "attendance-transparency";
       if (showMyProfile && isPageAllowed("my-profile")) return "my-profile";
       if (showAnnouncements && isPageAllowed("announcements")) return "announcements";
@@ -3005,12 +3005,13 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
     ]);
 
     useEffect(() => {
+      if (!sessionChecked || !hasRestoredViewRef.current) return;
       try {
         localStorage.setItem(LAST_VIEW_KEY, currentView);
       } catch {
         // Ignore storage failures.
       }
-    }, [currentView]);
+    }, [currentView, sessionChecked]);
 
     const openStoredView = useCallback((view: string) => {
       if (!view) return false;
@@ -3077,9 +3078,10 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
           }
           if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
+        case "my-qr-id":
         case "my-qrid":
           if (isPageAllowed("my-qr-id")) {
-            setActivePage("my-qrid");
+            setActivePage("my-qr-id");
             setShowMyQRID(true);
             return true;
           }
@@ -3187,7 +3189,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         }
       }
 
-      if (storedView) {
+      if (!currentPage && storedView) {
         const opened = openStoredView(storedView);
         if (!opened) {
           setActivePage("home");
@@ -3195,7 +3197,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       }
 
       hasRestoredViewRef.current = true;
-    }, [openStoredView, sessionChecked]);
+    }, [currentPage, openStoredView, sessionChecked]);
 
     useEffect(() => {
       if (hasRestoredScrollRef.current) return;
@@ -3702,8 +3704,10 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
 
     // Show My QR ID page
     if (showMyQRID && isPageAllowed("my-qr-id")) {
-      if (isPageInMaintenance("my-qrid")) {
-        const config = getPageMaintenanceConfig("my-qrid");
+      if (isPageInMaintenance("my-qr-id") || isPageInMaintenance("my-qrid")) {
+        const config = isPageInMaintenance("my-qr-id")
+          ? getPageMaintenanceConfig("my-qr-id")
+          : getPageMaintenanceConfig("my-qrid");
         return (
           <>
             <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="My QR ID" onBack={() => setShowMyQRID(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />

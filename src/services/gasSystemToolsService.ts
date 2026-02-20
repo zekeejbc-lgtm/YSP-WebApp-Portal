@@ -226,7 +226,7 @@ async function callSystemToolsAPI<T>(
   }
 
   // Suppress verbose logging - only log errors in production
-  const isSilentAction = action === 'getCacheVersion';
+  const isSilentAction = action === 'getCacheVersion' || action === 'getMaintenanceMode';
   if (!GAS_API_KEY && !isSilentAction) {
     console.error('[SystemTools] VITE_GAS_API_KEY is missing; requests will be rejected by GAS.');
   }
@@ -664,7 +664,7 @@ export const AVAILABLE_PAGES_BACKEND = [
   { id: 'attendance-recording', name: 'Attendance Recording' },
   { id: 'attendance-transparency', name: 'Attendance Transparency' },
   { id: 'manage-events', name: 'Manage Events' },
-  { id: 'my-qrid', name: 'My QR ID' },
+  { id: 'my-qr-id', name: 'My QR ID' },
   { id: 'officer-directory', name: 'Officer Directory' },
   { id: 'manage-members', name: 'Manage Members' },
   { id: 'membership-applications', name: 'Membership Applications' },

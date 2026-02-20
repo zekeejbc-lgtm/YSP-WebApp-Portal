@@ -22,6 +22,7 @@ function doPost(e) {
   try {
     const requestData = JSON.parse(e.postData.contents);
     const action = requestData.action;
+    const PUBLIC_ACTIONS = ['getMaintenanceMode', 'getCacheVersion'];
     if (isRequestCancelled_(requestData)) {
       return createErrorResponse('Request cancelled', 499);
     }
@@ -32,15 +33,18 @@ function doPost(e) {
     }
     
     // ---- Session token verification (HMAC) ----
-    var tokenUser = verifyHmacToken_(requestData.sessionToken);
-    var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-    if (!sessionSecret) {
-      return createErrorResponse('Server auth misconfigured: SESSION_SECRET_KEY is missing', 503);
+    // Public read-only actions can be accessed without a session token.
+    if (PUBLIC_ACTIONS.indexOf(action) === -1) {
+      var tokenUser = verifyHmacToken_(requestData.sessionToken);
+      var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+      if (!sessionSecret) {
+        return createErrorResponse('Server auth misconfigured: SESSION_SECRET_KEY is missing', 503);
+      }
+      if (!tokenUser) {
+        return createErrorResponse('Invalid or expired session token', 401);
+      }
+      requestData.username = tokenUser.username;
     }
-    if (!tokenUser) {
-      return createErrorResponse('Invalid or expired session token', 401);
-    }
-    requestData.username = tokenUser.username;
     
     Logger.log('doPost received action: ' + action);
 

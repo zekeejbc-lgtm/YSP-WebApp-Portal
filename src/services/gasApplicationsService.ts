@@ -95,12 +95,12 @@ function logApiError(
 export async function fetchOpportunities(): Promise<{ success: boolean; data?: ApplicationOpportunity[]; error?: string }> {
   try {
     const token = getSessionToken();
-    if (!token) {
-      return { success: false, error: "Authentication required" };
-    }
     const url = new URL(API_URL);
     url.searchParams.set("action", "getOpportunities");
-    url.searchParams.set("sessionToken", token);
+    // Public endpoint: token is optional (included only when available).
+    if (token) {
+      url.searchParams.set("sessionToken", token);
+    }
     const response = await fetch(url.toString());
     const result = await response.json();
 

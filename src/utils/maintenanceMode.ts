@@ -74,7 +74,7 @@ export const AVAILABLE_PAGES = [
   { id: "attendance-recording", name: "Attendance Recording" },
   { id: "attendance-transparency", name: "Attendance Transparency" },
   { id: "manage-events", name: "Manage Events" },
-  { id: "my-qrid", name: "My QR ID" },
+  { id: "my-qr-id", name: "My QR ID" },
   { id: "officer-directory", name: "Officer Directory" },
   { id: "manage-members", name: "Manage Members" },
   { id: "membership-applications", name: "Membership Applications" },

@@ -700,24 +700,6 @@ export default function MembershipApplicationsPage({
             {/* Modal Header */}
             <div className="px-6 sm:px-8 py-5 border-b border-gray-200 dark:border-gray-800 flex items-start justify-between gap-4 shrink-0">
               <div className="pr-2">
-                <div className="flex items-center gap-2 mb-3">
-                  <span
-                    className="px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 uppercase tracking-wide w-fit"
-                    style={{
-                      backgroundColor: `${getStatusColor(viewingOpportunity.status)}15`,
-                      color: getStatusColor(viewingOpportunity.status),
-                      border: `1px solid ${getStatusColor(viewingOpportunity.status)}30`,
-                    }}
-                  >
-                    {getStatusIcon(viewingOpportunity.status)}
-                    {viewingOpportunity.status}
-                  </span>
-                  {canManageOpportunities && (
-                    <span className="text-xs text-muted-foreground bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-full">
-                      {viewingOpportunity.visibility === "public" ? "Public" : "Hidden"}
-                    </span>
-                  )}
-                </div>
                 <h2
                   className="text-2xl sm:text-3xl font-bold leading-tight"
                   style={{
@@ -739,7 +721,25 @@ export default function MembershipApplicationsPage({
 
             {/* Modal Content */}
             <div className="space-y-6 px-6 sm:px-8 py-6 overflow-y-auto flex-1">
-              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground p-4 bg-gray-50 dark:bg-white/5 rounded-xl">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 text-sm text-muted-foreground p-4 bg-gray-50 dark:bg-white/5 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 uppercase tracking-wide w-fit"
+                    style={{
+                      backgroundColor: `${getStatusColor(viewingOpportunity.status)}15`,
+                      color: getStatusColor(viewingOpportunity.status),
+                      border: `1px solid ${getStatusColor(viewingOpportunity.status)}30`,
+                    }}
+                  >
+                    {getStatusIcon(viewingOpportunity.status)}
+                    {viewingOpportunity.status}
+                  </span>
+                  {canManageOpportunities && (
+                    <span className="text-xs text-muted-foreground bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-full">
+                      {viewingOpportunity.visibility === "public" ? "Public" : "Hidden"}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-[#f6421f]" />
                   <span className="font-medium text-foreground">Start:</span>
