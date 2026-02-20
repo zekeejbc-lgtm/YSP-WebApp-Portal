@@ -18,6 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
 import { toast } from "sonner";
 import { UploadToastMessage } from "./UploadToast";
@@ -1927,10 +1928,11 @@ export default function SystemToolsPage({
       </div>
       )}
 
-      {showAuditModal && propertyAudit && (
+      {typeof document !== "undefined" && showAuditModal && propertyAudit && createPortal((
         <div
-          className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
+          className="fixed inset-0 flex items-center justify-center p-4"
           style={{
+            zIndex: 2147483647,
             background: isDark ? "rgba(0, 0, 0, 0.72)" : "rgba(17, 24, 39, 0.5)",
             backdropFilter: "blur(6px)",
           }}
@@ -2040,7 +2042,7 @@ export default function SystemToolsPage({
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
 
       {showRoleModal && (
         <div

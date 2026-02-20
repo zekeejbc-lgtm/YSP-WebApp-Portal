@@ -38,6 +38,15 @@ export default function PwaInstallPrompt({
     setIsIos(isIosDevice());
 
     const onBeforeInstall = (event: Event) => {
+      const rawDismissed = localStorage.getItem(DISMISS_KEY);
+      const dismissedAtValue = rawDismissed ? Number(rawDismissed) : NaN;
+      const dismissedRecently =
+        !Number.isNaN(dismissedAtValue) && Date.now() - dismissedAtValue < DISMISS_DURATION_MS;
+      const seen = localStorage.getItem(SEEN_KEY) === "true";
+      const shouldIntercept = enabled && !isAppInstalled() && !dismissedRecently && !seen;
+      if (!shouldIntercept) {
+        return;
+      }
       event.preventDefault();
       setDeferredPrompt(event as BeforeInstallPromptEvent);
     };

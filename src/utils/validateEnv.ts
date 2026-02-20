@@ -16,6 +16,7 @@ const REQUIRED_ENV_VARS = [
   'VITE_GAS_ISSUANCE_API_URL',
   'VITE_GAS_FEEDBACK_API_URL',
   'VITE_GAS_CHATBOT_API_URL',
+  'VITE_GAS_API_KEY',
 ] as const;
 
 /** Firebase vars — push notifications won't work but app still loads */
