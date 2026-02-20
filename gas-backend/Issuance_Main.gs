@@ -3630,22 +3630,21 @@
   * Get committees list
   */
   function getCommittees() {
-    // Return standard YSP committees
+    // Return official YSP committees and groups
     return {
       success: true,
       data: [
-        { id: 'executive', name: 'Executive Committee' },
-        { id: 'environmental', name: 'Environmental Conservation' },
-        { id: 'youth-dev', name: 'Youth Development' },
-        { id: 'outreach', name: 'Community Outreach' },
-        { id: 'education', name: 'Education and Scholarship' },
-        { id: 'health', name: 'Health and Wellness' },
-        { id: 'sports', name: 'Sports and Recreation' },
-        { id: 'finance', name: 'Finance and Resource Mobilization' },
-        { id: 'communications', name: 'Communications and Media' },
-        { id: 'membership', name: 'Membership and Recruitment' },
-        { id: 'events', name: 'Events and Programs' },
-        { id: 'documentation', name: 'Documentation and Records' }
+        { id: 'executive-board', name: 'Executive Board' },
+        { id: 'membership-internal-affairs', name: 'Membership and Internal Affairs Committee' },
+        { id: 'external-relations', name: 'External Relations Committee' },
+        { id: 'secretariat-documentation', name: 'Secretariat and Documentation Committee' },
+        { id: 'finance-treasury', name: 'Finance and Treasury Committee' },
+        { id: 'program-development', name: 'Program Development Committee' },
+        { id: 'communications-marketing', name: 'Communications and Marketing Committee' },
+        { id: 'barangay-chapter-leaders', name: 'Barangay Chapter Leaders' },
+        { id: 'general-members', name: 'General Members' },
+        { id: 'volunteers', name: 'Volunteers' },
+        { id: 'probationary-members', name: 'Probationary Members' }
       ]
     };
   }

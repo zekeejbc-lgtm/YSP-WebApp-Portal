@@ -14,6 +14,7 @@
 /// <reference types="vite/client" />
 
 import { getSessionToken } from './gasLoginService';
+import { YSP_COMMITTEES as SHARED_COMMITTEES } from '../constants/committees';
 
 // =====================================================
 // TYPES
@@ -890,18 +891,10 @@ export async function getCommittees(): Promise<Committee[]> {
   }
   
   // Return default committees if API fails
-  return [
-    { id: 'executive', name: 'Executive Committee' },
-    { id: 'environmental', name: 'Environmental Conservation' },
-    { id: 'youth-dev', name: 'Youth Development' },
-    { id: 'outreach', name: 'Community Outreach' },
-    { id: 'education', name: 'Education and Scholarship' },
-    { id: 'health', name: 'Health and Wellness' },
-    { id: 'sports', name: 'Sports and Recreation' },
-    { id: 'finance', name: 'Finance and Resource Mobilization' },
-    { id: 'communications', name: 'Communications and Media' },
-    { id: 'membership', name: 'Membership and Recruitment' },
-  ];
+  return SHARED_COMMITTEES.map((committee) => ({
+    id: committee.id,
+    name: committee.name,
+  }));
 }
 
 /**

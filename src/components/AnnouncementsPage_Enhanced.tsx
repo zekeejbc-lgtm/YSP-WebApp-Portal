@@ -19,6 +19,7 @@ import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS } from "./de
 import CustomDropdown from "./CustomDropdown";
 import { toast } from "sonner";
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
+import { YSP_COMMITTEE_NAMES } from "../constants/committees";
 
 interface Announcement {
   id: string;
@@ -92,17 +93,7 @@ export default function AnnouncementsPageEnhanced({
   ];
   
   // Sample committee names for autocomplete
-  const committeeNames = [
-    "Environmental Conservation",
-    "Youth Development",
-    "Community Outreach",
-    "Education and Scholarship",
-    "Health and Wellness",
-    "Sports and Recreation",
-    "Finance and Resource Mobilization",
-    "Communications and Media",
-    "Membership and Recruitment"
-  ];
+  const committeeNames = YSP_COMMITTEE_NAMES;
   
   const [announcements, setAnnouncements] = useState<Announcement[]>([
     {

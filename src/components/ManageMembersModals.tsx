@@ -15,6 +15,7 @@ import { openEmailApp } from "../utils/externalLinks";
 import CustomDropdown from "./CustomDropdown";
 import { type UploadToastMessage } from "./UploadToast";
 import type { SystemRole } from "../types/app";
+import { YSP_COMMITTEE_OPTIONS } from "../constants/committees";
 
 export interface Member {
   id?: string;
@@ -86,12 +87,23 @@ function getRoleOptions(availableRoles: SystemRole[] = [], currentRole?: string)
   return options;
 }
 
+function getCommitteeOptions(currentCommittee?: string) {
+  const options = [...YSP_COMMITTEE_OPTIONS];
+  if (
+    currentCommittee &&
+    !options.some((opt) => opt.value.toLowerCase() === currentCommittee.toLowerCase())
+  ) {
+    options.push({ value: currentCommittee, label: currentCommittee });
+  }
+  return options;
+}
+
 export function AddMemberModal({ isDark, onClose, onSave, availableRoles = [] }: AddMemberModalProps) {
   const [formData, setFormData] = useState<Member>({
     name: "",
     position: "",
     role: "Member",
-    committee: "Youth Development",
+    committee: "General Members",
     status: "Active",
     email: "",
     phone: "",
@@ -186,16 +198,7 @@ export function AddMemberModal({ isDark, onClose, onSave, availableRoles = [] }:
               <CustomDropdown
                 value={formData.committee}
                 onChange={(value) => setFormData({ ...formData, committee: value })}
-                options={[
-                  { value: "Executive Board", label: "Executive Board" },
-                  { value: "Membership and Internal Affairs Committee", label: "Membership and Internal Affairs Committee" },
-                  { value: "External Relations Committee", label: "External Relations Committee" },
-                  { value: "Secretariat and Documentation Committee", label: "Secretariat and Documentation Committee" },
-                  { value: "Finance and Treasury Committee", label: "Finance and Treasury Committee" },
-                  { value: "Program Development Committee", label: "Program Development Committee" },
-                  { value: "Communications and Marketing Committee", label: "Communications and Marketing Committee" },
-                  { value: "None", label: "None" },
-                ]}
+                options={getCommitteeOptions(formData.committee)}
                 isDark={isDark}
                 size="md"
               />
@@ -460,16 +463,7 @@ export function EditMemberModal({
               <CustomDropdown
                 value={formData.committee}
                 onChange={(value) => setFormData({ ...formData, committee: value })}
-                options={[
-                  { value: "Executive Board", label: "Executive Board" },
-                  { value: "Membership and Internal Affairs Committee", label: "Membership and Internal Affairs Committee" },
-                  { value: "External Relations Committee", label: "External Relations Committee" },
-                  { value: "Secretariat and Documentation Committee", label: "Secretariat and Documentation Committee" },
-                  { value: "Finance and Treasury Committee", label: "Finance and Treasury Committee" },
-                  { value: "Program Development Committee", label: "Program Development Committee" },
-                  { value: "Communications and Marketing Committee", label: "Communications and Marketing Committee" },
-                  { value: "None", label: "None" },
-                ]}
+                options={getCommitteeOptions(formData.committee)}
                 isDark={isDark}
                 size="md"
               />

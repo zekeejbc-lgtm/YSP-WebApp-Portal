@@ -72,6 +72,7 @@ import {
 import { fetchEvents, type EventData } from "../services/gasEventsService";
 import { getAllOfficers, type DirectoryOfficer } from "../services/gasDirectoryService";
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
+import { YSP_COMMITTEES as SHARED_COMMITTEES } from "../constants/committees";
 
 // =====================================================
 // TYPES & INTERFACES
@@ -216,6 +217,22 @@ const detectAttachmentType = (url: string): 'pdf' | 'document' | 'spreadsheet' |
   }
   
   return 'other';
+};
+
+const CUSTOM_LINK_TEMPLATE_ID = '__CUSTOM_LINK__';
+const CUSTOM_LINK_TEMPLATE: IssuanceTemplate = {
+  TemplateID: CUSTOM_LINK_TEMPLATE_ID,
+  Name: 'Custom Link',
+  Description: 'Use a custom Google Docs template URL',
+  Type: 'Custom',
+  DocsUrl: '',
+  Fields: '[]',
+  FieldsParsed: [],
+  IsDefault: false,
+  CreatedBy: 'system',
+  CreatedAt: '',
+  UpdatedAt: '',
+  Status: 'Active',
 };
 
 // Helper to get icon for attachment type
@@ -1012,17 +1029,10 @@ export default function IssuanceCenterPage({
   };
   
   const loadCommittees = async () => {
-    // Use the actual YSP committee list
-    const yspCommittees: Committee[] = [
-      { id: 'executive', name: 'Executive Board' },
-      { id: 'membership', name: 'Membership and Internal Affairs Committee' },
-      { id: 'external', name: 'External Relations Committee' },
-      { id: 'secretariat', name: 'Secretariat and Documentation Committee' },
-      { id: 'finance', name: 'Finance and Treasury Committee' },
-      { id: 'program', name: 'Program Development Committee' },
-      { id: 'communications', name: 'Communications and Marketing Committee' },
-      { id: 'general', name: 'General Members Committee' },
-    ];
+    const yspCommittees: Committee[] = SHARED_COMMITTEES.map((committee) => ({
+      id: committee.id,
+      name: committee.name,
+    }));
     setCommittees(yspCommittees);
   };
   
@@ -1616,6 +1626,8 @@ export default function IssuanceCenterPage({
           namePositionUnit: placeholder === '{NAME}' ? nameUnitFromColumn : undefined
         })));
       }
+    } else if (issuance.CustomTemplateUrl) {
+      handleTemplateSelect(CUSTOM_LINK_TEMPLATE);
     }
     
     // Parse and set recipients
@@ -1851,10 +1863,14 @@ export default function IssuanceCenterPage({
         const committee = item as Committee;
         setIsLoadingRecipients(true);
         try {
-          // For "General Members Committee", include members with no committee assigned
-          const committeeMembers = committee.id === 'general' 
-            ? members.filter(m => !m.committee || m.committee.trim() === '' || m.committee.toLowerCase().includes('general'))
-            : members.filter(m => m.committee?.toLowerCase().includes(committee.name.toLowerCase()));
+          const normalizedTarget = committee.name.toLowerCase().trim();
+          const committeeMembers = members.filter((m) => {
+            const normalizedMemberCommittee = (m.committee || "").toLowerCase().trim();
+            if (committee.id === "general-members") {
+              return !normalizedMemberCommittee || normalizedMemberCommittee.includes("general");
+            }
+            return normalizedMemberCommittee === normalizedTarget;
+          });
           const newRecipients: SelectedRecipient[] = committeeMembers.map(m => ({
             id: m.id,
             name: m.name,
@@ -3351,13 +3367,20 @@ export default function IssuanceCenterPage({
                     <CustomDropdown
                       value={selectedTemplate?.TemplateID || ''}
                       onChange={(templateId) => {
+                        if (templateId === CUSTOM_LINK_TEMPLATE_ID) {
+                          handleTemplateSelect(CUSTOM_LINK_TEMPLATE);
+                          return;
+                        }
                         const template = templates.find(t => t.TemplateID === templateId);
                         if (template) handleTemplateSelect(template);
                       }}
-                      options={templates.map(t => ({
-                        value: t.TemplateID,
-                        label: `${t.Name} (${t.Type})`,
-                      }))}
+                      options={[
+                        { value: CUSTOM_LINK_TEMPLATE_ID, label: 'Custom Link (Use URL below)' },
+                        ...templates.map(t => ({
+                          value: t.TemplateID,
+                          label: `${t.Name} (${t.Type})`,
+                        })),
+                      ]}
                       placeholder="Select a template..."
                       isDark={isDark}
                       size="md"

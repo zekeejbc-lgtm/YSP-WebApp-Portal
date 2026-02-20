@@ -25,6 +25,7 @@ import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, M
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import ExcelJS from 'exceljs';
+import { YSP_COMMITTEE_NAMES } from "../constants/committees";
 
 // Organization Logo URL
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -281,15 +282,7 @@ export interface AttendanceDashboardContext {
 // Committee filter options
 const COMMITTEES = [
   "All",
-  "Executive Board (only heads/Officers)",
-  "Only Members",
-  "Only Volunteers",
-  "Membership and Internal Affairs Committee",
-  "External Relations Committee",
-  "Secretariat and Documentation Committee",
-  "Finance and Treasury Committee",
-  "Program Development Committee",
-  "Communications and Marketing Committee",
+  ...YSP_COMMITTEE_NAMES,
 ];
 
 // Skeleton component for loading states
@@ -596,23 +589,15 @@ export default function AttendanceDashboardPage({
   const matchesCommitteeFilter = useCallback((member: MemberForAttendance | undefined): boolean => {
     if (!member) return false;
     if (selectedCommittee === "All") return true;
-    
-    switch (selectedCommittee) {
-      case "Executive Board (only heads/Officers)":
-        return member.position?.toLowerCase().includes('head') || 
-               member.position?.toLowerCase().includes('officer') ||
-               member.position?.toLowerCase().includes('president') ||
-               member.position?.toLowerCase().includes('vice') ||
-               member.position?.toLowerCase().includes('secretary') ||
-               member.position?.toLowerCase().includes('treasurer');
-      case "Only Members":
-        return member.position?.toLowerCase() === 'member' || 
-               member.position?.toLowerCase().includes('member');
-      case "Only Volunteers":
-        return member.position?.toLowerCase().includes('volunteer');
-      default:
-        return member.committee === selectedCommittee;
+
+    const normalizedMemberCommittee = (member.committee || "").toLowerCase().trim();
+    const normalizedSelectedCommittee = selectedCommittee.toLowerCase().trim();
+
+    if (normalizedSelectedCommittee === "general members") {
+      return !normalizedMemberCommittee || normalizedMemberCommittee.includes("general");
     }
+
+    return normalizedMemberCommittee === normalizedSelectedCommittee;
   }, [selectedCommittee]);
 
   // Get members who were not recorded in attendance
@@ -1413,7 +1398,7 @@ export default function AttendanceDashboardPage({
         { name: 'Finance and Treasury Committee', short: 'FTC' },
         { name: 'Program Development Committee', short: 'PDC' },
         { name: 'Communications and Marketing Committee', short: 'CMC' },
-        { name: 'General Committee', short: 'GEN' },
+        { name: 'General Members', short: 'GEN' },
       ];
 
       const filteredRecords = getFilteredAttendance();
@@ -1425,10 +1410,10 @@ export default function AttendanceDashboardPage({
       
       // Calculate committee stats - only count Present/Late as attended
       const committeeStats = committeeList.map(comm => {
-        const isGeneral = comm.name === 'General Committee';
+        const isGeneral = comm.name === 'General Members';
         const committeeMembersCount = allMembers.filter(m => {
           if (isGeneral) {
-            return !m.committee || m.committee === '' || m.committee === 'None' || m.committee === 'General Committee';
+            return !m.committee || m.committee === '' || m.committee === 'None' || m.committee === 'General Members';
           }
           return m.committee === comm.name;
         }).length;
@@ -1440,7 +1425,7 @@ export default function AttendanceDashboardPage({
           
           const member = allMembers.find(m => m.id === r.memberId);
           if (isGeneral) {
-            return !member?.committee || member.committee === '' || member.committee === 'None' || member.committee === 'General Committee';
+            return !member?.committee || member.committee === '' || member.committee === 'None' || member.committee === 'General Members';
           }
           return member?.committee === comm.name;
         }).length;

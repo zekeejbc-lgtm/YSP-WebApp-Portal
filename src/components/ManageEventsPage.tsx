@@ -18,6 +18,7 @@ import {
 } from "../services/gasEventsService";
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 import { getMembersForAttendance, type MemberForAttendance } from "../services/gasAttendanceService";
+import { YSP_COMMITTEES as SHARED_COMMITTEES } from "../constants/committees";
 
 // --- COMPONENTS ---
 
@@ -238,16 +239,10 @@ interface Committee {
 }
 
 // YSP Committees list
-const YSP_COMMITTEES: Committee[] = [
-  { id: 'executive', name: 'Executive Board' },
-  { id: 'membership', name: 'Membership and Internal Affairs Committee' },
-  { id: 'external', name: 'External Relations Committee' },
-  { id: 'secretariat', name: 'Secretariat and Documentation Committee' },
-  { id: 'finance', name: 'Finance and Treasury Committee' },
-  { id: 'program', name: 'Program Development Committee' },
-  { id: 'communications', name: 'Communications and Marketing Committee' },
-  { id: 'general', name: 'General Members Committee' },
-];
+const YSP_COMMITTEES: Committee[] = SHARED_COMMITTEES.map((committee) => ({
+  id: committee.id,
+  name: committee.name,
+}));
 
 function convertToDateInput(dateStr: string): string {
   if (!dateStr) return '';
@@ -629,13 +624,15 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
   
   // Handle selecting a committee from suggestions
   const handleSelectCommittee = (committee: Committee) => {
-    // Get all members from this committee
-    // For "General Members Committee", include members with no committee assigned
-    const committeeMembers = committee.id === 'general' 
-      ? allMembers.filter(m => !m.committee || m.committee.toLowerCase().includes('general'))
-      : allMembers.filter(m => 
-          m.committee?.toLowerCase().includes(committee.name.toLowerCase())
-        );
+    // For General Members, include legacy blank values.
+    const normalizedTarget = committee.name.toLowerCase().trim();
+    const committeeMembers = allMembers.filter((m) => {
+      const normalizedMemberCommittee = (m.committee || "").toLowerCase().trim();
+      if (committee.id === "general-members") {
+        return !normalizedMemberCommittee || normalizedMemberCommittee.includes("general");
+      }
+      return normalizedMemberCommittee === normalizedTarget;
+    });
     
     // Filter out already added members
     const existingIds = new Set(formData.selectedRecipients.map(r => r.id));

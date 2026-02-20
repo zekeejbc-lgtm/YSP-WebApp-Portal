@@ -82,6 +82,7 @@ import {
   type AttendanceRecord,
 } from "../services/gasAttendanceService";
 import { getStoredUser } from "../services/gasLoginService";
+import { YSP_COMMITTEES as SHARED_COMMITTEES } from "../constants/committees";
 
 interface AttendanceRecordingPageProps {
   onClose: () => void;
@@ -970,21 +971,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
   const [batchNotFoundNames, setBatchNotFoundNames] = useState<string[]>([]);
   
   // Committees for @committee command
-  const COMMITTEES = [
-    { id: 'executive', name: 'Executive Committee' },
-    { id: 'environmental', name: 'Environmental Conservation' },
-    { id: 'youth-dev', name: 'Youth Development' },
-    { id: 'outreach', name: 'Community Outreach' },
-    { id: 'education', name: 'Education and Scholarship' },
-    { id: 'health', name: 'Health and Wellness' },
-    { id: 'sports', name: 'Sports and Recreation' },
-    { id: 'finance', name: 'Finance and Resource Mobilization' },
-    { id: 'communications', name: 'Communications and Media' },
-    { id: 'membership', name: 'Membership and Recruitment' },
-    { id: 'events', name: 'Events and Programs' },
-    { id: 'documentation', name: 'Documentation and Records' },
-    { id: 'general', name: 'General Members' },
-  ];
+  const COMMITTEES = SHARED_COMMITTEES;
   
   // Smart search command definitions
   const SEARCH_COMMANDS = [

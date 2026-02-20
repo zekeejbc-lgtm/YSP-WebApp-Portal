@@ -40,6 +40,7 @@ import {
 import { getSystemRoles } from "../services/gasSystemToolsService";
 import type { SystemRole } from "../types/app";
 import { useLocation, useNavigate } from "react-router-dom";
+import { YSP_COMMITTEE_OPTIONS } from "../constants/committees";
 
 // =================== SKELETON COMPONENTS ===================
 
@@ -1888,16 +1889,7 @@ export default function ManageMembersPage({
             <CustomDropdown
               value={filterCommittee}
               onChange={setFilterCommittee}
-              options={[
-                { value: "all", label: "All Committees" },
-                { value: "Executive Board", label: "Executive Board" },
-                { value: "Membership and Internal Committee", label: "Membership and Internal Affairs Committee" },
-                { value: "External Relations Committee", label: "External Relations Committee" },
-                { value: "Secretariat and Documentation Committee", label: "Secretariat and Documentation Committee" },
-                { value: "Finance and Treasury Committee", label: "Finance and Treasury Committee" },
-                { value: "Program Development Committee", label: "Program Development Committee" },
-                { value: "Communications and Marketing Committee", label: "Communications and Marketing Committee" },
-              ]}
+              options={[{ value: "all", label: "All Committees" }, ...YSP_COMMITTEE_OPTIONS]}
               isDark={isDark}
               size="md"
               className="min-w-[180px]"

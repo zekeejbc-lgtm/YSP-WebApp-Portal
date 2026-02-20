@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Button, DESIGN_TOKENS } from "./design-system";
 import { getModalStyles } from "./modal-regulations";
 import type { SystemRole } from "../types/app";
+import { YSP_COMMITTEE_NAMES } from "../constants/committees";
 
 interface AccountCreationModalProps {
   isOpen: boolean;
@@ -234,17 +235,7 @@ export default function AccountCreationModal({
   const [role, setRole] = useState("Member");
   const [position, setPosition] = useState("");
 
-  const committees = [
-    "Executive Board",
-    "Community Development",
-    "Environmental Conservation",
-    "Youth Development",
-    "Health & Wellness",
-    "Education & Literacy",
-    "Disaster Response",
-    "Events Management",
-    "Communications & Media",
-  ];
+  const committees = YSP_COMMITTEE_NAMES;
 
   const roleOptions = useMemo(() => {
     const source = availableRoles.length > 0 ? availableRoles : FALLBACK_ROLES;
