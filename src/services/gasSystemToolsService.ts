@@ -38,6 +38,41 @@ export interface SystemHealthData {
     message?: string; // Optional message when unavailable
     error?: string; // Optional error message
   };
+  propertyAudit?: ScriptPropertiesAudit;
+}
+
+export interface ScriptPropertiesAudit {
+  status: 'ok' | 'incomplete';
+  summary: {
+    totalDefined: number;
+    requiredConfigured: number;
+    requiredTotal: number;
+    recommendedConfigured: number;
+    recommendedTotal: number;
+    featureConfigured: number;
+    featureTotal: number;
+    chatbotGeminiKeyCount: number;
+  };
+  gemini?: {
+    chatbotConfiguredCount: number;
+    applicantConfiguredCount: number;
+    totalConfiguredCount: number;
+    chatbotConfiguredKeys: string[];
+    applicantConfiguredKeys: string[];
+  };
+  required: {
+    configured: string[];
+    missing: string[];
+  };
+  recommended: {
+    configured: string[];
+    missing: string[];
+  };
+  feature: {
+    configured: string[];
+    missing: string[];
+  };
+  notes?: string[];
 }
 
 export interface BackupResult {
@@ -102,6 +137,7 @@ const GAS_API_URL =
   import.meta.env.VITE_GAS_SYSTEM_TOOLS_API_URL ||
   import.meta.env.VITE_GAS_LOGIN_API_URL ||
   '';
+const GAS_API_KEY = import.meta.env.VITE_GAS_API_KEY || '';
 
 // Debug: Log API URL on load (silenced in production)
 // console.warn('[SystemTools] API URL configured:', GAS_API_URL ? GAS_API_URL.substring(0, 60) + '...' : 'NOT SET');
@@ -191,6 +227,9 @@ async function callSystemToolsAPI<T>(
 
   // Suppress verbose logging - only log errors in production
   const isSilentAction = action === 'getCacheVersion';
+  if (!GAS_API_KEY && !isSilentAction) {
+    console.error('[SystemTools] VITE_GAS_API_KEY is missing; requests will be rejected by GAS.');
+  }
 
   try {
     const response = await fetch(GAS_API_URL, {
@@ -198,7 +237,7 @@ async function callSystemToolsAPI<T>(
       headers: {
         'Content-Type': 'text/plain;charset=utf-8',
       },
-      body: JSON.stringify({ action, ...data, sessionToken: getSessionToken() }),
+      body: JSON.stringify({ action, ...data, key: GAS_API_KEY, sessionToken: getSessionToken() }),
       signal,
     });
 
@@ -245,6 +284,14 @@ async function callSystemToolsAPI<T>(
 export async function getSystemHealth(username?: string): Promise<SystemHealthData> {
   const resolvedUsername = username || getStoredUser()?.username || '';
   return callSystemToolsAPI<SystemHealthData>('getSystemHealth', { username: resolvedUsername });
+}
+
+export async function checkAllProperties(username?: string): Promise<ScriptPropertiesAudit> {
+  const resolvedUsername = username || getStoredUser()?.username || '';
+  const result = await callSystemToolsAPI<{ propertyAudit: ScriptPropertiesAudit }>('checkAllProperties', {
+    username: resolvedUsername,
+  });
+  return result.propertyAudit;
 }
 
 // =================== DATABASE BACKUP ===================

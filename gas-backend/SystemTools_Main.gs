@@ -1,4 +1,4 @@
-// =================== WEB APP ENTRY POINTS ===================
+﻿// =================== WEB APP ENTRY POINTS ===================
 
 function isRequestCancelled_(params) {
   return !!(params && (params.cancelled === true || params.cancelled === 'true' || params.action === 'cancel'));
@@ -32,17 +32,15 @@ function doPost(e) {
     }
     
     // ---- Session token verification (HMAC) ----
-    var tokenExemptActions = ['getCacheVersion', 'getMaintenanceMode'];
-    if (tokenExemptActions.indexOf(action) === -1) {
-      var tokenUser = verifyHmacToken_(requestData.sessionToken);
-      var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-      if (sessionSecret && !tokenUser) {
-        return createErrorResponse('Invalid or expired session token', 401);
-      }
-      if (tokenUser) {
-        requestData.username = tokenUser.username;
-      }
+    var tokenUser = verifyHmacToken_(requestData.sessionToken);
+    var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+    if (!sessionSecret) {
+      return createErrorResponse('Server auth misconfigured: SESSION_SECRET_KEY is missing', 503);
     }
+    if (!tokenUser) {
+      return createErrorResponse('Invalid or expired session token', 401);
+    }
+    requestData.username = tokenUser.username;
     
     Logger.log('doPost received action: ' + action);
 
@@ -67,6 +65,11 @@ function doPost(e) {
         const authError = requireAdminOrAuditor_(requestData.username, 'view system health');
         if (authError) return authError;
         return handleGetSystemHealth();
+      }
+      case 'checkAllProperties': {
+        const authError = requireAdminOrAuditor_(requestData.username, 'check script properties');
+        if (authError) return authError;
+        return handleCheckAllProperties();
       }
       
       // Cache Management
@@ -181,16 +184,16 @@ function forceAuthorization() {
   for (let i = 0; i < ALL_SPREADSHEETS.length; i++) {
     const config = ALL_SPREADSHEETS[i];
     if (!config.id) {
-      Logger.log('⏭ Skipping ' + config.name + ': No ID configured');
+      Logger.log('â­ Skipping ' + config.name + ': No ID configured');
       continue;
     }
     
     try {
       const ss = SpreadsheetApp.openById(config.id);
       const sheets = ss.getSheets();
-      Logger.log('✓ ' + config.name + ' OK: ' + ss.getName() + ' (' + sheets.length + ' sheets)');
+      Logger.log('âœ“ ' + config.name + ' OK: ' + ss.getName() + ' (' + sheets.length + ' sheets)');
     } catch (e) {
-      Logger.log('✗ ' + config.name + ' FAILED: ' + e.toString());
+      Logger.log('âœ— ' + config.name + ' FAILED: ' + e.toString());
     }
   }
   
@@ -200,9 +203,9 @@ function forceAuthorization() {
   // Check Drive folder access
   try {
     const folder = DriveApp.getFolderById(BACKUPS_FOLDER_ID);
-    Logger.log('✓ Backups folder access OK: ' + folder.getName());
+    Logger.log('âœ“ Backups folder access OK: ' + folder.getName());
   } catch (e) {
-    Logger.log('✗ Backups folder access FAILED: ' + e.toString());
+    Logger.log('âœ— Backups folder access FAILED: ' + e.toString());
   }
   
   // Test create/delete spreadsheet
@@ -210,9 +213,9 @@ function forceAuthorization() {
     const testSS = SpreadsheetApp.create('_AUTH_TEST_DELETE_ME');
     const testId = testSS.getId();
     DriveApp.getFileById(testId).setTrashed(true);
-    Logger.log('✓ Create/delete spreadsheet OK');
+    Logger.log('âœ“ Create/delete spreadsheet OK');
   } catch (e) {
-    Logger.log('✗ Create spreadsheet FAILED: ' + e.toString());
+    Logger.log('âœ— Create spreadsheet FAILED: ' + e.toString());
   }
   
   Logger.log('');
@@ -221,9 +224,9 @@ function forceAuthorization() {
   // Check MailApp access for email quota tracking
   try {
     const quota = MailApp.getRemainingDailyQuota();
-    Logger.log('✓ Email quota access OK: ' + quota + ' emails remaining');
+    Logger.log('âœ“ Email quota access OK: ' + quota + ' emails remaining');
   } catch (e) {
-    Logger.log('✗ Email quota access FAILED: ' + e.toString());
+    Logger.log('âœ— Email quota access FAILED: ' + e.toString());
   }
   
   Logger.log('');
@@ -396,6 +399,34 @@ const ALL_SPREADSHEETS = [
   { id: SYSTEM_SETTINGS_SPREADSHEET_ID, name: 'SystemSettings', description: 'Settings, Maintenance, Backup History' },
   { id: EVENTS_SPREADSHEET_ID, name: 'Events', description: 'Events, EventAttendance' },
   { id: HOMEPAGE_SPREADSHEET_ID, name: 'Homepage', description: 'Homepage content, Projects, Contact' },
+];
+
+// Universal project-level properties
+const REQUIRED_SCRIPT_PROPERTIES = [
+  'SESSION_SECRET_KEY',
+  'SECRET_API_KEY',
+  'LOGIN_SPREADSHEET_ID'
+];
+
+const RECOMMENDED_SCRIPT_PROPERTIES = [
+  'SYSTEM_SETTINGS_SPREADSHEET_ID'
+];
+
+// Feature/module properties used by one or more GAS modules in this project
+const FEATURE_SCRIPT_PROPERTIES = [
+  'CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID',
+  'AI_CHATBOT_API_KEY',
+  'FEEDBACK_SPREADSHEET_ID',
+  'FEEDBACK_SHEET_NAME',
+  'FEEDBACK_IMAGES_FOLDER_ID',
+  'EVENTS_SPREADSHEET_ID',
+  'HOMEPAGE_SPREADSHEET_ID',
+  'NOTIFICATIONS_SPREADSHEET_ID',
+  'NOTIFICATIONS_API_URL',
+  'PROFILE_PICTURES_FOLDER_ID',
+  'BACKUPS_FOLDER_ID',
+  'ACCESS_LOGS_ARCHIVE_FOLDER_ID',
+  'ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID'
 ];
 
 // =================== INITIALIZATION ===================
@@ -732,7 +763,7 @@ function getSystemRoleRecordByName_(roleName) {
 }
 
 /**
- * Reusable role gate — returns an error response if the user is NOT an admin or auditor,
+ * Reusable role gate â€” returns an error response if the user is NOT an admin or auditor,
  * or null if the user is authorized. Usage:
  *   const authError = requireAdminOrAuditor_(username, 'perform this action');
  *   if (authError) return authError;
@@ -767,13 +798,13 @@ function requireAdminOrAuditor_(username, actionDescription) {
 /**
  * Validate the request API key.
  * Set SECRET_API_KEY in Script Properties for each deployment.
- * Returns true if valid (or not yet configured), false if invalid.
+ * Returns true only when configured and valid, false otherwise.
  */
 function validateApiKey_(key) {
   var expected = props_.getProperty('SECRET_API_KEY') || '';
   if (!expected) {
-    Logger.log('WARNING: SECRET_API_KEY not set — API key validation skipped');
-    return true;
+    Logger.log('ERROR: SECRET_API_KEY not set — rejecting request');
+    return false;
   }
   return !!(key && String(key).trim() === expected);
 }
@@ -797,7 +828,7 @@ function verifyHmacToken_(token) {
   if (!token || typeof token !== 'string') return null;
   var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
   if (!secret) {
-    Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+    Logger.log('WARNING: SESSION_SECRET_KEY not set â€” token verification skipped');
     return null;
   }
   var parts = token.split('.');
@@ -1376,6 +1407,7 @@ function handleGetSystemHealth() {
     const lastExportName = getSystemSetting('last_export_name') || '';
     
     const cacheVersion = getCacheVersion();
+    const propertyAudit = getScriptPropertiesAudit_();
 
     return createSuccessResponse({
       database: databaseStatus,
@@ -1394,12 +1426,117 @@ function handleGetSystemHealth() {
       lastExportName: lastExportName,
       cacheVersion: cacheVersion,
       timestamp: new Date().toISOString(),
-      emailQuota: emailQuota
+      emailQuota: emailQuota,
+      propertyAudit: propertyAudit
     });
   } catch (error) {
     Logger.log('System health check error: ' + error.toString());
     return createErrorResponse('Failed to get system health: ' + error.message, 500);
   }
+}
+
+function handleCheckAllProperties() {
+  try {
+    return createSuccessResponse({
+      propertyAudit: getScriptPropertiesAudit_(),
+      checkedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    Logger.log('Script property check error: ' + error.toString());
+    return createErrorResponse('Failed to check script properties: ' + error.message, 500);
+  }
+}
+
+function getScriptPropertiesAudit_() {
+  var props = PropertiesService.getScriptProperties().getProperties() || {};
+  var allKeys = Object.keys(props);
+  var requiredMissing = [];
+  var recommendedMissing = [];
+  var featureMissing = [];
+
+  for (var i = 0; i < REQUIRED_SCRIPT_PROPERTIES.length; i++) {
+    var requiredKey = REQUIRED_SCRIPT_PROPERTIES[i];
+    if (!toSafePropValue_(props[requiredKey])) requiredMissing.push(requiredKey);
+  }
+  for (var j = 0; j < RECOMMENDED_SCRIPT_PROPERTIES.length; j++) {
+    var recommendedKey = RECOMMENDED_SCRIPT_PROPERTIES[j];
+    if (!toSafePropValue_(props[recommendedKey])) recommendedMissing.push(recommendedKey);
+  }
+  for (var k = 0; k < FEATURE_SCRIPT_PROPERTIES.length; k++) {
+    var featureKey = FEATURE_SCRIPT_PROPERTIES[k];
+    if (!toSafePropValue_(props[featureKey])) featureMissing.push(featureKey);
+  }
+
+  var chatbotKeyCount = countConfiguredPrefixedKeys_(props, 'AI_CHATBOT_API_KEY');
+  var applicantKeyCount = countConfiguredPrefixedKeys_(props, 'GEMINI_API_KEY');
+  var geminiTotalKeyCount = chatbotKeyCount + applicantKeyCount;
+
+  return {
+    status: requiredMissing.length ? 'incomplete' : 'ok',
+    summary: {
+      totalDefined: allKeys.length,
+      requiredConfigured: REQUIRED_SCRIPT_PROPERTIES.length - requiredMissing.length,
+      requiredTotal: REQUIRED_SCRIPT_PROPERTIES.length,
+      recommendedConfigured: RECOMMENDED_SCRIPT_PROPERTIES.length - recommendedMissing.length,
+      recommendedTotal: RECOMMENDED_SCRIPT_PROPERTIES.length,
+      featureConfigured: FEATURE_SCRIPT_PROPERTIES.length - featureMissing.length,
+      featureTotal: FEATURE_SCRIPT_PROPERTIES.length,
+      chatbotGeminiKeyCount: geminiTotalKeyCount
+    },
+    gemini: {
+      chatbotConfiguredCount: chatbotKeyCount,
+      applicantConfiguredCount: applicantKeyCount,
+      totalConfiguredCount: geminiTotalKeyCount,
+      chatbotConfiguredKeys: collectConfiguredPrefixedKeys_(props, 'AI_CHATBOT_API_KEY'),
+      applicantConfiguredKeys: collectConfiguredPrefixedKeys_(props, 'GEMINI_API_KEY')
+    },
+    required: {
+      configured: collectConfiguredKeys_(props, REQUIRED_SCRIPT_PROPERTIES),
+      missing: requiredMissing
+    },
+    recommended: {
+      configured: collectConfiguredKeys_(props, RECOMMENDED_SCRIPT_PROPERTIES),
+      missing: recommendedMissing
+    },
+    feature: {
+      configured: collectConfiguredKeys_(props, FEATURE_SCRIPT_PROPERTIES),
+      missing: featureMissing
+    },
+    notes: [
+      'Universal baseline keys are SESSION_SECRET_KEY, SECRET_API_KEY, LOGIN_SPREADSHEET_ID.',
+      'Gemini keys are detected from AI_CHATBOT_API_KEY* (chatbot) and GEMINI_API_KEY* (applicant mapping).'
+    ]
+  };
+}
+
+function collectConfiguredKeys_(props, keys) {
+  var out = [];
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (toSafePropValue_(props[key])) out.push(key);
+  }
+  return out;
+}
+
+function countConfiguredPrefixedKeys_(props, baseKey) {
+  return collectConfiguredPrefixedKeys_(props, baseKey).length;
+}
+
+function collectConfiguredPrefixedKeys_(props, baseKey) {
+  var out = [];
+  var normalizedBase = String(baseKey || '').trim();
+  if (!normalizedBase) return out;
+
+  if (toSafePropValue_(props[normalizedBase])) out.push(normalizedBase);
+  for (var i = 1; i <= 20; i++) {
+    var numbered = normalizedBase + '_' + i;
+    if (toSafePropValue_(props[numbered])) out.push(numbered);
+  }
+  return out;
+}
+
+function toSafePropValue_(value) {
+  return String(value || '').trim();
 }
 
 // =================== MAINTENANCE MODE ===================
@@ -1692,7 +1829,7 @@ function handleGetAccessLogs(page = 1, limit = 50, filterType = null) {
     const sheet = initializeAccessLogsSheet();
     const data = sheet.getDataRange().getValues();
 
-    // Build a username → { fullName, profilePic } lookup from User Profiles
+    // Build a username â†’ { fullName, profilePic } lookup from User Profiles
     var userLookup = {};
     try {
       var profileSS = SpreadsheetApp.openById(SYSTEM_DATA_SPREADSHEET_ID);
@@ -2983,3 +3120,5 @@ function testGetMaintenanceMode() {
   const result = handleGetMaintenanceMode();
   Logger.log(result.getContent());
 }
+
+

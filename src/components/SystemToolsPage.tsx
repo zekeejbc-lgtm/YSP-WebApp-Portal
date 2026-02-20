@@ -34,6 +34,7 @@ import {
 import MaintenanceModeModal, { type MaintenanceFormData } from "./MaintenanceModeModal";
 import {
   getSystemHealth,
+  checkAllProperties,
   createDatabaseBackup,
   exportData,
   bumpCacheVersion,
@@ -49,6 +50,7 @@ import {
   addSystemRole,
   updateSystemRole,
   deleteSystemRole,
+  type ScriptPropertiesAudit,
 } from "../services/gasSystemToolsService";
 import type { PermissionSet, SystemRole } from "../types/app";
 import { DEFAULT_PERMISSIONS, PERMISSION_TOGGLE_DEFINITIONS } from "../types/app";
@@ -195,14 +197,17 @@ export default function SystemToolsPage({
   
   // Data states
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
+  const [propertyAudit, setPropertyAudit] = useState<ScriptPropertiesAudit | null>(null);
+  const [isPropertyCheckLoading, setIsPropertyCheckLoading] = useState(false);
   const [maintenanceMode, setMaintenanceMode] = useState<MaintenanceModeState>(getMaintenanceMode());
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
   const [showCacheRefreshModal, setShowCacheRefreshModal] = useState(false);
   const [selectedPage, setSelectedPage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"operations" | "roles">("operations");
+  const [activeTab, setActiveTab] = useState<"operations" | "roles" | "checkup">("operations");
   const [roles, setRoles] = useState<SystemRole[]>([]);
   const [isRolesLoading, setIsRolesLoading] = useState(false);
   const [showRoleModal, setShowRoleModal] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
   const [editingRole, setEditingRole] = useState<SystemRole | null>(null);
   const [roleForm, setRoleForm] = useState<SystemRole>({
     name: "",
@@ -265,9 +270,11 @@ export default function SystemToolsPage({
     try {
       const health = await getSystemHealth(username);
       setSystemHealth(health);
+      setPropertyAudit(health.propertyAudit || null);
     } catch (error) {
       console.error('Error fetching system health:', error);
       toast.error('Failed to fetch system health');
+      setPropertyAudit(null);
       setSystemHealth({
         database: 'error',
         databaseRows: 0,
@@ -355,9 +362,9 @@ export default function SystemToolsPage({
   }, [fetchSystemHealth, fetchMaintenanceMode, fetchRoles]);
 
   useEffect(() => {
-    const anyModalOpen = showRoleModal || showMaintenanceModal || showCacheRefreshModal;
+    const anyModalOpen = showRoleModal || showMaintenanceModal || showCacheRefreshModal || showAuditModal;
     onModalStateChange?.(anyModalOpen);
-  }, [showRoleModal, showMaintenanceModal, showCacheRefreshModal, onModalStateChange]);
+  }, [showRoleModal, showMaintenanceModal, showCacheRefreshModal, showAuditModal, onModalStateChange]);
 
   useEffect(() => {
     return () => {
@@ -683,6 +690,24 @@ export default function SystemToolsPage({
     toast.success('System Health Refreshed');
   };
 
+  const handleRunPropertyCheck = async () => {
+    setIsPropertyCheckLoading(true);
+    try {
+      const audit = await checkAllProperties(username);
+      setPropertyAudit(audit);
+      toast.success(
+        audit.status === "ok"
+          ? "All required properties are configured."
+          : "Property check completed with missing keys."
+      );
+    } catch (error) {
+      console.error("Property check error:", error);
+      toast.error("Failed to run property check");
+    } finally {
+      setIsPropertyCheckLoading(false);
+    }
+  };
+
   // Maintenance Mode Handlers
   const handleToggleFullPWA = async () => {
     if (maintenanceMode.fullPWA.enabled) {
@@ -967,15 +992,17 @@ export default function SystemToolsPage({
           >
             System Health
           </h2>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleRefreshHealth}
-            icon={<RefreshCw className={`w-4 h-4 ${isLoadingHealth ? "animate-spin" : ""}`} />}
-            disabled={isLoadingHealth}
-          >
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleRefreshHealth}
+              icon={<RefreshCw className={`w-4 h-4 ${isLoadingHealth ? "animate-spin" : ""}`} />}
+              disabled={isLoadingHealth}
+            >
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {isLoadingHealth ? (
@@ -1262,6 +1289,7 @@ export default function SystemToolsPage({
           </div>
         </div>
         )}
+
       </div>
 
       <div className="mb-6">
@@ -1293,6 +1321,17 @@ export default function SystemToolsPage({
             }}
           >
             Role Manager
+          </button>
+          <button
+            className="px-4 py-2 rounded-lg text-sm transition-all"
+            onClick={() => setActiveTab("checkup")}
+            style={{
+              background: activeTab === "checkup" ? DESIGN_TOKENS.colors.brand.red : "transparent",
+              color: activeTab === "checkup" ? "#ffffff" : isDark ? "#d1d5db" : "#374151",
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            }}
+          >
+            System Checkup
           </button>
         </div>
       </div>
@@ -1653,7 +1692,7 @@ export default function SystemToolsPage({
           </div>
         </div>
       </>
-      ) : (
+      ) : activeTab === "roles" ? (
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <h2
@@ -1785,6 +1824,222 @@ export default function SystemToolsPage({
           </div>
         </div>
       </div>
+      ) : (
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2
+            style={{
+              fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+              fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+              fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            }}
+          >
+            System Checkup
+          </h2>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleRunPropertyCheck}
+            icon={<Shield className={`w-4 h-4 ${isPropertyCheckLoading ? "animate-spin" : ""}`} />}
+            disabled={isPropertyCheckLoading}
+          >
+            Run Property Check
+          </Button>
+        </div>
+
+        <div
+          className="p-6 rounded-xl border"
+          style={{
+            background: isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(255, 255, 255, 0.7)",
+            backdropFilter: "blur(12px)",
+            borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+          }}
+        >
+          {propertyAudit ? (
+            <>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  }}
+                >
+                  Script Properties Audit
+                </div>
+                <span
+                  className="px-2 py-1 rounded text-xs"
+                  style={{
+                    backgroundColor: propertyAudit.status === "ok" ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.2)",
+                    color: propertyAudit.status === "ok" ? "#10b981" : "#f59e0b",
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  }}
+                >
+                  {propertyAudit.status.toUpperCase()}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                  color: isDark ? "#9ca3af" : "#6b7280",
+                }}
+              >
+                Required: {propertyAudit.summary.requiredConfigured}/{propertyAudit.summary.requiredTotal} |
+                Recommended: {propertyAudit.summary.recommendedConfigured}/{propertyAudit.summary.recommendedTotal} |
+                Feature: {propertyAudit.summary.featureConfigured}/{propertyAudit.summary.featureTotal} |
+                Gemini Keys: {propertyAudit.gemini ? propertyAudit.gemini.totalConfiguredCount : propertyAudit.summary.chatbotGeminiKeyCount}
+              </div>
+
+              {propertyAudit.required.missing.length > 0 && (
+                <div
+                  className="mt-2"
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                    color: "#ef4444",
+                  }}
+                >
+                  Missing Required: {propertyAudit.required.missing.join(", ")}
+                </div>
+              )}
+
+              <div className="mt-4">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowAuditModal(true)}
+                  icon={<ExternalLink className="w-4 h-4" />}
+                >
+                  View Detailed Audit
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div
+              style={{
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                color: isDark ? "#9ca3af" : "#6b7280",
+              }}
+            >
+              No property audit run yet. Click Run Property Check to scan required and feature script properties.
+            </div>
+          )}
+        </div>
+      </div>
+      )}
+
+      {showAuditModal && propertyAudit && (
+        <div
+          className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
+          style={{
+            background: isDark ? "rgba(0, 0, 0, 0.72)" : "rgba(17, 24, 39, 0.5)",
+            backdropFilter: "blur(6px)",
+          }}
+          onClick={() => setShowAuditModal(false)}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl border flex flex-col"
+            style={{
+              background: isDark ? "rgba(15, 23, 42, 0.97)" : "rgba(255, 255, 255, 0.98)",
+              borderColor: isDark ? "rgba(255, 255, 255, 0.14)" : "rgba(0, 0, 0, 0.12)",
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              className="sticky top-0 z-10 px-6 py-4 border-b flex items-center justify-between"
+              style={{
+                background: isDark ? "rgba(15, 23, 42, 0.98)" : "rgba(255, 255, 255, 0.98)",
+                borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.08)",
+              }}
+            >
+              <h3
+                style={{
+                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                }}
+              >
+                Script Properties Audit Details
+              </h3>
+              <button
+                type="button"
+                aria-label="Close audit details"
+                title="Close"
+                className="p-2 rounded-lg border hover:bg-gray-200 dark:hover:bg-gray-700"
+                style={{
+                  borderColor: isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.12)",
+                }}
+                onClick={() => setShowAuditModal(false)}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-6 py-5 space-y-5">
+              <div
+                className="p-4 rounded-xl border"
+                style={{
+                  background: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(249, 250, 251, 0.9)",
+                  borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.08)",
+                }}
+              >
+                <div className="font-semibold mb-2">Summary</div>
+                <div className="text-sm">
+                  Required: {propertyAudit.summary.requiredConfigured}/{propertyAudit.summary.requiredTotal} | Recommended: {propertyAudit.summary.recommendedConfigured}/{propertyAudit.summary.recommendedTotal} | Feature: {propertyAudit.summary.featureConfigured}/{propertyAudit.summary.featureTotal}
+                </div>
+                <div className="text-sm mt-1">
+                  Gemini Keys:
+                  {' '}Chatbot {propertyAudit.gemini?.chatbotConfiguredCount ?? 0},
+                  {' '}Applicant {propertyAudit.gemini?.applicantConfiguredCount ?? 0},
+                  {' '}Total {propertyAudit.gemini?.totalConfiguredCount ?? propertyAudit.summary.chatbotGeminiKeyCount}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 rounded-xl border" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                  <div className="font-semibold mb-2">Required Keys</div>
+                  <div className="text-xs mb-2">Configured: {propertyAudit.required.configured.length}</div>
+                  <div className="text-xs">Missing: {propertyAudit.required.missing.length ? propertyAudit.required.missing.join(", ") : "None"}</div>
+                </div>
+                <div className="p-4 rounded-xl border" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                  <div className="font-semibold mb-2">Recommended Keys</div>
+                  <div className="text-xs mb-2">Configured: {propertyAudit.recommended.configured.length}</div>
+                  <div className="text-xs">Missing: {propertyAudit.recommended.missing.length ? propertyAudit.recommended.missing.join(", ") : "None"}</div>
+                </div>
+                <div className="p-4 rounded-xl border" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                  <div className="font-semibold mb-2">Feature Keys</div>
+                  <div className="text-xs mb-2">Configured: {propertyAudit.feature.configured.length}</div>
+                  <div className="text-xs">Missing: {propertyAudit.feature.missing.length ? propertyAudit.feature.missing.join(", ") : "None"}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl border" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                  <div className="font-semibold mb-2">Detected Chatbot Gemini Keys</div>
+                  <div className="text-xs">
+                    {propertyAudit.gemini?.chatbotConfiguredKeys?.length
+                      ? propertyAudit.gemini.chatbotConfiguredKeys.join(", ")
+                      : "None detected (AI_CHATBOT_API_KEY or AI_CHATBOT_API_KEY_1..20)"}
+                  </div>
+                </div>
+                <div className="p-4 rounded-xl border" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                  <div className="font-semibold mb-2">Detected Applicant Gemini Keys</div>
+                  <div className="text-xs">
+                    {propertyAudit.gemini?.applicantConfiguredKeys?.length
+                      ? propertyAudit.gemini.applicantConfiguredKeys.join(", ")
+                      : "None detected (GEMINI_API_KEY or GEMINI_API_KEY_1..20)"}
+                  </div>
+                </div>
+              </div>
+
+              {!!propertyAudit.notes?.length && (
+                <div className="p-4 rounded-xl border" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                  <div className="font-semibold mb-2">Notes</div>
+                  <div className="text-xs whitespace-pre-line">{propertyAudit.notes.join("\n")}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {showRoleModal && (

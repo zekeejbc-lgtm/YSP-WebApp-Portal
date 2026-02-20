@@ -1,3 +1,4 @@
+import { getSessionToken } from './gasLoginService';
 export const NOTIFICATIONS_API_URL = import.meta.env.VITE_GAS_NOTIFICATIONS_API_URL || "";
 
 export function isNotificationsApiConfigured(): boolean {
@@ -27,6 +28,7 @@ export async function registerFcmTokenWithBackend(options: {
       role: options.role || "",
       platform: options.platform || "",
       userAgent: options.userAgent || "",
+      sessionToken: getSessionToken(),
     }),
   });
 
@@ -44,6 +46,7 @@ export async function unregisterFcmTokenWithBackend(fcmToken: string) {
     body: JSON.stringify({
       action: "unregisterSubscription",
       fcmToken,
+      sessionToken: getSessionToken(),
     }),
   });
 

@@ -31,6 +31,8 @@ const CHATBOT_CONFIG = {
     'I need a bit more detail so we can answer correctly. Please include the specific page, name, event, or date.',
   MAX_CONTEXT_CHARS: 1200,
   MAX_HISTORY_ITEMS: 8,
+  MAX_POST_BODY_CHARS: 60000,
+  MAX_UNKNOWN_LOG_FIELD_CHARS: 500,
   DIRECTORY_GEMINI_REWRITE_ROUNDS: 2
 };
 
@@ -40,7 +42,32 @@ function doPost(e) {
   try {
     beginChatbotRuntimeTrace_();
     var rawData = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
-    var data = JSON.parse(rawData || '{}');
+    if (rawData && rawData.length > CHATBOT_CONFIG.MAX_POST_BODY_CHARS) {
+      return createChatbotJsonResponse_({
+        reply: 'Request too large.',
+        source: deriveChatbotResponseSource_(),
+        code: 413
+      });
+    }
+    var data = {};
+    try {
+      data = JSON.parse(rawData || '{}');
+    } catch (parseError) {
+      return createChatbotJsonResponse_({
+        reply: 'Invalid request payload.',
+        source: deriveChatbotResponseSource_(),
+        code: 400
+      });
+    }
+    var authResult = verifyChatbotRequestAuth_(data);
+    if (!authResult.ok) {
+      return createChatbotJsonResponse_({
+        reply: authResult.error || 'Unauthorized request.',
+        source: deriveChatbotResponseSource_(),
+        code: authResult.code || 401
+      });
+    }
+    data.username = authResult.username;
     var userMessage = toStringValue_(data.message);
 
     if (!userMessage) {
@@ -128,6 +155,72 @@ function deriveChatbotResponseSource_() {
 
 function createChatbotJsonResponse_(data) {
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function verifyChatbotRequestAuth_(data) {
+  var sessionSecret = toStringValue_(PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY'));
+  if (!sessionSecret) {
+    return {
+      ok: false,
+      code: 503,
+      error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing.'
+    };
+  }
+
+  var tokenUser = verifyChatbotHmacToken_(toStringValue_(data && data.sessionToken));
+  if (!tokenUser || !tokenUser.username) {
+    return {
+      ok: false,
+      code: 401,
+      error: 'Invalid or expired session token.'
+    };
+  }
+
+  return { ok: true, username: tokenUser.username };
+}
+
+function verifyChatbotHmacToken_(token) {
+  if (!token || typeof token !== 'string') return null;
+  var secret = toStringValue_(PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY'));
+  if (!secret) return null;
+  var parts = token.split('.');
+  if (parts.length !== 2) return null;
+  var payload = parts[0];
+  var signature = parts[1];
+  var expectedSig = bytesToHexForChatbot_(Utilities.computeHmacSha256Signature(payload, secret));
+  if (!constantTimeEqualsForChatbot_(signature, expectedSig)) return null;
+  try {
+    var decoded = Utilities.newBlob(Utilities.base64Decode(payload)).getDataAsString();
+    var fields = decoded.split('|');
+    if (fields.length < 2) return null;
+    var username = fields[0];
+    var expiry = parseInt(fields[1], 10);
+    if (!username || isNaN(expiry) || new Date().getTime() > expiry) return null;
+    return { username: username };
+  } catch (e) {
+    Logger.log('verifyChatbotHmacToken_ error: ' + e);
+    return null;
+  }
+}
+
+function constantTimeEqualsForChatbot_(a, b) {
+  var left = toStringValue_(a);
+  var right = toStringValue_(b);
+  if (!left || !right) return false;
+  if (left.length !== right.length) return false;
+  var mismatch = 0;
+  for (var i = 0; i < left.length; i++) {
+    mismatch |= left.charCodeAt(i) ^ right.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+function bytesToHexForChatbot_(bytes) {
+  var out = [];
+  for (var i = 0; i < bytes.length; i++) {
+    out.push(('0' + (bytes[i] & 0xFF).toString(16)).slice(-2));
+  }
+  return out.join('');
 }
 
 function extractChatRequestContext_(data) {
@@ -364,7 +457,13 @@ function lookupApprovedUnknownAnswer_(question, currentPage) {
 function logUnknownQuestion_(question, aiReply, context) {
   try {
     var sheet = getOrCreateUnknownSheet_();
-    var normalized = normalizeQuestionForMatch_(question);
+    var safeQuestion = sanitizeForSheetCell_(toStringValue_(question), CHATBOT_CONFIG.MAX_UNKNOWN_LOG_FIELD_CHARS);
+    var safeReply = sanitizeForSheetCell_(toStringValue_(aiReply), CHATBOT_CONFIG.MAX_UNKNOWN_LOG_FIELD_CHARS);
+    var safePage = sanitizeForSheetCell_(toStringValue_(context.currentPage), 160);
+    var safeUrl = sanitizeForSheetCell_(toStringValue_(context.currentUrl), 350);
+    var safeUsername = sanitizeForSheetCell_(toStringValue_(context.username), 120);
+    var safeSnippet = sanitizeForSheetCell_(toStringValue_(context.contextSnippet), CHATBOT_CONFIG.MAX_CONTEXT_CHARS);
+    var normalized = normalizeQuestionForMatch_(safeQuestion);
     var lastRow = sheet.getLastRow();
     var nowIso = new Date().toISOString();
 
@@ -376,7 +475,7 @@ function logUnknownQuestion_(question, aiReply, context) {
         var rowPage = toStringValue_(row[3]);
         var dbAction = toStringValue_(row[10]);
         if (!rowNormalized || rowNormalized !== normalized) continue;
-        if (rowPage !== toStringValue_(context.currentPage)) continue;
+        if (rowPage !== safePage) continue;
         if (dbAction === 'Add to Database' || dbAction === 'Ignore') break;
 
         var targetRow = i + 2;
@@ -390,13 +489,13 @@ function logUnknownQuestion_(question, aiReply, context) {
 
     var newRow = [
       nowIso,
-      toStringValue_(question),
+      safeQuestion,
       normalized,
-      toStringValue_(context.currentPage),
-      toStringValue_(context.currentUrl),
-      toStringValue_(context.username),
-      toStringValue_(context.contextSnippet),
-      toStringValue_(aiReply),
+      safePage,
+      safeUrl,
+      safeUsername,
+      safeSnippet,
+      safeReply,
       'Pending',
       '',
       'Pending Review',
@@ -465,10 +564,10 @@ function handleDirectoryMessage(message, data) {
       return 'I could not match the member yet. Please include full name, committee, role, or chapter.';
     }
 
-    var infoReply = handleMemberInfoQuery(message, targetRow, idx);
+    var infoReply = handleMemberInfoQuery(message, targetRow, idx, data);
     if (infoReply) return infoReply;
 
-    return formatMemberSummary(targetRow, idx);
+    return formatMemberSummary(targetRow, idx, data);
   } catch (e) {
     Logger.log('Directory query error: ' + e.toString());
     return 'Directory search failed. Please try again.';
@@ -477,12 +576,11 @@ function handleDirectoryMessage(message, data) {
 
 function isDirectoryRequest(message, data) {
   var lower = message.toLowerCase();
-  if (lower.indexOf('@members') !== -1 || lower.indexOf('/@members') !== -1) return true;
-  if (data && data.forceDirectory === true) return true;
 
   var allowedPage = isDirectoryPageContext_(data && data.contextPage ? data.contextPage : '');
   if (!allowedPage) return false;
 
+  if (lower.indexOf('@members') !== -1 || lower.indexOf('/@members') !== -1) return true;
   return /member|members|officer|committee|role|position|chapter|barangay|birthday|email verified|unverified|gender|female|male|id code/.test(lower);
 }
 
@@ -917,8 +1015,9 @@ function extractNameCandidate(normalizedMessage) {
   return candidate;
 }
 
-function handleMemberInfoQuery(message, row, idx) {
+function handleMemberInfoQuery(message, row, idx, data) {
   var lower = message.toLowerCase();
+  var canViewSensitive = canViewSensitiveDirectoryFields_(data);
 
   if (lower.indexOf('birthday') !== -1 || lower.indexOf('birthdate') !== -1) {
     var birthday = formatBirthday(getDirectoryValue(row, idx.birthday));
@@ -932,14 +1031,17 @@ function handleMemberInfoQuery(message, row, idx) {
   }
 
   if (lower.indexOf('email') !== -1) {
+    if (!canViewSensitive) return 'Email is restricted. Please contact an admin or auditor.';
     return 'Email for ' + getDirectoryValue(row, idx.fullName) + ': ' + (getDirectoryValue(row, idx.email) || 'Not available');
   }
 
   if (lower.indexOf('contact') !== -1) {
+    if (!canViewSensitive) return 'Contact number is restricted. Please contact an admin or auditor.';
     return 'Contact for ' + getDirectoryValue(row, idx.fullName) + ': ' + (getDirectoryValue(row, idx.contactNumber) || 'Not available');
   }
 
   if (lower.indexOf('id code') !== -1) {
+    if (!canViewSensitive) return 'ID Code is restricted. Please contact an admin or auditor.';
     return 'ID Code for ' + getDirectoryValue(row, idx.fullName) + ': ' + (getDirectoryValue(row, idx.idCode) || 'Not available');
   }
 
@@ -967,17 +1069,27 @@ function formatBirthday(value) {
   return iso + ' (' + longDate + ')';
 }
 
-function formatMemberSummary(row, idx) {
+function formatMemberSummary(row, idx, data) {
   var fullName = getDirectoryValue(row, idx.fullName) || 'Not available';
   var age = getDirectoryValue(row, idx.age);
   if (!age) age = calculateDirectoryAge(getDirectoryValue(row, idx.birthday));
+  var canViewSensitive = canViewSensitiveDirectoryFields_(data);
+  var contactValue = getDirectoryValue(row, idx.contactNumber) || 'Not available';
+  var emailValue = getDirectoryValue(row, idx.email) || 'Not available';
+  var idCodeValue = getDirectoryValue(row, idx.idCode) || 'Not available';
+
+  if (!canViewSensitive) {
+    contactValue = maskPhoneForChatbot_(contactValue);
+    emailValue = maskEmailForChatbot_(emailValue);
+    idCodeValue = maskIdForChatbot_(idCodeValue);
+  }
 
   var lines = [
     'Full Name: ' + fullName,
     'Age: ' + (age || 'Not available'),
-    'Contact: ' + (getDirectoryValue(row, idx.contactNumber) || 'Not available'),
-    'Email: ' + (getDirectoryValue(row, idx.email) || 'Not available'),
-    'ID Code: ' + (getDirectoryValue(row, idx.idCode) || 'Not available'),
+    'Contact: ' + contactValue,
+    'Email: ' + emailValue,
+    'ID Code: ' + idCodeValue,
     'Position: ' + (getDirectoryValue(row, idx.position) || 'Not available'),
     'Chapter: ' + (getDirectoryValue(row, idx.chapter) || 'Not available'),
     'Committee: ' + (getDirectoryValue(row, idx.committee) || 'Not available'),
@@ -985,6 +1097,66 @@ function formatMemberSummary(row, idx) {
   ];
 
   return lines.join('\n');
+}
+
+function canViewSensitiveDirectoryFields_(data) {
+  var verifiedUsername = toStringValue_(data && data.username);
+  var role = toStringValue_(getUserRoleFromLoginSheetForChatbot_(verifiedUsername)).toLowerCase();
+  if (!role) return false;
+  return role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1;
+}
+
+function getUserRoleFromLoginSheetForChatbot_(username) {
+  try {
+    var u = toStringValue_(username).toLowerCase();
+    if (!u) return '';
+    var ssId = resolveLoginSpreadsheetIdForChatbot_();
+    var sheetName = resolveLoginSheetNameForChatbot_();
+    if (!ssId) return '';
+    var ss = SpreadsheetApp.openById(ssId);
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() < 2) return '';
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0] || [];
+    var usernameIdx = findHeaderIndexByAliases_(headers, ['Username', 'User Name', 'username']);
+    var roleIdx = findHeaderIndexByAliases_(headers, ['Role', 'role']);
+    if (usernameIdx === -1 || roleIdx === -1) return '';
+    for (var i = 1; i < data.length; i++) {
+      if (toStringValue_(data[i][usernameIdx]).toLowerCase() === u) {
+        return toStringValue_(data[i][roleIdx]).toLowerCase();
+      }
+    }
+    return '';
+  } catch (e) {
+    Logger.log('getUserRoleFromLoginSheetForChatbot_ error: ' + e);
+    return '';
+  }
+}
+
+function maskEmailForChatbot_(email) {
+  var text = toStringValue_(email);
+  if (!text || text === 'Not available') return text || 'Not available';
+  var parts = text.split('@');
+  if (parts.length !== 2) return 'w***w';
+  var local = parts[0];
+  var domain = parts[1];
+  if (!local || !domain) return 'w***w';
+  return local.charAt(0) + '***' + local.slice(-1) + '@' + domain.charAt(0) + '***';
+}
+
+function maskPhoneForChatbot_(phone) {
+  var text = toStringValue_(phone);
+  if (!text || text === 'Not available') return text || 'Not available';
+  var digits = text.replace(/\D/g, '');
+  if (digits.length < 4) return '***';
+  return '***-***-' + digits.slice(-4);
+}
+
+function maskIdForChatbot_(idCode) {
+  var text = toStringValue_(idCode);
+  if (!text || text === 'Not available') return text || 'Not available';
+  if (text.length <= 2) return '**';
+  return text.charAt(0) + '***' + text.charAt(text.length - 1);
 }
 
 function getGeminiDirectoryHints(message, rows, idx) {
@@ -1195,16 +1367,11 @@ function handleReviewUnknownsCommand_(message, context, rawData) {
     return 'Please log in first before using this command.';
   }
   if (!doesUserExistInLoginSheet_(context)) {
-    var roleFromPayload = toStringValue_(rawData && (rawData.userRole || rawData.role));
-    var role = toStringValue_(context.userRole || roleFromPayload).toLowerCase();
-    var hasPrivilegedRole = role.indexOf('auditor') !== -1 || role.indexOf('admin') !== -1;
-    if (!hasPrivilegedRole) {
-      return 'Logged-in user was not found in the directory records.';
-    }
+    return 'Logged-in user was not found in the directory records.';
   }
 
-  if (!hasReviewUnknownsAccess_(context, rawData)) {
-    return 'Logged-in user was not found in the directory records.';
+  if (!hasReviewUnknownsAccess_(context)) {
+    return 'You do not have permission to review unknown questions.';
   }
 
   var sheet = getOrCreateUnknownSheet_();
@@ -1247,10 +1414,11 @@ function handleReviewUnknownsCommand_(message, context, rawData) {
   return lines.join('\n');
 }
 
-function hasReviewUnknownsAccess_(context, rawData) {
-  var roleFromPayload = toStringValue_(rawData && (rawData.userRole || rawData.role));
-  var role = toStringValue_(context.userRole || roleFromPayload).toLowerCase();
-  if (!role) return true;
+function hasReviewUnknownsAccess_(context) {
+  var username = toStringValue_(context && context.username);
+  if (!username) return false;
+  var role = toStringValue_(getUserRoleFromLoginSheetForChatbot_(username)).toLowerCase();
+  if (!role) return false;
   if (role.indexOf('auditor') !== -1) return true;
   if (role.indexOf('admin') !== -1) return true;
   return false;
@@ -1270,9 +1438,7 @@ function normalizePageKey_(value) {
 function doesUserExistInLoginSheet_(context) {
   try {
     var username = toStringValue_(context && context.username).toLowerCase();
-    var email = toStringValue_(context && context.email).toLowerCase();
-    var idCode = normalizeDirectoryText(context && context.idCode);
-    if (!username && !email && !idCode) return false;
+    if (!username) return false;
 
     var ssId = resolveLoginSpreadsheetIdForChatbot_();
     var sheetName = resolveLoginSheetNameForChatbot_();
@@ -1285,14 +1451,10 @@ function doesUserExistInLoginSheet_(context) {
     var data = sheet.getDataRange().getValues();
     var headers = data[0] || [];
     var usernameIdx = findHeaderIndexByAliases_(headers, ['Username', 'User Name', 'username']);
-    var emailIdx = findHeaderIndexByAliases_(headers, ['Email Address', 'Email', 'email']);
-    var idCodeIdx = findHeaderIndexByAliases_(headers, ['ID Code', 'Id Code', 'ID', 'idcode']);
-    if (usernameIdx === -1 && emailIdx === -1 && idCodeIdx === -1) return false;
+    if (usernameIdx === -1) return false;
 
     for (var i = 1; i < data.length; i++) {
-      if (usernameIdx !== -1 && username && toStringValue_(data[i][usernameIdx]).toLowerCase() === username) return true;
-      if (emailIdx !== -1 && email && toStringValue_(data[i][emailIdx]).toLowerCase() === email) return true;
-      if (idCodeIdx !== -1 && idCode && normalizeDirectoryText(data[i][idCodeIdx]) === idCode) return true;
+      if (toStringValue_(data[i][usernameIdx]).toLowerCase() === username) return true;
     }
     return false;
   } catch (e) {
@@ -1467,6 +1629,19 @@ function debugChatbotSpreadsheetAccess() {
 
 function toStringValue_(value) {
   return String(value || '').trim();
+}
+
+function sanitizeForSheetCell_(value, maxLen) {
+  var text = toStringValue_(value);
+  if (!text) return '';
+  var limit = Number(maxLen || 0);
+  if (limit > 0 && text.length > limit) {
+    text = text.slice(0, limit);
+  }
+  if (/^[=\-+@]/.test(text)) {
+    text = "'" + text;
+  }
+  return text;
 }
 
 function debugChatbotHealthCheck() {

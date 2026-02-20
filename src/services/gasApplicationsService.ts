@@ -7,7 +7,7 @@ import { getStoredUser, getSessionToken } from "./gasLoginService";
 import { type ApplicationOpportunity } from "../components/MembershipApplicationsPage";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbyrv2aWb4fXt372V4RdYM2SYU9jeK3DWfCTBLe2EI59UjIMuwh9csd8MdYh1MduVHl09A/exec";
-const API_KEY = import.meta.env.VITE_GAS_API_KEY || "YSP_TAGUM_CHAPTER_SECRET_KEY_2025";
+const API_KEY = import.meta.env.VITE_GAS_API_KEY || "";
 
 export interface SyncedApplicant {
   id: string;
@@ -94,7 +94,14 @@ function logApiError(
  */
 export async function fetchOpportunities(): Promise<{ success: boolean; data?: ApplicationOpportunity[]; error?: string }> {
   try {
-    const response = await fetch(`${API_URL}?action=getOpportunities`);
+    const token = getSessionToken();
+    if (!token) {
+      return { success: false, error: "Authentication required" };
+    }
+    const url = new URL(API_URL);
+    url.searchParams.set("action", "getOpportunities");
+    url.searchParams.set("sessionToken", token);
+    const response = await fetch(url.toString());
     const result = await response.json();
 
     if (result.success && result.data) {

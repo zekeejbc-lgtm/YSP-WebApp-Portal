@@ -114,7 +114,14 @@ export default function DetailsCard({
                 e.currentTarget.style.display = 'none';
                 const parent = e.currentTarget.parentElement;
                 if (parent && initials) {
-                  parent.innerHTML = `<span style="font-family: 'Lexend', sans-serif; font-size: 32px; font-weight: 700; color: white;">${initials}</span>`;
+                  const fallback = document.createElement('span');
+                  fallback.style.fontFamily = 'Lexend, sans-serif';
+                  fallback.style.fontSize = '32px';
+                  fallback.style.fontWeight = '700';
+                  fallback.style.color = 'white';
+                  fallback.textContent = initials;
+                  while (parent.firstChild) parent.removeChild(parent.firstChild);
+                  parent.appendChild(fallback);
                   parent.style.backgroundColor = '#FF8800';
                 }
               }}

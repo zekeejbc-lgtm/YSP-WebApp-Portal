@@ -106,29 +106,16 @@ export default function MaintenanceScreen({
 
   // Handle login
   const handleLogin = (email: string, password: string) => {
-    // Check if it's a valid admin/auditor account
-    const validAccounts = [
-      { email: "admin@ysp.com", password: "admin123", role: "admin" },
-      { email: "auditor@ysp.com", password: "auditor123", role: "auditor" },
-    ];
-
-    const account = validAccounts.find(
-      (acc) => acc.email === email && acc.password === password
-    );
-
-    if (account && (account.role === "admin" || account.role === "auditor")) {
+    if (onMaintenanceLogin) {
       setShowLoginModal(false);
       setToast({
-        message: `Welcome back, ${account.role}! Access granted.`,
+        message: "Credentials submitted. Verifying access...",
         type: "success",
       });
-      // Call the callback if provided
-      if (onMaintenanceLogin) {
-        onMaintenanceLogin(email, password);
-      }
+      onMaintenanceLogin(email, password);
     } else {
       setToast({
-        message: "Access denied. Only admin and auditor accounts can log in during maintenance.",
+        message: "Maintenance login is disabled in this build.",
         type: "error",
       });
     }

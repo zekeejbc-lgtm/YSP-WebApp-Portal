@@ -362,19 +362,18 @@ function doPost(e) {
     var PUBLIC_ACTIONS = [
       'login', 'verifySession',
       'lookupPasswordResetUser', 'sendPasswordResetOTP', 'verifyPasswordResetOTP', 'resetPasswordWithToken',
-      'searchOfficers', 'getOfficerByIdCode', 'getAllOfficers',
       'getMaintenanceMode', 'getCacheVersion'
     ];
     if (PUBLIC_ACTIONS.indexOf(action) === -1) {
       var tokenUser = verifyHmacToken_(requestData.sessionToken);
       var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-      if (sessionSecret && !tokenUser) {
+      if (!sessionSecret) {
+        return createErrorResponse('Server auth misconfigured: SESSION_SECRET_KEY is missing', 503);
+      }
+      if (!tokenUser) {
         return createErrorResponse('Invalid or expired session token', 401);
       }
-      // Use the verified username from the token (tamper-proof)
-      if (tokenUser) {
-        requestData.username = tokenUser.username;
-      }
+      requestData.username = tokenUser.username;
     }
 
     // Route to appropriate handler
@@ -410,9 +409,9 @@ function doPost(e) {
       case 'lookupPasswordResetUser':
         return handleLookupPasswordResetUser(requestData.identifier);
       case 'sendPasswordResetOTP':
-        return handleSendPasswordResetOTP(requestData.username, requestData.email);
+        return handleSendPasswordResetOTP(requestData.username, requestData.email, requestData.lookupToken);
       case 'verifyPasswordResetOTP':
-        return handleVerifyPasswordResetOTP(requestData.username, requestData.email, requestData.otp);
+        return handleVerifyPasswordResetOTP(requestData.username, requestData.email, requestData.otp, requestData.lookupToken);
       case 'resetPasswordWithToken':
         return handleResetPasswordWithToken(requestData.username, requestData.resetToken, requestData.newPassword);
       // Directory actions
@@ -654,32 +653,11 @@ function handleVerifySession(sessionToken) {
     });
   }
   
-  // Legacy fallback: CacheService lookup (only when SESSION_SECRET_KEY not configured)
-  const cache = CacheService.getScriptCache();
-  const sessionData = cache.get('session_' + sessionToken);
-  
-  if (!sessionData) {
-    return createSuccessResponse({
-      valid: false,
-      reason: 'Session expired or not found',
-      timestamp: new Date().toISOString()
-    });
-  }
-  
-  try {
-    const parsed = JSON.parse(sessionData);
-    return createSuccessResponse({
-      valid: true,
-      username: parsed.username || '',
-      timestamp: new Date().toISOString()
-    });
-  } catch (e) {
-    return createSuccessResponse({
-      valid: false,
-      reason: 'Invalid session data',
-      timestamp: new Date().toISOString()
-    });
-  }
+  return createSuccessResponse({
+    valid: false,
+    reason: 'Server auth misconfigured: SESSION_SECRET_KEY is missing',
+    timestamp: new Date().toISOString()
+  });
 }
 
 /**
@@ -3486,12 +3464,8 @@ function handleLookupPasswordResetUser(identifier) {
 
     const matches = isEmail ? emailMatches : usernameMatches.length ? usernameMatches : nameMatches;
 
-    if (matches.length === 0) {
-      return createErrorResponse('No account found with that information', 404);
-    }
-
-    if (!isEmail && usernameMatches.length === 0 && matches.length > 1) {
-      return createErrorResponse('Multiple accounts match that name. Please use username or email.', 409);
+    if (matches.length === 0 || (!isEmail && usernameMatches.length === 0 && matches.length > 1)) {
+      return createErrorResponse('Unable to verify account details. Please check your input and try again.', 404);
     }
 
     const user = matches[0];
@@ -3499,15 +3473,18 @@ function handleLookupPasswordResetUser(identifier) {
       return createErrorResponse('No email address is on file for this account.', 400);
     }
 
+    const lookupToken = createPasswordResetLookupToken_(user.username, user.email, user.idCode);
+
     return createSuccessResponse({
       success: true,
       user: {
         fullName: user.fullName,
         username: user.username,
-        email: user.email,
-        idCode: user.idCode,
+        email: maskEmailValue_(user.email),
+        idCode: maskIdCodeValue_(user.idCode),
       },
       matchedBy: user.matchedBy,
+      lookupToken: lookupToken,
     });
   } catch (error) {
     Logger.log('handleLookupPasswordResetUser Error: ' + error.toString());
@@ -3515,11 +3492,21 @@ function handleLookupPasswordResetUser(identifier) {
   }
 }
 
-function handleSendPasswordResetOTP(username, email) {
+function handleSendPasswordResetOTP(username, email, lookupToken) {
   Logger.log('=== handleSendPasswordResetOTP ===');
 
-  const cleanUsername = (username || '').toString().trim();
-  const cleanEmail = (email || '').toString().trim();
+  let cleanUsername = (username || '').toString().trim();
+  let cleanEmail = (email || '').toString().trim();
+  const cleanLookupToken = (lookupToken || '').toString().trim();
+
+  if (cleanLookupToken) {
+    const tokenData = resolvePasswordResetLookupToken_(cleanLookupToken, cleanUsername);
+    if (!tokenData) {
+      return createErrorResponse('Reset lookup session expired. Please search your account again.', 401);
+    }
+    cleanUsername = tokenData.username;
+    cleanEmail = tokenData.email;
+  }
 
   if (!cleanUsername || !cleanEmail) {
     return createErrorResponse('Username and email are required', 400);
@@ -3611,7 +3598,7 @@ function handleSendPasswordResetOTP(username, email) {
 
     return createSuccessResponse({
       success: true,
-      message: 'Verification code sent to ' + cleanEmail,
+      message: 'Verification code sent to ' + maskEmailValue_(cleanEmail),
       expiresInMinutes: OTP_EXPIRY_MINUTES,
       requestNumber: cooldownInfo.requestCount,
       nextCooldown: nextCooldownMsg
@@ -3622,10 +3609,20 @@ function handleSendPasswordResetOTP(username, email) {
   }
 }
 
-function handleVerifyPasswordResetOTP(username, email, otp) {
-  const cleanUsername = (username || '').toString().trim();
-  const cleanEmail = (email || '').toString().trim();
+function handleVerifyPasswordResetOTP(username, email, otp, lookupToken) {
+  let cleanUsername = (username || '').toString().trim();
+  let cleanEmail = (email || '').toString().trim();
   const cleanOtp = (otp || '').toString().trim();
+  const cleanLookupToken = (lookupToken || '').toString().trim();
+
+  if (cleanLookupToken) {
+    const tokenData = resolvePasswordResetLookupToken_(cleanLookupToken, cleanUsername);
+    if (!tokenData) {
+      return createErrorResponse('Reset lookup session expired. Please search your account again.', 401);
+    }
+    cleanUsername = tokenData.username;
+    cleanEmail = tokenData.email;
+  }
 
   if (!cleanUsername || !cleanEmail || !cleanOtp) {
     return createErrorResponse('Username, email, and OTP are required', 400);
@@ -3709,6 +3706,91 @@ function handleVerifyPasswordResetOTP(username, email, otp) {
     Logger.log('handleVerifyPasswordResetOTP Error: ' + error.toString());
     return createErrorResponse('Failed to verify code: ' + error.message, 500);
   }
+}
+
+function createPasswordResetLookupToken_(username, email, idCode) {
+  if (!username || !email) return '';
+  try {
+    var token = Utilities.getUuid();
+    var cache = CacheService.getScriptCache();
+    cache.put(
+      'pwd_lookup_' + token,
+      JSON.stringify({
+        username: String(username).trim(),
+        email: String(email).trim(),
+        idCode: String(idCode || '').trim()
+      }),
+      15 * 60
+    );
+    return token;
+  } catch (e) {
+    Logger.log('createPasswordResetLookupToken_ error: ' + e);
+    return '';
+  }
+}
+
+function resolvePasswordResetLookupToken_(token, expectedUsername) {
+  if (!token) return null;
+  try {
+    var cache = CacheService.getScriptCache();
+    var raw = cache.get('pwd_lookup_' + token);
+    if (!raw) return null;
+    var parsed = JSON.parse(raw);
+    var username = String(parsed.username || '').trim();
+    var email = String(parsed.email || '').trim();
+    if (!username || !email) return null;
+
+    var expected = String(expectedUsername || '').trim().toLowerCase();
+    if (expected && expected !== username.toLowerCase()) return null;
+
+    return { username: username, email: email };
+  } catch (e) {
+    Logger.log('resolvePasswordResetLookupToken_ error: ' + e);
+    return null;
+  }
+}
+
+function maskSensitivePart_(value) {
+  var text = String(value || '');
+  if (!text) return '';
+  if (text.length <= 2) return text.charAt(0) + '*';
+  return text.charAt(0) + Array(Math.max(text.length - 1, 2)).join('*') + text.charAt(text.length - 1);
+}
+
+function maskEmailValue_(email) {
+  var text = String(email || '').trim();
+  if (!text) return '';
+  var parts = text.split('@');
+  if (parts.length !== 2) return maskSensitivePart_(text);
+
+  var local = parts[0];
+  var domain = parts[1];
+  var domainParts = domain.split('.');
+  var domainName = domainParts[0] || '';
+  var tld = domainParts.length > 1 ? domainParts.slice(1).join('.') : '';
+
+  var maskedDomain = maskSensitivePart_(domainName);
+  return maskSensitivePart_(local) + '@' + maskedDomain + (tld ? '.' + tld : '');
+}
+
+function maskIdCodeValue_(idCode) {
+  var text = String(idCode || '').trim();
+  if (!text) return '';
+  var chars = text.split('');
+  var visibleCount = 0;
+  for (var i = 0; i < chars.length; i++) {
+    if (/[A-Za-z0-9]/.test(chars[i])) visibleCount++;
+  }
+  if (visibleCount <= 2) return text.replace(/[A-Za-z0-9]/g, '*');
+
+  var seen = 0;
+  for (var j = 0; j < chars.length; j++) {
+    if (!/[A-Za-z0-9]/.test(chars[j])) continue;
+    seen++;
+    if (seen === 1 || seen === visibleCount) continue;
+    chars[j] = '*';
+  }
+  return chars.join('');
 }
 
 function handleResetPasswordWithToken(username, resetToken, newPassword) {

@@ -174,8 +174,8 @@ function requireFeedbackPermission_(username, actionDescription, permissionKey) 
 function validateApiKey_(key) {
   var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
   if (!expected) {
-    Logger.log('WARNING: SECRET_API_KEY not set \u2014 API key validation skipped');
-    return true;
+    Logger.log('ERROR: SECRET_API_KEY not set \u2014 rejecting request');
+    return false;
   }
   return !!(key && String(key).trim() === expected);
 }
@@ -424,14 +424,21 @@ function doGet(e) {
     const tokenUser = verifyHmacToken_(sessionToken);
     const sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
 
-    if ((action === "initiate" || action === "migrateUrls") && sessionSecret && !tokenUser) {
-      return ContentService.createTextOutput(JSON.stringify({
-        success: false, status: "error", message: "Invalid or expired session token", code: 401
-      })).setMimeType(ContentService.MimeType.JSON);
+    if (action === "initiate" || action === "migrateUrls" || action === "getFeedbacks") {
+      if (!sessionSecret) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false, status: "error", message: "Server auth misconfigured: SESSION_SECRET_KEY is missing", code: 503
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+      if (!tokenUser) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false, status: "error", message: "Invalid or expired session token", code: 401
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
     }
 
     if (action === "initiate") {
-      var initUser = tokenUser ? String(tokenUser.username || '').trim() : String(e.parameter.username || '').trim();
+      var initUser = String(tokenUser.username || '').trim();
       var initAuth = requireFeedbackPermission_(initUser, 'initialize feedback sheets', 'canAccessSystemTools');
       if (initAuth) {
         return ContentService.createTextOutput(JSON.stringify(initAuth)).setMimeType(ContentService.MimeType.JSON);
@@ -440,7 +447,7 @@ function doGet(e) {
     } else if (action === "getFeedbacks") {
       return getFeedbacks();
     } else if (action === "migrateUrls") {
-       var migrateUser = tokenUser ? String(tokenUser.username || '').trim() : String(e.parameter.username || '').trim();
+       var migrateUser = String(tokenUser.username || '').trim();
        var migrateAuth = requireFeedbackPermission_(migrateUser, 'migrate image URLs', 'canAccessSystemTools');
        if (migrateAuth) {
          return ContentService.createTextOutput(JSON.stringify(migrateAuth)).setMimeType(ContentService.MimeType.JSON);
@@ -492,14 +499,17 @@ function doPost(e) {
     // ---- Session token verification (HMAC) ----
     var tokenUser = verifyHmacToken_(data.sessionToken);
     var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-    if (sessionSecret && !tokenUser) {
+    if (!sessionSecret) {
+      return ContentService.createTextOutput(JSON.stringify({
+        success: false, status: "error", message: "Server auth misconfigured: SESSION_SECRET_KEY is missing", code: 503
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (!tokenUser) {
       return ContentService.createTextOutput(JSON.stringify({
         success: false, status: "error", message: "Invalid or expired session token", code: 401
       })).setMimeType(ContentService.MimeType.JSON);
     }
-    if (tokenUser) {
-      data.username = tokenUser.username;
-    }
+    data.username = tokenUser.username;
 
     var account = getUserRoleAndStatus_(data.username);
     if (isRestrictedRoleStatus_(account.role, account.status)) {

@@ -38,6 +38,11 @@
   border-radius: 8px;
 }
 
+/* Force-hide chatbot when any modal panel is open */
+body.ysp-modal-open .ysp-chatbot-root {
+  display: none !important;
+}
+
 /* 3. The rest of your Tailwind layers follow below */
 @layer properties {
   @supports (((-webkit-hyphens: none)) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color: rgb(from red r g b)))) {

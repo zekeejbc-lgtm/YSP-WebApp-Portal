@@ -77,6 +77,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
   const [isSending, setIsSending] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const [expiryTimer, setExpiryTimer] = useState(0);
+  const [lookupToken, setLookupToken] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -163,6 +164,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
     setOtpSent(false);
     setResendTimer(0);
     setExpiryTimer(0);
+    setLookupToken("");
     setResetToken("");
     setNewPassword("");
     setConfirmPassword("");
@@ -186,6 +188,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
       const result = await lookupPasswordResetUser(input);
       if (result.success && result.user) {
         setUserInfo(result.user);
+        setLookupToken(result.lookupToken || "");
         setStep(2);
         setOtp(["", "", "", "", "", ""]);
         setOtpSent(false);
@@ -193,7 +196,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
         setExpiryTimer(0);
 
         if (result.matchedBy === "email") {
-          await handleSendOTP(result.user.username, result.user.email);
+          await handleSendOTP(result.user.username, input, result.lookupToken || "");
         }
       } else {
         setError(result.error || "No account found with that information.");
@@ -205,12 +208,13 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
     }
   };
 
-  const handleSendOTP = async (username?: string, email?: string) => {
+  const handleSendOTP = async (username?: string, email?: string, token?: string) => {
     const user = userInfo;
     const targetUsername = username || user?.username;
     const targetEmail = email || user?.email;
+    const targetLookupToken = token || lookupToken;
 
-    if (!targetUsername || !targetEmail) {
+    if (!targetUsername || (!targetEmail && !targetLookupToken)) {
       setError("Email address is required to send a verification code.");
       return;
     }
@@ -219,7 +223,12 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
     setError("");
 
     try {
-      const result = await sendPasswordResetOTP(targetUsername, targetEmail);
+      const result = await sendPasswordResetOTP(
+        targetUsername,
+        targetEmail || "",
+        undefined,
+        targetLookupToken || undefined
+      );
       if (result.success) {
         setOtpSent(true);
         setResendTimer(30);
@@ -251,7 +260,13 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
     setError("");
 
     try {
-      const result = await verifyPasswordResetOTP(userInfo.username, userInfo.email, otpCode);
+      const result = await verifyPasswordResetOTP(
+        userInfo.username,
+        userInfo.email || "",
+        otpCode,
+        undefined,
+        lookupToken || undefined
+      );
       if (result.success && result.verified && result.resetToken) {
         setResetToken(result.resetToken);
         setStep(3);
@@ -961,6 +976,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                       setError("");
                       setOtpSent(false);
                       setOtp(["", "", "", "", "", ""]);
+                      setLookupToken("");
                     }}
                     style={{ flex: "0 0 auto", minWidth: "100px", whiteSpace: "nowrap" }}
                   >
@@ -973,7 +989,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                     variant="primary"
                     size="md"
                     onClick={otpSent ? handleVerifyOTP : () => handleSendOTP()}
-                    disabled={isSending || isVerifying || (!otpSent && !userInfo?.email)}
+                    disabled={isSending || isVerifying || (!otpSent && !userInfo?.email && !lookupToken)}
                     style={{ flex: 1, whiteSpace: "nowrap" }}
                   >
                     {otpSent ? (

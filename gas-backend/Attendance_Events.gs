@@ -198,8 +198,8 @@ function requireHeadOrAbove_(username, actionDescription) {
 function validateApiKey_(key) {
   var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
   if (!expected) {
-    Logger.log('WARNING: SECRET_API_KEY not set \u2014 API key validation skipped');
-    return true;
+    Logger.log('ERROR: SECRET_API_KEY not set \u2014 rejecting request');
+    return false;
   }
   return !!(key && String(key).trim() === expected);
 }
@@ -250,6 +250,20 @@ function doGet(e) {
         .createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     }
+
+    // ---- Session token verification (HMAC) ----
+    var tokenUser = verifyHmacToken_(params.sessionToken);
+    var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+    if (!sessionSecret) {
+      result = { success: false, error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing', code: 503 };
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (!tokenUser) {
+      result = { success: false, error: 'Invalid or expired session token', code: 401 };
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+    params.username = sanitizeEventsParam_(tokenUser.username, 100);
+
     // Sanitize common params
     const eventId = sanitizeEventsParam_(params.eventId, 100);
     const memberId = sanitizeEventsParam_(params.memberId, 100);
@@ -373,14 +387,17 @@ function doPost(e) {
   // ---- Session token verification (HMAC) ----
   var tokenUser = verifyHmacToken_(params.sessionToken);
   var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-  if (sessionSecret && !tokenUser) {
+  if (!sessionSecret) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing', code: 503 }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  if (!tokenUser) {
     return ContentService
       .createTextOutput(JSON.stringify({ success: false, error: 'Invalid or expired session token', code: 401 }))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  if (tokenUser) {
-    params.username = tokenUser.username;
-  }
+  params.username = tokenUser.username;
   
   // Acquire script lock to prevent concurrent write race conditions
   const lock = LockService.getScriptLock();

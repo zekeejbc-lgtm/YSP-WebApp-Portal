@@ -1465,6 +1465,7 @@ export interface PasswordResetLookupResponse {
     idCode?: string;
   };
   matchedBy?: 'email' | 'username' | 'fullName';
+  lookupToken?: string;
   error?: string;
 }
 
@@ -1736,7 +1737,8 @@ export async function lookupPasswordResetUser(
 export async function sendPasswordResetOTP(
   username: string,
   email: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  lookupToken?: string
 ): Promise<SendOTPResponse> {
   if (!LOGIN_CONFIG.API_URL) {
     return { success: false, error: 'Service not configured' };
@@ -1763,6 +1765,7 @@ export async function sendPasswordResetOTP(
         action: 'sendPasswordResetOTP',
         username: username.trim(),
         email: email.trim(),
+        lookupToken: lookupToken || '',
       }),
       signal: controller.signal,
     });
@@ -1797,7 +1800,8 @@ export async function verifyPasswordResetOTP(
   username: string,
   email: string,
   otp: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  lookupToken?: string
 ): Promise<PasswordResetVerifyResponse> {
   if (!LOGIN_CONFIG.API_URL) {
     return { success: false, error: 'Service not configured' };
@@ -1825,6 +1829,7 @@ export async function verifyPasswordResetOTP(
         username,
         email,
         otp,
+        lookupToken: lookupToken || '',
       }),
       signal: controller.signal,
     });

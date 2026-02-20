@@ -46,9 +46,27 @@ const APPLICANT_AI_CONFIG = {
 function doGet(e) {
   try {
     const action = e && e.parameter ? e.parameter.action : 'getOpportunities';
+    const params = (e && e.parameter) ? e.parameter : {};
     
     if (action === 'health') {
       return createJsonResponse({ success: true, status: 'healthy' });
+    }
+
+    const sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+    if (!sessionSecret) {
+      return createJsonResponse({
+        success: false,
+        error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing',
+        code: 503
+      });
+    }
+    const tokenUser = verifyHmacToken_(params.sessionToken);
+    if (!tokenUser || !tokenUser.username) {
+      return createJsonResponse({
+        success: false,
+        error: 'Invalid or expired session token',
+        code: 401
+      });
     }
 
     if (action === 'getOpportunities') {
@@ -89,12 +107,13 @@ function doPost(e) {
     // ---- Session token verification (HMAC) ----
     var tokenUser = verifyHmacToken_(payload.sessionToken);
     var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-    if (sessionSecret && !tokenUser) {
+    if (!sessionSecret) {
+      return createJsonResponse({ success: false, error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing', code: 503 });
+    }
+    if (!tokenUser) {
       return createJsonResponse({ success: false, error: 'Invalid or expired session token', code: 401 });
     }
-    if (tokenUser) {
-      payload.username = tokenUser.username;
-    }
+    payload.username = tokenUser.username;
 
     // ---- Role check: all write operations require admin or auditor ----
     const authError = requireAdminOrAuditor_(payload.username, payload.action || 'manage opportunities');
@@ -1966,7 +1985,10 @@ function mapApplicantRow_(headers, row, rowIndex) {
 
 function validateApiKey_(key) {
   var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
-  if (!expected) return true;
+  if (!expected) {
+    console.error('[Applications Auth] SECRET_API_KEY is missing');
+    return false;
+  }
   return !!(key && String(key).trim() === expected);
 }
 

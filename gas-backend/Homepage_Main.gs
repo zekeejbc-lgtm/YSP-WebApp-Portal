@@ -1,4 +1,4 @@
-  /**
+﻿  /**
   * Google Apps Script - Homepage & Projects Management API
   * 
   * SETUP INSTRUCTIONS:
@@ -6,14 +6,14 @@
   */
 
   /**
-  * 🕵️‍♂️ FULL SYSTEM DIAGNOSIS 🕵️‍♂️
+  * ðŸ•µï¸â€â™‚ï¸ FULL SYSTEM DIAGNOSIS ðŸ•µï¸â€â™‚ï¸
   * 
   * Instructions:
   * 1. Select 'runFullDiagnosis' from the toolbar function dropdown.
   * 2. Click 'Run'.
   * 3. Checking the "Execution Log" at the bottom:
-  *    - If you see "✅ SYSTEM HEALTHY", you HAVE permissions (even if it didn't ask).
-  *    - If you see "❌ FAILED", it will tell you exactly why.
+  *    - If you see "âœ… SYSTEM HEALTHY", you HAVE permissions (even if it didn't ask).
+  *    - If you see "âŒ FAILED", it will tell you exactly why.
   */
   function runFullDiagnosis() {
     console.log('--- STARTING DIAGNOSIS ---');
@@ -21,30 +21,30 @@
     // 1. Check User Identity
     const user = Session.getActiveUser().getEmail();
     const effective = Session.getEffectiveUser().getEmail();
-    console.log(`👤 User: ${user}`);
-    console.log(`🤖 Effective Execution User: ${effective}`);
+    console.log(`ðŸ‘¤ User: ${user}`);
+    console.log(`ðŸ¤– Effective Execution User: ${effective}`);
     
     // 2. Check Drive Permissions (The common failure point)
     try {
       const folderId = PROJECTS_CONFIG.DRIVE_FOLDER_ID;
-      console.log(`📂 Checking Drive Folder ID: ${folderId}`);
+      console.log(`ðŸ“‚ Checking Drive Folder ID: ${folderId}`);
       
       // Test 1: Generic Drive Access
       const root = DriveApp.getRootFolder(); 
-      console.log('   ✅ Basic Drive Access: GRANTED');
+      console.log('   âœ… Basic Drive Access: GRANTED');
       
       // Test 2: Specific Folder Access
       const folder = DriveApp.getFolderById(folderId);
-      console.log(`   ✅ Project Folder Access: GRANTED (Found "${folder.getName()}")`);
+      console.log(`   âœ… Project Folder Access: GRANTED (Found "${folder.getName()}")`);
       
       // Test 3: Create Permission (Simulate Upload)
       const testFile = folder.createFile('permission_check.txt', 'This is a test file to verify write access.');
-      console.log('   ✅ Write/Create Access: GRANTED');
+      console.log('   âœ… Write/Create Access: GRANTED');
       testFile.setTrashed(true); // Clean up
-      console.log('   ✅ Delete/Cleanup Access: GRANTED');
+      console.log('   âœ… Delete/Cleanup Access: GRANTED');
       
     } catch (e) {
-      console.error('   ❌ DRIVE ERROR: ' + e.toString());
+      console.error('   âŒ DRIVE ERROR: ' + e.toString());
       console.log('      SOLUTION: Run this function again. If prompt appears, click Allow.');
       console.log('      If no prompt appears, check your DRIVE_FOLDER_ID is correct.');
     }
@@ -52,16 +52,16 @@
     // 3. Check Spreadsheet Permissions
     try {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
-      console.log(`📊 Spreadsheet Access: GRANTED (Found "${ss.getName()}")`);
+      console.log(`ðŸ“Š Spreadsheet Access: GRANTED (Found "${ss.getName()}")`);
     } catch (e) {
-      console.error('   ❌ SPREADSHEET ERROR: ' + e.toString());
+      console.error('   âŒ SPREADSHEET ERROR: ' + e.toString());
     }
 
     console.log('--- DIAGNOSIS COMPLETE ---');
   }
 
   /**
-  * ⚠️ OLD SETUP FUNCTION - IGNORE ⚠️
+  * âš ï¸ OLD SETUP FUNCTION - IGNORE âš ï¸
   */
   function forcePermissions() {
     runFullDiagnosis(); // Redirect to diagnosis
@@ -262,7 +262,7 @@
   }
 
   /**
-   * Reusable role gate — returns an error object if NOT admin/auditor, null if authorized.
+   * Reusable role gate â€” returns an error object if NOT admin/auditor, null if authorized.
    */
   function requireAdminOrAuditor_(username, actionDescription) {
     if (!username) {
@@ -295,8 +295,8 @@
   function validateApiKey_(key) {
     var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
     if (!expected) {
-      Logger.log('WARNING: SECRET_API_KEY not set — API key validation skipped');
-      return true;
+      Logger.log('ERROR: SECRET_API_KEY not set — rejecting request');
+      return false;
     }
     return !!(key && String(key).trim() === expected);
   }
@@ -311,7 +311,7 @@
     if (!token || typeof token !== 'string') return null;
     var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
     if (!secret) {
-      Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+      Logger.log('WARNING: SESSION_SECRET_KEY not set â€” token verification skipped');
       return null;
     }
     var parts = token.split('.');
@@ -443,15 +443,16 @@
         return createJsonResponse({ success: false, error: 'Invalid or missing API key', code: 401 });
       }
 
-      // ---- Session token verification (HMAC) — MUST run before role check ----
+      // ---- Session token verification (HMAC) â€” MUST run before role check ----
       var tokenUser = verifyHmacToken_(payload.sessionToken);
       var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-      if (sessionSecret && !tokenUser) {
+      if (!sessionSecret) {
+        return createJsonResponse({ success: false, error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing', code: 503 });
+      }
+      if (!tokenUser) {
         return createJsonResponse({ success: false, error: 'Invalid or expired session token', code: 401 });
       }
-      if (tokenUser) {
-        payload.username = tokenUser.username;
-      }
+      payload.username = tokenUser.username;
 
       // ---- Role check: all write operations require admin or auditor ----
       const authError = requireAdminOrAuditor_(payload.username, payload.action || 'modify homepage content');
@@ -870,7 +871,7 @@
       'Our Vision',
       'A community where every young person is actively engaged in building strong communities.',
       'Our Advocacy Pillars',
-      'Education • Environment • Health & Wellness • Community Development • Leadership & Civic Engagement',
+      'Education â€¢ Environment â€¢ Health & Wellness â€¢ Community Development â€¢ Leadership & Civic Engagement',
       '',
       ''
     ];
@@ -1351,7 +1352,7 @@
       '+63 917 123 4567',                                // Org_Phone
       'Tagum City, Davao del Norte, Philippines',        // Org_Location
       'https://maps.google.com/?q=Tagum+City,Davao+del+Norte,Philippines', // Org_GoogleMapURL
-      '🤝 Become Our Partner',                           // Partner_Title
+      'ðŸ¤ Become Our Partner',                           // Partner_Title
       'Join us in making a difference in our community. Partner with YSP and help us create lasting impact through collaborative projects.', // Partner_Description
       'Partner with Us',                                 // Partner_Button_Text
       '',                                                // Partner_GformURL (empty by default)
@@ -2719,3 +2720,5 @@
     const sheet = getFounderInfoSheet();
     console.log('Homepage_Founder Info sheet setup complete:', sheet.getName());
   }
+
+

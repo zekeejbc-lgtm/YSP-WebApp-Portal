@@ -7,6 +7,7 @@
  */
 
 /// <reference types="vite/client" />
+import { getSessionToken } from './gasLoginService';
 
 // =================== TYPES ===================
 
@@ -98,6 +99,14 @@ const DIRECTORY_CONFIG = {
   CACHE_DURATION: 5 * 60 * 1000, // 5 minutes
 };
 
+function getDirectoryAuthPayload(): { sessionToken: string } {
+  const sessionToken = getSessionToken();
+  if (!sessionToken) {
+    throw new DirectoryAPIError('Authentication required', DirectoryErrorCodes.INVALID_RESPONSE, 401);
+  }
+  return { sessionToken };
+}
+
 // =================== ERROR HANDLING ===================
 
 export class DirectoryAPIError extends Error {
@@ -188,6 +197,7 @@ export async function searchOfficers(query: string): Promise<SearchOfficersRespo
   }
 
   try {
+    const auth = getDirectoryAuthPayload();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DIRECTORY_CONFIG.TIMEOUT);
 
@@ -199,6 +209,7 @@ export async function searchOfficers(query: string): Promise<SearchOfficersRespo
       body: JSON.stringify({
         action: 'searchOfficers',
         query: query.trim(),
+        sessionToken: auth.sessionToken,
       }),
       signal: controller.signal,
     });
@@ -281,6 +292,7 @@ export async function getOfficerByIdCode(idCode: string): Promise<GetOfficerResp
   }
 
   try {
+    const auth = getDirectoryAuthPayload();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DIRECTORY_CONFIG.TIMEOUT);
 
@@ -292,6 +304,7 @@ export async function getOfficerByIdCode(idCode: string): Promise<GetOfficerResp
       body: JSON.stringify({
         action: 'getOfficerByIdCode',
         idCode: idCode.trim(),
+        sessionToken: auth.sessionToken,
       }),
       signal: controller.signal,
     });
@@ -378,6 +391,7 @@ export async function getAllOfficers(
   }
 
   try {
+    const auth = getDirectoryAuthPayload();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DIRECTORY_CONFIG.TIMEOUT);
 
@@ -390,6 +404,7 @@ export async function getAllOfficers(
         action: 'getAllOfficers',
         page,
         limit: Math.min(limit, 100),
+        sessionToken: auth.sessionToken,
       }),
       signal: controller.signal,
     });

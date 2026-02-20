@@ -245,6 +245,10 @@ export function clearIssuanceCache(): void {
 
 async function fetchFromGAS<T>(params: Record<string, string>): Promise<GASIssuanceResponse<T>> {
   const url = new URL(GAS_ISSUANCE_CONFIG.API_URL);
+  const sessionToken = getSessionToken();
+  if (sessionToken) {
+    url.searchParams.append('sessionToken', sessionToken);
+  }
   Object.entries(params).forEach(([key, value]) => {
     url.searchParams.append(key, value);
   });

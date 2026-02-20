@@ -59,6 +59,10 @@ async function callFeedbackAPI<T>(
     if (action === 'getFeedbacks' || action === 'initiate') {
       const url = new URL(GAS_FEEDBACK_API_URL);
       url.searchParams.append('action', action);
+      const sessionToken = getSessionToken();
+      if (sessionToken) {
+        url.searchParams.append('sessionToken', sessionToken);
+      }
       
       response = await fetch(url.toString(), {
         method: 'GET',
@@ -191,7 +195,8 @@ export async function uploadFeedbackImage(
       body: JSON.stringify({
         action: 'uploadImage',
         fileName: file.name,
-        fileData: base64Data
+        fileData: base64Data,
+        sessionToken: getSessionToken()
       }),
       signal,
     });

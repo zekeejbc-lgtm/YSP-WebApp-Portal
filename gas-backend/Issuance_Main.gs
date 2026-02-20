@@ -1,4 +1,4 @@
-  /**
+﻿  /**
   * =============================================================================
   * ISSUANCE CENTER - GOOGLE APPS SCRIPT BACKEND
   * =============================================================================
@@ -674,8 +674,8 @@
   function validateApiKey_(key) {
     var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
     if (!expected) {
-      Logger.log('WARNING: SECRET_API_KEY not set — API key validation skipped');
-      return true;
+      Logger.log('ERROR: SECRET_API_KEY not set — rejecting request');
+      return false;
     }
     return !!(key && String(key).trim() === expected);
   }
@@ -690,7 +690,7 @@
     if (!token || typeof token !== 'string') return null;
     var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
     if (!secret) {
-      Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+      Logger.log('WARNING: SESSION_SECRET_KEY not set â€” token verification skipped');
       return null;
     }
     var parts = token.split('.');
@@ -721,50 +721,62 @@
   * Handle GET requests
   */
   function doGet(e) {
-    const action = e.parameter.action;
+    const params = e.parameter || {};
+    const action = params.action;
     
     try {
+      // ---- Session token verification (HMAC) ----
+      var tokenUser = verifyHmacToken_(params.sessionToken);
+      var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+      if (!sessionSecret) {
+        return jsonResponse({ success: false, error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing', code: 503 });
+      }
+      if (!tokenUser) {
+        return jsonResponse({ success: false, error: 'Invalid or expired session token', code: 401 });
+      }
+      params.username = tokenUser.username;
+
       switch (action) {
         case 'init': {
-          var initUser = e.parameter.username || '';
+          var initUser = params.username || '';
           var initAuth = requireAdminOrAuditor_(initUser, 'initialize sheets');
           if (initAuth) return jsonResponse(initAuth);
           return jsonResponse(initializeIssuanceSheets());
         }
         
         case 'migrateColumns': {
-          var migrateUser = e.parameter.username || '';
+          var migrateUser = params.username || '';
           var migrateAuth = requireAdminOrAuditor_(migrateUser, 'migrate columns');
           if (migrateAuth) return jsonResponse(migrateAuth);
           return jsonResponse(migrateIssuanceColumns());
         }
         
         case 'getIssuances':
-          return jsonResponse(getIssuances(e.parameter));
+          return jsonResponse(getIssuances(params));
         
         case 'getIssuancesByRecipient':
-          return jsonResponse(getIssuancesByRecipient(e.parameter.email, e.parameter.name));
+          return jsonResponse(getIssuancesByRecipient(params.email, params.name));
         
         case 'getIssuance':
-          return jsonResponse(getIssuanceById(e.parameter.id));
+          return jsonResponse(getIssuanceById(params.id));
         
         case 'getTemplates':
-          return jsonResponse(getTemplates(e.parameter));
+          return jsonResponse(getTemplates(params));
         
         case 'getTemplate':
-          return jsonResponse(getTemplateById(e.parameter.id));
+          return jsonResponse(getTemplateById(params.id));
         
         case 'getSettings':
           return jsonResponse(getSettings());
         
         case 'getRecipients':
-          return jsonResponse(getRecipientsByIssuance(e.parameter.issuanceId));
+          return jsonResponse(getRecipientsByIssuance(params.issuanceId));
         
         case 'getSendLogs':
-          return jsonResponse(getSendLogs(e.parameter));
+          return jsonResponse(getSendLogs(params));
         
         case 'getEventAttendees':
-          return jsonResponse(getEventAttendees(e.parameter.eventId));
+          return jsonResponse(getEventAttendees(params.eventId));
         
         case 'getMembers':
           return jsonResponse(getAllMembers());
@@ -773,32 +785,32 @@
           return jsonResponse(getCommittees());
         
         case 'getControlNumberInfo':
-          return jsonResponse(getControlNumberInfo(e.parameter.issuanceId));
+          return jsonResponse(getControlNumberInfo(params.issuanceId));
         
         case 'getEventDetails':
-          return jsonResponse(getEventDetails(e.parameter.eventId));
+          return jsonResponse(getEventDetails(params.eventId));
         
         case 'previewControlNumber':
           // Preview what control number would be assigned for an event
-          return jsonResponse(previewControlNumberForEvent(e.parameter.eventId, e.parameter.eventTitle));
+          return jsonResponse(previewControlNumberForEvent(params.eventId, params.eventTitle));
         
         // Control Number Tracking endpoints
         case 'getControlNumberTracking':
           return jsonResponse(getControlNumberTracking({
-            year: e.parameter.year ? parseInt(e.parameter.year) : null,
-            eventId: e.parameter.eventId || null,
-            status: e.parameter.status || null,
-            issuanceId: e.parameter.issuanceId || null
+            year: params.year ? parseInt(params.year) : null,
+            eventId: params.eventId || null,
+            status: params.status || null,
+            issuanceId: params.issuanceId || null
           }));
         
         case 'getControlNumberSummary':
           return jsonResponse(getControlNumberSummary(
-            e.parameter.year ? parseInt(e.parameter.year) : null
+            params.year ? parseInt(params.year) : null
           ));
         
         case 'findAvailableEventNumbers':
           return jsonResponse(findAvailableEventNumbers(
-            e.parameter.year ? parseInt(e.parameter.year) : new Date().getFullYear()
+            params.year ? parseInt(params.year) : new Date().getFullYear()
           ));
         
         default:
@@ -829,12 +841,13 @@
       // ---- Session token verification (HMAC) ----
       var tokenUser = verifyHmacToken_(data.sessionToken);
       var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-      if (sessionSecret && !tokenUser) {
+      if (!sessionSecret) {
+        return jsonResponse({ success: false, error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing', code: 503 });
+      }
+      if (!tokenUser) {
         return jsonResponse({ success: false, error: 'Invalid or expired session token', code: 401 });
       }
-      if (tokenUser) {
-        data.username = tokenUser.username;
-      }
+      data.username = tokenUser.username;
       
       switch (action) {
         case 'createIssuance':
@@ -3845,7 +3858,7 @@
                   </div>
                   <div style="margin-top: 24px; padding: 16px; background: linear-gradient(135deg, rgba(238,135,36,0.1) 0%, rgba(246,66,31,0.1) 100%); border-radius: 8px; border-left: 4px solid #ee8724;">
                     <div style="display: flex; align-items: center; gap: 8px;">
-                      <span style="font-size: 20px;">📎</span>
+                      <span style="font-size: 20px;">ðŸ“Ž</span>
                       <span class="font-body" style="color: #4a5568; font-size: 14px;">Your document is attached to this email. Please download and save it for your records.</span>
                     </div>
                   </div>
@@ -3979,3 +3992,5 @@
     
     return result;
   }
+
+

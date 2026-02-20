@@ -3344,6 +3344,29 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
       }
     };
 
+    const chatbotForceHidden =
+      isEditingProfile ||
+      isEditingHomepage ||
+      accessLogsModalOpen ||
+      issuanceModalOpen ||
+      attendanceDashboardModalOpen ||
+      manageEventsModalOpen ||
+      attendanceTransparencyModalOpen ||
+      !!modalProject ||
+      showLoginPanel ||
+      showFounderModal ||
+      showDeveloperModal ||
+      membershipAppsModalOpen ||
+      manageMembersModalOpen ||
+      systemToolsModalOpen;
+
+    useEffect(() => {
+      document.body.classList.toggle("ysp-modal-open", chatbotForceHidden);
+      return () => {
+        document.body.classList.remove("ysp-modal-open");
+      };
+    }, [chatbotForceHidden]);
+
     const chatbot = (
       <YSPChatBot
         userRole={userRole}
@@ -3351,7 +3374,7 @@ import type { AttendanceDashboardContext } from "./components/AttendanceDashboar
         onOfficerDirectorySearch={handleOfficerDirectorySearch}
         onRequestCacheClear={handleRequestCacheClear}
         currentPage={activePage}
-        hidden={isEditingProfile || isEditingHomepage || accessLogsModalOpen || issuanceModalOpen || attendanceDashboardModalOpen || manageEventsModalOpen || attendanceTransparencyModalOpen || !!modalProject || showLoginPanel || showFounderModal || showDeveloperModal || membershipAppsModalOpen || manageMembersModalOpen || systemToolsModalOpen}
+        hidden={chatbotForceHidden}
         onTriggerEditMode={handleTriggerProfileEditMode}
         attendanceDashboardContext={attendanceDashboardContext}
         isDark={isDark}

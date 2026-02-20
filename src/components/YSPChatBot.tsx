@@ -5,7 +5,7 @@ import { openEmailApp } from "../utils/externalLinks";
 import { getAllOfficers, searchOfficers, type DirectoryOfficer } from "../services/gasDirectoryService";
 import { fetchEvents, formatEventDate } from "../services/gasEventsService";
 import { fetchAllProjects, type Project } from "../services/projectsService";
-import { getStoredUser, fetchUserProfile, type UserProfile } from "../services/gasLoginService";
+import { getStoredUser, getSessionToken, fetchUserProfile, type UserProfile } from "../services/gasLoginService";
 import type { AttendanceDashboardContext } from "./AttendanceDashboardPage";
 
 // API URL loaded from environment variable
@@ -2498,6 +2498,10 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
 
     try {
       const storedUser = getStoredUser();
+      const sessionToken = getSessionToken();
+      if (!sessionToken) {
+        throw new Error("Please log in to use the chatbot.");
+      }
       const recentHistory = messages.slice(-8).map((m) => ({
         role: m.sender === "bot" ? "assistant" : "user",
         text: m.text,
@@ -2524,6 +2528,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
           email: storedUser?.email || "",
           userRole: storedUser?.role || userRole || "",
           idCode: storedUser?.id || "",
+          sessionToken,
           history: recentHistory,
         }),
       });
@@ -2679,12 +2684,12 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
   const ui = useMemo(() => {
     return (
       <div
-        className="font-sans"
+        className="font-sans ysp-chatbot-root"
         style={{
           position: "fixed",
           bottom: "20px",
           right: "20px",
-          zIndex: 9999980,
+          zIndex: 9000,
           pointerEvents: "none",
           display: "flex",
           flexDirection: "column",
@@ -3120,7 +3125,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              zIndex: 9999980,
+              zIndex: 9000,
               padding: "24px",
               pointerEvents: "auto",
             }}

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * =====================================================
  * YSP TAGUM - NOTIFICATIONS SYSTEM
  * Google Apps Script Backend
@@ -51,6 +51,19 @@ function doGet(e) {
   try {
     if (isRequestCancelled_(params)) {
       return createJsonResponse_({ success: false, cancelled: true, message: 'Request cancelled' });
+    }
+
+    // Keep health endpoint public; require token for all others.
+    if (action !== 'health') {
+      var tokenUser = verifyHmacToken_(params.sessionToken);
+      var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+      if (!sessionSecret) {
+        return createJsonResponse_({ success: false, error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing', code: 503 });
+      }
+      if (!tokenUser) {
+        return createJsonResponse_({ success: false, error: 'Invalid or expired session token', code: 401 });
+      }
+      params.username = tokenUser.username;
     }
 
     switch (action) {
@@ -200,8 +213,8 @@ function requireAdminOrAuditor_(username, actionDescription) {
 function validateApiKey_(key) {
   var expected = PropertiesService.getScriptProperties().getProperty('SECRET_API_KEY') || '';
   if (!expected) {
-    Logger.log('WARNING: SECRET_API_KEY not set \u2014 API key validation skipped');
-    return true;
+    Logger.log('ERROR: SECRET_API_KEY not set — rejecting request');
+    return false;
   }
   return !!(key && String(key).trim() === expected);
 }
@@ -216,7 +229,7 @@ function verifyHmacToken_(token) {
   if (!token || typeof token !== 'string') return null;
   var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
   if (!secret) {
-    Logger.log('WARNING: SESSION_SECRET_KEY not set — token verification skipped');
+    Logger.log('WARNING: SESSION_SECRET_KEY not set â€” token verification skipped');
     return null;
   }
   var parts = token.split('.');
@@ -260,12 +273,13 @@ function doPost(e) {
     // ---- Session token verification (HMAC) ----
     var tokenUser = verifyHmacToken_(params.sessionToken);
     var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-    if (sessionSecret && !tokenUser) {
+    if (!sessionSecret) {
+      return createJsonResponse_({ success: false, error: 'Server auth misconfigured: SESSION_SECRET_KEY is missing', code: 503 });
+    }
+    if (!tokenUser) {
       return createJsonResponse_({ success: false, error: 'Invalid or expired session token', code: 401 });
     }
-    if (tokenUser) {
-      params.username = tokenUser.username;
-    }
+    params.username = tokenUser.username;
 
     switch (params.action) {
       case 'initializeSheets': {
@@ -694,3 +708,5 @@ function rowToObject_(headers, row) {
   });
   return obj;
 }
+
+

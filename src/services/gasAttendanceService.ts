@@ -230,6 +230,10 @@ function isApiConfigured(): boolean {
 function buildUrl(action: string, params?: Record<string, string | number | boolean>): string {
   const url = new URL(GAS_ATTENDANCE_CONFIG.API_URL);
   url.searchParams.append('action', action);
+  const sessionToken = getSessionToken();
+  if (sessionToken) {
+    url.searchParams.append('sessionToken', sessionToken);
+  }
   
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
