@@ -1332,6 +1332,7 @@ function callGemini(msg, context, requestContext, history) {
       - Act like a helpful LLM assistant for YSP users.
       - Prefer concrete answers over vague responses.
       - Give concise answers by default; expand when user asks for more detail.
+      - Do not use markdown symbols (no **bold**, __underline__, or backticks).
       - If details are missing, ask one focused follow-up question.
       - Do not output the phrase "I don't know". Give the best safe guidance based on known context.
       - If you are uncertain, say what detail is needed next.

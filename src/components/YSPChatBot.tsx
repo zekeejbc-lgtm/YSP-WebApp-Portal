@@ -736,6 +736,40 @@ function normalizeKnowledgeSource(value: unknown): KnowledgeSource | null {
   return null;
 }
 
+function getBotMessageGlowStyle(source: KnowledgeSource, isDark?: boolean): React.CSSProperties {
+  if (source === "gemini") {
+    return {
+      border: "1px solid rgba(239, 68, 68, 0.45)",
+      boxShadow: isDark
+        ? "0 0 14px rgba(239, 68, 68, 0.35), 0 0 4px rgba(239, 68, 68, 0.5)"
+        : "0 0 12px rgba(239, 68, 68, 0.2), 0 0 3px rgba(239, 68, 68, 0.35)",
+    };
+  }
+  if (source === "mixed") {
+    return {
+      border: "1px solid rgba(168, 85, 247, 0.45)",
+      boxShadow: isDark
+        ? "0 0 14px rgba(168, 85, 247, 0.35), 0 0 4px rgba(250, 204, 21, 0.3)"
+        : "0 0 12px rgba(168, 85, 247, 0.2), 0 0 3px rgba(250, 204, 21, 0.22)",
+    };
+  }
+  return {
+    border: "1px solid rgba(250, 204, 21, 0.5)",
+    boxShadow: isDark
+      ? "0 0 14px rgba(250, 204, 21, 0.3), 0 0 4px rgba(250, 204, 21, 0.42)"
+      : "0 0 12px rgba(250, 204, 21, 0.18), 0 0 3px rgba(250, 204, 21, 0.28)",
+  };
+}
+
+function sanitizeBotText(text: string): string {
+  return String(text || "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "");
+}
+
 function isCountQuery(query: string): boolean {
   return /\b(how many|count|number of|total)\b/.test(query);
 }
@@ -1374,12 +1408,13 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
 
     if (/^\/mode\s+llm$/i.test(workingText)) {
       setChatMode("llm");
+      setMembersCommandActive(false);
       setLastKnowledgeSource("gemini");
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now() + 1,
-          text: "LLM mode enabled. KaagapAI will prioritize Gemini for normal chat.",
+          text: "LLM mode enabled. KaagapAI will prioritize Gemini for normal chat. Members mode is now off.",
           sender: "bot",
         },
       ]);
@@ -1602,7 +1637,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       return;
     }
 
-    if (membersCommandActive && !/^@members\b/i.test(workingText)) {
+    if (shouldUseAssistantHeuristics && membersCommandActive && !/^@members\b/i.test(workingText)) {
       if (!isMembersCommandAllowed) {
         setMembersCommandActive(false);
         setMessages((prev) => [
@@ -2531,10 +2566,11 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
 
 // 🔗 Helper: Format text to make URLs and Emails clickable
   const formatMessage = (text: string, isUser: boolean) => {
+    const safeText = isUser ? text : sanitizeBotText(text);
     // Split text by URLs or Emails (including + signs)
     const regex = /((?:https?:\/\/[^\s]+)|(?:[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}))/g;
 
-    return text.split(regex).map((part, i) => {
+    return safeText.split(regex).map((part, i) => {
       // Check if it's a URL
       if (part.match(/^https?:\/\//)) {
         return (
@@ -2639,28 +2675,6 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     // Shadows
     chatWindowShadow: isDark ? "0 10px 40px -10px rgba(0,0,0,0.5)" : "0 10px 40px -10px rgba(0,0,0,0.2)",
   };
-
-  const bubbleGlow = useMemo(() => {
-    if (lastKnowledgeSource === "database") {
-      return {
-        border: "2px solid #facc15",
-        base: "0 0 0 3px rgba(250, 204, 21, 0.35), 0 6px 18px rgba(250, 204, 21, 0.45)",
-        hover: "0 0 0 4px rgba(250, 204, 21, 0.45), 0 10px 24px rgba(250, 204, 21, 0.55)",
-      };
-    }
-    if (lastKnowledgeSource === "mixed") {
-      return {
-        border: "2px solid #fb923c",
-        base: "0 0 0 3px rgba(251, 146, 60, 0.35), 0 6px 18px rgba(251, 146, 60, 0.45)",
-        hover: "0 0 0 4px rgba(251, 146, 60, 0.45), 0 10px 24px rgba(251, 146, 60, 0.55)",
-      };
-    }
-    return {
-      border: "2px solid #ef4444",
-      base: "0 0 0 3px rgba(239, 68, 68, 0.35), 0 6px 18px rgba(239, 68, 68, 0.45)",
-      hover: "0 0 0 4px rgba(239, 68, 68, 0.45), 0 10px 24px rgba(239, 68, 68, 0.55)",
-    };
-  }, [lastKnowledgeSource]);
 
   const ui = useMemo(() => {
     return (
@@ -2793,6 +2807,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
           >
             {messages.map((msg) => {
               const isUser = msg.sender === "user";
+              const botSource: KnowledgeSource = msg.source || "database";
+              const botGlowStyle = isUser ? null : getBotMessageGlowStyle(botSource, isDark);
               return (
                 <div
                   key={msg.id}
@@ -2863,6 +2879,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
                         wordBreak: "break-word",
                         overflowWrap: "anywhere",
                         whiteSpace: "pre-wrap",
+                        ...(botGlowStyle || {}),
                       }}
                     >
                       {formatMessage(msg.text, isUser)}
@@ -3067,11 +3084,11 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
             width: "60px",
             height: "60px",
             borderRadius: "50%",
-            border: bubbleGlow.border,
+            border: "2px solid rgba(255, 255, 255, 0.75)",
             cursor: "pointer",
             background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
             color: "#ffffff",
-            boxShadow: bubbleGlow.base,
+            boxShadow: "0 10px 22px rgba(234, 88, 12, 0.35)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -3081,11 +3098,11 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = "scale(1.05)";
-            e.currentTarget.style.boxShadow = bubbleGlow.hover;
+            e.currentTarget.style.boxShadow = "0 14px 28px rgba(234, 88, 12, 0.45)";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.transform = "scale(1)";
-            e.currentTarget.style.boxShadow = bubbleGlow.base;
+            e.currentTarget.style.boxShadow = "0 10px 22px rgba(234, 88, 12, 0.35)";
           }}
         >
           {isOpen ? <X size={28} /> : <MessageSquare size={28} />}
@@ -3187,7 +3204,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
         `}</style>
       </div>
     );
-}, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList, isDark, colors, bubbleGlow, chatMode]); // ✅ Add cooldown, isDark, colors here
+}, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList, isDark, colors, chatMode]); // ✅ Add cooldown, isDark, colors here
 
   if (!mounted) return null;
   if (hidden) return null; // Hide chatbot when in edit mode
