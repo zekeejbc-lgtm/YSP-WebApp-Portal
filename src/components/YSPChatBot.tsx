@@ -12,12 +12,15 @@ import type { AttendanceDashboardContext } from "./AttendanceDashboardPage";
 const API_URL = import.meta.env.VITE_GAS_CHATBOT_API_URL || '';
 
 type Sender = "user" | "bot";
+type KnowledgeSource = "database" | "mixed" | "gemini";
+type ChatMode = "assistant" | "llm";
 
 interface Message {
   id: number;
   text: string;
   sender: Sender;
   image?: string;
+  source?: KnowledgeSource;
 }
 
 interface YSPChatBotProps {
@@ -41,6 +44,9 @@ interface KBEntry {
 
 // 💡 SUGGESTIONS: Quick reply chips
 const BASE_SUGGESTIONS = [
+  "/help",
+  "/mode llm",
+  "/mode assistant",
   "Who is the founder?",
   "What are the advocacy pillars?",
   "About YSP",
@@ -690,6 +696,46 @@ function parseGenderFilter(query: string): "female" | "male" | null {
   return null;
 }
 
+function normalizeGenderValue(value: string): "female" | "male" | null {
+  const normalized = String(value || "").toLowerCase().trim();
+  if (!normalized) return null;
+  if (normalized === "f") return "female";
+  if (normalized === "m") return "male";
+  if (
+    normalized.includes("female") ||
+    normalized === "woman" ||
+    normalized === "women" ||
+    normalized === "girl" ||
+    normalized === "girls" ||
+    normalized.includes("feminine")
+  ) {
+    return "female";
+  }
+  if (
+    normalized.includes("male") ||
+    normalized === "man" ||
+    normalized === "men" ||
+    normalized === "boy" ||
+    normalized === "boys" ||
+    normalized.includes("masculine")
+  ) {
+    return "male";
+  }
+  return null;
+}
+
+function matchesGenderFilter(value: string, target: "female" | "male"): boolean {
+  return normalizeGenderValue(value) === target;
+}
+
+function normalizeKnowledgeSource(value: unknown): KnowledgeSource | null {
+  const raw = String(value || "").toLowerCase().trim();
+  if (raw === "database") return "database";
+  if (raw === "mixed") return "mixed";
+  if (raw === "gemini") return "gemini";
+  return null;
+}
+
 function isCountQuery(query: string): boolean {
   return /\b(how many|count|number of|total)\b/.test(query);
 }
@@ -922,6 +968,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
   const [lastDirectoryOfficer, setLastDirectoryOfficer] = useState<DirectoryOfficer | null>(null);
   const [membersCommandActive, setMembersCommandActive] = useState(false);
   const [fullImageUrl, setFullImageUrl] = useState<string | null>(null);
+  const [lastKnowledgeSource, setLastKnowledgeSource] = useState<KnowledgeSource>("database");
+  const [chatMode, setChatMode] = useState<ChatMode>("llm");
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1170,34 +1218,6 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     return null;
   };
 
-  const getCachedOfficersFromStorage = (): DirectoryOfficer[] | null => {
-    const storages = [sessionStorage, localStorage];
-    let bestTimestamp = 0;
-    let bestOfficers: DirectoryOfficer[] | null = null;
-
-    for (const storage of storages) {
-      try {
-        for (let i = 0; i < storage.length; i++) {
-          const key = storage.key(i);
-          if (!key || !key.startsWith("ysp_directory_cache_all_")) continue;
-          const raw = storage.getItem(key);
-          if (!raw) continue;
-          const parsed = JSON.parse(raw) as { data?: { officers?: DirectoryOfficer[] }; timestamp?: number };
-          const officers = parsed.data?.officers;
-          const timestamp = parsed.timestamp || 0;
-          if (officers && timestamp > bestTimestamp) {
-            bestTimestamp = timestamp;
-            bestOfficers = officers;
-          }
-        }
-      } catch {
-        // Ignore storage read errors
-      }
-    }
-
-    return bestOfficers;
-  };
-
   const getCachedSearchResults = (query: string): DirectoryOfficer[] | null => {
     const key = `ysp_directory_cache_search_${query.toLowerCase().trim()}`;
     const storages = [sessionStorage, localStorage];
@@ -1226,17 +1246,62 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     return searchOfficers(query);
   };
 
+  const buildHelpMessage = (pageValue: string, roleValue: string, loggedIn: boolean): string => {
+    const page = pageValue.toLowerCase().trim();
+    const role = roleValue.toLowerCase().trim();
+    const isPrivileged = role === "auditor" || role === "admin";
+    const lines: string[] = [];
+
+    lines.push("Available commands for this page:");
+    lines.push("- /help: Show available commands for the current page");
+    lines.push("- /mode llm: LLM-first chat mode");
+    lines.push("- /mode assistant: Rule/feature-first assistant mode");
+    lines.push("- @clear chat history: Reset chat conversation");
+
+    if (loggedIn && (page === "my-profile" || page === "profile")) {
+      lines.push("- @profile [question]: Profile help and guidance");
+      lines.push("- @profile who am I");
+      lines.push("- @profile introduce me");
+      lines.push("- @profile edit profile");
+      lines.push("- @profile verify email");
+    }
+
+    if (loggedIn && (page === "officer-directory" || page === "manage-members")) {
+      if (isPrivileged) {
+        lines.push("- @members [query]: Search members and analytics");
+        lines.push("- /@members: Enable members mode");
+        lines.push("- /@members off: Disable members mode");
+        lines.push("- @members who is [name]");
+        lines.push("- @members how many members are females");
+      } else {
+        lines.push("- @members is available for auditors/admins only");
+      }
+    }
+
+    if (loggedIn && page.indexOf("system") !== -1) {
+      lines.push("- @system clear cache");
+      lines.push("- @system hard refresh");
+      if (isPrivileged) {
+        lines.push("- @review unknowns");
+      }
+    }
+
+    if (page === "attendance-dashboard" || page === "attendancedashboard") {
+      lines.push("- Ask attendance questions (summary, present/late/absent, rate)");
+    }
+
+    if (!loggedIn) {
+      lines.push("Login required for protected commands like @profile, @members, @system, and @review unknowns.");
+    }
+
+    return lines.join("\n");
+  };
+
   const loadAllOfficersForAnalytics = async (): Promise<DirectoryOfficer[]> => {
     const cache = directoryAnalyticsCacheRef.current;
     const cacheMs = 2 * 60 * 1000;
     if (cache && Date.now() - cache.timestamp < cacheMs) {
       return cache.officers;
-    }
-
-    const cachedOfficers = getCachedOfficersFromStorage();
-    if (cachedOfficers && cachedOfficers.length > 0) {
-      directoryAnalyticsCacheRef.current = { timestamp: Date.now(), officers: cachedOfficers };
-      return cachedOfficers;
     }
 
     const officers: DirectoryOfficer[] = [];
@@ -1274,11 +1339,14 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     const role = userRole.toLowerCase();
     const isPrivileged = role === "auditor" || role === "admin";
     const pageKey = currentPage.toLowerCase();
+    const isLoggedIn = Boolean(getStoredUser()?.username);
+    const shouldUseAssistantHeuristics = chatMode === "assistant";
     const isMembersCommandAllowed =
       pageKey === "officer-directory" || pageKey === "manage-members";
 
     if (/^@clear\b/i.test(workingText) || /^@clear chat history\b/i.test(workingText)) {
       setMessages([{ id: Date.now(), text: "Hello! I'm the YSP Assistant. How can I help you?", sender: "bot" }]);
+      setLastKnowledgeSource("database");
       setIsLoading(false);
       setMembersCommandActive(false);
       setPendingProjectSummary(null);
@@ -1287,6 +1355,50 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       setIsDirectoryDetailsPending(false);
       setLastDirectoryOfficer(null);
       setInput("");
+      return;
+    }
+
+    if (/^\/help(?:\s+.*)?$/i.test(workingText) || /^help$/i.test(workingText)) {
+      setLastKnowledgeSource("database");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          text: buildHelpMessage(pageKey, role, isLoggedIn),
+          sender: "bot",
+        },
+      ]);
+      setIsLoading(false);
+      return;
+    }
+
+    if (/^\/mode\s+llm$/i.test(workingText)) {
+      setChatMode("llm");
+      setLastKnowledgeSource("gemini");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          text: "LLM mode enabled. KaagapAI will prioritize Gemini for normal chat.",
+          sender: "bot",
+        },
+      ]);
+      setIsLoading(false);
+      return;
+    }
+
+    if (/^\/mode\s+assistant$/i.test(workingText)) {
+      setChatMode("assistant");
+      setLastKnowledgeSource("database");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          text: "Assistant mode enabled. KaagapAI will prioritize built-in commands and local handlers.",
+          sender: "bot",
+        },
+      ]);
+      setIsLoading(false);
       return;
     }
 
@@ -1552,6 +1664,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       const analyticsQuery = parseDirectoryAnalyticsQuery(commandText.toLowerCase());
       if (analyticsQuery) {
         try {
+          setLastKnowledgeSource("database");
           const officers = await loadAllOfficersForAnalytics();
           const scope = parseDirectoryRoleScope(commandText.toLowerCase());
           const formatScopeLabel = (value: string) =>
@@ -1600,12 +1713,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
           if (analyticsQuery.type === "gender" && analyticsQuery.gender) {
             const genderKey = analyticsQuery.gender;
             const matches = filteredOfficers.filter((officer) => {
-              const genderValue = (officer.gender || "").toLowerCase();
-              if (!genderValue) return false;
-              if (genderKey === "female") {
-                return genderValue.includes("female") || genderValue === "f";
-              }
-              return genderValue.includes("male") || genderValue === "m";
+              return matchesGenderFilter(officer.gender || "", genderKey);
             });
             const count = matches.length;
             setMessages((prev) => [
@@ -1956,7 +2064,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     }
 
     const analyticsQuery = parseDirectoryAnalyticsQuery(normalized);
-    if (analyticsQuery) {
+    if (shouldUseAssistantHeuristics && analyticsQuery) {
       if (!isPrivileged) {
         setMessages((prev) => [
           ...prev,
@@ -1971,17 +2079,13 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       }
 
       try {
+        setLastKnowledgeSource("database");
         const officers = await loadAllOfficersForAnalytics();
 
         if (analyticsQuery.type === "gender" && analyticsQuery.gender) {
           const genderKey = analyticsQuery.gender;
           const matches = officers.filter((officer) => {
-            const genderValue = (officer.gender || "").toLowerCase();
-            if (!genderValue) return false;
-            if (genderKey === "female") {
-              return genderValue.includes("female") || genderValue === "f";
-            }
-            return genderValue.includes("male") || genderValue === "m";
+            return matchesGenderFilter(officer.gender || "", genderKey);
           });
           const count = matches.length;
           setMessages((prev) => [
@@ -2064,7 +2168,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       return;
     }
 
-    if (isExecutiveBoardQuery(normalized)) {
+    if (shouldUseAssistantHeuristics && isExecutiveBoardQuery(normalized)) {
       const responseText = orgChartUrl
         ? "Here is the organizational chart for the Executive Board."
         : "The organizational chart is not available yet. Please check back later.";
@@ -2079,7 +2183,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       return;
     }
 
-    if (isDirectoryIntent(normalized)) {
+    if (shouldUseAssistantHeuristics && isDirectoryIntent(normalized)) {
       const rawTarget =
         extractDirectoryTarget(workingText) || extractPossessiveTarget(workingText) || "";
       const target = normalizeDirectoryTarget(rawTarget);
@@ -2196,7 +2300,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     }
 
     const eventQuery = parseEventQuery(normalized);
-    if (eventQuery) {
+    if (shouldUseAssistantHeuristics && eventQuery) {
       if (eventQuery.needsClarification) {
         setMessages((prev) => [
           ...prev,
@@ -2266,7 +2370,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       return;
     }
 
-    if (isProjectsQuery(normalized)) {
+    if (shouldUseAssistantHeuristics && isProjectsQuery(normalized)) {
       try {
         const result = await fetchAllProjects();
         if (result.error) {
@@ -2311,7 +2415,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     }
 
     // 📊 Check for attendance dashboard context queries
-    if (currentPage === 'attendance-dashboard' || currentPage === 'AttendanceDashboard') {
+    if (shouldUseAssistantHeuristics && (currentPage === 'attendance-dashboard' || currentPage === 'AttendanceDashboard')) {
       const attendanceResponse = generateAttendanceContextResponse(text);
       if (attendanceResponse) {
         setTimeout(() => {
@@ -2328,7 +2432,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     }
 
     const localMatch = findLocalAnswer(text);
-    if (localMatch) {
+    if (shouldUseAssistantHeuristics && localMatch) {
+      setLastKnowledgeSource("database");
       let imageUrl: string | undefined = undefined;
 
       if (localMatch.lookup) {
@@ -2365,6 +2470,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
 
       const contextParts: string[] = [];
       if (currentPage) contextParts.push(`Current page: ${currentPage}`);
+      contextParts.push(`Chat mode: ${chatMode}`);
       if (attendanceDashboardContext) {
         contextParts.push(
           `Attendance mode: ${attendanceDashboardContext.mode}, records: ${attendanceDashboardContext.statistics.totalRecords}`
@@ -2389,16 +2495,20 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
 
       const raw = await res.text();
       let reply = "";
+      let source: KnowledgeSource = "gemini";
       try {
         const parsed = JSON.parse(raw);
         reply = typeof parsed?.reply === "string" ? parsed.reply : "";
+        const parsedSource = normalizeKnowledgeSource(parsed?.source);
+        if (parsedSource) source = parsedSource;
       } catch {
         reply = raw;
       }
 
       if (!reply.trim()) reply = CLARIFYING_FALLBACK;
 
-      const botMsg: Message = { id: Date.now() + 1, text: reply, sender: "bot" };
+      setLastKnowledgeSource(source);
+      const botMsg: Message = { id: Date.now() + 1, text: reply, sender: "bot", source };
       setMessages((prev) => [...prev, botMsg]);
     } catch (err) {
       console.error("Chatbot API error:", err);
@@ -2530,6 +2640,28 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     chatWindowShadow: isDark ? "0 10px 40px -10px rgba(0,0,0,0.5)" : "0 10px 40px -10px rgba(0,0,0,0.2)",
   };
 
+  const bubbleGlow = useMemo(() => {
+    if (lastKnowledgeSource === "database") {
+      return {
+        border: "2px solid #facc15",
+        base: "0 0 0 3px rgba(250, 204, 21, 0.35), 0 6px 18px rgba(250, 204, 21, 0.45)",
+        hover: "0 0 0 4px rgba(250, 204, 21, 0.45), 0 10px 24px rgba(250, 204, 21, 0.55)",
+      };
+    }
+    if (lastKnowledgeSource === "mixed") {
+      return {
+        border: "2px solid #fb923c",
+        base: "0 0 0 3px rgba(251, 146, 60, 0.35), 0 6px 18px rgba(251, 146, 60, 0.45)",
+        hover: "0 0 0 4px rgba(251, 146, 60, 0.45), 0 10px 24px rgba(251, 146, 60, 0.55)",
+      };
+    }
+    return {
+      border: "2px solid #ef4444",
+      base: "0 0 0 3px rgba(239, 68, 68, 0.35), 0 6px 18px rgba(239, 68, 68, 0.45)",
+      hover: "0 0 0 4px rgba(239, 68, 68, 0.45), 0 10px 24px rgba(239, 68, 68, 0.55)",
+    };
+  }, [lastKnowledgeSource]);
+
   const ui = useMemo(() => {
     return (
       <div
@@ -2611,6 +2743,22 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
               <span style={{ fontSize: "11px", opacity: 0.9, fontWeight: "400" }}>
                 Katuwang ng Kabataang Tagumeño.
               </span>
+              <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <span
+                  style={{
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: "999px",
+                    backgroundColor: chatMode === "llm" ? "rgba(239, 68, 68, 0.22)" : "rgba(250, 204, 21, 0.22)",
+                    border: chatMode === "llm" ? "1px solid rgba(239, 68, 68, 0.55)" : "1px solid rgba(250, 204, 21, 0.55)",
+                    color: "#fff",
+                    letterSpacing: "0.2px",
+                  }}
+                >
+                  Mode: {chatMode === "llm" ? "LLM" : "Assistant"}
+                </span>
+              </div>
             </div>
 
             <button
@@ -2919,24 +3067,25 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
             width: "60px",
             height: "60px",
             borderRadius: "50%",
-            border: "none",
+            border: bubbleGlow.border,
             cursor: "pointer",
             background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
             color: "#ffffff",
-            boxShadow: "0 4px 14px rgba(246, 66, 31, 0.4)",
+            boxShadow: bubbleGlow.base,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             pointerEvents: "auto",
             transition: "transform 0.2s, box-shadow 0.2s",
+            animation: "chatBubblePulse 2.2s ease-in-out infinite",
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = "scale(1.05)";
-            e.currentTarget.style.boxShadow = "0 6px 20px rgba(246, 66, 31, 0.5)";
+            e.currentTarget.style.boxShadow = bubbleGlow.hover;
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.transform = "scale(1)";
-            e.currentTarget.style.boxShadow = "0 4px 14px rgba(246, 66, 31, 0.4)";
+            e.currentTarget.style.boxShadow = bubbleGlow.base;
           }}
         >
           {isOpen ? <X size={28} /> : <MessageSquare size={28} />}
@@ -3021,6 +3170,11 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
             from { opacity: 0; transform: scale(0.95) translateY(10px); }
             to { opacity: 1; transform: scale(1) translateY(0); }
           }
+          @keyframes chatBubblePulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+            100% { transform: scale(1); }
+          }
           /* Hide scrollbar for Chrome, Safari and Opera */
           .ysp-no-scrollbar::-webkit-scrollbar {
             display: none;
@@ -3033,7 +3187,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
         `}</style>
       </div>
     );
-}, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList, isDark, colors]); // ✅ Add cooldown, isDark, colors here
+}, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList, isDark, colors, bubbleGlow, chatMode]); // ✅ Add cooldown, isDark, colors here
 
   if (!mounted) return null;
   if (hidden) return null; // Hide chatbot when in edit mode

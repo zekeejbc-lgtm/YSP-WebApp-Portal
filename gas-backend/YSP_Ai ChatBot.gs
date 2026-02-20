@@ -34,37 +34,47 @@ const CHATBOT_CONFIG = {
   DIRECTORY_GEMINI_REWRITE_ROUNDS: 2
 };
 
+var CHATBOT_RUNTIME_TRACE_ = null;
+
 function doPost(e) {
   try {
+    beginChatbotRuntimeTrace_();
     var rawData = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
     var data = JSON.parse(rawData || '{}');
     var userMessage = toStringValue_(data.message);
 
     if (!userMessage) {
       return createChatbotJsonResponse_({
-        reply: 'Please type a message.'
+        reply: 'Please type a message.',
+        source: deriveChatbotResponseSource_()
       });
     }
 
     var requestContext = extractChatRequestContext_(data);
     var reviewUnknownsReply = handleReviewUnknownsCommand_(userMessage, requestContext, data);
     if (reviewUnknownsReply) {
+      markDatabaseUsed_();
       return createChatbotJsonResponse_({
-        reply: reviewUnknownsReply
+        reply: reviewUnknownsReply,
+        source: deriveChatbotResponseSource_()
       });
     }
 
     var cannedReply = lookupApprovedUnknownAnswer_(userMessage, requestContext.currentPage);
     if (cannedReply) {
+      markDatabaseUsed_();
       return createChatbotJsonResponse_({
-        reply: cannedReply
+        reply: cannedReply,
+        source: deriveChatbotResponseSource_()
       });
     }
 
     var directoryReply = handleDirectoryMessage(userMessage, data);
     if (directoryReply) {
+      markDatabaseUsed_();
       return createChatbotJsonResponse_({
-        reply: directoryReply
+        reply: directoryReply,
+        source: deriveChatbotResponseSource_()
       });
     }
 
@@ -80,14 +90,40 @@ function doPost(e) {
     }
 
     return createChatbotJsonResponse_({
-      reply: finalReply
+      reply: finalReply,
+      source: deriveChatbotResponseSource_()
     });
 
   } catch (error) {
     return createChatbotJsonResponse_({
-      reply: 'System Error: ' + error.toString()
+      reply: 'System Error: ' + error.toString(),
+      source: deriveChatbotResponseSource_()
     });
   }
+}
+
+function beginChatbotRuntimeTrace_() {
+  CHATBOT_RUNTIME_TRACE_ = {
+    usedGemini: false,
+    usedDatabase: false
+  };
+}
+
+function markGeminiUsed_() {
+  if (!CHATBOT_RUNTIME_TRACE_) beginChatbotRuntimeTrace_();
+  CHATBOT_RUNTIME_TRACE_.usedGemini = true;
+}
+
+function markDatabaseUsed_() {
+  if (!CHATBOT_RUNTIME_TRACE_) beginChatbotRuntimeTrace_();
+  CHATBOT_RUNTIME_TRACE_.usedDatabase = true;
+}
+
+function deriveChatbotResponseSource_() {
+  if (!CHATBOT_RUNTIME_TRACE_) return 'database';
+  if (CHATBOT_RUNTIME_TRACE_.usedGemini && CHATBOT_RUNTIME_TRACE_.usedDatabase) return 'mixed';
+  if (CHATBOT_RUNTIME_TRACE_.usedGemini) return 'gemini';
+  return 'database';
 }
 
 function createChatbotJsonResponse_(data) {
@@ -765,14 +801,45 @@ function callGeminiForDirectoryAggregateIntent_(message, rows, idx) {
 }
 
 function isGenderMatch(value, target) {
-  var normalized = normalizeDirectoryText(value);
+  var normalized = normalizeGenderValue_(value);
   if (target === 'male') {
-    return normalized === 'male' || normalized === 'm' || normalized === 'man' || normalized === 'men';
+    return normalized === 'male';
   }
   if (target === 'female') {
-    return normalized === 'female' || normalized === 'f' || normalized === 'woman' || normalized === 'women';
+    return normalized === 'female';
   }
   return false;
+}
+
+function normalizeGenderValue_(value) {
+  var text = normalizeDirectoryText(value);
+  if (!text) return '';
+  if (text === 'm') return 'male';
+  if (text === 'f') return 'female';
+  if (
+    text.indexOf('female') !== -1 ||
+    text === 'woman' ||
+    text === 'women' ||
+    text === 'girl' ||
+    text === 'girls' ||
+    text.indexOf('feminine') !== -1
+  ) {
+    return 'female';
+  }
+  if (
+    text.indexOf('male') !== -1 ||
+    text === 'man' ||
+    text === 'men' ||
+    text === 'boy' ||
+    text === 'boys' ||
+    text.indexOf('masculine') !== -1
+  ) {
+    return 'male';
+  }
+  if (text === 'm f' || text === 'f m' || text.indexOf('non binary') !== -1 || text.indexOf('nonbinary') !== -1) {
+    return '';
+  }
+  return '';
 }
 
 function isEmailVerified(row, idx) {
@@ -1260,9 +1327,11 @@ function callGemini(msg, context, requestContext, history) {
       CONTEXT: You are a floating chat bubble inside the student leader WebApp.
       TONE: Professional, encouraging, concise. Use "We".
       INFO: Membership Officer is Ezequiel John B. Crisostomo. Apply in 'Membership' tab. Attendance in 'Events' tab.
-      RESTRICTIONS: No code. No technical explanations. Short answers.
+      RESTRICTIONS: Avoid unsafe/harmful content.
       BEHAVIOR:
+      - Act like a helpful LLM assistant for YSP users.
       - Prefer concrete answers over vague responses.
+      - Give concise answers by default; expand when user asks for more detail.
       - If details are missing, ask one focused follow-up question.
       - Do not output the phrase "I don't know". Give the best safe guidance based on known context.
       - If you are uncertain, say what detail is needed next.
@@ -1306,6 +1375,7 @@ function callGemini(msg, context, requestContext, history) {
 }
 
 function callGeminiWithRotation_(payload) {
+  markGeminiUsed_();
   var keys = resolveChatbotApiKeys_();
   if (!keys.length) {
     return { success: false, text: '', error: 'No Gemini API keys configured' };
