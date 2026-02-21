@@ -34,6 +34,15 @@ export interface SessionVerifyResponse {
   timestamp: string;
 }
 
+interface SessionRefreshResponse {
+  success: boolean;
+  sessionToken?: string;
+  username?: string;
+  timestamp?: string;
+  error?: string;
+  code?: number;
+}
+
 export type SessionVerificationState = 'valid' | 'expired' | 'unreachable';
 
 // User Profile interface matching the backend data
@@ -147,6 +156,9 @@ const LOGIN_CONFIG = {
   SESSION_KEY: 'ysp_session',
   USER_KEY: 'ysp_user',
 };
+
+const SESSION_REFRESH_BUFFER_MS = 10 * 60 * 1000; // refresh ~10 minutes before expiry
+let refreshSessionInFlight: Promise<string | null> | null = null;
 
 // =================== ERROR HANDLING ===================
 
@@ -931,6 +943,83 @@ export async function verifySession(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function decodeTokenExpiryMs(token: string): number | null {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length !== 2) return null;
+    const decoded = atob(parts[0]);
+    const fields = decoded.split('|');
+    if (fields.length < 2) return null;
+    const expiry = Number(fields[1]);
+    return Number.isFinite(expiry) ? expiry : null;
+  } catch {
+    return null;
+  }
+}
+
+function upsertSessionToken(nextToken: string): void {
+  try {
+    localStorage.setItem(LOGIN_CONFIG.SESSION_KEY, obfuscate(nextToken));
+    const storedUser = getStoredUser();
+    if (storedUser) {
+      localStorage.setItem(
+        LOGIN_CONFIG.USER_KEY,
+        obfuscate(JSON.stringify({ ...storedUser, sessionToken: nextToken }))
+      );
+    }
+  } catch (error) {
+    console.error('Failed to update session token:', error);
+  }
+}
+
+export function isSessionTokenExpiringSoon(bufferMs = SESSION_REFRESH_BUFFER_MS): boolean {
+  const token = getSessionToken();
+  if (!token) return true;
+  const expiry = decodeTokenExpiryMs(token);
+  if (!expiry) return false; // Legacy/non-HMAC tokens can't be parsed; skip proactive refresh.
+  return Date.now() + Math.max(0, bufferMs) >= expiry;
+}
+
+export async function refreshSessionToken(force = false): Promise<string | null> {
+  const currentToken = getSessionToken();
+  if (!currentToken || !LOGIN_CONFIG.API_URL) return null;
+
+  if (!force && !isSessionTokenExpiringSoon()) {
+    return currentToken;
+  }
+
+  if (refreshSessionInFlight) return refreshSessionInFlight;
+
+  refreshSessionInFlight = (async () => {
+    try {
+      const response = await fetch(LOGIN_CONFIG.API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: JSON.stringify({
+          action: 'refreshSession',
+          sessionToken: currentToken,
+        }),
+      });
+
+      if (!response.ok) return null;
+
+      const data: SessionRefreshResponse = await response.json();
+      if (!data.success || !data.sessionToken) return null;
+
+      upsertSessionToken(data.sessionToken);
+      return data.sessionToken;
+    } catch {
+      return null;
+    } finally {
+      refreshSessionInFlight = null;
+    }
+  })();
+
+  return refreshSessionInFlight;
 }
 
 /**
@@ -1933,6 +2022,8 @@ export default {
   createUserAccount,
   storeSession,
   getSessionToken,
+  refreshSessionToken,
+  isSessionTokenExpiringSoon,
   getStoredUser,
   clearSession,
   hasActiveSession,

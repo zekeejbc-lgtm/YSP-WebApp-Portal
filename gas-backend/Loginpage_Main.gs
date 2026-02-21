@@ -382,6 +382,8 @@ function doPost(e) {
         return handleLogin(username, password);
       case 'verifySession':
         return handleVerifySession(requestData.sessionToken);
+      case 'refreshSession':
+        return handleRefreshSession(requestData.username);
       case 'checkUserRole':
         return handleCheckUserRole(requestData.username);
       case 'getProfile':
@@ -661,6 +663,30 @@ function handleVerifySession(sessionToken) {
 }
 
 /**
+ * Refresh an authenticated session and return a newly-signed token.
+ * Requires a valid session token at request time (enforced in doPost).
+ * @param {string} username - Username resolved from verified token
+ * @returns {TextOutput} JSON response
+ */
+function handleRefreshSession(username) {
+  if (!username) {
+    return createErrorResponse('Invalid or expired session token', 401);
+  }
+
+  var nextToken = generateSessionToken(username);
+  if (!nextToken) {
+    return createErrorResponse('Failed to refresh session token', 500);
+  }
+
+  return createSuccessResponse({
+    success: true,
+    sessionToken: nextToken,
+    username: username,
+    timestamp: new Date().toISOString()
+  });
+}
+
+/**
  * Lightweight role check for polling - returns only role and status
  * Used by frontend to detect role changes without fetching full profile
  * @param {string} username - Username to check role for
@@ -858,6 +884,7 @@ function canAccessPathByRole_(roleName, pagePath) {
     'admin/members': 'page_admin_members',
     'admin/logs': 'page_admin_logs',
     'admin/tools': 'page_admin_tools',
+    'organizational-tasks': 'page_organizational_tasks',
   };
   const explicitPageKey = pagePermissionMap[path];
   if (explicitPageKey) {
@@ -876,6 +903,7 @@ function canAccessPathByRole_(roleName, pagePath) {
     path === 'profile' ||
     path === 'announcements' ||
     path === 'issuance' ||
+    path === 'organizational-tasks' ||
     path === 'applications' ||
     path === 'settings'
   ) {

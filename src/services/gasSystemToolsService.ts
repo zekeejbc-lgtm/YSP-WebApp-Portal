@@ -11,7 +11,7 @@
 
 /// <reference types="vite/client" />
 
-import { getSessionToken, getStoredUser } from './gasLoginService';
+import { getSessionToken, getStoredUser, refreshSessionToken } from './gasLoginService';
 import type { SystemRole } from '../types/app';
 
 // =================== TYPES ===================
@@ -210,12 +210,18 @@ export const SystemToolsErrorCodes = {
   UNAUTHORIZED: 1005,
 } as const;
 
+function normalizeSystemToolsErrorCode(code?: number): number {
+  if (code === 401) return SystemToolsErrorCodes.UNAUTHORIZED;
+  return code || SystemToolsErrorCodes.API_ERROR;
+}
+
 // =================== API HELPERS ===================
 
 async function callSystemToolsAPI<T>(
   action: string,
   data: Record<string, unknown> = {},
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  allowRefreshRetry = true
 ): Promise<T> {
   if (!GAS_API_URL) {
     console.error('[SystemTools] API URL not configured!');
@@ -232,6 +238,10 @@ async function callSystemToolsAPI<T>(
   }
 
   try {
+    if (allowRefreshRetry) {
+      await refreshSessionToken(false);
+    }
+
     const response = await fetch(GAS_API_URL, {
       method: 'POST',
       headers: {
@@ -242,18 +252,38 @@ async function callSystemToolsAPI<T>(
     });
 
     if (!response.ok) {
+      if (
+        allowRefreshRetry &&
+        response.status === 401 &&
+        action !== 'logAccess'
+      ) {
+        const nextToken = await refreshSessionToken(true);
+        if (nextToken) {
+          return callSystemToolsAPI(action, data, signal, false);
+        }
+      }
       throw new SystemToolsAPIError(
         `HTTP error: ${response.status}`,
-        SystemToolsErrorCodes.API_ERROR
+        normalizeSystemToolsErrorCode(response.status)
       );
     }
 
     const result: SystemToolsResponse<T> = await response.json();
 
     if (!result.success) {
+      if (
+        allowRefreshRetry &&
+        normalizeSystemToolsErrorCode(result.code) === SystemToolsErrorCodes.UNAUTHORIZED &&
+        action !== 'logAccess'
+      ) {
+        const nextToken = await refreshSessionToken(true);
+        if (nextToken) {
+          return callSystemToolsAPI(action, data, signal, false);
+        }
+      }
       throw new SystemToolsAPIError(
         result.error || 'Unknown API error',
-        result.code || SystemToolsErrorCodes.API_ERROR
+        normalizeSystemToolsErrorCode(result.code)
       );
     }
 
@@ -799,8 +829,8 @@ export function logLogin(username: string, success: boolean): void {
 /**
  * Helper to log logout events
  */
-export function logLogout(username: string): void {
-  logAccess({
+export function logLogout(username: string): Promise<boolean> {
+  return logAccess({
     username,
     action: 'User logged out',
     actionType: 'logout',

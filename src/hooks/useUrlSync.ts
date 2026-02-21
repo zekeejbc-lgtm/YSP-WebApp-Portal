@@ -49,6 +49,7 @@ interface PageStateMap {
   showAccessLogs: boolean;
   showSystemTools: boolean;
   showManageMembers: boolean;
+  showOrganizationalTask: boolean;
   showMembershipApplicationsPage: boolean;
   showSettings: boolean;
   showLoginPanel: boolean;
@@ -71,6 +72,7 @@ interface PageSetterMap {
   setShowAccessLogs: (v: boolean) => void;
   setShowSystemTools: (v: boolean) => void;
   setShowManageMembers: (v: boolean) => void;
+  setShowOrganizationalTask: (v: boolean) => void;
   setShowMembershipApplicationsPage: (v: boolean) => void;
   setShowSettings: (v: boolean) => void;
   setShowLoginPanel: (v: boolean) => void;
@@ -95,6 +97,7 @@ const PAGE_TO_STATE: Record<string, keyof PageStateMap> = {
   'AccessLogs': 'showAccessLogs',
   'SystemTools': 'showSystemTools',
   'ManageMembers': 'showManageMembers',
+  'OrganizationalTask': 'showOrganizationalTask',
   'MembershipEditor': 'showMembershipApplicationsPage',
   'Settings': 'showSettings',
   'Login': 'showLoginPanel',
@@ -157,6 +160,7 @@ const PAGE_ROLE_REQUIREMENTS: Record<string, UserRole> = {
   'AttendanceRecording': 'head',
   'ManageEvents': 'admin',
   'ManageMembers': 'admin',
+  'OrganizationalTask': 'member',
   'FeedbackDashboard': 'admin', // Admin/Auditor feedback management
   'AccessLogs': 'auditor',
   'SystemTools': 'auditor',

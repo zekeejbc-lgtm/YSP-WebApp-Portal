@@ -29,7 +29,6 @@
     Loader2,
     RefreshCw,
     AlertCircle,
-    Settings,
   } from "lucide-react";
   import { openEmailApp, openPhoneApp } from "./utils/externalLinks";
   import { suggestLinkTextFromUrl, normalizeThemeSongUrl } from "./utils/appHelpers";
@@ -40,7 +39,7 @@
     updateHomepageContent,
     getDefaultHomepageContent,
     uploadOrgChart,
-    fetchHomepageOtherContent,
+    fetchHomepageOtherContentSafe,
     updateHomepageOtherContent,
     invalidateOtherContentCache,
     type HomepageMainContent,
@@ -75,6 +74,7 @@
     hasActiveSession,
     verifySession,
     getSessionVerificationState,
+    refreshSessionToken,
     checkUserRole,
     authorizePageAccess,
     LoginErrorCodes,
@@ -115,6 +115,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
   const ManageMembersPage = lazy(() => import("./components/ManageMembersPage"));
   const MembershipApplicationsPage = lazy(() => import("./components/MembershipApplicationsPage"));
   const SettingsPage = lazy(() => import("./components/SettingsPage"));
+  const OrganizationalTaskPage = lazy(() => import("./components/OrganizationalTaskPage"));
   const FounderModal = lazy(() => import("./components/FounderModal"));
   const DeveloperModal = lazy(() => import("./components/DeveloperModal"));
   import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
@@ -163,6 +164,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
     "access-logs": "admin/logs",
     "system-tools": "admin/tools",
     "manage-members": "admin/members",
+    "organizational-task": "organizational-tasks",
     settings: "settings",
   };
 
@@ -329,6 +331,7 @@ export default function App() {
     const [showAccessLogs, setShowAccessLogs] = useState(false);
     const [showSystemTools, setShowSystemTools] = useState(false);
     const [showManageMembers, setShowManageMembers] = useState(false);
+    const [showOrganizationalTask, setShowOrganizationalTask] = useState(false);
     const [showMembershipApplications, setShowMembershipApplications] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showFounderModal, setShowFounderModal] = useState(false);
@@ -375,6 +378,7 @@ export default function App() {
       showAccessLogs,
       showSystemTools,
       showManageMembers,
+      showOrganizationalTask,
       showMembershipApplicationsPage,
       showSettings,
       showLoginPanel,
@@ -396,6 +400,7 @@ export default function App() {
       setShowAccessLogs,
       setShowSystemTools,
       setShowManageMembers,
+      setShowOrganizationalTask,
       setShowMembershipApplicationsPage,
       setShowSettings,
       setShowLoginPanel,
@@ -639,6 +644,46 @@ export default function App() {
       }
     };
   }, [handleSessionExpired, isAdmin, sessionChecked, userRole, userUsername]);
+
+  // Proactively refresh session before token expiry to avoid disruptive 401s mid-action.
+  useEffect(() => {
+    if (!sessionChecked || !hasActiveSession()) return;
+
+    let mounted = true;
+    let refreshing = false;
+
+    const tickRefresh = async () => {
+      if (!mounted || refreshing || !hasActiveSession()) return;
+      refreshing = true;
+      try {
+        const nextToken = await refreshSessionToken(false);
+        if (!mounted) return;
+        if (!nextToken) {
+          const state = await getSessionVerificationState();
+          if (state === "expired") {
+            const storedUser = getStoredUser();
+            handleSessionExpired(storedUser?.username || userUsername);
+          }
+        }
+      } finally {
+        refreshing = false;
+      }
+    };
+
+    const initialTimer = setTimeout(() => {
+      void tickRefresh();
+    }, 3000);
+
+    const interval = setInterval(() => {
+      void tickRefresh();
+    }, 120000);
+
+    return () => {
+      mounted = false;
+      clearTimeout(initialTimer);
+      clearInterval(interval);
+    };
+  }, [handleSessionExpired, sessionChecked, userUsername]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1036,6 +1081,7 @@ export default function App() {
       closeIfBlocked(showAccessLogs, "access-logs", () => setShowAccessLogs(false));
       closeIfBlocked(showSystemTools, "system-tools", () => setShowSystemTools(false));
       closeIfBlocked(showManageMembers, "manage-members", () => setShowManageMembers(false));
+      closeIfBlocked(showOrganizationalTask, "organizational-task", () => setShowOrganizationalTask(false));
       closeIfBlocked(showSettings, "settings", () => setShowSettings(false));
 
       if (blocked) {
@@ -1068,6 +1114,7 @@ export default function App() {
       showAccessLogs,
       showSystemTools,
       showManageMembers,
+      showOrganizationalTask,
       showSettings,
       pageAccessByPath,
       isAdmin,
@@ -1488,7 +1535,10 @@ export default function App() {
             invalidateOtherContentCache();
           }
           
-          const otherContent = await fetchHomepageOtherContent();
+          const { content: otherContent, error: otherContentError } = await fetchHomepageOtherContentSafe();
+          if (otherContentError && loadedFromCache) {
+            console.warn(`[App] Other content sync fallback (${otherContentError.code}) - using cached content`);
+          }
           
           // Build new cache data
           const newCacheData: CachedHomepageOther = {
@@ -1974,16 +2024,16 @@ export default function App() {
         roles: ["admin"], // admin and above can see this group
       },
       {
-        id: "account-settings",
-        label: "Account",
-        icon: <Settings className="w-5 h-5" />,
+        id: "organizational-task-group",
+        label: "Organizational Task",
+        icon: <Network className="w-5 h-5" />,
         pages: [
           {
-            id: "settings",
-            label: "Settings",
+            id: "organizational-task",
+            label: "Committees",
             action: () => {
-              setActivePage("settings");
-              setShowSettings(true);
+              setActivePage("organizational-task");
+              setShowOrganizationalTask(true);
               setOpenDropdown(null);
               setIsMenuOpen(false);
             },
@@ -2120,15 +2170,6 @@ export default function App() {
               action: () => {
                 setActivePage("attendance-transparency");
                 setShowAttendanceTransparency(true);
-                setIsSidebarOpen(false);
-              },
-            },
-            {
-              id: "settings",
-              label: "Settings",
-              action: () => {
-                setActivePage("settings");
-                setShowSettings(true);
                 setIsSidebarOpen(false);
               },
             },
@@ -2856,31 +2897,35 @@ export default function App() {
     };
 
     const handleLogout = () => {
-      // Log logout before clearing session (need username)
-      if (userName) {
-        logLogout(userName);
-        
-        // Clear the user's profile cache on logout
-        const storedUser = getStoredUser();
-        if (storedUser?.username) {
-          clearUserProfileCache(storedUser.username);
+      const executeLogout = async () => {
+        // Log logout before clearing session (need username)
+        if (userName) {
+          await logLogout(userName);
+
+          // Clear the user's profile cache on logout
+          const storedUser = getStoredUser();
+          if (storedUser?.username) {
+            clearUserProfileCache(storedUser.username);
+          }
         }
-      }
-      
-      // Clear session from storage
-      clearSession();
-      setShowLoginPrepLoader(false);
-      
-      setIsAdmin(false);
-      setUserRole("guest");
-      setUserName("");
-      setUserUsername("");
-      setUserEmail("");
-      setUserIdCode("");
-      setUserPosition("");
-      setUserProfilePicture("");
-      setActivePage("home");
-      toast.success('Successfully logged out');
+
+        // Clear session from storage
+        clearSession();
+        setShowLoginPrepLoader(false);
+
+        setIsAdmin(false);
+        setUserRole("guest");
+        setUserName("");
+        setUserUsername("");
+        setUserEmail("");
+        setUserIdCode("");
+        setUserPosition("");
+        setUserProfilePicture("");
+        setActivePage("home");
+        toast.success('Successfully logged out');
+      };
+
+      void executeLogout();
     };
 
     // Homepage Edit Handlers
@@ -3047,6 +3092,7 @@ export default function App() {
       if (showAccessLogs && isPageAllowed("access-logs")) return "access-logs";
       if (showSystemTools && isPageAllowed("system-tools")) return "system-tools";
       if (showManageMembers && isPageAllowed("manage-members")) return "manage-members";
+      if (showOrganizationalTask && isPageAllowed("organizational-task")) return "organizational-task";
       if (showSettings && isPageAllowed("settings")) return "settings";
       return activePage;
     }, [
@@ -3060,6 +3106,7 @@ export default function App() {
       showFeedbackPage,
       showManageEvents,
       showManageMembers,
+      showOrganizationalTask,
       showMembershipApplications,
       showMembershipApplicationsPage,
       showMyProfile,
@@ -3200,6 +3247,14 @@ export default function App() {
           }
           if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
+        case "organizational-task":
+          if (isPageAllowed("organizational-task")) {
+            setActivePage("organizational-task");
+            setShowOrganizationalTask(true);
+            return true;
+          }
+          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
+          return false;
         case "settings":
           if (isPageAllowed("settings")) {
             setActivePage("settings");
@@ -3222,6 +3277,7 @@ export default function App() {
       setShowFeedbackPage,
       setShowManageEvents,
       setShowManageMembers,
+      setShowOrganizationalTask,
       setShowMembershipApplications,
       setShowMembershipApplicationsPage,
       setShowMyProfile,
@@ -3874,6 +3930,15 @@ export default function App() {
                 setShowMyProfile(false);
                 setIsEditingProfile(false);
               }} 
+              onOpenSettings={
+                isPageAllowed("settings")
+                  ? () => {
+                      setActivePage("settings");
+                      setShowSettings(true);
+                      setShowMyProfile(false);
+                    }
+                  : undefined
+              }
               isDark={isDark}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
@@ -4046,6 +4111,35 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Manage Members")}>
             <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userUsername || userName} onModalStateChange={setManageMembersModalOpen} />
+          </Suspense>
+          {chatbot}
+        </>
+      );
+    }
+
+    // Show Organizational Task page
+    if (showOrganizationalTask && isPageAllowed("organizational-task")) {
+      if (isPageInMaintenance("organizational-task")) {
+        const config = getPageMaintenanceConfig("organizational-task");
+        return (
+          <>
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Organizational Task" onBack={() => setShowOrganizationalTask(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <Suspense fallback={null}>
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+            </Suspense>
+            {chatbot}
+          </>
+        );
+      }
+      return (
+        <>
+          <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+          <Suspense fallback={getPageLoadingFallback("Organizational Task")}>
+            <OrganizationalTaskPage
+              onClose={() => setShowOrganizationalTask(false)}
+              isDark={isDark}
+              username={userUsername || userName}
+            />
           </Suspense>
           {chatbot}
         </>
@@ -4232,7 +4326,7 @@ export default function App() {
         !showManageEvents && !showMyQRID && 
         !showAttendanceTransparency && !showAnnouncements && !showIssuanceCenter && !showAccessLogs && 
         !showSystemTools && !showManageMembers && !showFeedbackPage && 
-        !showMembershipApplicationsPage && !showMyProfile && !showSettings && (
+        !showMembershipApplicationsPage && !showMyProfile && !showSettings && !showOrganizationalTask && (
           <TopBar
             isDark={isDark}
             onToggleDark={toggleDark}
@@ -4323,6 +4417,7 @@ export default function App() {
             setShowSystemTools(false);
             setShowFeedbackPage(false);
             setShowMyProfile(false);
+            setShowOrganizationalTask(false);
             window.scrollTo({ top: 0, behavior: "smooth" });
           }}
           onLoginClick={() => {

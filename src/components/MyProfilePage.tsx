@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { User as UserIcon, Save, Edit, Camera, Loader2, Lock, Mail, CheckCircle2, AlertCircle, X } from "lucide-react";
+import { User as UserIcon, Save, Edit, Camera, Loader2, Lock, Mail, CheckCircle2, AlertCircle, X, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { SkeletonProfilePage } from "./SkeletonCard";
@@ -49,6 +49,7 @@ interface MyProfilePageProps {
   onProfilePictureChange?: (newUrl: string) => void;
   onEditingChange?: (isEditing: boolean) => void;
   startInEditMode?: boolean;
+  onOpenSettings?: () => void;
 }
 
 export default function MyProfilePage({ 
@@ -60,6 +61,7 @@ export default function MyProfilePage({
   onProfilePictureChange,
   onEditingChange,
   startInEditMode = false,
+  onOpenSettings,
 }: MyProfilePageProps) {
   const [isEditing, setIsEditing] = useState(startInEditMode);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -824,6 +826,16 @@ export default function MyProfilePage({
       subtitle="View and manage your personal information"
       isDark={isDark}
       onClose={onClose}
+      actions={onOpenSettings ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={onOpenSettings}
+          icon={<Settings className="w-4 h-4" />}
+          className="px-2! min-w-0!"
+          style={{ width: "36px" }}
+        />
+      ) : undefined}
       breadcrumbs={[
         { label: "Home", onClick: onClose },
         { label: "My Profile", onClick: undefined },

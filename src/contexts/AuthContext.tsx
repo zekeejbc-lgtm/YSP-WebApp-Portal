@@ -318,7 +318,7 @@ export function AuthProvider({ children, onCacheClearRequest }: AuthProviderProp
   // Logout function
   const logout = useCallback(() => {
     if (user?.name) {
-      logLogout(user.name);
+      void logLogout(user.name);
       
       const storedUser = getStoredUser();
       if (storedUser?.username) {

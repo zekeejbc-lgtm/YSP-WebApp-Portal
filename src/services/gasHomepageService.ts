@@ -110,6 +110,7 @@ const GAS_CONFIG = {
   
   // Timeout for API calls (in milliseconds)
   TIMEOUT: 10000,
+  OTHER_TIMEOUT: 20000,
   
   // Cache duration (in milliseconds) - 5 minutes
   CACHE_DURATION: 5 * 60 * 1000,
@@ -597,37 +598,44 @@ export const fetchHomepageOtherContent = async (): Promise<HomepageOtherContent>
     // Silenced: verbose fetch log
     // console.warn('[GAS Homepage_Other] Fetching content from GAS...');
     
-    // Create AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), GAS_CONFIG.TIMEOUT);
+    const maxAttempts = 2;
+    let response: Response | null = null;
+    let requestError: HomepageAPIError | null = null;
 
-    let response: Response;
-    try {
-      response = await fetch(`${GAS_CONFIG.HOMEPAGE_API_URL}?action=getHomepageOther`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-        signal: controller.signal,
-      });
-    } catch (fetchError: unknown) {
-      clearTimeout(timeoutId);
-      if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
-        throw new HomepageAPIError(
-          'HO002',
-          'Request timeout',
-          `API did not respond within ${GAS_CONFIG.TIMEOUT}ms`
-        );
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), GAS_CONFIG.OTHER_TIMEOUT);
+
+      try {
+        response = await fetch(`${GAS_CONFIG.HOMEPAGE_API_URL}?action=getHomepageOther`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          },
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        requestError = null;
+        break;
+      } catch (fetchError: unknown) {
+        clearTimeout(timeoutId);
+        const isTimeout = fetchError instanceof DOMException && fetchError.name === 'AbortError';
+        const code = isTimeout ? 'HO002' : 'HO006';
+        const message = isTimeout ? 'Request timeout' : 'Network error';
+        const details = isTimeout
+          ? `API did not respond within ${GAS_CONFIG.OTHER_TIMEOUT}ms`
+          : (fetchError instanceof Error ? fetchError.message : 'Failed to connect to API');
+
+        requestError = new HomepageAPIError(code, message, details);
+        if (attempt < maxAttempts) {
+          continue;
+        }
       }
-      const errMsg = fetchError instanceof Error ? fetchError.message : 'Failed to connect to API';
-      throw new HomepageAPIError(
-        'HO006',
-        'Network error',
-        errMsg
-      );
     }
 
-    clearTimeout(timeoutId);
+    if (!response) {
+      throw requestError || new HomepageAPIError('HO007', 'Unknown error', 'Failed to fetch Homepage_Other');
+    }
 
     if (!response.ok) {
       throw new HomepageAPIError(
@@ -672,7 +680,11 @@ export const fetchHomepageOtherContent = async (): Promise<HomepageOtherContent>
     return result.data;
 
   } catch (error) {
-    console.error('[GAS Homepage_Other] Error fetching content:', error);
+    if (error instanceof HomepageAPIError && (error.code === 'HO002' || error.code === 'HO006')) {
+      console.warn('[GAS Homepage_Other] Fetch warning:', error.code, error.message, error.details || '');
+    } else {
+      console.error('[GAS Homepage_Other] Error fetching content:', error);
+    }
     
     // If it's already a HomepageAPIError, re-throw it
     if (error instanceof HomepageAPIError) {
