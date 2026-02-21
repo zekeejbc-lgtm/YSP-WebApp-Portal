@@ -362,7 +362,8 @@ function doPost(e) {
     var PUBLIC_ACTIONS = [
       'login', 'verifySession',
       'lookupPasswordResetUser', 'sendPasswordResetOTP', 'verifyPasswordResetOTP', 'resetPasswordWithToken',
-      'getMaintenanceMode', 'getCacheVersion'
+      'getMaintenanceMode', 'getCacheVersion',
+      'syncMeetAttendance'
     ];
     if (PUBLIC_ACTIONS.indexOf(action) === -1) {
       var tokenUser = verifyHmacToken_(requestData.sessionToken);
@@ -468,6 +469,23 @@ function doPost(e) {
         return handleAuthorizePageAccess(requestData.username, requestData.pagePath || requestData.pageKey);
       case 'createUserAccount':
         return handleCreateUserAccount(requestData.data || {}, requestData.username);
+      case 'syncMeetAttendance':
+        return handleSyncMeetAttendance(requestData);
+      case 'getMeetAttendance':
+        if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return handleGetMeetAttendance(requestData);
+      case 'updateMeetAttendanceParticipant':
+        if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return handleUpdateMeetAttendanceParticipant(requestData, requestData.username);
+      case 'exportMeetAttendancePDF':
+        if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return handleExportMeetAttendancePDF(requestData.meetingId);
       default:
         return createErrorResponse('Invalid action', 400);
     }
@@ -885,6 +903,7 @@ function canAccessPathByRole_(roleName, pagePath) {
     'admin/logs': 'page_admin_logs',
     'admin/tools': 'page_admin_tools',
     'organizational-tasks': 'page_organizational_tasks',
+    'kaagapai-meet': 'page_kaagapai_meet',
   };
   const explicitPageKey = pagePermissionMap[path];
   if (explicitPageKey) {
@@ -904,6 +923,7 @@ function canAccessPathByRole_(roleName, pagePath) {
     path === 'announcements' ||
     path === 'issuance' ||
     path === 'organizational-tasks' ||
+    path === 'kaagapai-meet' ||
     path === 'applications' ||
     path === 'settings'
   ) {

@@ -50,6 +50,7 @@ interface PageStateMap {
   showSystemTools: boolean;
   showManageMembers: boolean;
   showOrganizationalTask: boolean;
+  showKaagapAIMeet: boolean;
   showMembershipApplicationsPage: boolean;
   showSettings: boolean;
   showLoginPanel: boolean;
@@ -73,6 +74,7 @@ interface PageSetterMap {
   setShowSystemTools: (v: boolean) => void;
   setShowManageMembers: (v: boolean) => void;
   setShowOrganizationalTask: (v: boolean) => void;
+  setShowKaagapAIMeet: (v: boolean) => void;
   setShowMembershipApplicationsPage: (v: boolean) => void;
   setShowSettings: (v: boolean) => void;
   setShowLoginPanel: (v: boolean) => void;
@@ -98,6 +100,7 @@ const PAGE_TO_STATE: Record<string, keyof PageStateMap> = {
   'SystemTools': 'showSystemTools',
   'ManageMembers': 'showManageMembers',
   'OrganizationalTask': 'showOrganizationalTask',
+  'KaagapAIMeet': 'showKaagapAIMeet',
   'MembershipEditor': 'showMembershipApplicationsPage',
   'Settings': 'showSettings',
   'Login': 'showLoginPanel',
@@ -161,6 +164,7 @@ const PAGE_ROLE_REQUIREMENTS: Record<string, UserRole> = {
   'ManageEvents': 'admin',
   'ManageMembers': 'admin',
   'OrganizationalTask': 'member',
+  'KaagapAIMeet': 'member',
   'FeedbackDashboard': 'admin', // Admin/Auditor feedback management
   'AccessLogs': 'auditor',
   'SystemTools': 'auditor',

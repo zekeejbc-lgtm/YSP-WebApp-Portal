@@ -708,6 +708,7 @@ export const AVAILABLE_PAGES_BACKEND = [
   { id: 'my-profile', name: 'My Profile' },
   { id: 'access-logs', name: 'Access Logs' },
   { id: 'system-tools', name: 'System Tools' },
+  { id: 'kaagapai-meet', name: 'KaagapAI Meet (Google Meet)' },
   { id: 'issuance', name: 'Issuance Center' },
 ];
 
