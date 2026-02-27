@@ -110,6 +110,26 @@ function doPost(e) {
         return handleUpdateMeetAttendanceParticipant(requestData, requestData.username || 'meet-webapp');
       case 'exportMeetAttendancePDF':
         return handleExportMeetAttendancePDF(requestData.meetingId);
+      case 'checkMeetPermissions':
+        return createSuccessResponse({
+          success: true,
+          data: checkMeetCalendarPermissions_(),
+        });
+      case 'checkMeetPermissionsFull':
+        return createSuccessResponse({
+          success: true,
+          data: runMeetFullDiagnosis(),
+        });
+      case 'attemptMeetPermissionAutoFix':
+        return createSuccessResponse({
+          success: true,
+          data: attemptMeetPermissionAutoFix_(),
+        });
+      case 'recoverMeetPermissions':
+        return createSuccessResponse({
+          success: true,
+          data: runMeetPermissionRecovery_(),
+        });
       default:
         return createErrorResponse('Unknown action: ' + action, 400);
     }
@@ -260,7 +280,10 @@ function ensureMeetAttendanceSheet_() {
   }
 
   if (!valid) {
-    sheet.clearContents();
+    // Repair only the header row to avoid wiping existing attendance data.
+    if (sheet.getMaxColumns() < MEET_ATTENDANCE_HEADERS.length) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), MEET_ATTENDANCE_HEADERS.length - sheet.getMaxColumns());
+    }
     sheet.getRange(1, 1, 1, MEET_ATTENDANCE_HEADERS.length).setValues([MEET_ATTENDANCE_HEADERS]);
     sheet.getRange(1, 1, 1, MEET_ATTENDANCE_HEADERS.length).setFontWeight('bold');
     sheet.setFrozenRows(1);
@@ -453,6 +476,7 @@ function handleGetMeetDashboard(requestData) {
       const summary = attendanceSummaryByMeeting[item.meetingId] || defaultMeetSummary_();
       const card = {
         meetingId: item.meetingId,
+        meetingOrigin: 'frontend',
         title: item.title,
         mode: item.mode,
         meetUrl: item.meetUrl,
@@ -483,6 +507,7 @@ function handleGetMeetDashboard(requestData) {
       const summary = attendanceSummaryByMeeting[meetingId];
       manualMeetings.push({
         meetingId: meetingId,
+        meetingOrigin: 'manual_gmeet',
         meetingDate: summary.meetingDate,
         meetUrl: summary.meetingUrl,
         status: 'manual',
@@ -527,7 +552,8 @@ function handleSyncMeetAttendance(requestData) {
     const incomingMeetingId = sanitizeMeetText_(meeting.id);
     const meetingDate = sanitizeMeetText_(meeting.date) || new Date().toISOString().slice(0, 10);
     const meetingUrl = sanitizeMeetText_(meeting.url);
-    const meetingId = resolveMeetingIdForSync_(incomingMeetingId, meetingUrl);
+    const syncContext = resolveMeetingSyncContext_(incomingMeetingId, meetingUrl);
+    const meetingId = syncContext.meetingId;
     const attendees = Array.isArray(requestData.attendees) ? requestData.attendees : [];
 
     if (!meetingId) {
@@ -535,8 +561,10 @@ function handleSyncMeetAttendance(requestData) {
     }
 
     const sheet = ensureMeetAttendanceSheet_();
-    const directoryMap = buildDirectoryMapForMeet_();
-    const existingRowMap = buildMeetExistingRowMap_(sheet, meetingId);
+    const directoryLookup = buildDirectoryLookupForMeet_();
+    const directoryMap = directoryLookup.map;
+    const directoryList = directoryLookup.list;
+    const existingLookup = buildMeetExistingRowLookupForSync_(sheet, meetingId);
 
     let inserted = 0;
     let updated = 0;
@@ -551,7 +579,7 @@ function handleSyncMeetAttendance(requestData) {
       const parsed = normalizeIncomingAttendee_(attendees[i]);
       if (!parsed.participantKey || !parsed.name) continue;
 
-      const directoryMatch = directoryMap[parsed.normalizedName] || null;
+      const directoryMatch = findBestDirectoryMatchForMeet_(parsed.normalizedName, directoryMap, directoryList);
       const isExternal = !directoryMatch;
       if (isExternal) externalCount++;
 
@@ -580,9 +608,10 @@ function handleSyncMeetAttendance(requestData) {
         'extension',
       ];
 
-      const existingRow = existingRowMap[parsed.participantKey];
-      if (existingRow) {
-        sheet.getRange(existingRow, 1, 1, MEET_ATTENDANCE_HEADERS.length).setValues([rowValues]);
+      const existingEntry = findMeetExistingEntryForParsed_(existingLookup, parsed);
+      if (existingEntry && existingEntry.rowIndex) {
+        const mergedValues = mergeMeetAttendanceRowValues_(existingEntry.rowValues, rowValues);
+        sheet.getRange(existingEntry.rowIndex, 1, 1, MEET_ATTENDANCE_HEADERS.length).setValues([mergedValues]);
         updated++;
       } else {
         rowsToAppend.push(rowValues);
@@ -598,6 +627,9 @@ function handleSyncMeetAttendance(requestData) {
     return createSuccessResponse({
       success: true,
       meetingId: meetingId,
+      meetingOrigin: syncContext.meetingOrigin,
+      matchedScheduledMeetingId: syncContext.matchedScheduledMeetingId,
+      detectedMeetCode: syncContext.detectedMeetCode,
       inserted: inserted,
       updated: updated,
       externalParticipants: externalCount,
@@ -627,6 +659,7 @@ function handleGetMeetAttendance(requestData) {
 
     const values = sheet.getRange(2, 1, lastRow - 1, MEET_ATTENDANCE_HEADERS.length).getValues();
     const groups = {};
+    const scheduledIdSet = getScheduledMeetingIdSet_();
 
     for (let i = 0; i < values.length; i++) {
       const row = values[i];
@@ -637,6 +670,7 @@ function handleGetMeetAttendance(requestData) {
       if (!groups[meetingId]) {
         groups[meetingId] = {
           meetingId: meetingId,
+          meetingOrigin: inferMeetingOriginByMeetingId_(meetingId, scheduledIdSet),
           meetingDate: sanitizeMeetText_(row[1]),
           meetingUrl: sanitizeMeetText_(row[2]),
           attendees: [],
@@ -695,6 +729,7 @@ function handleGetMeetAttendance(requestData) {
       meetings: meetings.slice(0, limit).map(function (m) {
         return {
           meetingId: m.meetingId,
+          meetingOrigin: m.meetingOrigin,
           meetingDate: m.meetingDate,
           meetingUrl: m.meetingUrl,
           totalAttendees: m.totalAttendees,
@@ -729,8 +764,8 @@ function handleUpdateMeetAttendanceParticipant(requestData, updatedBy) {
     }
 
     const normalized = normalizeMeetName_(correctedName);
-    const directoryMap = buildDirectoryMapForMeet_();
-    const match = directoryMap[normalized] || null;
+    const directoryLookup = buildDirectoryLookupForMeet_();
+    const match = findBestDirectoryMatchForMeet_(normalized, directoryLookup.map, directoryLookup.list);
     const isExternal = !match;
     const nowIso = new Date().toISOString();
 
@@ -881,6 +916,105 @@ function createMeetAttendancePdfHtml_(meeting, logoBase64) {
   );
 }
 
+function buildMeetExistingRowLookupForSync_(sheet, meetingId) {
+  const lookup = {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return lookup;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, MEET_ATTENDANCE_HEADERS.length).getValues();
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const rowMeetingId = sanitizeMeetText_(row[0]);
+    if (rowMeetingId !== meetingId) continue;
+    const rowIndex = i + 2;
+    const participantKey = sanitizeMeetText_(row[3]);
+    const participantName = sanitizeMeetText_(row[4]);
+    const normalizedName = sanitizeMeetText_(row[5]) || normalizeMeetName_(participantName);
+    const entry = { rowIndex: rowIndex, rowValues: row };
+
+    if (participantKey) lookup['pk:' + participantKey] = entry;
+    if (normalizedName) lookup['nn:' + normalizedName] = entry;
+    if (participantName) lookup['nm:' + normalizeMeetName_(participantName)] = entry;
+  }
+
+  return lookup;
+}
+
+function findMeetExistingEntryForParsed_(lookup, parsed) {
+  const participantKey = sanitizeMeetText_(parsed && parsed.participantKey);
+  const normalizedName = sanitizeMeetText_(parsed && parsed.normalizedName);
+  const normalizedFromName = normalizeMeetName_(sanitizeMeetText_(parsed && parsed.name));
+  return (
+    (participantKey && lookup['pk:' + participantKey]) ||
+    (normalizedName && lookup['nn:' + normalizedName]) ||
+    (normalizedFromName && lookup['nm:' + normalizedFromName]) ||
+    null
+  );
+}
+
+function mergeMeetAttendanceRowValues_(existingRow, incomingRow) {
+  const prev = Array.isArray(existingRow) ? existingRow : [];
+  const next = Array.isArray(incomingRow) ? incomingRow.slice(0) : [];
+
+  function parseIso(value) {
+    const t = Date.parse(sanitizeMeetText_(value));
+    return isNaN(t) ? 0 : t;
+  }
+  function pickEarliestIso(a, b) {
+    const ta = parseIso(a);
+    const tb = parseIso(b);
+    if (!ta) return sanitizeMeetText_(b);
+    if (!tb) return sanitizeMeetText_(a);
+    return ta <= tb ? sanitizeMeetText_(a) : sanitizeMeetText_(b);
+  }
+  function pickLatestIso(a, b) {
+    const ta = parseIso(a);
+    const tb = parseIso(b);
+    if (!ta) return sanitizeMeetText_(b);
+    if (!tb) return sanitizeMeetText_(a);
+    return ta >= tb ? sanitizeMeetText_(a) : sanitizeMeetText_(b);
+  }
+  function asBoolString(value) {
+    return String(value).toUpperCase() === 'TRUE' ? 'TRUE' : 'FALSE';
+  }
+  function asNumber(value) {
+    const n = Number(value || 0);
+    return isNaN(n) ? 0 : n;
+  }
+  function isSyntheticName(value) {
+    return /^external participant #?\d+$/i.test(sanitizeMeetText_(value));
+  }
+  function pickPreferredName(prevName, nextName) {
+    const a = sanitizeMeetText_(prevName);
+    const b = sanitizeMeetText_(nextName);
+    if (!a) return b;
+    if (!b) return a;
+    if (isSyntheticName(a) && !isSyntheticName(b)) return b;
+    if (isSyntheticName(b) && !isSyntheticName(a)) return a;
+    return b;
+  }
+
+  next[3] = pickPreferredName(prev[3], next[3]); // ParticipantKey
+  next[4] = pickPreferredName(prev[4], next[4]); // ParticipantName
+  next[5] = pickPreferredName(prev[5], next[5]); // NormalizedName
+  next[6] = pickEarliestIso(prev[6], next[6]); // FirstJoinTime
+  next[7] = pickLatestIso(prev[7], next[7]); // LastLeaveTime
+  next[8] = Math.max(asNumber(prev[8]), asNumber(next[8])); // TotalDurationSeconds
+  next[9] = Math.max(asNumber(prev[9]), asNumber(next[9])); // JoinCount
+  next[10] = Math.max(asNumber(prev[10]), asNumber(next[10])); // ExitCount
+  next[11] = (asBoolString(prev[11]) === 'TRUE' || asBoolString(next[11]) === 'TRUE') ? 'TRUE' : 'FALSE'; // IsPresent
+  next[12] = (asBoolString(prev[12]) === 'TRUE' || asBoolString(next[12]) === 'TRUE') ? 'TRUE' : 'FALSE'; // IsExternalParticipant
+
+  // Keep richer sessions payload when one side is clearly more complete.
+  const prevSessions = sanitizeMeetText_(prev[16]);
+  const nextSessions = sanitizeMeetText_(next[16]);
+  if (prevSessions && prevSessions.length > nextSessions.length) {
+    next[16] = prevSessions;
+  }
+
+  return next;
+}
+
 function buildMeetExistingRowMap_(sheet, meetingId) {
   const map = {};
   const lastRow = sheet.getLastRow();
@@ -898,15 +1032,20 @@ function buildMeetExistingRowMap_(sheet, meetingId) {
 }
 
 function buildDirectoryMapForMeet_() {
+  return buildDirectoryLookupForMeet_().map;
+}
+
+function buildDirectoryLookupForMeet_() {
   const map = {};
-  if (!MEET_ATTENDANCE_CONFIG.DIRECTORY_SPREADSHEET_ID) return map;
+  const list = [];
+  if (!MEET_ATTENDANCE_CONFIG.DIRECTORY_SPREADSHEET_ID) return { map: map, list: list };
 
   const ss = SpreadsheetApp.openById(MEET_ATTENDANCE_CONFIG.DIRECTORY_SPREADSHEET_ID);
   const sheet = ss.getSheetByName(MEET_ATTENDANCE_CONFIG.DIRECTORY_SHEET_NAME);
-  if (!sheet) return map;
+  if (!sheet) return { map: map, list: list };
 
   const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return map;
+  if (data.length <= 1) return { map: map, list: list };
   const headers = data[0];
   const idx = {};
   headers.forEach(function (header, i) {
@@ -918,7 +1057,7 @@ function buildDirectoryMapForMeet_() {
   const picIdx = idx['ProfilePictureURL'];
   const roleIdx = idx['Role'];
   const statusIdx = idx['Status'];
-  if (fullNameIdx === undefined) return map;
+  if (fullNameIdx === undefined) return { map: map, list: list };
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
@@ -934,19 +1073,101 @@ function buildDirectoryMapForMeet_() {
     }
 
     if (!map[normalized]) {
-      map[normalized] = {
+      const entry = {
         fullName: fullName,
+        normalizedName: normalized,
         idCode: idCodeIdx !== undefined ? sanitizeMeetText_(row[idCodeIdx]) : '',
         profilePictureURL: picIdx !== undefined ? sanitizeMeetText_(row[picIdx]) : '',
       };
+      map[normalized] = entry;
+      list.push(entry);
     }
   }
 
-  return map;
+  return { map: map, list: list };
+}
+
+function findBestDirectoryMatchForMeet_(normalizedName, directoryMap, directoryList) {
+  const key = sanitizeMeetText_(normalizedName);
+  if (!key) return null;
+  if (directoryMap && directoryMap[key]) return directoryMap[key];
+
+  const list = Array.isArray(directoryList) ? directoryList : [];
+  if (!list.length) return null;
+
+  let best = null;
+  let bestScore = 0;
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
+    if (!item || !item.normalizedName) continue;
+    const score = computeMeetNameSimilarity_(key, item.normalizedName);
+    if (score > bestScore) {
+      bestScore = score;
+      best = item;
+    }
+  }
+
+  // Very high-confidence match only (as requested).
+  return bestScore >= 0.99 ? best : null;
+}
+
+function computeMeetNameSimilarity_(a, b) {
+  const left = sanitizeMeetText_(a);
+  const right = sanitizeMeetText_(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+
+  const sortedLeft = left.split(' ').filter(Boolean).sort().join(' ');
+  const sortedRight = right.split(' ').filter(Boolean).sort().join(' ');
+  if (sortedLeft && sortedLeft === sortedRight) return 1;
+
+  const maxLen = Math.max(left.length, right.length);
+  if (maxLen <= 0) return 0;
+  const dist = levenshteinMeet_(left, right);
+  return Math.max(0, 1 - (dist / maxLen));
+}
+
+function levenshteinMeet_(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = [];
+  for (let i = 0; i <= m; i++) {
+    dp[i] = [i];
+  }
+  for (let j = 1; j <= n; j++) {
+    dp[0][j] = j;
+  }
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[m][n];
 }
 
 function normalizeIncomingAttendee_(attendee) {
   const name = sanitizeMeetText_(attendee.name);
+  if (!isLikelyMeetParticipantName_(name)) {
+    return {
+      participantKey: '',
+      name: '',
+      normalizedName: '',
+      firstJoinTime: '',
+      lastLeaveTime: '',
+      totalDurationSeconds: 0,
+      joinCount: 0,
+      exitCount: 0,
+      isPresent: false,
+      sessions: [],
+    };
+  }
   const normalizedName = sanitizeMeetText_(attendee.normalizedName) || normalizeMeetName_(name);
   const participantKey = sanitizeMeetText_(attendee.participantKey) || normalizedName;
   const firstJoinTime = sanitizeMeetText_(attendee.firstJoinTime);
@@ -969,6 +1190,43 @@ function normalizeIncomingAttendee_(attendee) {
     isPresent: isPresent,
     sessions: sessions.slice(0, 1000),
   };
+}
+
+function isLikelyMeetParticipantName_(value) {
+  const cleaned = sanitizeMeetText_(value);
+  if (!cleaned) return false;
+  if (cleaned.length < 2 || cleaned.length > 80) return false;
+  if (!/[a-z0-9]/i.test(cleaned)) return false;
+
+  const lower = cleaned.toLowerCase();
+  const disallowed = [
+    'more options for',
+    'more_vert',
+    'frame_person',
+    'reframe',
+    'visual effects',
+    'backgrounds and effects',
+    'others might still see your full video',
+    'present now',
+    'meeting details',
+    'raise hand',
+    'leave call',
+    'camera off',
+    'microphone off',
+    'search',
+    'people',
+    'chat',
+  ];
+  for (let i = 0; i < disallowed.length; i++) {
+    if (lower.indexOf(disallowed[i]) !== -1) return false;
+  }
+
+  if (cleaned.length % 2 === 0 && cleaned.length >= 8) {
+    const half = cleaned.length / 2;
+    if (cleaned.slice(0, half) === cleaned.slice(half)) return false;
+  }
+
+  return true;
 }
 
 function sanitizeMeetText_(value) {
@@ -1035,6 +1293,7 @@ function getMeetAttendanceSummaryMap_() {
   const sheet = ensureMeetAttendanceSheet_();
   const lastRow = sheet.getLastRow();
   const out = {};
+  const scheduledIdSet = getScheduledMeetingIdSet_();
   if (lastRow <= 1) return out;
   const values = sheet.getRange(2, 1, lastRow - 1, MEET_ATTENDANCE_HEADERS.length).getValues();
   for (let i = 0; i < values.length; i++) {
@@ -1048,6 +1307,7 @@ function getMeetAttendanceSummaryMap_() {
     if (!out[meetingId]) {
       out[meetingId] = defaultMeetSummary_();
       out[meetingId].meetingId = meetingId;
+      out[meetingId].meetingOrigin = inferMeetingOriginByMeetingId_(meetingId, scheduledIdSet);
       out[meetingId].meetingDate = sanitizeMeetText_(row[1]);
       out[meetingId].meetingUrl = sanitizeMeetText_(row[2]);
     }
@@ -1067,6 +1327,7 @@ function getMeetAttendanceSummaryMap_() {
 function defaultMeetSummary_() {
   return {
     meetingId: '',
+    meetingOrigin: '',
     meetingDate: '',
     meetingUrl: '',
     totalAttendees: 0,
@@ -1105,22 +1366,77 @@ function generateMeetBusinessId_() {
   return prefix + serial;
 }
 
-function resolveMeetingIdForSync_(incomingMeetingId, meetingUrl) {
+function resolveMeetingSyncContext_(incomingMeetingId, meetingUrl) {
   const fromPayload = sanitizeMeetText_(incomingMeetingId);
   const fromUrl = extractMeetIdFromUrl_(meetingUrl);
-  const meetCode = (fromPayload || fromUrl || '').toLowerCase();
-  if (!meetCode) return '';
+  const payloadLooksLikeMeetCode = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(fromPayload);
+  const detectedMeetCode = (fromUrl || (payloadLooksLikeMeetCode ? fromPayload : '') || '').toLowerCase();
+
+  // If payload is already a known scheduled business ID, trust it.
+  if (fromPayload && !payloadLooksLikeMeetCode) {
+    const scheduledIds = getScheduledMeetingIdSet_();
+    if (scheduledIds[fromPayload]) {
+      return {
+        meetingId: fromPayload,
+        meetingOrigin: 'frontend',
+        matchedScheduledMeetingId: fromPayload,
+        detectedMeetCode: detectedMeetCode,
+      };
+    }
+  }
+
+  if (!detectedMeetCode) {
+    return {
+      meetingId: fromPayload || '',
+      meetingOrigin: 'manual_gmeet',
+      matchedScheduledMeetingId: '',
+      detectedMeetCode: '',
+    };
+  }
 
   const schedules = getMeetScheduleRows_();
   for (let i = 0; i < schedules.length; i++) {
     const row = schedules[i];
     const rowCode = extractMeetIdFromUrl_(row.meetUrl);
     if (!rowCode) continue;
-    if (rowCode === meetCode) {
-      return row.meetingId;
+    if (rowCode === detectedMeetCode) {
+      return {
+        meetingId: row.meetingId,
+        meetingOrigin: 'frontend',
+        matchedScheduledMeetingId: row.meetingId,
+        detectedMeetCode: detectedMeetCode,
+      };
     }
   }
-  return fromPayload || fromUrl;
+
+  return {
+    meetingId: fromPayload || detectedMeetCode,
+    meetingOrigin: 'manual_gmeet',
+    matchedScheduledMeetingId: '',
+    detectedMeetCode: detectedMeetCode,
+  };
+}
+
+function resolveMeetingIdForSync_(incomingMeetingId, meetingUrl) {
+  return resolveMeetingSyncContext_(incomingMeetingId, meetingUrl).meetingId;
+}
+
+function getScheduledMeetingIdSet_() {
+  const schedules = getMeetScheduleRows_();
+  const set = {};
+  for (let i = 0; i < schedules.length; i++) {
+    const id = sanitizeMeetText_(schedules[i].meetingId);
+    if (!id) continue;
+    set[id] = true;
+  }
+  return set;
+}
+
+function inferMeetingOriginByMeetingId_(meetingId, scheduledIdSet) {
+  const id = sanitizeMeetText_(meetingId);
+  if (!id) return 'manual_gmeet';
+  const set = scheduledIdSet || getScheduledMeetingIdSet_();
+  return set[id] ? 'frontend' : 'manual_gmeet';
 }
 
 function canUserCompleteMeetSession_(username) {
@@ -1158,51 +1474,344 @@ function canUserCompleteMeetSession_(username) {
 }
 
 function createGoogleMeetLink_(title, startIso, endIso, notes, expectedAttendees) {
-  // Primary approach: create a Calendar event with Google Meet conference link.
-  // Requires Calendar advanced service + calendar scope in the deployed project.
-  if (typeof Calendar !== 'undefined' && Calendar && Calendar.Events && typeof Calendar.Events.insert === 'function') {
-    try {
-      const attendees = (Array.isArray(expectedAttendees) ? expectedAttendees : [])
-        .filter(function (a) { return a && a.email; })
-        .map(function (a) { return { email: a.email }; });
-      const req = {
-        summary: title,
-        description: notes || '',
-        start: { dateTime: startIso },
-        end: { dateTime: endIso },
-        attendees: attendees,
-        conferenceData: {
-          createRequest: {
-            requestId: Utilities.getUuid(),
-            conferenceSolutionKey: { type: 'hangoutsMeet' },
-          },
+  // Always require a real, pre-created Google Meet room from Calendar API.
+  if (typeof Calendar === 'undefined' || !Calendar || !Calendar.Events || typeof Calendar.Events.insert !== 'function') {
+    throw new Error('Google Calendar advanced service is not enabled for this deployment');
+  }
+
+  try {
+    const attendees = (Array.isArray(expectedAttendees) ? expectedAttendees : [])
+      .filter(function (a) { return a && a.email; })
+      .map(function (a) { return { email: a.email }; });
+    const req = {
+      summary: title,
+      description: notes || '',
+      start: { dateTime: startIso },
+      end: { dateTime: endIso },
+      attendees: attendees,
+      conferenceData: {
+        createRequest: {
+          requestId: Utilities.getUuid(),
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
         },
-      };
-      const event = Calendar.Events.insert(req, 'primary', {
-        conferenceDataVersion: 1,
-        sendUpdates: 'none',
-      });
-      const fromHangout = sanitizeMeetText_(event && event.hangoutLink);
-      if (fromHangout) return { meetUrl: fromHangout, calendarEventId: sanitizeMeetText_(event.id) };
+      },
+    };
+    const event = Calendar.Events.insert(req, 'primary', {
+      conferenceDataVersion: 1,
+      sendUpdates: 'none',
+    });
+    const fromHangout = sanitizeMeetText_(event && event.hangoutLink);
+    if (fromHangout && fromHangout.indexOf('meet.google.com') !== -1) {
+      return { meetUrl: fromHangout, calendarEventId: sanitizeMeetText_(event.id) };
+    }
+    const entryPoints = event && event.conferenceData && event.conferenceData.entryPoints;
+    if (entryPoints && entryPoints.length) {
+      for (let i = 0; i < entryPoints.length; i++) {
+        const uri = sanitizeMeetText_(entryPoints[i].uri);
+        if (uri && uri.indexOf('meet.google.com') !== -1) {
+          return { meetUrl: uri, calendarEventId: sanitizeMeetText_(event.id) };
+        }
+      }
+    }
+    throw new Error('Calendar event was created but no Google Meet join link was returned');
+  } catch (error) {
+    Logger.log('createGoogleMeetLink_ failed: ' + error.toString());
+    throw new Error(formatMeetCalendarErrorMessage_(error));
+  }
+}
+
+function formatMeetCalendarErrorMessage_(error) {
+  const raw = String((error && (error.message || error.toString())) || '');
+  const lower = raw.toLowerCase();
+
+  const missingAdvancedService =
+    lower.indexOf('calendar advanced service') !== -1 ||
+    lower.indexOf('calendar is not defined') !== -1 ||
+    lower.indexOf('calendar.events') !== -1 && lower.indexOf('undefined') !== -1;
+
+  if (missingAdvancedService) {
+    return 'Unable to create an actual Google Meet room. Calendar advanced service is not enabled in this deployment.';
+  }
+
+  const missingScope =
+    lower.indexOf('insufficient permission') !== -1 ||
+    lower.indexOf('insufficientpermissions') !== -1 ||
+    lower.indexOf('calendar.events.insert') !== -1 ||
+    lower.indexOf('www.googleapis.com/auth/calendar.events') !== -1 ||
+    lower.indexOf('not have permission') !== -1 ||
+    lower.indexOf('request had insufficient authentication scopes') !== -1;
+
+  if (missingScope) {
+    return 'Unable to create an actual Google Meet room. Missing Calendar scope (https://www.googleapis.com/auth/calendar.events). Reauthorize and redeploy the Meet web app.';
+  }
+
+  return 'Unable to create an actual Google Meet room. ' + raw;
+}
+
+/**
+ * Diagnose whether this deployment can create real Google Meet links via Calendar API.
+ * Safe to run manually from Apps Script editor:
+ * - runMeetPermissionCheck()
+ */
+function checkMeetCalendarPermissions_() {
+  const diagnostics = {
+    success: false,
+    timestamp: new Date().toISOString(),
+    calendarAdvancedServiceEnabled: false,
+    eventsInsertAvailable: false,
+    canCreateCalendarEvent: false,
+    canGenerateMeetLink: false,
+    testCalendarEventId: '',
+    testMeetUrl: '',
+    cleanupStatus: '',
+    requiredConfig: {
+      advancedService: 'Calendar API (v3) in appsscript.json dependencies.enabledAdvancedServices',
+      oauthScope: 'https://www.googleapis.com/auth/calendar.events',
+      cloudApi: 'Google Calendar API enabled in linked Google Cloud project',
+    },
+    error: '',
+  };
+
+  diagnostics.calendarAdvancedServiceEnabled = !!(
+    typeof Calendar !== 'undefined' &&
+    Calendar &&
+    Calendar.Events
+  );
+  diagnostics.eventsInsertAvailable = !!(
+    diagnostics.calendarAdvancedServiceEnabled &&
+    typeof Calendar.Events.insert === 'function'
+  );
+
+  if (!diagnostics.eventsInsertAvailable) {
+    diagnostics.error = 'Calendar advanced service is not enabled for this deployment';
+    return diagnostics;
+  }
+
+  let testEventId = '';
+  try {
+    const start = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+    const end = new Date(Date.now() + 17 * 60 * 1000).toISOString();
+    const req = {
+      summary: 'YSP Meet Permission Check (Auto Cleanup)',
+      description: 'Temporary event created by runMeetPermissionCheck().',
+      start: { dateTime: start },
+      end: { dateTime: end },
+      conferenceData: {
+        createRequest: {
+          requestId: Utilities.getUuid(),
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      },
+    };
+
+    const event = Calendar.Events.insert(req, 'primary', {
+      conferenceDataVersion: 1,
+      sendUpdates: 'none',
+    });
+
+    testEventId = sanitizeMeetText_(event && event.id);
+    diagnostics.testCalendarEventId = testEventId;
+    diagnostics.canCreateCalendarEvent = !!testEventId;
+
+    const fromHangout = sanitizeMeetText_(event && event.hangoutLink);
+    if (fromHangout && fromHangout.indexOf('meet.google.com') !== -1) {
+      diagnostics.testMeetUrl = fromHangout;
+      diagnostics.canGenerateMeetLink = true;
+    } else {
       const entryPoints = event && event.conferenceData && event.conferenceData.entryPoints;
       if (entryPoints && entryPoints.length) {
         for (let i = 0; i < entryPoints.length; i++) {
           const uri = sanitizeMeetText_(entryPoints[i].uri);
           if (uri && uri.indexOf('meet.google.com') !== -1) {
-            return { meetUrl: uri, calendarEventId: sanitizeMeetText_(event.id) };
+            diagnostics.testMeetUrl = uri;
+            diagnostics.canGenerateMeetLink = true;
+            break;
           }
         }
       }
-    } catch (error) {
-      Logger.log('createGoogleMeetLink_ Calendar API failed, using meet.new fallback: ' + error.toString());
+    }
+
+    diagnostics.success = diagnostics.canCreateCalendarEvent && diagnostics.canGenerateMeetLink;
+    if (!diagnostics.success) {
+      diagnostics.error = 'Calendar event was created, but no Meet join link was returned';
+    }
+  } catch (error) {
+    diagnostics.error = error && error.message ? String(error.message) : String(error);
+  } finally {
+    if (testEventId) {
+      try {
+        Calendar.Events.remove('primary', testEventId, { sendUpdates: 'none' });
+        diagnostics.cleanupStatus = 'Temporary test event deleted';
+      } catch (cleanupError) {
+        diagnostics.cleanupStatus = 'Temporary test event was NOT deleted: ' + cleanupError;
+      }
+    } else {
+      diagnostics.cleanupStatus = 'No temporary event created';
     }
   }
 
-  // Fallback: provide meet.new for instant creation when Calendar advanced service is unavailable.
-  return {
-    meetUrl: 'https://meet.new',
-    calendarEventId: '',
+  return diagnostics;
+}
+
+function runMeetPermissionCheck() {
+  const result = checkMeetCalendarPermissions_();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function getMeetAuthorizationStatus_() {
+  const requiredScope = 'https://www.googleapis.com/auth/calendar.events';
+  const out = {
+    status: 'UNKNOWN',
+    authorizationUrl: '',
+    requiredScopes: [requiredScope],
+    error: '',
   };
+
+  try {
+    const info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL, [requiredScope]);
+    out.status = String(info.getAuthorizationStatus());
+    out.authorizationUrl = String(info.getAuthorizationUrl() || '');
+    return out;
+  } catch (error) {
+    out.error = String(error && (error.message || error.toString()) || 'Unknown authorization status error');
+    return out;
+  }
+}
+
+function getMeetGrantedScopes_() {
+  const requiredScope = 'https://www.googleapis.com/auth/calendar.events';
+  const out = {
+    requiredScope: requiredScope,
+    hasRequiredScope: false,
+    grantedScopes: [],
+    source: 'tokeninfo',
+    error: '',
+  };
+
+  try {
+    const token = ScriptApp.getOAuthToken();
+    if (!token) {
+      out.error = 'No OAuth token available in current execution context';
+      return out;
+    }
+
+    const url = 'https://oauth2.googleapis.com/tokeninfo?access_token=' + encodeURIComponent(token);
+    const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    const code = resp.getResponseCode();
+    if (code !== 200) {
+      out.error = 'tokeninfo request failed with status ' + code + ': ' + resp.getContentText();
+      return out;
+    }
+
+    const payload = JSON.parse(resp.getContentText() || '{}');
+    const scopes = String(payload.scope || '')
+      .split(/\s+/)
+      .map(function (s) { return String(s || '').trim(); })
+      .filter(function (s) { return !!s; });
+
+    out.grantedScopes = scopes;
+    out.hasRequiredScope = scopes.indexOf(requiredScope) !== -1;
+    return out;
+  } catch (error) {
+    out.error = String(error && (error.message || error.toString()) || 'Unknown scope check error');
+    return out;
+  }
+}
+
+function runMeetFullDiagnosis() {
+  const basic = checkMeetCalendarPermissions_();
+  const scopeInfo = getMeetGrantedScopes_();
+  const authInfo = getMeetAuthorizationStatus_();
+  const needsScopeGrant =
+    basic &&
+    String(basic.error || '').toLowerCase().indexOf('required permissions: https://www.googleapis.com/auth/calendar.events') !== -1;
+  const hasScope = scopeInfo.hasRequiredScope === true;
+
+  const diagnosis = {
+    success: basic.success === true && hasScope === true,
+    timestamp: new Date().toISOString(),
+    basic: basic,
+    oauth: scopeInfo,
+    authorization: authInfo,
+    inferredRootCause: '',
+    canAutoFix: false,
+    autoFixReason: 'Google OAuth consent and deployment authorization cannot be fully completed by script code.',
+    recoverySteps: [],
+  };
+
+  if (basic.success === true) {
+    diagnosis.inferredRootCause = 'No blocking permission issue detected.';
+    diagnosis.recoverySteps = ['No action required.'];
+    return diagnosis;
+  }
+
+  if (needsScopeGrant || !hasScope || authInfo.status === 'REQUIRED') {
+    diagnosis.inferredRootCause = 'Deployment owner has not granted Calendar scope for this script version.';
+    diagnosis.recoverySteps = [
+      'Open Apps Script Editor for this Meet project while signed in as the DEPLOYING account',
+      'Run runMeetPermissionCheck() and click Allow on the OAuth consent screen',
+      authInfo.authorizationUrl ? ('If shown, open this authorization URL: ' + authInfo.authorizationUrl) : 'If no auth URL is returned, run any Calendar action in editor to trigger consent',
+      'Deploy a NEW web app version after consent is granted',
+      'Re-test createMeetSession from frontend',
+    ];
+    return diagnosis;
+  }
+
+  diagnosis.inferredRootCause = 'Calendar API/service/deployment mismatch (not pure OAuth scope issue).';
+  diagnosis.recoverySteps = [
+    'Confirm appsscript.json has Calendar advanced service (v3) and oauthScope https://www.googleapis.com/auth/calendar.events',
+    'In Apps Script Editor > Services, ensure Calendar API is enabled',
+    'In linked Google Cloud Project, enable Google Calendar API',
+    'Deploy a NEW web app version after manifest/service updates',
+    'Run runMeetPermissionCheck() manually as deployment owner and grant permissions when prompted',
+    'Retry createMeetSession from frontend',
+  ];
+  return diagnosis;
+}
+
+function attemptMeetPermissionAutoFix_() {
+  const before = runMeetFullDiagnosis();
+  const result = {
+    success: false,
+    timestamp: new Date().toISOString(),
+    before: before,
+    attemptedActions: [],
+    note: 'Full automatic fix is not possible from Apps Script because OAuth consent + redeploy are manual platform steps.',
+    nextSteps: before.recoverySteps,
+  };
+
+  try {
+    if (typeof ScriptApp.invalidateAuth === 'function') {
+      ScriptApp.invalidateAuth();
+      result.attemptedActions.push('Called ScriptApp.invalidateAuth() to force fresh authorization on next manual run');
+    } else {
+      result.attemptedActions.push('ScriptApp.invalidateAuth() not available in this context');
+    }
+  } catch (error) {
+    result.attemptedActions.push('invalidateAuth failed: ' + String(error && (error.message || error.toString()) || error));
+  }
+
+  result.after = runMeetFullDiagnosis();
+  return result;
+}
+
+function runMeetPermissionRecovery_() {
+  const diagnosis = runMeetFullDiagnosis();
+  const out = {
+    success: diagnosis.success,
+    timestamp: new Date().toISOString(),
+    diagnosis: diagnosis,
+    attempted: null,
+    nextSteps: diagnosis.recoverySteps,
+  };
+
+  if (!diagnosis.success) {
+    out.attempted = attemptMeetPermissionAutoFix_();
+    out.nextSteps = out.attempted && out.attempted.nextSteps ? out.attempted.nextSteps : diagnosis.recoverySteps;
+  }
+
+  return out;
 }
 
 function normalizeExpectedAttendees_(value) {

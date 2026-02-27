@@ -88,6 +88,41 @@ function formatElapsedSince(value?: string): string {
   return formatDuration(diffSec);
 }
 
+function isLikelyParticipantDisplayName(value?: string): boolean {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  const lowered = text.toLowerCase();
+  const blocked = [
+    "more options for",
+    "more_vert",
+    "frame_person",
+    "reframe",
+    "visual effects",
+    "backgrounds and effects",
+    "others might still see your full video",
+    "meeting details",
+    "present now",
+    "raise hand",
+    "camera off",
+    "microphone off",
+  ];
+  return !blocked.some((b) => lowered.includes(b));
+}
+
+function getNameInitials(value?: string): string {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+  return (parts[0].slice(0, 1) + parts[parts.length - 1].slice(0, 1)).toUpperCase();
+}
+
+function getAvatarBorderColor(isDark: boolean): string {
+  return isDark ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.9)";
+}
+
 function normalizeCommitteeLabel(value?: string): string {
   return String(value || "")
     .toLowerCase()
@@ -639,7 +674,7 @@ export default function KaagapAIMeetPage({
     padding: "16px",
   };
 
-  const attendance = selectedMeeting?.attendees || [];
+  const attendance = (selectedMeeting?.attendees || []).filter((item) => isLikelyParticipantDisplayName(item.name));
 
   return (
     <PageLayout onClose={onClose} isDark={isDark} title="KaagapAI Meet" subtitle="Google Meet attendance tracker">
@@ -1135,7 +1170,7 @@ export default function KaagapAIMeetPage({
           <div style={floatingOverlayStyle} onClick={() => setIsDetailOpen(false)}>
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-5xl rounded-2xl border overflow-hidden"
+              className="w-full max-w-5xl max-h-[88vh] rounded-2xl border overflow-hidden flex flex-col"
               style={{
                 background: isDark ? "rgba(15,23,42,0.96)" : "rgba(255,255,255,0.97)",
                 borderColor: isDark ? "rgba(148,163,184,0.24)" : "rgba(15,23,42,0.1)",
@@ -1155,7 +1190,7 @@ export default function KaagapAIMeetPage({
                 </button>
               </div>
 
-              <div className="p-5">
+              <div className="p-5 overflow-y-auto min-h-0">
                 <div className="flex flex-wrap gap-2 text-xs mb-3">
                   <span className="px-2 py-1 rounded-lg border">Realtime refresh every 8s</span>
                   <span className="px-2 py-1 rounded-lg border">Meeting ID: {selectedCard.meetingId}</span>
@@ -1201,15 +1236,16 @@ export default function KaagapAIMeetPage({
                 {!!selectedMeeting && (
                   <>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-xs">
-                      <div className="rounded-lg border p-2">Total: {selectedMeeting.totalAttendees}</div>
+                      <div className="rounded-lg border p-2">Total: {attendance.length}</div>
                       <div className="rounded-lg border p-2">Live: {attendance.filter((a) => a.isPresent).length}</div>
-                      <div className="rounded-lg border p-2">External: {selectedMeeting.externalParticipants}</div>
-                      <div className="rounded-lg border p-2">Duration: {formatDuration(selectedMeeting.totalDurationSeconds)}</div>
+                      <div className="rounded-lg border p-2">External: {attendance.filter((a) => a.isExternalParticipant).length}</div>
+                      <div className="rounded-lg border p-2">Duration: {formatDuration(attendance.reduce((acc, a) => acc + Number(a.totalDurationSeconds || 0), 0))}</div>
                     </div>
 
-                    <div className="max-h-[52vh] overflow-auto border rounded-lg">
-                      <table className="w-full text-xs">
-                        <thead>
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="max-h-[40vh] overflow-auto">
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
                           <tr>
                             <th className="p-2 text-left">Name</th>
                             <th className="p-2 text-left">Live</th>
@@ -1219,21 +1255,48 @@ export default function KaagapAIMeetPage({
                             <th className="p-2 text-left">Leave</th>
                             <th className="p-2 text-left">Duration</th>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {attendance.map((a: MeetAttendanceDetail) => (
-                            <tr key={a.participantKey} className="border-t">
-                              <td className="p-2">{a.name}</td>
-                              <td className="p-2">{a.isPresent ? "In meeting" : "Left"}</td>
-                              <td className="p-2">{a.joinCount}</td>
-                              <td className="p-2">{a.exitCount}</td>
-                              <td className="p-2">{formatDateTime(a.firstJoinTime)}</td>
-                              <td className="p-2">{formatDateTime(a.lastLeaveTime)}</td>
-                              <td className="p-2">{formatDuration(a.totalDurationSeconds)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {attendance.map((a: MeetAttendanceDetail) => (
+                              <tr key={a.participantKey} className="border-t">
+                              <td className="p-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="relative w-7 h-7 flex-shrink-0">
+                                    <span
+                                      className="absolute inset-0 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                                      style={{
+                                        background: "linear-gradient(135deg, #ee8724 0%, #f6421f 100%)",
+                                        border: `1px solid ${getAvatarBorderColor(isDark)}`,
+                                      }}
+                                    >
+                                      {getNameInitials(a.name)}
+                                    </span>
+                                    {a.profilePictureURL ? (
+                                      <img
+                                        src={a.profilePictureURL}
+                                        alt={a.name}
+                                        className="relative w-7 h-7 rounded-full object-cover"
+                                        style={{ border: `1px solid ${getAvatarBorderColor(isDark)}` }}
+                                        onError={(e) => {
+                                          e.currentTarget.style.display = "none";
+                                        }}
+                                      />
+                                    ) : null}
+                                  </div>
+                                  <span className="truncate">{a.name}</span>
+                                </div>
+                              </td>
+                                <td className="p-2">{a.isPresent ? "In meeting" : "Left"}</td>
+                                <td className="p-2">{a.joinCount}</td>
+                                <td className="p-2">{a.exitCount}</td>
+                                <td className="p-2">{formatDateTime(a.firstJoinTime)}</td>
+                                <td className="p-2">{formatDateTime(a.lastLeaveTime)}</td>
+                                <td className="p-2">{formatDuration(a.totalDurationSeconds)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </>
                 )}

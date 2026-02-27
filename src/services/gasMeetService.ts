@@ -1,17 +1,25 @@
-import { getStoredUser } from './gasLoginService';
+import { getSessionToken, getStoredUser } from './gasLoginService';
 
 const MEET_API_URL =
   import.meta.env.VITE_GAS_MEET_API_URL ||
+  import.meta.env.VITE_GAS_LOGIN_API_URL ||
   'https://script.google.com/macros/s/AKfycbyTYEMa5apc6ZSCVce1qowpbcooRB88OjtW-nSvsb4ZK-W8N9XcQp2dbigoaPTg316J/exec';
 
 type MeetApiResponse<T> = T & { success?: boolean; error?: string; code?: number };
 
 async function callMeetApi<T>(action: string, data: Record<string, unknown> = {}): Promise<T> {
   if (!MEET_API_URL) throw new Error('Meet API URL not configured');
+  const user = getStoredUser();
+  const sessionToken = getSessionToken();
   const response = await fetch(MEET_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ action, ...data }),
+    body: JSON.stringify({
+      action,
+      username: user?.username || '',
+      sessionToken: sessionToken || undefined,
+      ...data,
+    }),
   });
   if (!response.ok) throw new Error('Meet API request failed: ' + response.status);
   const payload = (await response.json()) as MeetApiResponse<T>;

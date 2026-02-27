@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YSP Meet Tracker</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="card">
+      <h1>YSP Meet Tracker</h1>
+      <label class="row">
+        <span>Tracking Enabled</span>
+        <input id="enabled" type="checkbox" />
+      </label>
+      <p id="active" class="muted">Active: No</p>
+      <p id="meeting" class="muted">Meeting: -</p>
+      <p id="origin" class="muted">Origin: -</p>
+      <p id="coverage" class="muted">Coverage: Live 0 | Seen 0 | Capture 0</p>
+      <p id="sync" class="muted">Last Sync: -</p>
+      <p id="error" class="error"></p>
+      <button id="refresh" type="button">Refresh</button>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+  </html>
