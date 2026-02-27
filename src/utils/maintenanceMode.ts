@@ -74,7 +74,6 @@ export const AVAILABLE_PAGES = [
   { id: "attendance-recording", name: "Attendance Recording" },
   { id: "attendance-transparency", name: "Attendance Transparency" },
   { id: "manage-events", name: "Manage Events" },
-  { id: "organizational-task", name: "Organizational Task" },
   { id: "kaagapai-meet", name: "KaagapAI Meet (Google Meet)" },
   { id: "my-qr-id", name: "My QR ID" },
   { id: "officer-directory", name: "Officer Directory" },

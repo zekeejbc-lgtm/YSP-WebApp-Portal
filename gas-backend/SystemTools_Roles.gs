@@ -31,7 +31,6 @@ const SYSTEM_PERMISSION_KEYS = [
   'page_admin_members',
   'page_admin_logs',
   'page_admin_tools',
-  'page_organizational_tasks',
   'page_kaagapai_meet',
   'fn_manage_opportunities',
   'fn_sync_applicant_sheet',
@@ -46,7 +45,6 @@ const SYSTEM_PERMISSION_KEYS = [
   'fn_manage_attendance_events',
   'fn_moderate_feedback',
   'fn_manage_projects',
-  'fn_manage_organizational_tasks',
 ];
 
 function getDefaultPermissionsForLevel_(powerLevel) {
@@ -74,7 +72,6 @@ function getDefaultPermissionsForLevel_(powerLevel) {
     page_admin_members: level >= 8,
     page_admin_logs: level >= 10,
     page_admin_tools: level >= 8,
-    page_organizational_tasks: level >= 2,
     page_kaagapai_meet: level >= 2,
     fn_manage_opportunities: level >= 8,
     fn_sync_applicant_sheet: level >= 8,
@@ -89,7 +86,6 @@ function getDefaultPermissionsForLevel_(powerLevel) {
     fn_manage_attendance_events: level >= 5,
     fn_moderate_feedback: level >= 8,
     fn_manage_projects: level >= 8,
-    fn_manage_organizational_tasks: level >= 4,
   };
 
   if (level <= 0) {

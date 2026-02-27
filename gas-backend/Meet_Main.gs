@@ -64,7 +64,7 @@ function canAccessMeetAttendanceByUsername_(username) {
   }
   const role = getUserRoleForLoginActions_(username);
   if (!role) return false;
-  return canAccessPathByRole_(role, 'organizational-tasks');
+  return canAccessPathByRole_(role, 'kaagapai-meet');
 }
 
 /**
@@ -79,6 +79,17 @@ function doPost(e) {
   try {
     const requestData = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     const action = sanitizeMeetText_(requestData.action);
+    const requiresUserAccess = action && action !== 'syncMeetAttendance';
+
+    if (requiresUserAccess) {
+      const username = sanitizeMeetText_(requestData.username);
+      if (!username) {
+        return createErrorResponse('username is required', 401);
+      }
+      if (!canAccessMeetAttendanceByUsername_(username)) {
+        return createErrorResponse('Permission denied', 403);
+      }
+    }
 
     switch (action) {
       case 'syncMeetAttendance':
@@ -307,8 +318,8 @@ function handleCreateMeetSession(requestData) {
     const mode = sanitizeMeetText_(requestData.mode).toLowerCase() === 'scheduled' ? 'scheduled' : 'instant';
     const title = sanitizeMeetText_(requestData.title) || 'KaagapAI Meet Session';
     const notes = sanitizeMeetText_(requestData.notes);
-    const scheduledStart = sanitizeMeetText_(requestData.scheduledStart);
-    const scheduledEnd = sanitizeMeetText_(requestData.scheduledEnd);
+    const scheduledStart = normalizeMeetDateTimeInput_(requestData.scheduledStart);
+    const scheduledEnd = normalizeMeetDateTimeInput_(requestData.scheduledEnd);
     const expectedAttendees = normalizeExpectedAttendees_(requestData.expectedAttendees);
 
     let startIso = scheduledStart;
@@ -316,8 +327,11 @@ function handleCreateMeetSession(requestData) {
     const now = new Date();
     if (!startIso) startIso = now.toISOString();
     if (!endIso) {
-      const end = new Date(now.getTime() + (60 * 60 * 1000));
+      const end = new Date(Date.parse(startIso) + (60 * 60 * 1000));
       endIso = end.toISOString();
+    }
+    if ((Date.parse(endIso) || 0) <= (Date.parse(startIso) || 0)) {
+      endIso = new Date(Date.parse(startIso) + (60 * 60 * 1000)).toISOString();
     }
 
     const meetData = createGoogleMeetLink_(title, startIso, endIso, notes, expectedAttendees);
@@ -1147,36 +1161,40 @@ function createGoogleMeetLink_(title, startIso, endIso, notes, expectedAttendees
   // Primary approach: create a Calendar event with Google Meet conference link.
   // Requires Calendar advanced service + calendar scope in the deployed project.
   if (typeof Calendar !== 'undefined' && Calendar && Calendar.Events && typeof Calendar.Events.insert === 'function') {
-    const attendees = (Array.isArray(expectedAttendees) ? expectedAttendees : [])
-      .filter(function (a) { return a && a.email; })
-      .map(function (a) { return { email: a.email }; });
-    const req = {
-      summary: title,
-      description: notes || '',
-      start: { dateTime: startIso },
-      end: { dateTime: endIso },
-      attendees: attendees,
-      conferenceData: {
-        createRequest: {
-          requestId: Utilities.getUuid(),
-          conferenceSolutionKey: { type: 'hangoutsMeet' },
+    try {
+      const attendees = (Array.isArray(expectedAttendees) ? expectedAttendees : [])
+        .filter(function (a) { return a && a.email; })
+        .map(function (a) { return { email: a.email }; });
+      const req = {
+        summary: title,
+        description: notes || '',
+        start: { dateTime: startIso },
+        end: { dateTime: endIso },
+        attendees: attendees,
+        conferenceData: {
+          createRequest: {
+            requestId: Utilities.getUuid(),
+            conferenceSolutionKey: { type: 'hangoutsMeet' },
+          },
         },
-      },
-    };
-    const event = Calendar.Events.insert(req, 'primary', {
-      conferenceDataVersion: 1,
-      sendUpdates: 'none',
-    });
-    const fromHangout = sanitizeMeetText_(event && event.hangoutLink);
-    if (fromHangout) return { meetUrl: fromHangout, calendarEventId: sanitizeMeetText_(event.id) };
-    const entryPoints = event && event.conferenceData && event.conferenceData.entryPoints;
-    if (entryPoints && entryPoints.length) {
-      for (let i = 0; i < entryPoints.length; i++) {
-        const uri = sanitizeMeetText_(entryPoints[i].uri);
-        if (uri && uri.indexOf('meet.google.com') !== -1) {
-          return { meetUrl: uri, calendarEventId: sanitizeMeetText_(event.id) };
+      };
+      const event = Calendar.Events.insert(req, 'primary', {
+        conferenceDataVersion: 1,
+        sendUpdates: 'none',
+      });
+      const fromHangout = sanitizeMeetText_(event && event.hangoutLink);
+      if (fromHangout) return { meetUrl: fromHangout, calendarEventId: sanitizeMeetText_(event.id) };
+      const entryPoints = event && event.conferenceData && event.conferenceData.entryPoints;
+      if (entryPoints && entryPoints.length) {
+        for (let i = 0; i < entryPoints.length; i++) {
+          const uri = sanitizeMeetText_(entryPoints[i].uri);
+          if (uri && uri.indexOf('meet.google.com') !== -1) {
+            return { meetUrl: uri, calendarEventId: sanitizeMeetText_(event.id) };
+          }
         }
       }
+    } catch (error) {
+      Logger.log('createGoogleMeetLink_ Calendar API failed, using meet.new fallback: ' + error.toString());
     }
   }
 
@@ -1269,4 +1287,12 @@ function sendMeetInviteEmails_(attendees, context) {
     failedCount: failedCount,
     sentAt: sentCount ? sentAt : '',
   };
+}
+
+function normalizeMeetDateTimeInput_(value) {
+  const raw = sanitizeMeetText_(value);
+  if (!raw) return '';
+  const parsed = new Date(raw);
+  if (isNaN(parsed.getTime())) return '';
+  return parsed.toISOString();
 }

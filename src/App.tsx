@@ -115,7 +115,6 @@ import MyQRIDPage from "./components/MyQRIDPage";
   const ManageMembersPage = lazy(() => import("./components/ManageMembersPage"));
   const MembershipApplicationsPage = lazy(() => import("./components/MembershipApplicationsPage"));
   const SettingsPage = lazy(() => import("./components/SettingsPage"));
-  const OrganizationalTaskPage = lazy(() => import("./components/OrganizationalTaskPage"));
   const KaagapAIMeetPage = lazy(() => import("./components/KaagapAIMeetPage"));
   const FounderModal = lazy(() => import("./components/FounderModal"));
   const DeveloperModal = lazy(() => import("./components/DeveloperModal"));
@@ -165,7 +164,6 @@ import MyQRIDPage from "./components/MyQRIDPage";
     "access-logs": "admin/logs",
     "system-tools": "admin/tools",
     "manage-members": "admin/members",
-    "organizational-task": "organizational-tasks",
     "kaagapai-meet": "kaagapai-meet",
     settings: "settings",
   };
@@ -333,7 +331,6 @@ export default function App() {
     const [showAccessLogs, setShowAccessLogs] = useState(false);
     const [showSystemTools, setShowSystemTools] = useState(false);
     const [showManageMembers, setShowManageMembers] = useState(false);
-    const [showOrganizationalTask, setShowOrganizationalTask] = useState(false);
     const [showKaagapAIMeet, setShowKaagapAIMeet] = useState(false);
     const [showMembershipApplications, setShowMembershipApplications] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
@@ -381,7 +378,6 @@ export default function App() {
       showAccessLogs,
       showSystemTools,
       showManageMembers,
-      showOrganizationalTask,
       showKaagapAIMeet,
       showMembershipApplicationsPage,
       showSettings,
@@ -404,7 +400,6 @@ export default function App() {
       setShowAccessLogs,
       setShowSystemTools,
       setShowManageMembers,
-      setShowOrganizationalTask,
       setShowKaagapAIMeet,
       setShowMembershipApplicationsPage,
       setShowSettings,
@@ -1086,7 +1081,6 @@ export default function App() {
       closeIfBlocked(showAccessLogs, "access-logs", () => setShowAccessLogs(false));
       closeIfBlocked(showSystemTools, "system-tools", () => setShowSystemTools(false));
       closeIfBlocked(showManageMembers, "manage-members", () => setShowManageMembers(false));
-      closeIfBlocked(showOrganizationalTask, "organizational-task", () => setShowOrganizationalTask(false));
       closeIfBlocked(showKaagapAIMeet, "kaagapai-meet", () => setShowKaagapAIMeet(false));
       closeIfBlocked(showSettings, "settings", () => setShowSettings(false));
 
@@ -1120,7 +1114,6 @@ export default function App() {
       showAccessLogs,
       showSystemTools,
       showManageMembers,
-      showOrganizationalTask,
       showKaagapAIMeet,
       showSettings,
       pageAccessByPath,
@@ -2031,21 +2024,10 @@ export default function App() {
         roles: ["admin"], // admin and above can see this group
       },
       {
-        id: "organizational-task-group",
-        label: "Organizational Task",
+        id: "kaagapai-meet-group",
+        label: "KaagapAI Meet",
         icon: <Network className="w-5 h-5" />,
         pages: [
-          {
-            id: "organizational-task",
-            label: "Committees",
-            action: () => {
-              setActivePage("organizational-task");
-              setShowOrganizationalTask(true);
-              setOpenDropdown(null);
-              setIsMenuOpen(false);
-            },
-            roles: ["member"],
-          },
           {
             id: "kaagapai-meet",
             label: "KaagapAI Meet (Google Meet)",
@@ -3110,7 +3092,6 @@ export default function App() {
       if (showAccessLogs && isPageAllowed("access-logs")) return "access-logs";
       if (showSystemTools && isPageAllowed("system-tools")) return "system-tools";
       if (showManageMembers && isPageAllowed("manage-members")) return "manage-members";
-      if (showOrganizationalTask && isPageAllowed("organizational-task")) return "organizational-task";
       if (showKaagapAIMeet && isPageAllowed("kaagapai-meet")) return "kaagapai-meet";
       if (showSettings && isPageAllowed("settings")) return "settings";
       return activePage;
@@ -3125,7 +3106,6 @@ export default function App() {
       showFeedbackPage,
       showManageEvents,
       showManageMembers,
-      showOrganizationalTask,
       showKaagapAIMeet,
       showMembershipApplications,
       showMembershipApplicationsPage,
@@ -3267,14 +3247,6 @@ export default function App() {
           }
           if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
           return false;
-        case "organizational-task":
-          if (isPageAllowed("organizational-task")) {
-            setActivePage("organizational-task");
-            setShowOrganizationalTask(true);
-            return true;
-          }
-          if (PAGE_ACCESS_DEBUG) console.warn("[AccessDebug] Stored view blocked", { view, userRole, isAdmin, pageAccessByPath });
-          return false;
         case "kaagapai-meet":
           if (isPageAllowed("kaagapai-meet")) {
             setActivePage("kaagapai-meet");
@@ -3305,7 +3277,6 @@ export default function App() {
       setShowFeedbackPage,
       setShowManageEvents,
       setShowManageMembers,
-      setShowOrganizationalTask,
       setShowKaagapAIMeet,
       setShowMembershipApplications,
       setShowMembershipApplicationsPage,
@@ -4146,35 +4117,6 @@ export default function App() {
       );
     }
 
-    // Show Organizational Task page
-    if (showOrganizationalTask && isPageAllowed("organizational-task")) {
-      if (isPageInMaintenance("organizational-task")) {
-        const config = getPageMaintenanceConfig("organizational-task");
-        return (
-          <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Organizational Task" onBack={() => setShowOrganizationalTask(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
-            <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
-            </Suspense>
-            {chatbot}
-          </>
-        );
-      }
-      return (
-        <>
-          <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <Suspense fallback={getPageLoadingFallback("Organizational Task")}>
-            <OrganizationalTaskPage
-              onClose={() => setShowOrganizationalTask(false)}
-              isDark={isDark}
-              username={userUsername || userName}
-            />
-          </Suspense>
-          {chatbot}
-        </>
-      );
-    }
-
     // Show KaagapAI Meet page
     if (showKaagapAIMeet && isPageAllowed("kaagapai-meet")) {
       if (isPageInMaintenance("kaagapai-meet")) {
@@ -4386,7 +4328,7 @@ export default function App() {
         !showManageEvents && !showMyQRID && 
         !showAttendanceTransparency && !showAnnouncements && !showIssuanceCenter && !showAccessLogs && 
         !showSystemTools && !showManageMembers && !showFeedbackPage && 
-        !showMembershipApplicationsPage && !showMyProfile && !showSettings && !showOrganizationalTask && !showKaagapAIMeet && (
+        !showMembershipApplicationsPage && !showMyProfile && !showSettings && !showKaagapAIMeet && (
           <TopBar
             isDark={isDark}
             onToggleDark={toggleDark}
@@ -4477,7 +4419,6 @@ export default function App() {
             setShowSystemTools(false);
             setShowFeedbackPage(false);
             setShowMyProfile(false);
-            setShowOrganizationalTask(false);
             setShowKaagapAIMeet(false);
             window.scrollTo({ top: 0, behavior: "smooth" });
           }}

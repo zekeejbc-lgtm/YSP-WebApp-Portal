@@ -125,7 +125,6 @@ export const DEFAULT_PERMISSIONS: PermissionSet = {
   page_admin_members: false,
   page_admin_logs: false,
   page_admin_tools: false,
-  page_organizational_tasks: false,
   page_kaagapai_meet: false,
   fn_manage_opportunities: false,
   fn_sync_applicant_sheet: false,
@@ -140,7 +139,6 @@ export const DEFAULT_PERMISSIONS: PermissionSet = {
   fn_manage_attendance_events: false,
   fn_moderate_feedback: false,
   fn_manage_projects: false,
-  fn_manage_organizational_tasks: false,
 };
 
 export interface PermissionToggleDefinition {
@@ -172,7 +170,6 @@ export const PERMISSION_TOGGLE_DEFINITIONS: PermissionToggleDefinition[] = [
   { key: "page_admin_members", label: "Page: Manage Members", group: "pages" },
   { key: "page_admin_logs", label: "Page: Access Logs", group: "pages" },
   { key: "page_admin_tools", label: "Page: System Tools", group: "pages" },
-  { key: "page_organizational_tasks", label: "Page: Organizational Task", group: "pages" },
   { key: "page_kaagapai_meet", label: "Page: KaagapAI Meet", group: "pages" },
   { key: "fn_manage_opportunities", label: "Function: Manage Opportunities", group: "functions" },
   { key: "fn_sync_applicant_sheet", label: "Function: Sync Applicant Sheet", group: "functions" },
@@ -187,7 +184,6 @@ export const PERMISSION_TOGGLE_DEFINITIONS: PermissionToggleDefinition[] = [
   { key: "fn_manage_attendance_events", label: "Function: Manage Attendance Events", group: "functions" },
   { key: "fn_moderate_feedback", label: "Function: Moderate Feedback", group: "functions" },
   { key: "fn_manage_projects", label: "Function: Manage Projects", group: "functions" },
-  { key: "fn_manage_organizational_tasks", label: "Function: Manage Organizational Tasks", group: "functions" },
 ];
 
 // Role hierarchy levels

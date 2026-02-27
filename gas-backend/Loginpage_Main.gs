@@ -471,6 +471,31 @@ function doPost(e) {
         return handleCreateUserAccount(requestData.data || {}, requestData.username);
       case 'syncMeetAttendance':
         return handleSyncMeetAttendance(requestData);
+      case 'getMembers':
+        if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return handleGetMeetMembers(requestData);
+      case 'getCommittees':
+        if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return handleGetMeetCommittees();
+      case 'createMeetSession':
+        if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return handleCreateMeetSession(requestData);
+      case 'markMeetSessionComplete':
+        if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return handleMarkMeetSessionComplete(requestData);
+      case 'getMeetDashboard':
+        if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
+          return createErrorResponse('Permission denied', 403);
+        }
+        return handleGetMeetDashboard(requestData);
       case 'getMeetAttendance':
         if (!canAccessMeetAttendanceByUsername_(requestData.username)) {
           return createErrorResponse('Permission denied', 403);
@@ -902,7 +927,6 @@ function canAccessPathByRole_(roleName, pagePath) {
     'admin/members': 'page_admin_members',
     'admin/logs': 'page_admin_logs',
     'admin/tools': 'page_admin_tools',
-    'organizational-tasks': 'page_organizational_tasks',
     'kaagapai-meet': 'page_kaagapai_meet',
   };
   const explicitPageKey = pagePermissionMap[path];
@@ -922,7 +946,6 @@ function canAccessPathByRole_(roleName, pagePath) {
     path === 'profile' ||
     path === 'announcements' ||
     path === 'issuance' ||
-    path === 'organizational-tasks' ||
     path === 'kaagapai-meet' ||
     path === 'applications' ||
     path === 'settings'
