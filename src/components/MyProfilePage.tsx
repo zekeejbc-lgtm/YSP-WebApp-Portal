@@ -39,6 +39,7 @@ import {
   get2FAStatus,
   generateTotpEnrollment,
   enrollUser2FA,
+  enableUser2FA,
   disableUser2FA,
   beginTotpSecretReset,
   confirmTotpSecretReset,
@@ -82,10 +83,11 @@ export default function MyProfilePage({
   const [currentUsername, setCurrentUsername] = useState<string>('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [authenticatorLinked, setAuthenticatorLinked] = useState(false);
   const [showSetup2FAModal, setShowSetup2FAModal] = useState(false);
   const [setupMode, setSetupMode] = useState<"enroll" | "reset">("enroll");
   const [showTwoFactorActionModal, setShowTwoFactorActionModal] = useState(false);
-  const [twoFactorAction, setTwoFactorAction] = useState<"disable" | "reset">("disable");
+  const [twoFactorAction, setTwoFactorAction] = useState<"enable" | "disable" | "reset">("disable");
   const [prefetchedSetupResponse, setPrefetchedSetupResponse] = useState<{
     success: boolean;
     secret?: string;
@@ -449,7 +451,8 @@ export default function MyProfilePage({
     try {
       const result = await get2FAStatus();
       if (result.success) {
-        setTwoFactorEnabled(!!result.enabled);
+        setTwoFactorEnabled(!!(result.loginEnabled ?? result.enabled));
+        setAuthenticatorLinked(!!(result.authenticatorLinked ?? result.enabled));
       }
     } catch {
       // Keep profile usable even when 2FA status check fails.
@@ -1729,6 +1732,11 @@ export default function MyProfilePage({
                 setShowTwoFactorActionModal(true);
                 return;
               }
+              if (authenticatorLinked) {
+                setTwoFactorAction("enable");
+                setShowTwoFactorActionModal(true);
+                return;
+              }
               setSetupMode("enroll");
               setShowSetup2FAModal(true);
             }}
@@ -1774,6 +1782,11 @@ export default function MyProfilePage({
                 setShowTwoFactorActionModal(true);
                 return;
               }
+              if (authenticatorLinked) {
+                setTwoFactorAction("enable");
+                setShowTwoFactorActionModal(true);
+                return;
+              }
               setSetupMode("enroll");
               setShowSetup2FAModal(true);
             }}
@@ -1786,7 +1799,7 @@ export default function MyProfilePage({
           >
             {twoFactorEnabled ? "Disable 2FA" : "Enable 2FA"}
           </button>
-          {twoFactorEnabled && (
+          {authenticatorLinked && (
             <button
               type="button"
               onClick={() => {
@@ -1850,21 +1863,41 @@ export default function MyProfilePage({
       <TwoFactorActionModal
         isOpen={showTwoFactorActionModal}
         isDark={isDark}
-        title={twoFactorAction === "reset" ? "Reset Authenticator Secret" : "Disable Two-Factor Authentication"}
+        title={
+          twoFactorAction === "reset"
+            ? "Reset Authenticator Secret"
+            : twoFactorAction === "enable"
+              ? "Enable Two-Factor Authentication"
+              : "Disable Two-Factor Authentication"
+        }
         subtitle={
           twoFactorAction === "reset"
             ? "Re-verify your identity to generate a new authenticator secret."
-            : "Confirm your identity before disabling authenticator protection."
+            : twoFactorAction === "enable"
+              ? "Confirm your identity to re-enable login authenticator verification."
+              : "Confirm your identity before disabling login authenticator verification."
         }
-        confirmLabel={twoFactorAction === "reset" ? "Continue" : "Disable 2FA"}
-        loadingLabel={twoFactorAction === "reset" ? "Starting reset..." : "Disabling..."}
+        confirmLabel={twoFactorAction === "reset" ? "Continue" : twoFactorAction === "enable" ? "Enable 2FA" : "Disable 2FA"}
+        loadingLabel={twoFactorAction === "reset" ? "Starting reset..." : twoFactorAction === "enable" ? "Enabling..." : "Disabling..."}
         onClose={() => setShowTwoFactorActionModal(false)}
         onConfirm={async (currentPassword, totpCode) => {
+          if (twoFactorAction === "enable") {
+            const result = await enableUser2FA(currentPassword, totpCode);
+            if (result.success) {
+              setTwoFactorEnabled(true);
+              setAuthenticatorLinked(true);
+              toast.success("Two-factor authentication enabled for login.");
+              return { success: true };
+            }
+            return { success: false, error: result.error || "Failed to enable 2FA." };
+          }
+
           if (twoFactorAction === "disable") {
             const result = await disableUser2FA(currentPassword, totpCode);
             if (result.success) {
               setTwoFactorEnabled(false);
-              toast.success("Two-factor authentication disabled.");
+              setAuthenticatorLinked(!!(result.authenticatorLinked ?? true));
+              toast.success("Two-factor login verification disabled.");
               return { success: true };
             }
             return { success: false, error: result.error || "Failed to disable 2FA." };

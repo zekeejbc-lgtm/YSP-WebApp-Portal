@@ -410,6 +410,8 @@ function doPost(e) {
         return handleGenerateTotpEnrollment(requestData.username);
       case 'enrollUser2FA':
         return handleEnrollUser2FA(requestData.username, requestData.code);
+      case 'enableUser2FA':
+        return handleEnableUser2FA(requestData.username, requestData.currentPassword, requestData.totpCode);
       case 'disableUser2FA':
         return handleDisableUser2FA(requestData.username, requestData.currentPassword, requestData.totpCode);
       case 'beginTotpSecretReset':
@@ -3728,7 +3730,7 @@ function handleLookupPasswordResetUser(identifier) {
     }
 
     const twoFactorState = get2FAStateForUsername_(user.username);
-    const twoFactorEnabled = !!(twoFactorState && twoFactorState.success && twoFactorState.enabled);
+    const twoFactorEnabled = !!(twoFactorState && twoFactorState.success && twoFactorState.authenticatorLinked);
     const lookupToken = createPasswordResetLookupToken_(user.username, user.email, user.idCode);
 
     return createSuccessResponse({

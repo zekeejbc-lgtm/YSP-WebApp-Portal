@@ -1667,6 +1667,8 @@ export interface PasswordResetVerifyResponse {
 export interface TwoFactorStatusResponse {
   success: boolean;
   enabled?: boolean;
+  loginEnabled?: boolean;
+  authenticatorLinked?: boolean;
   username?: string;
   email?: string;
   error?: string;
@@ -1678,6 +1680,8 @@ export interface TwoFactorEnrollmentResponse {
   otpAuthUri?: string;
   expiresInSeconds?: number;
   enabled?: boolean;
+  loginEnabled?: boolean;
+  authenticatorLinked?: boolean;
   message?: string;
   error?: string;
 }
@@ -2348,6 +2352,65 @@ export async function disableUser2FA(
   }
 }
 
+export async function enableUser2FA(
+  currentPassword: string,
+  totpCode: string,
+  signal?: AbortSignal
+): Promise<TwoFactorEnrollmentResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  const storedUser = getStoredUser();
+  const username = storedUser?.username || '';
+  if (!username) {
+    return { success: false, error: 'No active user session' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'enableUser2FA',
+        username,
+        currentPassword,
+        totpCode,
+        sessionToken: getSessionToken(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('enableUser2FA Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
 export async function beginTotpSecretReset(
   currentPassword: string,
   totpCode: string,
@@ -2564,6 +2627,7 @@ export default {
   get2FAStatus,
   generateTotpEnrollment,
   enrollUser2FA,
+  enableUser2FA,
   disableUser2FA,
   beginTotpSecretReset,
   confirmTotpSecretReset,

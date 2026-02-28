@@ -590,12 +590,15 @@ function get2FAStateForUsername_(username, ss) {
 
   const idx = rowInfo.idx;
   const row = rowInfo.row;
-  const enabled = normalizeBoolean_(row[idx.Is_2FA_Enabled]);
+  const loginEnabled = normalizeBoolean_(row[idx.Is_2FA_Enabled]);
   const encryptedSecret = String(row[idx.TOTP_Secret_Enc] || '').trim();
+  const authenticatorLinked = !!encryptedSecret;
 
   return {
     success: true,
-    enabled: enabled && !!encryptedSecret,
+    enabled: loginEnabled && authenticatorLinked, // Backward-compatible alias for login enforcement.
+    loginEnabled: loginEnabled && authenticatorLinked,
+    authenticatorLinked: authenticatorLinked,
     user: user,
     record: {
       rowIndex: rowInfo.rowIndex,
@@ -637,6 +640,8 @@ function handleGet2FAStatus(username) {
     return createSuccessResponse({
       success: true,
       enabled: !!state.enabled,
+      loginEnabled: !!state.loginEnabled,
+      authenticatorLinked: !!state.authenticatorLinked,
       username: state.user.username,
       email: maskEmailValue_(state.user.email)
     });
@@ -729,8 +734,24 @@ function handleDisableUser2FA(username, currentPassword, totpCode) {
       return createErrorResponse(state.error || 'User not found', 404);
     }
 
-    if (!state.enabled || !state.record || !state.record.encryptedSecret) {
-      return createSuccessResponse({ success: true, enabled: false, message: '2FA is already disabled' });
+    if (!state.record || !state.record.encryptedSecret) {
+      return createSuccessResponse({
+        success: true,
+        enabled: false,
+        loginEnabled: false,
+        authenticatorLinked: false,
+        message: 'Authenticator is not configured for this account'
+      });
+    }
+
+    if (!state.enabled) {
+      return createSuccessResponse({
+        success: true,
+        enabled: false,
+        loginEnabled: false,
+        authenticatorLinked: true,
+        message: 'Login authenticator challenge is already disabled'
+      });
     }
 
     const secret = decryptTotpSecret_(state.record.encryptedSecret);
@@ -738,16 +759,58 @@ function handleDisableUser2FA(username, currentPassword, totpCode) {
       return createErrorResponse('Invalid authenticator code', 401);
     }
 
-    clear2FASecret_(state.user.username, state.user.email);
+    set2FAEnabled_(state.user.username, state.user.email, false);
 
     return createSuccessResponse({
       success: true,
       enabled: false,
-      message: 'Two-factor authentication disabled'
+      loginEnabled: false,
+      authenticatorLinked: true,
+      message: 'Two-factor login verification disabled. Authenticator remains linked for recovery and security actions.'
     });
   } catch (error) {
     Logger.log('handleDisableUser2FA Error: ' + error);
     return createErrorResponse('Failed to disable 2FA: ' + error.message, 500);
+  }
+}
+
+function handleEnableUser2FA(username, currentPassword, totpCode) {
+  try {
+    if (!username || !currentPassword || !totpCode) {
+      return createErrorResponse('Username, current password, and authenticator code are required', 400);
+    }
+
+    const pwdCheck = verifyCurrentPasswordForUser_(username, currentPassword);
+    if (!pwdCheck.ok) {
+      return createErrorResponse(pwdCheck.reason, 401);
+    }
+
+    const state = get2FAStateForUsername_(username);
+    if (!state.success || !state.user) {
+      return createErrorResponse(state.error || 'User not found', 404);
+    }
+
+    if (!state.record || !state.record.encryptedSecret) {
+      return createErrorResponse('No authenticator is linked yet. Please enroll first.', 400);
+    }
+
+    const secret = decryptTotpSecret_(state.record.encryptedSecret);
+    if (!verifyTotpCode(secret, totpCode)) {
+      return createErrorResponse('Invalid authenticator code', 401);
+    }
+
+    set2FAEnabled_(state.user.username, state.user.email, true);
+
+    return createSuccessResponse({
+      success: true,
+      enabled: true,
+      loginEnabled: true,
+      authenticatorLinked: true,
+      message: 'Two-factor login verification enabled'
+    });
+  } catch (error) {
+    Logger.log('handleEnableUser2FA Error: ' + error);
+    return createErrorResponse('Failed to enable 2FA login challenge: ' + error.message, 500);
   }
 }
 
@@ -763,8 +826,8 @@ function handleBeginTotpSecretReset(username, currentPassword, totpCode) {
     }
 
     const state = get2FAStateForUsername_(username);
-    if (!state.success || !state.user || !state.enabled || !state.record || !state.record.encryptedSecret) {
-      return createErrorResponse('2FA must be enabled before resetting secret', 400);
+    if (!state.success || !state.user || !state.authenticatorLinked || !state.record || !state.record.encryptedSecret) {
+      return createErrorResponse('Authenticator must be linked before resetting secret', 400);
     }
 
     const currentSecret = decryptTotpSecret_(state.record.encryptedSecret);
@@ -866,7 +929,7 @@ function handleVerifyPasswordResetTOTP(username, email, totpCode, lookupToken) {
       return createErrorResponse('Email does not match the account on file.', 403);
     }
 
-    if (!state.enabled || !state.record || !state.record.encryptedSecret) {
+    if (!state.authenticatorLinked || !state.record || !state.record.encryptedSecret) {
       return createErrorResponse('Authenticator is not enabled for this account.', 400);
     }
 
