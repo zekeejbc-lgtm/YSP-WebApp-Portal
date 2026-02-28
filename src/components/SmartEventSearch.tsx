@@ -106,14 +106,14 @@ const parseSmartDate = (input: string): Date | null => {
   }
   
   // MM/DD/YYYY or MM-DD-YYYY
-  const mdyMatch = input.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  const mdyMatch = input.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (mdyMatch) {
     const [, month, day, year] = mdyMatch;
     return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
   }
   
   // DD/MM/YYYY (European format) - only if day > 12
-  const dmyMatch = input.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  const dmyMatch = input.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmyMatch && parseInt(dmyMatch[1]) > 12) {
     const [, day, month, year] = dmyMatch;
     return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
@@ -132,7 +132,7 @@ const parseSmartDate = (input: string): Date | null => {
 const isDateQuery = (input: string): boolean => {
   const datePatterns = [
     /^\d{4}-\d{2}-\d{2}$/,
-    /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/,
+    /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/,
     /^(today|yesterday|tomorrow)$/i,
     /^(this|last)\s+(week|month|year)$/i,
     /^last\s+\d+\s+(day|week|month|year)s?$/i,

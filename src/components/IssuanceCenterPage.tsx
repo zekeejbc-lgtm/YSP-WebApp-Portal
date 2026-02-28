@@ -1798,7 +1798,7 @@ export default function IssuanceCenterPage({
     if (!activeCommand) return;
     
     switch (activeCommand) {
-      case '@Person':
+      case '@Person': {
         const member = item as MemberWithEmail;
         if (member.email) {
           handleAddRecipient({
@@ -1812,8 +1812,9 @@ export default function IssuanceCenterPage({
           toast.error("Member has no email address");
         }
         break;
-      
-      case '@Event':
+      }
+
+      case '@Event': {
         const event = item as EventData;
         setIsLoadingRecipients(true);
         try {
@@ -1858,8 +1859,9 @@ export default function IssuanceCenterPage({
           setIsLoadingRecipients(false);
         }
         break;
-      
-      case '@Committee':
+      }
+
+      case '@Committee': {
         const committee = item as Committee;
         setIsLoadingRecipients(true);
         try {
@@ -1897,6 +1899,7 @@ export default function IssuanceCenterPage({
           setIsLoadingRecipients(false);
         }
         break;
+      }
     }
     
     // Reset after selection

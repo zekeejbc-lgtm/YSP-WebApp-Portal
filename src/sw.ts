@@ -34,12 +34,8 @@ const notifyClients = async (message: { type: string; [key: string]: unknown }) 
 const gasApiBackgroundSync = new BackgroundSyncPlugin('gas-api-queue', {
   maxRetentionTime: 24 * 60,
   onSync: async ({ queue }) => {
-    try {
-      await queue.replayRequests();
-      await notifyClients({ type: 'OFFLINE_QUEUE_SYNCED' });
-    } catch (error) {
-      throw error;
-    }
+    await queue.replayRequests();
+    await notifyClients({ type: 'OFFLINE_QUEUE_SYNCED' });
   },
 });
 

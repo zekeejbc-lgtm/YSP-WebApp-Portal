@@ -150,10 +150,14 @@ export default function AnnouncementsPageEnhanced({
     if (initialAnnouncementId && announcements.length > 0 && !hasAutoSelectedRef.current) {
       const announcement = announcements.find(a => a.id === initialAnnouncementId);
       if (announcement) {
-        setViewingAnnouncement(announcement);
-        hasAutoSelectedRef.current = true;
+        const timer = window.setTimeout(() => {
+          setViewingAnnouncement(announcement);
+          hasAutoSelectedRef.current = true;
+        }, 0);
+        return () => window.clearTimeout(timer);
       }
     }
+    return undefined;
   }, [initialAnnouncementId, announcements]);
 
   const filteredAnnouncements = announcements

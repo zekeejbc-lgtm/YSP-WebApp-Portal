@@ -22,14 +22,17 @@ const isPushSupported = () => {
 export default function PushNotificationsPrompt() {
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [isEnabled, setIsEnabled] = useState(false);
+  const [mountedAt, setMountedAt] = useState<number | null>(null);
 
   useEffect(() => {
     const rawDismissed = localStorage.getItem(DISMISS_KEY);
     const rawEnabled = localStorage.getItem(ENABLED_KEY);
     const parsedDismissed = rawDismissed ? Number(rawDismissed) : null;
     if (parsedDismissed && !Number.isNaN(parsedDismissed)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDismissedAt(parsedDismissed);
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsEnabled(rawEnabled === "true");
   }, []);
 
@@ -45,10 +48,16 @@ export default function PushNotificationsPrompt() {
     });
   }, []);
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMountedAt(Date.now());
+  }, []);
+
   const isDismissed = useMemo(() => {
     if (!dismissedAt) return false;
-    return Date.now() - dismissedAt < DISMISS_DURATION_MS;
-  }, [dismissedAt]);
+    if (!mountedAt) return false;
+    return mountedAt - dismissedAt < DISMISS_DURATION_MS;
+  }, [dismissedAt, mountedAt]);
 
   const handleEnable = async () => {
     if (!isPushSupported()) {

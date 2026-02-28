@@ -21,6 +21,8 @@ import { SkeletonProfilePage } from "./SkeletonCard";
 import { UploadToastMessage } from "./UploadToast";
 import ChangePasswordModal from "./ChangePasswordModal";
 import EmailVerificationModal from "./EmailVerificationModal";
+import Setup2FAModal from "./Setup2FAModal";
+import TwoFactorActionModal from "./TwoFactorActionModal";
 import {
   saveUserProfileToCache,
   loadUserProfileFromCache,
@@ -34,6 +36,12 @@ import {
   getStoredUser,
   verifyPassword,
   changePassword,
+  get2FAStatus,
+  generateTotpEnrollment,
+  enrollUser2FA,
+  disableUser2FA,
+  beginTotpSecretReset,
+  confirmTotpSecretReset,
   sendVerificationOTP,
   verifyOTP,
   checkEmailVerified,
@@ -73,6 +81,18 @@ export default function MyProfilePage({
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [currentUsername, setCurrentUsername] = useState<string>('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [showSetup2FAModal, setShowSetup2FAModal] = useState(false);
+  const [setupMode, setSetupMode] = useState<"enroll" | "reset">("enroll");
+  const [showTwoFactorActionModal, setShowTwoFactorActionModal] = useState(false);
+  const [twoFactorAction, setTwoFactorAction] = useState<"disable" | "reset">("disable");
+  const [prefetchedSetupResponse, setPrefetchedSetupResponse] = useState<{
+    success: boolean;
+    secret?: string;
+    otpAuthUri?: string;
+    expiresInSeconds?: number;
+    error?: string;
+  } | null>(null);
   const [originalProfile, setOriginalProfile] = useState<typeof profile | null>(null); // Track original values
   
   // Email verification states
@@ -423,6 +443,23 @@ export default function MyProfilePage({
 
     loadProfile();
   }, [onClose, addUploadToast, updateUploadToast, removeUploadToast]); // [FIXED] Added missing dependencies
+
+  const refresh2FAStatus = async () => {
+    if (!currentUsername) return;
+    try {
+      const result = await get2FAStatus();
+      if (result.success) {
+        setTwoFactorEnabled(!!result.enabled);
+      }
+    } catch {
+      // Keep profile usable even when 2FA status check fails.
+    }
+  };
+
+  useEffect(() => {
+    void refresh2FAStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUsername]);
 
   // Cleanup local preview URL on unmount
   useEffect(() => {
@@ -1641,6 +1678,133 @@ export default function MyProfilePage({
           </div>
         </div>
       </div>
+
+      {/* Authenticator Security */}
+      <div
+        className="border rounded-lg mb-6"
+        style={{
+          borderRadius: `${DESIGN_TOKENS.radius.card}px`,
+          padding: `${DESIGN_TOKENS.spacing.scale.xl}px`,
+          borderColor: isDark
+            ? "rgba(255, 255, 255, 0.1)"
+            : "rgba(0, 0, 0, 0.1)",
+          ...glassStyle,
+        }}
+      >
+        <h3
+          className="mb-4"
+          style={{
+            fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+            fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+            fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+            color: DESIGN_TOKENS.colors.brand.orange,
+          }}
+        >
+          Authenticator
+        </h3>
+        <p
+          className="mb-4 text-sm"
+          style={{
+            color: isDark ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.62)",
+          }}
+        >
+          Manage your two-factor authentication for login and account recovery.
+        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <span
+            className="rounded-full border px-2 py-1 text-xs"
+            style={{
+              borderColor: twoFactorEnabled ? "rgba(34,197,94,0.35)" : "rgba(107,114,128,0.25)",
+              color: twoFactorEnabled ? "#16a34a" : "#6b7280",
+              backgroundColor: twoFactorEnabled ? "rgba(34,197,94,0.08)" : "rgba(107,114,128,0.08)",
+            }}
+          >
+            {twoFactorEnabled ? "Authenticator Enabled" : "Authenticator Disabled"}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              if (twoFactorEnabled) {
+                setTwoFactorAction("disable");
+                setShowTwoFactorActionModal(true);
+                return;
+              }
+              setSetupMode("enroll");
+              setShowSetup2FAModal(true);
+            }}
+            className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs"
+            style={{
+              borderColor: twoFactorEnabled ? "rgba(34,197,94,0.35)" : "rgba(107,114,128,0.3)",
+              color: twoFactorEnabled ? "#16a34a" : "#6b7280",
+              backgroundColor: twoFactorEnabled ? "rgba(34,197,94,0.08)" : "rgba(107,114,128,0.08)",
+            }}
+            aria-label={twoFactorEnabled ? "Disable two-factor authentication" : "Enable two-factor authentication"}
+          >
+            <span
+              className="relative inline-block"
+              style={{
+                width: "34px",
+                height: "18px",
+                borderRadius: "999px",
+                backgroundColor: twoFactorEnabled ? "rgba(34,197,94,0.45)" : "rgba(107,114,128,0.35)",
+              }}
+            >
+              <span
+                style={{
+                  position: "absolute",
+                  top: "2px",
+                  left: twoFactorEnabled ? "18px" : "2px",
+                  width: "14px",
+                  height: "14px",
+                  borderRadius: "999px",
+                  backgroundColor: "#fff",
+                  transition: "left 0.2s ease",
+                }}
+              />
+            </span>
+            <span>{twoFactorEnabled ? "On" : "Off"}</span>
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (twoFactorEnabled) {
+                setTwoFactorAction("disable");
+                setShowTwoFactorActionModal(true);
+                return;
+              }
+              setSetupMode("enroll");
+              setShowSetup2FAModal(true);
+            }}
+            className="rounded-lg border px-3 py-1.5 text-xs"
+            style={{
+              borderColor: twoFactorEnabled ? "rgba(239,68,68,0.35)" : "rgba(246,66,31,0.3)",
+              color: twoFactorEnabled ? "#dc2626" : "#f6421f",
+              backgroundColor: twoFactorEnabled ? "rgba(239,68,68,0.06)" : "rgba(246,66,31,0.06)",
+            }}
+          >
+            {twoFactorEnabled ? "Disable 2FA" : "Enable 2FA"}
+          </button>
+          {twoFactorEnabled && (
+            <button
+              type="button"
+              onClick={() => {
+                setTwoFactorAction("reset");
+                setShowTwoFactorActionModal(true);
+              }}
+              className="rounded-lg border px-3 py-1.5 text-xs"
+              style={{
+                borderColor: "rgba(246,66,31,0.3)",
+                color: "#f6421f",
+                backgroundColor: "rgba(246,66,31,0.06)",
+              }}
+            >
+              Reset Secret
+            </button>
+          )}
+        </div>
+      </div>
         </>
       )}
 
@@ -1648,15 +1812,75 @@ export default function MyProfilePage({
       <ChangePasswordModal
         isOpen={showPasswordModal}
         onClose={() => setShowPasswordModal(false)}
+        twoFactorEnabled={twoFactorEnabled}
         onVerifyPassword={async (password) => {
           return await verifyPassword(currentUsername, password);
         }}
-        onChangePassword={async (currentPwd, newPwd, signal) => {
-          return await changePassword(currentUsername, currentPwd, newPwd, signal);
+        onChangePassword={async (currentPwd, newPwd, totpCode, signal) => {
+          return await changePassword(currentUsername, currentPwd, newPwd, totpCode, signal);
         }}
         isDark={isDark}
         addUploadToast={addUploadToast}
         updateUploadToast={updateUploadToast}
+      />
+
+      <Setup2FAModal
+        isOpen={showSetup2FAModal}
+        isDark={isDark}
+        mode={setupMode}
+        onClose={() => {
+          setShowSetup2FAModal(false);
+          setPrefetchedSetupResponse(null);
+        }}
+        onStart={async () => {
+          if (setupMode === "reset" && prefetchedSetupResponse) {
+            return prefetchedSetupResponse;
+          }
+          return await generateTotpEnrollment();
+        }}
+        onConfirm={async (code) => {
+          return setupMode === "reset" ? await confirmTotpSecretReset(code) : await enrollUser2FA(code);
+        }}
+        onCompleted={() => {
+          void refresh2FAStatus();
+          toast.success(setupMode === "reset" ? "Authenticator secret reset." : "Two-factor authentication enabled.");
+        }}
+      />
+
+      <TwoFactorActionModal
+        isOpen={showTwoFactorActionModal}
+        isDark={isDark}
+        title={twoFactorAction === "reset" ? "Reset Authenticator Secret" : "Disable Two-Factor Authentication"}
+        subtitle={
+          twoFactorAction === "reset"
+            ? "Re-verify your identity to generate a new authenticator secret."
+            : "Confirm your identity before disabling authenticator protection."
+        }
+        confirmLabel={twoFactorAction === "reset" ? "Continue" : "Disable 2FA"}
+        loadingLabel={twoFactorAction === "reset" ? "Starting reset..." : "Disabling..."}
+        onClose={() => setShowTwoFactorActionModal(false)}
+        onConfirm={async (currentPassword, totpCode) => {
+          if (twoFactorAction === "disable") {
+            const result = await disableUser2FA(currentPassword, totpCode);
+            if (result.success) {
+              setTwoFactorEnabled(false);
+              toast.success("Two-factor authentication disabled.");
+              return { success: true };
+            }
+            return { success: false, error: result.error || "Failed to disable 2FA." };
+          }
+
+          const beginResult = await beginTotpSecretReset(currentPassword, totpCode);
+          if (!beginResult.success) {
+            return { success: false, error: beginResult.error || "Failed to start reset." };
+          }
+
+          setPrefetchedSetupResponse(beginResult);
+          setShowTwoFactorActionModal(false);
+          setSetupMode("reset");
+          setShowSetup2FAModal(true);
+          return { success: true };
+        }}
       />
 
       {/* Email Verification Modal */}

@@ -25,6 +25,10 @@ export interface LoginUser {
 export interface LoginResponse {
   success: boolean;
   user?: LoginUser;
+  requires2FA?: boolean;
+  username?: string;
+  maskedEmail?: string;
+  message?: string;
   error?: string;
   code?: number;
 }
@@ -257,7 +261,7 @@ export async function authenticateUser(
       );
     }
 
-    // Store session on successful login
+    // Store session on successful login (only after full auth path is complete).
     if (data.user) {
       storeSession(data.user);
     }
@@ -945,6 +949,96 @@ export async function verifySession(): Promise<boolean> {
   }
 }
 
+/**
+ * Complete login when backend requested authenticator verification.
+ * @param username - Username used for login
+ * @param totpCode - 6-digit authenticator code
+ */
+export async function verifyLogin2FA(
+  username: string,
+  totpCode: string
+): Promise<LoginResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    throw new LoginAPIError(
+      'Login service not configured',
+      LoginErrorCodes.NO_API_URL
+    );
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'verifyLogin2FA',
+        username: username.trim(),
+        totpCode: String(totpCode || '').trim(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new LoginAPIError(
+        `Server responded with status ${response.status}`,
+        LoginErrorCodes.SERVER_ERROR,
+        response.status
+      );
+    }
+
+    const data: LoginResponse = await response.json();
+
+    if (!data.success) {
+      if (data.code === 401) {
+        throw new LoginAPIError(
+          data.error || 'Invalid authenticator code',
+          LoginErrorCodes.INVALID_CREDENTIALS,
+          401
+        );
+      }
+      throw new LoginAPIError(
+        data.error || 'Authenticator verification failed',
+        LoginErrorCodes.SERVER_ERROR,
+        data.code
+      );
+    }
+
+    if (data.user) {
+      storeSession(data.user);
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof LoginAPIError) {
+      throw error;
+    }
+
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        throw new LoginAPIError(
+          'Authenticator verification timed out. Please try again.',
+          LoginErrorCodes.TIMEOUT_ERROR
+        );
+      }
+      throw new LoginAPIError(
+        error.message || 'Network error occurred',
+        LoginErrorCodes.NETWORK_ERROR
+      );
+    }
+
+    throw new LoginAPIError(
+      'An unexpected error occurred',
+      LoginErrorCodes.SERVER_ERROR
+    );
+  }
+}
+
 function decodeTokenExpiryMs(token: string): number | null {
   try {
     const parts = String(token || '').split('.');
@@ -1458,6 +1552,7 @@ export async function changePassword(
   username: string,
   currentPassword: string,
   newPassword: string,
+  totpCode?: string,
   signal?: AbortSignal
 ): Promise<{ success: boolean; error?: string }> {
   if (!LOGIN_CONFIG.API_URL) {
@@ -1487,6 +1582,7 @@ export async function changePassword(
         username,
         currentPassword,
         newPassword,
+        totpCode: totpCode || '',
         sessionToken: getSessionToken(),
       }),
       signal: controller.signal,
@@ -1554,6 +1650,8 @@ export interface PasswordResetLookupResponse {
     idCode?: string;
   };
   matchedBy?: 'email' | 'username' | 'fullName';
+  twoFactorEnabled?: boolean;
+  availableResetMethods?: ('email' | 'authenticator')[];
   lookupToken?: string;
   error?: string;
 }
@@ -1562,6 +1660,24 @@ export interface PasswordResetVerifyResponse {
   success: boolean;
   verified?: boolean;
   resetToken?: string;
+  message?: string;
+  error?: string;
+}
+
+export interface TwoFactorStatusResponse {
+  success: boolean;
+  enabled?: boolean;
+  username?: string;
+  email?: string;
+  error?: string;
+}
+
+export interface TwoFactorEnrollmentResponse {
+  success: boolean;
+  secret?: string;
+  otpAuthUri?: string;
+  expiresInSeconds?: number;
+  enabled?: boolean;
   message?: string;
   error?: string;
 }
@@ -1897,6 +2013,9 @@ export async function verifyPasswordResetOTP(
   }
 
   try {
+    const cleanUsername = String(username ?? '').trim();
+    const cleanEmail = String(email ?? '').trim();
+    const cleanOtp = String(otp ?? '').trim();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
     const onExternalAbort = () => controller.abort();
@@ -1915,9 +2034,9 @@ export async function verifyPasswordResetOTP(
       },
       body: JSON.stringify({
         action: 'verifyPasswordResetOTP',
-        username,
-        email,
-        otp,
+        username: cleanUsername,
+        email: cleanEmail,
+        otp: cleanOtp,
         lookupToken: lookupToken || '',
       }),
       signal: controller.signal,
@@ -1939,6 +2058,402 @@ export async function verifyPasswordResetOTP(
     if (signal) {
       signal.removeEventListener('abort', () => {});
     }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+export async function verifyPasswordResetTOTP(
+  username: string,
+  email: string,
+  totpCode: string,
+  signal?: AbortSignal,
+  lookupToken?: string
+): Promise<PasswordResetVerifyResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  try {
+    const cleanUsername = String(username ?? '').trim();
+    const cleanEmail = String(email ?? '').trim();
+    const cleanTotpCode = String(totpCode ?? '').trim();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify({
+        action: 'verifyPasswordResetTOTP',
+        username: cleanUsername,
+        email: cleanEmail,
+        totpCode: cleanTotpCode,
+        lookupToken: lookupToken || '',
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('verifyPasswordResetTOTP Error:', error);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+export async function get2FAStatus(signal?: AbortSignal): Promise<TwoFactorStatusResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  const storedUser = getStoredUser();
+  const username = storedUser?.username || '';
+  if (!username) {
+    return { success: false, error: 'No active user session' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'get2FAStatus',
+        username,
+        sessionToken: getSessionToken(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('get2FAStatus Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+export async function generateTotpEnrollment(signal?: AbortSignal): Promise<TwoFactorEnrollmentResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  const storedUser = getStoredUser();
+  const username = storedUser?.username || '';
+  if (!username) {
+    return { success: false, error: 'No active user session' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'generateTotpEnrollment',
+        username,
+        sessionToken: getSessionToken(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('generateTotpEnrollment Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+export async function enrollUser2FA(code: string, signal?: AbortSignal): Promise<TwoFactorEnrollmentResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  const storedUser = getStoredUser();
+  const username = storedUser?.username || '';
+  if (!username) {
+    return { success: false, error: 'No active user session' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'enrollUser2FA',
+        username,
+        code,
+        sessionToken: getSessionToken(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('enrollUser2FA Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+export async function disableUser2FA(
+  currentPassword: string,
+  totpCode: string,
+  signal?: AbortSignal
+): Promise<TwoFactorEnrollmentResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  const storedUser = getStoredUser();
+  const username = storedUser?.username || '';
+  if (!username) {
+    return { success: false, error: 'No active user session' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'disableUser2FA',
+        username,
+        currentPassword,
+        totpCode,
+        sessionToken: getSessionToken(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('disableUser2FA Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+export async function beginTotpSecretReset(
+  currentPassword: string,
+  totpCode: string,
+  signal?: AbortSignal
+): Promise<TwoFactorEnrollmentResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  const storedUser = getStoredUser();
+  const username = storedUser?.username || '';
+  if (!username) {
+    return { success: false, error: 'No active user session' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'beginTotpSecretReset',
+        username,
+        currentPassword,
+        totpCode,
+        sessionToken: getSessionToken(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('beginTotpSecretReset Error:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Request timed out' };
+    }
+    return { success: false, error: 'Network error' };
+  }
+}
+
+export async function confirmTotpSecretReset(code: string, signal?: AbortSignal): Promise<TwoFactorEnrollmentResponse> {
+  if (!LOGIN_CONFIG.API_URL) {
+    return { success: false, error: 'Service not configured' };
+  }
+
+  const storedUser = getStoredUser();
+  const username = storedUser?.username || '';
+  if (!username) {
+    return { success: false, error: 'No active user session' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_CONFIG.TIMEOUT);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort();
+      } else {
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const response = await fetch(LOGIN_CONFIG.API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'confirmTotpSecretReset',
+        username,
+        code,
+        sessionToken: getSessionToken(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', () => {});
+    }
+
+    if (!response.ok) {
+      return { success: false, error: 'Server error' };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('confirmTotpSecretReset Error:', error);
     if (error instanceof Error && error.name === 'AbortError') {
       return { success: false, error: 'Request timed out' };
     }
@@ -2015,6 +2530,7 @@ export async function resetPasswordWithToken(
 
 export default {
   authenticateUser,
+  verifyLogin2FA,
   checkLoginApiHealth,
   fetchUserProfile,
   updateUserProfile,
@@ -2043,7 +2559,14 @@ export default {
   lookupPasswordResetUser,
   sendPasswordResetOTP,
   verifyPasswordResetOTP,
+  verifyPasswordResetTOTP,
   resetPasswordWithToken,
+  get2FAStatus,
+  generateTotpEnrollment,
+  enrollUser2FA,
+  disableUser2FA,
+  beginTotpSecretReset,
+  confirmTotpSecretReset,
   LoginErrorCodes,
 };
 

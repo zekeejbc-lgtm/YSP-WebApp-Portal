@@ -360,8 +360,8 @@ function doPost(e) {
     // ---- Session token verification (HMAC) ----
     // Public/pre-auth actions that don't require a valid session token
     var PUBLIC_ACTIONS = [
-      'login', 'verifySession',
-      'lookupPasswordResetUser', 'sendPasswordResetOTP', 'verifyPasswordResetOTP', 'resetPasswordWithToken',
+      'login', 'verifyLogin2FA', 'verifySession',
+      'lookupPasswordResetUser', 'sendPasswordResetOTP', 'verifyPasswordResetOTP', 'verifyPasswordResetTOTP', 'resetPasswordWithToken',
       'getMaintenanceMode', 'getCacheVersion',
       'syncMeetAttendance'
     ];
@@ -381,6 +381,8 @@ function doPost(e) {
     switch (action) {
       case 'login':
         return handleLogin(username, password);
+      case 'verifyLogin2FA':
+        return handleVerifyLogin2FA(requestData.username, requestData.totpCode);
       case 'verifySession':
         return handleVerifySession(requestData.sessionToken);
       case 'refreshSession':
@@ -400,7 +402,20 @@ function doPost(e) {
       case 'verifyPassword':
         return handleVerifyPassword(requestData.username, requestData.password);
       case 'changePassword':
-        return handleChangePassword(requestData.username, requestData.currentPassword, requestData.newPassword);
+        return handleChangePassword(requestData.username, requestData.currentPassword, requestData.newPassword, requestData.totpCode);
+      // Authenticator (2FA) actions
+      case 'get2FAStatus':
+        return handleGet2FAStatus(requestData.username);
+      case 'generateTotpEnrollment':
+        return handleGenerateTotpEnrollment(requestData.username);
+      case 'enrollUser2FA':
+        return handleEnrollUser2FA(requestData.username, requestData.code);
+      case 'disableUser2FA':
+        return handleDisableUser2FA(requestData.username, requestData.currentPassword, requestData.totpCode);
+      case 'beginTotpSecretReset':
+        return handleBeginTotpSecretReset(requestData.username, requestData.currentPassword, requestData.totpCode);
+      case 'confirmTotpSecretReset':
+        return handleConfirmTotpSecretReset(requestData.username, requestData.code);
       // Email verification actions
       case 'sendVerificationOTP':
         return handleSendVerificationOTP(requestData.username, requestData.email);
@@ -415,6 +430,8 @@ function doPost(e) {
         return handleSendPasswordResetOTP(requestData.username, requestData.email, requestData.lookupToken);
       case 'verifyPasswordResetOTP':
         return handleVerifyPasswordResetOTP(requestData.username, requestData.email, requestData.otp, requestData.lookupToken);
+      case 'verifyPasswordResetTOTP':
+        return handleVerifyPasswordResetTOTP(requestData.username, requestData.email, requestData.totpCode, requestData.lookupToken);
       case 'resetPasswordWithToken':
         return handleResetPasswordWithToken(requestData.username, requestData.resetToken, requestData.newPassword);
       // Directory actions
@@ -537,6 +554,31 @@ function doGet(e) {
 
 // =================== AUTHENTICATION HANDLERS ===================
 
+const LOGIN_2FA_CACHE_PREFIX = 'login_2fa_challenge_';
+const LOGIN_2FA_CACHE_TTL_SECONDS = 5 * 60;
+
+function cacheLogin2FAChallenge_(username) {
+  const cache = CacheService.getScriptCache();
+  const normalized = normalize2FAUsername_(username);
+  cache.put(
+    LOGIN_2FA_CACHE_PREFIX + normalized,
+    JSON.stringify({ username: normalized, createdAt: new Date().toISOString() }),
+    LOGIN_2FA_CACHE_TTL_SECONDS
+  );
+}
+
+function hasLogin2FAChallenge_(username) {
+  const cache = CacheService.getScriptCache();
+  const normalized = normalize2FAUsername_(username);
+  return !!cache.get(LOGIN_2FA_CACHE_PREFIX + normalized);
+}
+
+function clearLogin2FAChallenge_(username) {
+  const cache = CacheService.getScriptCache();
+  const normalized = normalize2FAUsername_(username);
+  cache.remove(LOGIN_2FA_CACHE_PREFIX + normalized);
+}
+
 /**
  * Handle user login authentication
  * @param {string} username - Username or email
@@ -638,9 +680,38 @@ function handleLogin(username, password) {
       return createErrorResponse('This account has been permanently banned. Contact admin for assistance.', 403);
     }
 
+    const canonicalUsername = String(userRow[idx.username] || username).trim();
+
+    // If authenticator is enabled, require a second step before issuing a session token.
+    let twoFactorState = null;
+    try {
+      twoFactorState = get2FAStateForUsername_(canonicalUsername);
+    } catch (twoFaError) {
+      Logger.log('handleLogin 2FA State Error: ' + twoFaError);
+      return createErrorResponse('Unable to verify authenticator status. Please try again.', 500);
+    }
+
+    if (
+      twoFactorState &&
+      twoFactorState.success &&
+      twoFactorState.enabled &&
+      twoFactorState.record &&
+      twoFactorState.record.encryptedSecret
+    ) {
+      cache.remove(rateLimitKey);
+      cacheLogin2FAChallenge_(canonicalUsername);
+      return createSuccessResponse({
+        success: true,
+        requires2FA: true,
+        username: canonicalUsername,
+        maskedEmail: maskEmailValue_(twoFactorState.user && twoFactorState.user.email ? twoFactorState.user.email : ''),
+        message: 'Authenticator code required to complete login'
+      });
+    }
+
     // Generate session token — use the actual username so that HMAC-verified
     // identity matches the 'Username' column used by getProfile / getUserRole_
-    const sessionToken = generateSessionToken(userRow[idx.username] || username);
+    const sessionToken = generateSessionToken(canonicalUsername);
 
     // Clear failed login attempts on successful login
     cache.remove(rateLimitKey);
@@ -664,6 +735,100 @@ function handleLogin(username, password) {
   } catch (error) {
     Logger.log('handleLogin Error: ' + error.toString());
     return createErrorResponse('Authentication failed: ' + error.message, 500);
+  }
+}
+
+function handleVerifyLogin2FA(username, totpCode) {
+  if (!username || !totpCode) {
+    return createErrorResponse('Username and authenticator code are required', 400);
+  }
+
+  if (!hasLogin2FAChallenge_(username)) {
+    return createErrorResponse('Login authenticator session expired. Please sign in again.', 410);
+  }
+
+  try {
+    const state = get2FAStateForUsername_(username);
+    if (!state.success || !state.user || !state.enabled || !state.record || !state.record.encryptedSecret) {
+      clearLogin2FAChallenge_(username);
+      return createErrorResponse('Authenticator is not enabled for this account', 400);
+    }
+
+    const secret = decryptTotpSecret_(state.record.encryptedSecret);
+    if (!verifyTotpCode(secret, totpCode)) {
+      return createErrorResponse('Invalid authenticator code', 401);
+    }
+
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) {
+      return createErrorResponse('User database not found', 500);
+    }
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0] || [];
+    const idx = {
+      email: headers.indexOf('Email Address'),
+      name: headers.indexOf('Full name'),
+      username: headers.indexOf('Username'),
+      idCode: headers.indexOf('ID Code'),
+      position: headers.indexOf('Position'),
+      role: headers.indexOf('Role'),
+      profilePic: headers.indexOf('ProfilePictureURL'),
+      status: headers.indexOf('Status'),
+    };
+
+    if (idx.username === -1) {
+      return createErrorResponse('Database configuration error', 500);
+    }
+
+    let userRow = null;
+    const clean = String(state.user.username || username).toLowerCase().trim();
+    for (let i = 1; i < data.length; i++) {
+      const rowUsername = (data[i][idx.username] || '').toString().toLowerCase().trim();
+      if (rowUsername === clean) {
+        userRow = data[i];
+        break;
+      }
+    }
+
+    if (!userRow) {
+      return createErrorResponse('User not found', 404);
+    }
+
+    let role = idx.role > -1 ? (userRow[idx.role] || '').toString().trim().toLowerCase() : 'member';
+    if (!role) role = 'member';
+
+    let status = idx.status > -1 ? (userRow[idx.status] || '').toString().toLowerCase().trim() : 'active';
+    if (isRestrictedRoleStatus_(role, status)) {
+      status = role === 'banned' ? 'banned' : 'suspended';
+    }
+
+    if (String(status || '').toLowerCase().trim() === 'banned') {
+      clearLogin2FAChallenge_(username);
+      return createErrorResponse('This account has been permanently banned. Contact admin for assistance.', 403);
+    }
+
+    const sessionToken = generateSessionToken(userRow[idx.username] || state.user.username || username);
+    clearLogin2FAChallenge_(username);
+
+    return createSuccessResponse({
+      success: true,
+      user: {
+        id: idx.idCode > -1 ? (userRow[idx.idCode] || '') : '',
+        username: userRow[idx.username] || state.user.username || '',
+        email: idx.email > -1 ? (userRow[idx.email] || '') : '',
+        name: idx.name > -1 ? (userRow[idx.name] || 'User') : 'User',
+        role: role,
+        status: status,
+        position: idx.position > -1 ? (userRow[idx.position] || '') : '',
+        profilePic: idx.profilePic > -1 ? (userRow[idx.profilePic] || '') : '',
+        sessionToken: sessionToken
+      }
+    });
+  } catch (error) {
+    Logger.log('handleVerifyLogin2FA Error: ' + error.toString());
+    return createErrorResponse('Failed to verify authenticator login: ' + error.message, 500);
   }
 }
 
@@ -2158,9 +2323,10 @@ function handleVerifyPassword(username, password) {
  * @param {string} username - Username to change password for
  * @param {string} currentPassword - Current password for verification
  * @param {string} newPassword - New password to set
+ * @param {string} totpCode - Authenticator code when 2FA is enabled
  * @returns {TextOutput} JSON response
  */
-function handleChangePassword(username, currentPassword, newPassword) {
+function handleChangePassword(username, currentPassword, newPassword, totpCode) {
   if (!username || !currentPassword || !newPassword) {
     return createErrorResponse('Username, current password, and new password are required', 400);
   }
@@ -2220,6 +2386,18 @@ function handleChangePassword(username, currentPassword, newPassword) {
     
     if (!verifyPassword(currentPassword, storedHash, existingSalt)) {
       return createErrorResponse('Current password is incorrect', 401);
+    }
+
+    // Enforce authenticator proof when 2FA is enabled for this user.
+    const twoFactorState = get2FAStateForUsername_(username);
+    if (twoFactorState && twoFactorState.success && twoFactorState.enabled) {
+      if (!totpCode) {
+        return createErrorResponse('Authenticator code is required for this account', 401);
+      }
+      const twoFactorSecret = decryptTotpSecret_(twoFactorState.record.encryptedSecret);
+      if (!verifyTotpCode(twoFactorSecret, totpCode)) {
+        return createErrorResponse('Invalid authenticator code', 401);
+      }
     }
 
     // Check that new password is different from current
@@ -3549,6 +3727,8 @@ function handleLookupPasswordResetUser(identifier) {
       return createErrorResponse('No email address is on file for this account.', 400);
     }
 
+    const twoFactorState = get2FAStateForUsername_(user.username);
+    const twoFactorEnabled = !!(twoFactorState && twoFactorState.success && twoFactorState.enabled);
     const lookupToken = createPasswordResetLookupToken_(user.username, user.email, user.idCode);
 
     return createSuccessResponse({
@@ -3560,6 +3740,8 @@ function handleLookupPasswordResetUser(identifier) {
         idCode: maskIdCodeValue_(user.idCode),
       },
       matchedBy: user.matchedBy,
+      twoFactorEnabled: twoFactorEnabled,
+      availableResetMethods: twoFactorEnabled ? ['email', 'authenticator'] : ['email'],
       lookupToken: lookupToken,
     });
   } catch (error) {

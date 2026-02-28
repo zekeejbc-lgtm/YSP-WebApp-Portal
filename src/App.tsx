@@ -69,6 +69,7 @@
   } from "./services/projectsService";
   import {
     authenticateUser,
+    verifyLogin2FA,
     clearSession,
     getStoredUser,
     hasActiveSession,
@@ -2743,10 +2744,28 @@ export default function App() {
       }
     };
 
-    const handleLogin = async (username: string, password: string, rememberMe: boolean) => {
+    const handleLogin = async (
+      username: string,
+      password: string,
+      rememberMe: boolean,
+      totpCode?: string,
+      challengeUsername?: string
+    ): Promise<{ requires2FA?: boolean; challengeUsername?: string; maskedEmail?: string; completed?: boolean; error?: string }> => {
       // Real authentication via GAS backend
       try {
-        const response = await authenticateUser(username, password);
+        let response;
+        if (totpCode) {
+          response = await verifyLogin2FA((challengeUsername || username).trim(), totpCode);
+        } else {
+          response = await authenticateUser(username, password);
+          if (response.success && response.requires2FA) {
+            return {
+              requires2FA: true,
+              challengeUsername: response.username || username,
+              maskedEmail: response.maskedEmail || '',
+            };
+          }
+        }
         
         if (response.success && response.user) {
           const user = response.user;
@@ -2756,7 +2775,7 @@ export default function App() {
             toast.error('Account Banned', {
               description: 'This account has been permanently banned. Contact admin for assistance.',
             });
-            return;
+            return { error: 'Account banned' };
           }
 
           recordRecentUsername(username);
@@ -2779,7 +2798,7 @@ export default function App() {
             toast.warning('Account Suspended', {
               description: 'Your account has limited access. Contact admin for full restoration.',
             });
-            return;
+            return { completed: true };
           }
 
           // Normal login for all other roles
@@ -2811,7 +2830,9 @@ export default function App() {
           toast.success('Successfully logged in!', {
             description: roleMessages[user.role] || `Welcome, ${user.name}!`,
           });
+          return { completed: true };
         }
+        return { error: 'Login failed' };
       } catch (error: unknown) {
         // Log failed login attempt
         logLogin(username, false);
@@ -2825,36 +2846,38 @@ export default function App() {
               toast.error('Invalid credentials', {
                 description: 'Please check your username and password',
               });
-              break;
+              return { error: 'Invalid credentials' };
             case LoginErrorCodes.ACCOUNT_BANNED:
               toast.error('Account Banned', {
                 description: loginError.message || 'This account has been permanently banned.',
               });
-              break;
+              return { error: loginError.message || 'Account access denied' };
             case LoginErrorCodes.TIMEOUT_ERROR:
               toast.error('Connection Timeout', {
                 description: 'The server is taking too long to respond. Please try again.',
               });
-              break;
+              return { error: 'Connection timeout' };
             case LoginErrorCodes.NETWORK_ERROR:
               toast.error('Network Error', {
                 description: 'Unable to connect to the server. Please check your internet connection.',
               });
-              break;
+              return { error: 'Network error' };
             case LoginErrorCodes.NO_API_URL:
               toast.error('Service Unavailable', {
                 description: 'Login service is not configured. Please contact administrator.',
               });
-              break;
+              return { error: 'Service unavailable' };
             default:
               toast.error('Login Failed', {
                 description: loginError.message || 'An unexpected error occurred. Please try again.',
               });
+              return { error: loginError.message || 'Login failed' };
           }
         } else {
           toast.error('Login Failed', {
             description: 'An unexpected error occurred. Please try again.',
           });
+          return { error: 'Unexpected error' };
         }
       }
     };

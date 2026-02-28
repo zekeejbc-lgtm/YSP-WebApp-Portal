@@ -529,12 +529,13 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
           m.committee?.toLowerCase().includes(query)
         ).slice(0, 8);
       
-      case '@Committee':
+      case '@Committee': {
         const committees = YSP_COMMITTEES;
         if (!query) return committees.slice(0, 8);
         return committees.filter(c =>
           c.name.toLowerCase().includes(query)
         ).slice(0, 8);
+      }
       
       case '@All':
         return []; // No suggestions needed, direct action

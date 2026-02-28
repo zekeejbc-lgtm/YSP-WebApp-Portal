@@ -1212,7 +1212,7 @@ export default function ManageMembersPage({
 
     statusCounts.forEach((status, index) => {
       const boxX = margin + index * (boxWidth + boxGap);
-      // @ts-ignore
+      // @ts-expect-error jsPDF setFillColor accepts RGB tuples
       doc.setFillColor(...status.color);
       doc.roundedRect(boxX, yPosition, boxWidth, boxHeight, 3, 3, 'F');
       
@@ -1250,7 +1250,7 @@ export default function ManageMembersPage({
 
     generalCounts.forEach((item, index) => {
         const boxX = margin + index * (genBoxWidth + boxGap);
-        // @ts-ignore
+        // @ts-expect-error jsPDF setFillColor accepts RGB tuples
         doc.setFillColor(...item.color);
         doc.roundedRect(boxX, yPosition, genBoxWidth, boxHeight, 3, 3, 'F');
 
@@ -1301,7 +1301,7 @@ export default function ManageMembersPage({
       const commX = margin + idx * (commBoxWidth + commBoxGap);
       
       // Card Background
-      // @ts-ignore
+      // @ts-expect-error jsPDF setFillColor accepts RGB tuples
       doc.setFillColor(...committee.color);
       doc.roundedRect(commX, yPosition, commBoxWidth, commBoxHeight, 3, 3, 'F');
       
@@ -2376,7 +2376,10 @@ function ApplicationPanel({
   const [profileImageFailed, setProfileImageFailed] = useState(false);
   const [profileImageIndex, setProfileImageIndex] = useState(0);
   const [proxiedProfileSrc, setProxiedProfileSrc] = useState("");
-  const [cachedTransformedProfileSrc, setCachedTransformedProfileSrc] = useState("");
+  const cachedTransformedProfileSrc = useMemo(
+    () => getTransformedProfileLinkWithCache(data.profilePicture),
+    [data.profilePicture]
+  );
   const [actionMenuValue, setActionMenuValue] = useState("");
   const panelScrollRef = useRef<HTMLDivElement | null>(null);
   const lastProxySourceRef = useRef("");
@@ -2390,14 +2393,6 @@ function ApplicationPanel({
   useEffect(() => {
     logApplicantFrontDebug(`panel open ${application.id}`, application);
   }, [application]);
-
-  useEffect(() => {
-    setProfileImageFailed(false);
-    setProfileImageIndex(0);
-    setProxiedProfileSrc("");
-    lastProxySourceRef.current = "";
-    setCachedTransformedProfileSrc(getTransformedProfileLinkWithCache(data.profilePicture));
-  }, [application.id, data.profilePicture]);
 
   useEffect(() => {
     let active = true;

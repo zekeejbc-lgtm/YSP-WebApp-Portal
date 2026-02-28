@@ -1,12 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { X, Lock, User, Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react';
+import { X, Lock, User, Eye, EyeOff, LogIn, AlertCircle, ShieldCheck } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import ForgotPasswordModal from './ForgotPasswordModal';
 
 interface LoginPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  onLogin: (username: string, password: string, rememberMe: boolean) => Promise<void>;
+  onLogin: (
+    username: string,
+    password: string,
+    rememberMe: boolean,
+    totpCode?: string,
+    challengeUsername?: string
+  ) => Promise<{ requires2FA?: boolean; challengeUsername?: string; maskedEmail?: string; completed?: boolean; error?: string }>;
   onContinueSession: () => Promise<void>;
   canContinueSession: boolean;
   continueUserName: string;
@@ -30,6 +36,11 @@ export default function LoginPanel({
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [recentUsernames, setRecentUsernames] = useState<string[]>([]);
   const [rememberMe, setRememberMe] = useState(false);
+  const [requires2FA, setRequires2FA] = useState(false);
+  const [totpCode, setTotpCode] = useState('');
+  const [challengeUsername, setChallengeUsername] = useState('');
+  const [challengeMaskedEmail, setChallengeMaskedEmail] = useState('');
+  const [totpError, setTotpError] = useState('');
   
   // Refs for input elements to avoid re-renders during typing
   const usernameRef = useRef<HTMLInputElement>(null);
@@ -82,6 +93,11 @@ export default function LoginPanel({
       setIsLoading(false);
       setShowForgotPassword(false);
       setRememberMe(false);
+      setRequires2FA(false);
+      setTotpCode('');
+      setChallengeUsername('');
+      setChallengeMaskedEmail('');
+      setTotpError('');
     }
   }, [isOpen]);
 
@@ -144,10 +160,38 @@ export default function LoginPanel({
     setIsLoading(true);
     
     try {
-      // Call the login handler (now async with real backend)
-      await onLogin(username, password, rememberMe);
+      const result = await onLogin(username, password, rememberMe);
+      if (result?.requires2FA) {
+        setRequires2FA(true);
+        setChallengeUsername(result.challengeUsername || username);
+        setChallengeMaskedEmail(result.maskedEmail || '');
+        setTotpCode('');
+        setTotpError('');
+      }
     } catch {
       // Error handling is done in App.tsx
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSubmit2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = totpCode.replace(/\D/g, '');
+    if (clean.length !== 6) {
+      setTotpError('Enter a valid 6-digit authenticator code');
+      return;
+    }
+
+    setIsLoading(true);
+    setTotpError('');
+    try {
+      const result = await onLogin(username, password, rememberMe, clean, challengeUsername || username);
+      if (result?.error) {
+        setTotpError(result.error);
+      }
+    } catch {
+      setTotpError('Invalid authenticator code');
     } finally {
       setIsLoading(false);
     }
@@ -255,7 +299,16 @@ export default function LoginPanel({
 
           {/* Form - Compact spacing */}
           <div>
-            <form onSubmit={handleSubmit} className="px-6 pb-6 sm:px-8 sm:pb-8 space-y-4">
+            <form
+              onSubmit={(e) => {
+                if (requires2FA) {
+                  void handleSubmit2FA(e);
+                } else {
+                  void handleSubmit(e);
+                }
+              }}
+              className="px-6 pb-6 sm:px-8 sm:pb-8 space-y-4"
+            >
               {canContinueSession && (
                 <div
                   className="rounded-xl border px-4 py-3 flex items-center justify-between gap-3"
@@ -295,6 +348,8 @@ export default function LoginPanel({
                   </button>
                 </div>
               )}
+              {!requires2FA && (
+              <>
               {/* Username Field with Glass Effect */}
               <div className="space-y-2">
                 <label 
@@ -469,6 +524,110 @@ export default function LoginPanel({
                   </>
                 )}
               </button>
+              </>
+              )}
+
+              {requires2FA && (
+                <div className="space-y-4">
+                  <div
+                    className="rounded-xl border px-4 py-3"
+                    style={{
+                      borderColor: 'rgba(246, 66, 31, 0.2)',
+                      background: 'rgba(246, 66, 31, 0.06)',
+                    }}
+                  >
+                    <div className="flex items-center gap-2 text-sm text-gray-700" style={{ fontWeight: '600' }}>
+                      <ShieldCheck className="w-4 h-4" style={{ color: '#ee8724' }} />
+                      Two-Factor Verification
+                    </div>
+                    <div className="mt-1 text-xs text-gray-600">
+                      Enter the 6-digit code from your Authenticator app
+                      {challengeMaskedEmail ? ` for ${challengeMaskedEmail}` : ''}.
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="totpCode"
+                      className="flex items-center gap-2 text-sm text-gray-700"
+                      style={{ fontWeight: '600' }}
+                    >
+                      <ShieldCheck className="w-4 h-4" style={{ color: '#ee8724' }} />
+                      Authenticator Code
+                    </label>
+                    <input
+                      id="totpCode"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={totpCode}
+                      onChange={(e) => {
+                        setTotpCode(e.target.value.replace(/\D/g, ''));
+                        if (totpError) setTotpError('');
+                      }}
+                      placeholder="123456"
+                      className="w-full h-12 sm:h-13 px-4 rounded-xl border-2 text-sm sm:text-base text-gray-900 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200 tracking-[0.25em]"
+                      style={{
+                        background: '#ffffff',
+                        borderColor: totpError ? '#ef4444' : 'rgba(246, 66, 31, 0.3)',
+                        WebkitAppearance: 'none',
+                        fontSize: '16px',
+                      }}
+                    />
+                    {totpError && (
+                      <p className="flex items-center gap-1.5 mt-1.5 text-xs text-red-500">
+                        <AlertCircle className="w-3 h-3" />
+                        {totpError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRequires2FA(false);
+                        setTotpCode('');
+                        setTotpError('');
+                        setChallengeUsername('');
+                        setChallengeMaskedEmail('');
+                      }}
+                      className="h-12 sm:h-13 px-4 rounded-xl border text-sm sm:text-base"
+                      style={{
+                        borderColor: 'rgba(0,0,0,0.1)',
+                        color: '#4b5563',
+                        fontWeight: '600',
+                      }}
+                      disabled={isLoading}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="flex-1 h-12 sm:h-13 rounded-xl text-white active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base"
+                      style={{
+                        background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                        fontWeight: '600',
+                        boxShadow: '0 4px 12px rgba(246, 66, 31, 0.3)',
+                      }}
+                    >
+                      {isLoading ? (
+                        <>
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span>Verifying...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck className="w-5 h-5" />
+                          <span>Verify & Sign In</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
 
 
             </form>

@@ -337,6 +337,15 @@ export function useUrlSync({
     }
   }, []);
 
+  // Close current page and navigate to home
+  const closePage = useCallback(() => {
+    skipStateSyncRef.current = true;
+    closeAllPages();
+    navigate(buildUrl(null));
+    lastSyncedPage.current = null;
+    setTimeout(() => { skipStateSyncRef.current = false; }, 50);
+  }, [closeAllPages, navigate, buildUrl]);
+
   // Navigate to a page by updating both URL and state, with optional deep link params
   const navigateToPage = useCallback((pageName: string, params?: DeepLinkParams) => {
     const normalizedPageName = normalizePageName(pageName);
@@ -363,16 +372,7 @@ export function useUrlSync({
     lastSyncedPage.current = normalizedPageName;
     
     setTimeout(() => { skipStateSyncRef.current = false; }, 50);
-  }, [hasPageAccess, setIntendedDestination, closeAllPages, pageSetters, navigate, openPageDirect, buildUrl]);
-
-  // Close current page and navigate to home
-  const closePage = useCallback(() => {
-    skipStateSyncRef.current = true;
-    closeAllPages();
-    navigate(buildUrl(null));
-    lastSyncedPage.current = null;
-    setTimeout(() => { skipStateSyncRef.current = false; }, 50);
-  }, [closeAllPages, navigate, buildUrl]);
+  }, [hasPageAccess, setIntendedDestination, closeAllPages, pageSetters, navigate, openPageDirect, buildUrl, closePage]);
 
   // Update URL when role changes (to keep role segment in sync)
   useEffect(() => {

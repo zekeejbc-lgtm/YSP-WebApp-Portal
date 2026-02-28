@@ -32,9 +32,14 @@ export default function PwaInstallPrompt({
   const [hasSeen, setHasSeen] = useState(false);
   const [isReady, setIsReady] = useState(delayMs === 0);
   const hasRecordedSeen = useRef(false);
+  const [mountedAt, setMountedAt] = useState<number | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMountedAt(Date.now());
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setInstalled(isAppInstalled());
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsIos(isIosDevice());
 
     const onBeforeInstall = (event: Event) => {
@@ -70,6 +75,7 @@ export default function PwaInstallPrompt({
     if (!raw) return;
     const parsed = Number(raw);
     if (!Number.isNaN(parsed)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDismissedAt(parsed);
     }
   }, []);
@@ -77,6 +83,7 @@ export default function PwaInstallPrompt({
   useEffect(() => {
     const raw = localStorage.getItem(SEEN_KEY);
     if (raw === "true") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasSeen(true);
       hasRecordedSeen.current = true;
     }
@@ -84,10 +91,12 @@ export default function PwaInstallPrompt({
 
   useEffect(() => {
     if (!enabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsReady(false);
       return;
     }
     if (delayMs === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsReady(true);
       return;
     }
@@ -101,8 +110,9 @@ export default function PwaInstallPrompt({
 
   const isDismissed = useMemo(() => {
     if (!dismissedAt) return false;
-    return Date.now() - dismissedAt < DISMISS_DURATION_MS;
-  }, [dismissedAt]);
+    if (!mountedAt) return false;
+    return mountedAt - dismissedAt < DISMISS_DURATION_MS;
+  }, [dismissedAt, mountedAt]);
 
   const shouldOfferInstall = enabled && isReady && !installed && !isDismissed && !hasSeen;
   const shouldRenderPrompt = shouldOfferInstall && (isIos ? !deferredPrompt : Boolean(deferredPrompt));

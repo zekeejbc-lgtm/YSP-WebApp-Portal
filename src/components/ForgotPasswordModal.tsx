@@ -36,6 +36,7 @@ import {
   lookupPasswordResetUser,
   sendPasswordResetOTP,
   verifyPasswordResetOTP,
+  verifyPasswordResetTOTP,
   resetPasswordWithToken,
 } from "../services/gasLoginService";
 
@@ -50,6 +51,8 @@ interface ResetUserInfo {
   username: string;
   email: string;
   idCode?: string;
+  twoFactorEnabled?: boolean;
+  availableResetMethods?: ("email" | "authenticator")[];
 }
 
 interface PasswordStrength {
@@ -78,6 +81,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
   const [resendTimer, setResendTimer] = useState(0);
   const [expiryTimer, setExpiryTimer] = useState(0);
   const [lookupToken, setLookupToken] = useState("");
+  const [resetMethod, setResetMethod] = useState<"email" | "authenticator">("email");
   const [isVerifying, setIsVerifying] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -165,6 +169,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
     setResendTimer(0);
     setExpiryTimer(0);
     setLookupToken("");
+    setResetMethod("email");
     setResetToken("");
     setNewPassword("");
     setConfirmPassword("");
@@ -187,15 +192,22 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
     try {
       const result = await lookupPasswordResetUser(input);
       if (result.success && result.user) {
-        setUserInfo(result.user);
+        const defaultMethod: "email" | "authenticator" =
+          result.twoFactorEnabled ? "authenticator" : "email";
+        setUserInfo({
+          ...result.user,
+          twoFactorEnabled: !!result.twoFactorEnabled,
+          availableResetMethods: result.availableResetMethods || (result.twoFactorEnabled ? ["email", "authenticator"] : ["email"]),
+        });
         setLookupToken(result.lookupToken || "");
+        setResetMethod(defaultMethod);
         setStep(2);
         setOtp(["", "", "", "", "", ""]);
-        setOtpSent(false);
+        setOtpSent(defaultMethod === "authenticator");
         setResendTimer(0);
         setExpiryTimer(0);
 
-        if (result.matchedBy === "email") {
+        if (defaultMethod === "email" && result.matchedBy === "email") {
           await handleSendOTP(result.user.username, input, result.lookupToken || "");
         }
       } else {
@@ -209,6 +221,13 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
   };
 
   const handleSendOTP = async (username?: string, email?: string, token?: string) => {
+    if (resetMethod !== "email") {
+      setOtpSent(true);
+      setResendTimer(0);
+      setExpiryTimer(0);
+      return;
+    }
+
     const user = userInfo;
     const targetUsername = username || user?.username;
     const targetEmail = email || user?.email;
@@ -260,13 +279,22 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
     setError("");
 
     try {
-      const result = await verifyPasswordResetOTP(
-        userInfo.username,
-        userInfo.email || "",
-        otpCode,
-        undefined,
-        lookupToken || undefined
-      );
+      const result =
+        resetMethod === "authenticator"
+          ? await verifyPasswordResetTOTP(
+              String(userInfo.username || ""),
+              String(userInfo.email || ""),
+              otpCode,
+              undefined,
+              lookupToken || undefined
+            )
+          : await verifyPasswordResetOTP(
+              String(userInfo.username || ""),
+              String(userInfo.email || ""),
+              otpCode,
+              undefined,
+              lookupToken || undefined
+            );
       if (result.success && result.verified && result.resetToken) {
         setResetToken(result.resetToken);
         setStep(3);
@@ -303,7 +331,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
     setError("");
 
     try {
-      const result = await resetPasswordWithToken(userInfo.username, resetToken, newPassword);
+      const result = await resetPasswordWithToken(String(userInfo.username || ""), resetToken, newPassword);
       if (result.success) {
         setSuccess(true);
         setTimeout(() => {
@@ -622,6 +650,63 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                     </div>
                   )}
 
+                  {userInfo?.twoFactorEnabled && (
+                    <div
+                      className="rounded-lg p-3 mb-4"
+                      style={{
+                        backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.02)",
+                        border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}`,
+                      }}
+                    >
+                      <p
+                        className="mb-2 text-muted-foreground"
+                        style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px` }}
+                      >
+                        Choose verification method
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetMethod("email");
+                            setOtp(["", "", "", "", "", ""]);
+                            setOtpSent(false);
+                            setResendTimer(0);
+                            setExpiryTimer(0);
+                            setError("");
+                          }}
+                          className="px-3 py-2 rounded-lg border text-sm"
+                          style={{
+                            borderColor: resetMethod === "email" ? "#f6421f" : (isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.15)"),
+                            color: resetMethod === "email" ? "#f6421f" : (isDark ? "#fff" : "#1a1a1a"),
+                            backgroundColor: resetMethod === "email" ? "rgba(246,66,31,0.08)" : "transparent",
+                          }}
+                        >
+                          Email OTP
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetMethod("authenticator");
+                            setOtp(["", "", "", "", "", ""]);
+                            setOtpSent(true);
+                            setResendTimer(0);
+                            setExpiryTimer(0);
+                            setError("");
+                          }}
+                          className="px-3 py-2 rounded-lg border text-sm"
+                          style={{
+                            borderColor: resetMethod === "authenticator" ? "#f6421f" : (isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.15)"),
+                            color: resetMethod === "authenticator" ? "#f6421f" : (isDark ? "#fff" : "#1a1a1a"),
+                            backgroundColor: resetMethod === "authenticator" ? "rgba(246,66,31,0.08)" : "transparent",
+                          }}
+                        >
+                          Authenticator
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {otpSent && (
                     <>
                       <div className="text-center mb-4">
@@ -634,14 +719,16 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                               color: isDark ? "#fff" : "#1a1a1a",
                             }}
                           >
-                            Enter the 6-digit code
+                            {resetMethod === "authenticator" ? "Enter your authenticator code" : "Enter the 6-digit code"}
                           </span>
                         </div>
                         <p
                           className="text-muted-foreground"
                           style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.small}px` }}
                         >
-                          We sent a code to <strong>{userInfo?.email}</strong>
+                          {resetMethod === "authenticator"
+                            ? "Open Google Authenticator and enter your current 6-digit code."
+                            : <>We sent a code to <strong>{userInfo?.email}</strong></>}
                         </p>
                       </div>
 
@@ -675,6 +762,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                         ))}
                       </div>
 
+                      {resetMethod === "email" && (
                       <div className="text-center mb-4">
                         {resendTimer > 0 ? (
                           <p
@@ -699,7 +787,9 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                           </button>
                         )}
                       </div>
+                      )}
 
+                      {resetMethod === "email" && (
                       <div
                         className="rounded-lg p-3 text-center"
                         style={{
@@ -747,6 +837,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                           </span>
                         </div>
                       </div>
+                      )}
                     </>
                   )}
 
@@ -989,7 +1080,14 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                     variant="primary"
                     size="md"
                     onClick={otpSent ? handleVerifyOTP : () => handleSendOTP()}
-                    disabled={isSending || isVerifying || (!otpSent && !userInfo?.email && !lookupToken)}
+                    disabled={
+                      isSending ||
+                      isVerifying ||
+                      (!otpSent &&
+                        resetMethod === "email" &&
+                        !userInfo?.email &&
+                        !lookupToken)
+                    }
                     style={{ flex: 1, whiteSpace: "nowrap" }}
                   >
                     {otpSent ? (
@@ -1007,12 +1105,12 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                     ) : isSending ? (
                       <span className="flex items-center justify-center gap-2">
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Sending Code...</span>
+                        <span>{resetMethod === "authenticator" ? "Preparing..." : "Sending Code..."}</span>
                       </span>
                     ) : (
                       <span className="flex items-center justify-center gap-2">
                         <Mail className="w-4 h-4" />
-                        <span>Send Code</span>
+                        <span>{resetMethod === "authenticator" ? "Enter Code" : "Send Code"}</span>
                       </span>
                     )}
                   </Button>

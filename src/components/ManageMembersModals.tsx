@@ -552,14 +552,12 @@ interface ViewMemberModalProps {
 export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberModalProps) {
   const displayEmail = (member.verifiedEmail || "").trim();
   const isPersonalEmailVerified = Boolean(member.emailVerified);
-  const [profileImageFailed, setProfileImageFailed] = useState(false);
+  const [failedProfileImageKey, setFailedProfileImageKey] = useState("");
   const profilePicture = (member.profilePicture || "").trim();
+  const profileImageKey = `${member.id}:${profilePicture}`;
+  const profileImageFailed = failedProfileImageKey === profileImageKey;
   const hasProfileImage = Boolean(profilePicture) && !profileImageFailed;
   const fallbackInitial = member.name?.trim()?.charAt(0)?.toUpperCase() || "?";
-
-  useEffect(() => {
-    setProfileImageFailed(false);
-  }, [member.id, member.profilePicture]);
 
   const emergencyContactName =
     member.emergencyContactName ||
@@ -640,7 +638,7 @@ export function ViewMemberModal({ isDark, member, onClose, onEdit }: ViewMemberM
                   alt={member.name}
                   className="w-full h-full object-cover"
                   style={{ borderRadius: '9999px' }}
-                  onError={() => setProfileImageFailed(true)}
+                  onError={() => setFailedProfileImageKey(profileImageKey)}
                 />
               ) : (
                 fallbackInitial

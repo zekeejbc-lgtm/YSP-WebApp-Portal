@@ -19,9 +19,10 @@ import { DESIGN_TOKENS, Button } from "./design-system";
 interface ChangePasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onChangePassword: (currentPassword: string, newPassword: string, signal?: AbortSignal) => Promise<{ success: boolean; error?: string }>;
+  onChangePassword: (currentPassword: string, newPassword: string, totpCode?: string, signal?: AbortSignal) => Promise<{ success: boolean; error?: string }>;
   onVerifyPassword: (password: string) => Promise<{ valid: boolean; error?: string }>;
   isDark: boolean;
+  twoFactorEnabled?: boolean;
   addUploadToast?: (message: { id: string; title: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number; onCancel?: () => void }) => void;
   updateUploadToast?: (id: string, updates: Partial<{ title?: string; message: string; status: 'loading' | 'success' | 'error' | 'info'; progress?: number }>) => void;
 }
@@ -45,6 +46,7 @@ export default function ChangePasswordModal({
   onChangePassword,
   onVerifyPassword,
   isDark,
+  twoFactorEnabled = false,
   addUploadToast,
   updateUploadToast,
 }: ChangePasswordModalProps) {
@@ -59,6 +61,7 @@ export default function ChangePasswordModal({
   const [isChanging, setIsChanging] = useState(false);
   const [error, setError] = useState("");
   const [verifiedPassword, setVerifiedPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
 
   // Calculate password strength
   const calculateStrength = (password: string): PasswordStrength => {
@@ -99,6 +102,7 @@ export default function ChangePasswordModal({
     setShowConfirmPassword(false);
     setError("");
     setVerifiedPassword("");
+    setTotpCode("");
     onClose();
   };
 
@@ -133,6 +137,13 @@ export default function ChangePasswordModal({
     if (!isPasswordValid) {
       setError("Please ensure your password meets all requirements and both passwords match");
       return;
+    }
+    if (twoFactorEnabled) {
+      const cleanTotp = totpCode.replace(/\D/g, "");
+      if (cleanTotp.length !== 6) {
+        setError("Authenticator code must be 6 digits");
+        return;
+      }
     }
 
     // Check if new password is same as current
@@ -172,7 +183,12 @@ export default function ChangePasswordModal({
         });
       }
 
-      const result = await onChangePassword(verifiedPassword, newPassword, signal);
+      const result = await onChangePassword(
+        verifiedPassword,
+        newPassword,
+        twoFactorEnabled ? totpCode.replace(/\D/g, "") : undefined,
+        signal
+      );
       if (signal.aborted) {
         return;
       }
@@ -412,6 +428,46 @@ export default function ChangePasswordModal({
                         </button>
                       </div>
                     </div>
+
+                    {twoFactorEnabled && (
+                      <div>
+                        <label
+                          className="block text-muted-foreground mb-2"
+                          style={{
+                            fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                            fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
+                          }}
+                        >
+                          Authenticator Code
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            value={totpCode}
+                            onChange={(e) => {
+                              setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                              setError("");
+                            }}
+                            placeholder="Enter 6-digit authenticator code"
+                            className="w-full border-2 bg-white/50 dark:bg-white/5 backdrop-blur-sm transition-all focus:outline-none focus:border-[#f6421f] focus:ring-2 focus:ring-[#f6421f]/20"
+                            style={{
+                              ...inputStyle,
+                              borderColor: isDark
+                                ? "rgba(255, 255, 255, 0.1)"
+                                : "rgba(0, 0, 0, 0.1)",
+                              color: isDark ? "#fff" : "#1a1a1a",
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && isPasswordValid && !isChanging) {
+                                handleChangePassword();
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
 
                     {error && (
                       <motion.div

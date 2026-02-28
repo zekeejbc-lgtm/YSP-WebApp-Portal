@@ -121,7 +121,7 @@ export function DebugPill() {
     const calculateCacheSize = () => {
       let totalSize = 0;
       for (let key in localStorage) {
-        if (localStorage.hasOwnProperty(key)) {
+        if (Object.prototype.hasOwnProperty.call(localStorage, key)) {
           totalSize += localStorage[key].length + key.length;
         }
       }

@@ -220,6 +220,15 @@ const FALLBACK_ROLES: SystemRole[] = [
   },
 ];
 
+function generatePasswordValue(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
+  let pass = "";
+  for (let i = 0; i < 12; i++) {
+    pass += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return pass;
+}
+
 export default function AccountCreationModal({
   isOpen,
   onClose,
@@ -254,24 +263,30 @@ export default function AccountCreationModal({
     return `${parts[0]}.${parts[parts.length - 1]}`;
   };
 
-  const generatePassword = (): string => {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
-    let pass = "";
-    for (let i = 0; i < 12; i++) {
-      pass += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return pass;
-  };
+  const generatedDefaults = useMemo(() => {
+    if (!isOpen || !applicantData) return null;
+    return {
+      username: generateUsername(applicantData.fullName),
+      password: generatePasswordValue(),
+      committee: applicantData.committeePreference,
+      role: roleOptions[0]?.name || "Member",
+      position: applicantData.desiredRole === "Officer" ? "Documentation Officer" : "Member",
+    };
+  }, [isOpen, applicantData, roleOptions]);
 
   useEffect(() => {
-    if (isOpen && applicantData) {
-      setUsername(generateUsername(applicantData.fullName));
-      setPassword(generatePassword());
-      setCommittee(applicantData.committeePreference);
-      setRole(roleOptions[0]?.name || "Member");
-      setPosition(applicantData.desiredRole === "Officer" ? "Documentation Officer" : "Member");
-    }
-  }, [isOpen, applicantData, roleOptions]);
+    if (!generatedDefaults) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUsername(generatedDefaults.username);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPassword(generatedDefaults.password);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCommittee(generatedDefaults.committee);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRole(generatedDefaults.role);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPosition(generatedDefaults.position);
+  }, [generatedDefaults]);
 
   const handleSubmit = () => {
     if (!username) {

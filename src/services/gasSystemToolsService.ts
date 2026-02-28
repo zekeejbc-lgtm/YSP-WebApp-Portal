@@ -800,12 +800,11 @@ export async function logAccess(params: LogAccessParams): Promise<boolean> {
     
     return true;
   } catch (error) {
-    const isExpectedLogoutAuthFailure =
+    const isExpectedAuthFailure =
       error instanceof SystemToolsAPIError &&
-      error.code === SystemToolsErrorCodes.UNAUTHORIZED &&
-      params.actionType === 'logout';
+      error.code === SystemToolsErrorCodes.UNAUTHORIZED;
 
-    if (isExpectedLogoutAuthFailure) {
+    if (isExpectedAuthFailure) {
       return false;
     }
 
