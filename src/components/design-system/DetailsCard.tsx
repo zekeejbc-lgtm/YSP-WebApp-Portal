@@ -156,7 +156,7 @@ export default function DetailsCard({
           >
             <div className="flex items-start gap-2">
               {field.icon && (
-                <div className="text-[#f6421f] mt-1 flex-shrink-0">
+                <div className="text-[#f6421f] mt-1 shrink-0">
                   {field.icon}
                 </div>
               )}

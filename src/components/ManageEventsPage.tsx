@@ -1694,7 +1694,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                                   disabled={isRecipientAlreadyAdded(member.id)}
                                 >
                                   {/* Profile Picture with Fallback */}
-                                  <div className="relative w-8 h-8 flex-shrink-0">
+                                  <div className="relative w-8 h-8 shrink-0">
                                     {member.profilePicture ? (
                                       <>
                                         <img
@@ -1732,7 +1732,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                                     </p>
                                   </div>
                                   {isRecipientAlreadyAdded(member.id) && (
-                                    <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                                    <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
                                   )}
                                 </button>
                               ))}
@@ -1838,7 +1838,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                   {/* Info about All Members fallback */}
                   {formData.selectedRecipients.length === 0 && (
                     <div className="p-3 rounded-xl flex items-start gap-2" style={{ background: isDark ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-                      <Users className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                      <Users className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
                       <div className="text-xs text-muted-foreground">
                         <p className="font-semibold text-blue-600 dark:text-blue-400 mb-0.5">Default: All Members</p>
                         <p>If no specific attendees are selected, this event will be open to all YSP Tagum members.</p>
@@ -1853,7 +1853,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                 <div className="space-y-4">
                   <div className="p-3 rounded-xl" style={{ background: isDark ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
                     <div className="flex items-start gap-2">
-                      <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                      <Clock className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
                       <div className="text-xs text-muted-foreground">
                         <p className="font-semibold text-blue-600 dark:text-blue-400 mb-1">About Time Windows</p>
                         <p>Set time boundaries for Time In and Time Out. Attendance recorded after the end time will be marked as <span className="font-medium text-amber-600">Late</span>.</p>
@@ -1997,7 +1997,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                       
                       {formData.lat && formData.lng && formData.radius > 0 && (
                         <div className="p-3 rounded-xl flex items-start gap-3" style={{ background: isDark ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.05)', border: isDark ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid rgba(59, 130, 246, 0.15)' }}>
-                          <MapPin className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                          <MapPin className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-1">Geofence Active</p>
                             <p className="text-xs text-muted-foreground">📍 {formData.lat.toFixed(6)}, {formData.lng.toFixed(6)}</p>
@@ -2032,7 +2032,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
       {/* Delete Confirmation Modal - Z-INDEX FIX APPLIED HERE */}
       {deleteConfirmModal.isOpen && deleteConfirmModal.event && (
         <div 
-          className="fixed inset-0 flex items-center justify-center z-[9999] p-4" 
+          className="fixed inset-0 flex items-center justify-center z-9999 p-4" 
           style={{ backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)' }}
         >
           <div 

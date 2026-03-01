@@ -165,7 +165,7 @@ export default function RejectionModal({
               borderColor: "#ef4444",
             }}
           >
-            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold, color: "#ef4444" }}>
                 This action cannot be undone

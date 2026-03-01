@@ -1043,7 +1043,7 @@ export default function KaagapAIMeetPage({
                                     <p className="text-xs opacity-70 truncate">{member.email || "No email"}</p>
                                   </div>
                                   {selectedRecipients.some((r) => getRecipientKey(r) === getRecipientKey(member)) && (
-                                    <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                                    <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
                                   )}
                                 </button>
                               ))}
@@ -1261,7 +1261,7 @@ export default function KaagapAIMeetPage({
                               <tr key={a.participantKey} className="border-t">
                               <td className="p-2">
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <div className="relative w-7 h-7 flex-shrink-0">
+                                  <div className="relative w-7 h-7 shrink-0">
                                     <span
                                       className="absolute inset-0 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
                                       style={{

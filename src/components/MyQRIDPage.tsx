@@ -1573,7 +1573,7 @@ export default function MyQRIDPage({
                 <ul className="text-sm space-y-1">
                   {missingProfileFields.slice(0, 5).map((field, idx) => (
                     <li key={idx} className="flex items-center gap-2" style={{ color: isDark ? '#fbbf24' : '#b45309' }}>
-                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <AlertCircle className="w-4 h-4 shrink-0" />
                       {field}
                     </li>
                   ))}
@@ -1793,7 +1793,7 @@ export default function MyQRIDPage({
                 }}
               >
                 <div 
-                  className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0"
+                  className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0"
                   style={{ background: 'linear-gradient(135deg, #10B981, #059669)' }}
                 >
                   <FileImage className="w-6 h-6 text-white" />
@@ -1815,7 +1815,7 @@ export default function MyQRIDPage({
                 }}
               >
                 <div 
-                  className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0"
+                  className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0"
                   style={{ background: 'linear-gradient(135deg, #EF4444, #DC2626)' }}
                 >
                   <FileText className="w-6 h-6 text-white" />

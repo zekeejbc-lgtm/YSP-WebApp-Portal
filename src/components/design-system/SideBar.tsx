@@ -168,7 +168,7 @@ function DesktopSideBar({
                 <img
                   src={logoUrl}
                   alt="YSP Logo"
-                  className="w-8 h-8 object-contain flex-shrink-0"
+                  className="w-8 h-8 object-contain shrink-0"
                 />
               )}
               
@@ -219,7 +219,7 @@ function DesktopSideBar({
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
                   onClick={onToggleDark}
-                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-all flex-shrink-0"
+                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-all shrink-0"
                   whileHover={{ rotate: 360 }}
                   transition={{ duration: 0.6, ease: "easeInOut" }}
                   aria-label="Toggle dark mode"
@@ -247,7 +247,7 @@ function DesktopSideBar({
               padding: isExpanded ? "10px 12px" : "10px",
             }}
           >
-            <HomeIcon className="w-5 h-5 flex-shrink-0" />
+            <HomeIcon className="w-5 h-5 shrink-0" />
             <motion.span
               animate={{
                 opacity: isExpanded ? 1 : 0,
@@ -282,7 +282,7 @@ function DesktopSideBar({
                 }}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  {group.icon && <span className="flex-shrink-0 group-hover:text-[#ee8724] transition-colors">{group.icon}</span>}
+                  {group.icon && <span className="shrink-0 group-hover:text-[#ee8724] transition-colors">{group.icon}</span>}
                   <motion.span
                     className="group-hover:text-[#ee8724] transition-colors"
                     animate={{
@@ -303,7 +303,7 @@ function DesktopSideBar({
                 </div>
                 {isExpanded && (
                   <ChevronDown
-                    className={`w-4 h-4 transition-transform flex-shrink-0 ${
+                    className={`w-4 h-4 transition-transform shrink-0 ${
                       openDropdown === group.id ? "rotate-180" : ""
                     }`}
                     style={{
@@ -385,7 +385,7 @@ function DesktopSideBar({
                   <img
                     src={userProfilePicture}
                     alt={userName}
-                    className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                    className="w-8 h-8 rounded-full object-cover shrink-0"
                     referrerPolicy="no-referrer"
                     onError={(e) => {
                       // Hide broken image, fallback to default icon
@@ -394,7 +394,7 @@ function DesktopSideBar({
                   />
                 ) : (
                   <div
-                    className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                    className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
                     style={{
                       background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
                     }}
@@ -429,7 +429,7 @@ function DesktopSideBar({
                   padding: isExpanded ? "10px 12px" : "10px",
                 }}
               >
-                <LogOut className="w-5 h-5 flex-shrink-0" />
+                <LogOut className="w-5 h-5 shrink-0" />
                 <motion.span
                   animate={{
                     opacity: isExpanded ? 1 : 0,
@@ -458,7 +458,7 @@ function DesktopSideBar({
                 padding: isExpanded ? "10px 12px" : "10px",
               }}
             >
-              <User className="w-5 h-5 flex-shrink-0" />
+              <User className="w-5 h-5 shrink-0" />
               <motion.span
                 animate={{
                   opacity: isExpanded ? 1 : 0,
@@ -555,7 +555,7 @@ function MobileSideBar({
                     <img
                       src={logoUrl}
                       alt="YSP Logo"
-                      className="w-8 h-8 object-contain flex-shrink-0"
+                      className="w-8 h-8 object-contain shrink-0"
                     />
                   )}
                   <div className="flex flex-col min-w-0">
@@ -592,7 +592,7 @@ function MobileSideBar({
                 <div className="flex items-center gap-2">
                   <motion.button
                     onClick={onToggleDark}
-                    className="p-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition-all flex-shrink-0"
+                    className="p-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition-all shrink-0"
                     whileHover={{ rotate: 360 }}
                     transition={{ duration: 0.6, ease: "easeInOut" }}
                     aria-label="Toggle dark mode"
@@ -601,7 +601,7 @@ function MobileSideBar({
                   </motion.button>
                   <button
                     onClick={onClose}
-                    className="p-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition-all flex-shrink-0"
+                    className="p-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition-all shrink-0"
                     aria-label="Close sidebar"
                   >
                     <X className="w-5 h-5" />
@@ -628,7 +628,7 @@ function MobileSideBar({
                         : "transparent",
                   }}
                 >
-                  <HomeIcon className="w-5 h-5 flex-shrink-0" />
+                  <HomeIcon className="w-5 h-5 shrink-0" />
                   <span
                     style={{
                       fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
@@ -662,7 +662,7 @@ function MobileSideBar({
                         className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition-all mb-1 group"
                       >
                         <div className="flex items-center gap-2">
-                          {group.icon && <span className="flex-shrink-0 group-hover:text-[#ee8724] transition-colors">{group.icon}</span>}
+                          {group.icon && <span className="shrink-0 group-hover:text-[#ee8724] transition-colors">{group.icon}</span>}
                           <span
                             className="group-hover:text-[#ee8724] transition-colors"
                             style={{
@@ -758,7 +758,7 @@ function MobileSideBar({
                                 : "transparent",
                             }}
                           >
-                            {page.icon && <span className="flex-shrink-0">{page.icon}</span>}
+                            {page.icon && <span className="shrink-0">{page.icon}</span>}
                             <span>{page.label}</span>
                           </button>
                         );
@@ -799,7 +799,7 @@ function MobileSideBar({
                         <img
                           src={userProfilePicture}
                           alt={userName}
-                          className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                          className="w-8 h-8 rounded-full object-cover shrink-0"
                           referrerPolicy="no-referrer"
                           onError={(e) => {
                             // Hide broken image, fallback to default icon
@@ -808,7 +808,7 @@ function MobileSideBar({
                         />
                       ) : (
                         <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                          className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
                           style={{
                             background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
                           }}

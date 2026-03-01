@@ -493,7 +493,7 @@ export function RoleChangeModal({
               color: content.color,
             }}
           >
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            <AlertTriangle className="w-4 h-4 shrink-0" />
             {content.warning}
           </p>
           

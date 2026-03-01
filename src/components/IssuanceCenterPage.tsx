@@ -1,4 +1,4 @@
-/**
+﻿/**
  * =============================================================================
  * ISSUANCE CENTER PAGE
  * =============================================================================
@@ -16,13 +16,13 @@
  * =============================================================================
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import {
   X, Plus, Search, FileText, Mail, Download, Eye, Edit2, Trash2,
   ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Loader2, CheckCircle, XCircle, AlertCircle,
   LayoutGrid, List, Send, Users, Calendar, Building, Globe, User,
-  RefreshCw, Settings, Copy, ExternalLink, FileCheck, Clock, Image, Archive, AlertTriangle, Link, Paperclip, Hash
+  RefreshCw, Settings, ExternalLink, FileCheck, Clock, Image, Archive, AlertTriangle, Link, Paperclip, Hash
 } from "lucide-react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
@@ -45,29 +45,24 @@ import {
   resendToRecipient,
   downloadIssuance,
   generatePdfPreview,
-  getRecipientsByIssuance,
   getEventAttendees,
   getTemplateById,
   getSettings,
-  updateSetting,
   clearIssuanceCache,
   getIssuanceStatusColor,
   getRecipientTypeLabel,
   formatIssuanceDate,
   parseFieldInputs,
-  parseRecipientDetails,
   convertPdfToImagePreview,
   generateIssuanceFilename,
   migrateColumns,
   type Issuance,
   type IssuanceTemplate,
   type IssuanceAttachment,
-  type Recipient,
   type Committee,
   type SendResult,
   type CreateIssuanceData,
   type CreateTemplateData,
-  type PdfPreviewItem,
 } from "../services/gasIssuanceService";
 import { fetchEvents, type EventData } from "../services/gasEventsService";
 import { getAllOfficers, type DirectoryOfficer } from "../services/gasDirectoryService";
@@ -94,6 +89,14 @@ type ViewMode = 'table' | 'card';
 type RecipientType = 'Event' | 'Person' | 'Committee' | 'Directory' | 'External';
 type CreateModalTab = 'recipients' | 'preview' | 'templates';
 type DetailModalTab = 'info' | 'preview';
+
+const SEARCH_COMMANDS = [
+  { command: '@Person' as const, icon: User, label: 'Search individual members', color: '#3b82f6' },
+  { command: '@Event' as const, icon: Calendar, label: 'Load attendees from event', color: '#8b5cf6' },
+  { command: '@Committee' as const, icon: Building, label: 'Load members by committee', color: '#10b981' },
+  { command: '@All' as const, icon: Users, label: 'Load all directory members', color: '#f59e0b' },
+  { command: '@External' as const, icon: Globe, label: 'Add external recipient', color: '#ec4899' },
+];
 
 interface MemberWithEmail {
   id: string;
@@ -352,11 +355,6 @@ const base64ToBlobUrl = (base64: string): string => {
   return URL.createObjectURL(blob);
 };
 
-// Clear preview cache (can be called when templates change)
-const clearPreviewCache = (): void => {
-  localStorage.removeItem(PREVIEW_CACHE_KEY);
-};
-
 // =====================================================
 // MEMBER ISSUANCE MODAL COMPONENT
 // Simplified view for heads, members, and roles below auditor/admin
@@ -407,12 +405,12 @@ function MemberIssuanceModal({
   }, [issuance.Recipients, userEmail, username]);
 
   // Helper to find real name from members list by email
-  const findMemberNameLocal = (email?: string): string | undefined => {
+  const findMemberNameLocal = useCallback((email?: string): string | undefined => {
     if (!members || members.length === 0 || !email) return undefined;
     const emailLower = email.toLowerCase().trim();
     const member = members.find(m => m.email?.toLowerCase().trim() === emailLower);
     return member?.name;
-  };
+  }, [members]);
 
   // Determine display name and custom name indicator
   const { displayName, customNameToShow } = useMemo(() => {
@@ -434,7 +432,7 @@ function MemberIssuanceModal({
       : (nameFieldValue && nameFieldValue !== name ? nameFieldValue : null);  // Show {NAME} field value if different
     
     return { displayName: name, customNameToShow: customName };
-  }, [issuance.FieldInputs, userRecipient, username, members]);
+  }, [issuance.FieldInputs, userRecipient, username, findMemberNameLocal]);
 
   const handleDownloadCertificate = async () => {
     if (!userRecipient) {
@@ -542,7 +540,7 @@ function MemberIssuanceModal({
     >
       {/* Modal Header */}
       <div 
-        className="px-5 py-4 border-b relative flex-shrink-0"
+        className="px-5 py-4 border-b relative shrink-0"
         style={{ 
           borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
           background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange}15 0%, rgba(246, 66, 31, 0.1) 100%)`
@@ -569,7 +567,7 @@ function MemberIssuanceModal({
             <FileCheck className="w-6 h-6 text-white" />
           </div>
           
-          <h2 className="text-base sm:text-lg font-bold mb-1 line-clamp-2 break-words px-2" style={{ color: isDark ? '#fff' : '#000' }} title={issuance.Title}>
+          <h2 className="text-base sm:text-lg font-bold mb-1 line-clamp-2 wrap-break-word px-2" style={{ color: isDark ? '#fff' : '#000' }} title={issuance.Title}>
             {issuance.Title}
           </h2>
           <p className="text-sm text-muted-foreground">
@@ -586,7 +584,7 @@ function MemberIssuanceModal({
           style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
         >
           {/* Profile Picture or Initials */}
-          <div className="relative w-14 h-14 flex-shrink-0">
+          <div className="relative w-14 h-14 shrink-0">
             {profilePicture ? (
               <>
                 <img
@@ -637,7 +635,7 @@ function MemberIssuanceModal({
             style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
           >
             <div className="flex items-center gap-2 sm:gap-3 mb-1.5">
-              <Mail className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              <Mail className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
               <span className="text-xs sm:text-sm font-medium text-muted-foreground">Email Details</span>
             </div>
             
@@ -676,7 +674,7 @@ function MemberIssuanceModal({
             style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
           >
             <div className="flex items-center gap-3 mb-2">
-              <FileText className="w-5 h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              <FileText className="w-5 h-5 shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
               <span className="text-sm font-medium text-muted-foreground">Document Notes</span>
             </div>
             <p 
@@ -694,7 +692,7 @@ function MemberIssuanceModal({
           style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
         >
           <div className="flex items-center gap-3 mb-2">
-            <Calendar className="w-5 h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+            <Calendar className="w-5 h-5 shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
             <span className="text-sm font-medium text-muted-foreground">Issued On</span>
           </div>
           <p className="text-sm pl-8" style={{ color: isDark ? '#fff' : '#000' }}>
@@ -709,7 +707,7 @@ function MemberIssuanceModal({
             style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
           >
             <div className="flex items-center gap-3 mb-2">
-              <Hash className="w-5 h-5 flex-shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              <Hash className="w-5 h-5 shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
               <span className="text-sm font-medium text-muted-foreground">Control Number</span>
             </div>
             <p 
@@ -724,7 +722,7 @@ function MemberIssuanceModal({
       
       {/* Modal Footer - Download Button Only */}
       <div 
-        className="p-5 border-t flex-shrink-0"
+        className="p-5 border-t shrink-0"
         style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}
       >
         <button
@@ -868,7 +866,7 @@ export default function IssuanceCenterPage({
   const [isSending, setIsSending] = useState(false);
   const [sendProgress, setSendProgress] = useState<SendResult | null>(null);
   const [resendingRecipientId, setResendingRecipientId] = useState<string | null>(null);
-  const [sendCancelled, setSendCancelled] = useState(false); // Track if user wants to cancel sending
+  const [, setSendCancelled] = useState(false); // Track if user wants to cancel sending
   
   // PDF Preview state
   const [previewPdfUrl, setPreviewPdfUrl] = useState("");
@@ -955,13 +953,13 @@ export default function IssuanceCenterPage({
       loadMembers();
       loadSettings();
     }
-  }, [canCreate]);
+  }, [canCreate]); // eslint-disable-line react-hooks/exhaustive-deps
   
   // Deep link: Auto-select issuance from URL parameter
   const hasAutoSelectedRef = useRef(false);
   useEffect(() => {
     if (initialIssuanceId && issuances.length > 0 && !hasAutoSelectedRef.current) {
-      const issuance = issuances.find(i => i.id === initialIssuanceId);
+      const issuance = issuances.find(i => i.IssuanceID === initialIssuanceId);
       if (issuance) {
         setSelectedIssuance(issuance);
         setShowDetailModal(true);
@@ -1232,15 +1230,6 @@ export default function IssuanceCenterPage({
     return filtered;
   }, [archivedIssuances, searchQuery, isArchiveSearch, typeFilter, templates]);
   
-  // Command suggestions for universal search
-  const SEARCH_COMMANDS = [
-    { command: '@Person' as const, icon: User, label: 'Search individual members', color: '#3b82f6' },
-    { command: '@Event' as const, icon: Calendar, label: 'Load attendees from event', color: '#8b5cf6' },
-    { command: '@Committee' as const, icon: Building, label: 'Load members by committee', color: '#10b981' },
-    { command: '@All' as const, icon: Users, label: 'Load all directory members', color: '#f59e0b' },
-    { command: '@External' as const, icon: Globe, label: 'Add external recipient', color: '#ec4899' },
-  ];
-
   // Universal search suggestions based on active command
   const universalSearchSuggestions = useMemo(() => {
     const query = commandSearchQuery.toLowerCase().trim();
@@ -1972,7 +1961,7 @@ export default function IssuanceCenterPage({
       } else {
         toast.success(`Added ${toAdd.length} members from directory`);
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to load directory");
     } finally {
       setIsLoadingRecipients(false);
@@ -2000,7 +1989,6 @@ export default function IssuanceCenterPage({
       
       const fieldValues: Record<string, string> = {};
       const nameField = fieldInputs.find(f => f.placeholder === '{NAME}');
-      const controlNumberField = fieldInputs.find(f => f.placeholder === '{CONTROL_NUMBER}');
       const useCustomName = nameField?.isCustomName && nameField?.value?.trim();
       const useAllCaps = nameField?.isAllCaps === true; // Check if ALL CAPS is enabled
       
@@ -2056,7 +2044,7 @@ export default function IssuanceCenterPage({
       // Pass all recipients for combined multi-page preview
       // If using custom name, modify recipients to all use the same name for preview
       // Apply ALL CAPS transformation to recipient names if enabled
-      let recipientsForPreview = selectedRecipients.length > 0 
+      const recipientsForPreview = selectedRecipients.length > 0 
         ? (useAllCaps 
           ? selectedRecipients.map(r => ({ ...r, name: r.name.toUpperCase() }))
           : selectedRecipients)
@@ -2671,7 +2659,7 @@ export default function IssuanceCenterPage({
       setShowTemplateForm(false);
       loadTemplates();
       
-    } catch (error) {
+    } catch {
       toast.error("Failed to create template");
     }
   };
@@ -2961,14 +2949,14 @@ export default function IssuanceCenterPage({
             >
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex-1 min-w-0 overflow-hidden">
-                  <h3 className="font-semibold text-base mb-1 line-clamp-2 break-words" style={{ color: isDark ? '#fff' : '#000' }}>
+                  <h3 className="font-semibold text-base mb-1 line-clamp-2 wrap-break-word" style={{ color: isDark ? '#fff' : '#000' }}>
                     {issuance.Title}
                   </h3>
                   <p className="text-sm text-muted-foreground truncate">
                     {issuance.TemplateName}
                   </p>
                 </div>
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                <div className="flex flex-col items-end gap-1 shrink-0">
                   <StatusChip
                     status={issuance.Status.toLowerCase() as 'draft' | 'sent'}
                     label={issuance.Status}
@@ -3238,14 +3226,14 @@ export default function IssuanceCenterPage({
                     >
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="flex-1 min-w-0 overflow-hidden">
-                          <h3 className="font-medium text-sm line-clamp-2 break-words" style={{ color: isDark ? '#fff' : '#000' }} title={issuance.Title}>
+                          <h3 className="font-medium text-sm line-clamp-2 wrap-break-word" style={{ color: isDark ? '#fff' : '#000' }} title={issuance.Title}>
                             {issuance.Title}
                           </h3>
                           <p className="text-xs text-muted-foreground truncate">
                             {issuance.TemplateName}
                           </p>
                         </div>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-600 dark:text-gray-400 flex-shrink-0">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-600 dark:text-gray-400 shrink-0">
                           Archived
                         </span>
                       </div>
@@ -3695,7 +3683,7 @@ export default function IssuanceCenterPage({
                                     disabled={!member.email}
                                   >
                                     {/* Profile Picture with Fallback */}
-                                    <div className="relative w-8 h-8 flex-shrink-0">
+                                    <div className="relative w-8 h-8 shrink-0">
                                       {member.profilePicture ? (
                                         <>
                                           <img
@@ -3733,7 +3721,7 @@ export default function IssuanceCenterPage({
                                       </p>
                                     </div>
                                     {selectedRecipients.some(r => r.email === member.email) && (
-                                      <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                                      <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
                                     )}
                                   </button>
                                 ))}
@@ -5095,16 +5083,16 @@ export default function IssuanceCenterPage({
                             </div>
                             <div className="flex items-center gap-2 ml-2">
                               {template.DocsUrl ? (
-                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                                <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />
                               ) : (
-                                <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0" />
+                                <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
                               )}
                               {template.DocsUrl && (
                                 <a
                                   href={template.DocsUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-shrink-0"
+                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
                                   title="Open template"
                                 >
                                   <ExternalLink className="w-4 h-4" />
@@ -5113,7 +5101,7 @@ export default function IssuanceCenterPage({
                               {editingTemplateId === template.TemplateID ? (
                                 <button
                                   onClick={handleCancelEditTemplate}
-                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-shrink-0"
+                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
                                   title="Cancel editing"
                                 >
                                   <X className="w-4 h-4 text-gray-500" />
@@ -5121,7 +5109,7 @@ export default function IssuanceCenterPage({
                               ) : (
                                 <button
                                   onClick={() => handleStartEditTemplate(template)}
-                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-shrink-0"
+                                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
                                   title="Edit template"
                                 >
                                   <Edit2 className="w-4 h-4 text-gray-500 hover:text-[#f6421f]" />
@@ -5377,12 +5365,12 @@ export default function IssuanceCenterPage({
           >
             {/* Modal Header */}
             <div className="flex items-center justify-between gap-3 p-4 border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
-              <h2 className="text-lg sm:text-xl font-bold line-clamp-2 break-words flex-1 min-w-0" style={{ color: isDark ? '#fff' : '#000' }} title={selectedIssuance.Title}>
+              <h2 className="text-lg sm:text-xl font-bold line-clamp-2 wrap-break-word flex-1 min-w-0" style={{ color: isDark ? '#fff' : '#000' }} title={selectedIssuance.Title}>
                 {selectedIssuance.Title}
               </h2>
               <button
                 onClick={() => setShowDetailModal(false)}
-                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flex-shrink-0"
+                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -5876,7 +5864,7 @@ export default function IssuanceCenterPage({
                                 <p className="text-sm font-medium truncate">{attachment.name}</p>
                                 <p className="text-xs text-muted-foreground truncate">{attachment.url}</p>
                               </div>
-                              <ExternalLink className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <ExternalLink className="w-4 h-4 text-muted-foreground shrink-0" />
                             </a>
                           ))}
                         </div>
@@ -6098,7 +6086,7 @@ export default function IssuanceCenterPage({
             {/* Modal Footer */}
             <div className="flex items-center justify-between gap-2 p-3 border-t flex-wrap sm:flex-nowrap" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
               {/* Left side: Send button or Stop button */}
-              <div className="flex items-center gap-1.5 flex-shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
                 {/* Send button for Draft email issuances */}
                 {canCreate && selectedIssuance && selectedIssuance.Status === 'Draft' && selectedIssuance.DeliveryMethod === 'Email' && !isSending && (() => {
                   // Calculate pending recipients count (only Pending status, not Sent or Failed)
@@ -6191,7 +6179,7 @@ export default function IssuanceCenterPage({
                 <button
                   onClick={() => {
                     // Generate member-accessible URL (not admin/auditor)
-                    const memberUrl = buildShareableUrl('IssuanceCenter', { id: selectedIssuance.id }).replace(/\/(admin|auditor)\?/, '/member?');
+                    const memberUrl = buildShareableUrl('IssuanceCenter', { id: selectedIssuance.IssuanceID }).replace(/\/(admin|auditor)\?/, '/member?');
                     navigator.clipboard.writeText(memberUrl).then(() => {
                       toast.success('Link copied!', {
                         description: 'Members can use this link to view their issuance',
@@ -6216,7 +6204,7 @@ export default function IssuanceCenterPage({
               <div className="flex-1 min-w-0" />
               
               {/* Right side: Edit button (for drafts) and Close button */}
-              <div className="flex items-center gap-1.5 flex-shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
                 {/* Edit button for Draft issuances - icon only, beside Close */}
                 {canCreate && selectedIssuance && selectedIssuance.Status === 'Draft' && !isSending && (
                   <button
@@ -6272,7 +6260,7 @@ export default function IssuanceCenterPage({
               }}
             >
               <div 
-                className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
                 style={{ background: 'rgba(239, 68, 68, 0.2)' }}
               >
                 <AlertTriangle className="w-6 h-6 text-red-500" />
@@ -6387,3 +6375,4 @@ export default function IssuanceCenterPage({
     </PageLayout>
   );
 }
+

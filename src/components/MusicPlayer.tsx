@@ -179,7 +179,7 @@ export default function MusicPlayer({
             type="button"
             onClick={handleTogglePlay}
             disabled={isLoading}
-            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-95"
+            className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-95"
             style={{
               background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
               color: "white",

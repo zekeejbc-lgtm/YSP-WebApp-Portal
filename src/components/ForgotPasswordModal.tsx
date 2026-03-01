@@ -425,7 +425,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
         >
           {/* Header */}
           <div
-            className="flex items-center justify-between p-4 sm:p-6 border-b flex-shrink-0"
+            className="flex items-center justify-between p-4 sm:p-6 border-b shrink-0"
             style={{
               borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
               backgroundColor: isDark ? "#1e1e1e" : "#ffffff",
@@ -459,14 +459,14 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
             <button
               onClick={handleClose}
               disabled={isLookingUp || isSending || isVerifying || isSaving}
-              className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex-shrink-0 disabled:opacity-50"
+              className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors shrink-0 disabled:opacity-50"
             >
               <X className="w-5 h-5 text-muted-foreground" />
             </button>
           </div>
 
           {/* Progress */}
-          <div className="px-4 sm:px-6 pb-4 flex-shrink-0" style={{ backgroundColor: isDark ? "#1e1e1e" : "#ffffff" }}>
+          <div className="px-4 sm:px-6 pb-4 shrink-0" style={{ backgroundColor: isDark ? "#1e1e1e" : "#ffffff" }}>
             <div className="flex gap-2">
               {[1, 2, 3].map((index) => (
                 <div
@@ -586,7 +586,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                         animate={{ opacity: 1, y: 0 }}
                         className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20"
                       >
-                        <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                        <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
                         <span className="text-sm text-red-500">{error}</span>
                       </motion.div>
                     )}
@@ -847,7 +847,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                       animate={{ opacity: 1, y: 0 }}
                       className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 mt-4"
                     >
-                      <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
                       <span className="text-sm text-red-500">{error}</span>
                     </motion.div>
                   )}
@@ -1018,7 +1018,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
                         animate={{ opacity: 1, y: 0 }}
                         className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20"
                       >
-                        <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                        <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
                         <span className="text-sm text-red-500">{error}</span>
                       </motion.div>
                     )}
@@ -1031,7 +1031,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, isDark }: ForgotP
           {/* Footer */}
           {!success && (
             <div
-              className="p-4 sm:p-6 border-t flex-shrink-0"
+              className="p-4 sm:p-6 border-t shrink-0"
               style={{
                 borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
                 backgroundColor: isDark ? "#1e1e1e" : "#ffffff",

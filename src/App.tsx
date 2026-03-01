@@ -3504,7 +3504,8 @@ export default function App() {
       showDeveloperModal ||
       membershipAppsModalOpen ||
       manageMembersModalOpen ||
-      systemToolsModalOpen;
+      systemToolsModalOpen ||
+      showAnnouncements;
 
     useEffect(() => {
       document.body.classList.toggle("ysp-modal-open", chatbotForceHidden);
@@ -4006,8 +4007,12 @@ export default function App() {
               username={userUsername || 'admin'}
               initialAnnouncementId={deepLinkParams.id}
               buildShareableUrl={buildShareableUrl}
+              addUploadToast={addUploadToast}
+              updateUploadToast={updateUploadToast}
+              removeUploadToast={removeUploadToast}
             />
           </Suspense>
+          <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
           {chatbot}
         </>
       );
@@ -4561,7 +4566,7 @@ export default function App() {
           {homepageError && !isLoadingHomepage && (
             <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
               <div className="flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
                 <p className="text-amber-700 dark:text-amber-300 text-sm flex-1">{homepageError}</p>
                 <button
                   onClick={retryLoadHomepage}
@@ -5197,7 +5202,7 @@ export default function App() {
             {/* Founder Information - Clickable */}
             <button
               onClick={() => setShowFounderModal(true)}
-              className="w-full mb-6 p-4 md:p-6 bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-[1.02] cursor-pointer active:scale-[0.98] text-left"
+              className="w-full mb-6 p-4 md:p-6 bg-linear-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-[1.02] cursor-pointer active:scale-[0.98] text-left"
             >
               <h3
                 className="mb-2"
@@ -5683,7 +5688,7 @@ export default function App() {
 
                 {/* Partner with Us Button - Smart Detection for Email vs Link */}
                 {homepageContent.contact.partnerButtonLink && homepageContent.contact.partnerButtonLink.trim() !== "" && (
-                  <div className="mt-8 p-6 bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-2xl text-center">
+                  <div className="mt-8 p-6 bg-linear-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-2xl text-center">
                     <h3
                       className="mb-3"
                       style={{
@@ -5771,7 +5776,7 @@ export default function App() {
             <SkeletonProfileCard />
           ) : (
           <div
-            className="ysp-card p-6 md:p-8 bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-800 dark:to-gray-700 border-2 border-blue-200 dark:border-blue-800"
+            className="ysp-card p-6 md:p-8 bg-linear-to-br from-gray-50 to-blue-50 dark:from-gray-800 dark:to-gray-700 border-2 border-blue-200 dark:border-blue-800"
             style={{
               boxShadow:
                 "0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)",

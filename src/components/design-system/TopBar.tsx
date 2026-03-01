@@ -88,7 +88,7 @@ export default function TopBar({
         {/* Mobile Menu Button */}
         <button
           onClick={onToggleMenu}
-          className="md:hidden p-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition-all flex items-center justify-center flex-shrink-0"
+          className="md:hidden p-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition-all flex items-center justify-center shrink-0"
           style={{
             transitionDuration: `${DESIGN_TOKENS.motion.duration.normal}ms`,
           }}
@@ -101,7 +101,7 @@ export default function TopBar({
         <a
           href="#home"
           onClick={onHomeClick}
-          className="flex items-center gap-3 md:gap-1.5 lg:gap-3 flex-shrink-0"
+          className="flex items-center gap-3 md:gap-1.5 lg:gap-3 shrink-0"
         >
           <img
             src={logoUrl}

@@ -1477,7 +1477,7 @@ export default function AccessLogsPage({
     >
       <td className="px-4 py-4">
         <div className="flex items-center gap-3">
-          <div className={`w-8 h-8 rounded-full relative overflow-hidden flex-shrink-0 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}>
+          <div className={`w-8 h-8 rounded-full relative overflow-hidden shrink-0 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}>
             <div className="access-logs-shimmer" />
           </div>
           <SkeletonLine width="100px" height="1rem" />
@@ -2109,7 +2109,7 @@ export default function AccessLogsPage({
           /* Regular Error */
           <div className="p-6 rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800">
             <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
               <div>
                 <h3 className="font-semibold text-red-900 dark:text-red-200">Error Loading Logs</h3>
                 <p className="text-sm text-red-700 dark:text-red-300 mt-1">{error}</p>
@@ -2320,7 +2320,7 @@ export default function AccessLogsPage({
                   <td className="px-4 py-4">
                     <div className="flex items-center gap-3">
                       <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                        className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
                         style={{
                           background: `${getActionColor(log.type)}20`,
                           color: getActionColor(log.type),
@@ -2694,7 +2694,7 @@ export default function AccessLogsPage({
       {/* Clear Logs Modal - Elegant Centered Design */}
       {showClearLogsModal && (
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          className="fixed inset-0 z-9999 flex items-center justify-center p-4"
           style={{ backgroundColor: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(8px)" }}
           onClick={() => !isClearing && setShowClearLogsModal(false)}
         >
@@ -2711,7 +2711,7 @@ export default function AccessLogsPage({
           >
             {/* Modal Header */}
             <div
-              className="px-5 py-4 border-b flex items-center justify-between flex-shrink-0"
+              className="px-5 py-4 border-b flex items-center justify-between shrink-0"
               style={{
                 borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
                 background: isDark ? "rgba(239, 68, 68, 0.1)" : "rgba(239, 68, 68, 0.05)",
@@ -2780,7 +2780,7 @@ export default function AccessLogsPage({
                   }}
                 >
                   <div
-                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${
                       clearMode === 'all' ? 'border-red-500 bg-red-500' : 'border-gray-400'
                     }`}
                   >
@@ -2819,7 +2819,7 @@ export default function AccessLogsPage({
                   }}
                 >
                   <div
-                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${
                       clearMode === 'dateRange' ? 'border-red-500 bg-red-500' : 'border-gray-400'
                     }`}
                   >
@@ -2906,7 +2906,7 @@ export default function AccessLogsPage({
                   }}
                 >
                   <div
-                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${
                       clearMode === 'selected' ? 'border-red-500 bg-red-500' : 'border-gray-400'
                     }`}
                   >
@@ -3005,7 +3005,7 @@ export default function AccessLogsPage({
                   border: `1px solid ${isDark ? "rgba(245, 158, 11, 0.3)" : "rgba(245, 158, 11, 0.2)"}`,
                 }}
               >
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
                 <div>
                   <div
                     className="text-[11px]"
@@ -3037,7 +3037,7 @@ export default function AccessLogsPage({
 
             {/* Modal Footer */}
             <div
-              className="px-5 py-3 border-t flex items-center justify-end gap-2 flex-shrink-0"
+              className="px-5 py-3 border-t flex items-center justify-end gap-2 shrink-0"
               style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}
             >
               <Button

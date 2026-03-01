@@ -168,7 +168,7 @@ export default function SocialLinksEditor({ links, onChange, isDark, isEditing =
                       {/* Delete Button */}
                       <button
                         onClick={() => removeLink(link.id)}
-                        className="p-2 rounded-lg transition-all duration-300 hover:scale-110 flex-shrink-0"
+                        className="p-2 rounded-lg transition-all duration-300 hover:scale-110 shrink-0"
                         style={{
                           background: isDark ? 'rgba(239, 68, 68, 0.2)' : 'rgba(239, 68, 68, 0.1)',
                           color: '#ef4444',
@@ -231,7 +231,7 @@ export default function SocialLinksEditor({ links, onChange, isDark, isEditing =
                         {link.url}
                       </p>
                     </div>
-                    <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    <ExternalLink className="w-4 h-4 text-gray-400 shrink-0" />
                   </a>
                 )}
               </div>

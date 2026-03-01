@@ -55,6 +55,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
+import type { Map as LeafletMap, Marker as LeafletMarker, Circle as LeafletCircle } from "leaflet";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
 import CustomDropdown from "./CustomDropdown";
@@ -79,7 +80,6 @@ import {
   AttendanceErrorCodes,
   AttendanceAPIError,
   type MemberForAttendance,
-  type AttendanceRecord,
 } from "../services/gasAttendanceService";
 import { getStoredUser } from "../services/gasLoginService";
 import { YSP_COMMITTEES as SHARED_COMMITTEES } from "../constants/committees";
@@ -536,16 +536,14 @@ interface GeofenceMapProps {
   isWithinGeofence: boolean | null;
   isDark: boolean;
   locationName?: string;
-  onRecenterUser?: () => void;
 }
 
-function GeofenceMap({ eventLat, eventLng, radius, userLocation, isWithinGeofence, isDark, locationName, onRecenterUser }: GeofenceMapProps) {
-  const mapRef = useRef<any>(null);
-  const mapInstanceRef = useRef<any>(null);
-  const eventMarkerRef = useRef<any>(null);
-  const geofenceCircleRef = useRef<any>(null);
-  const userMarkerRef = useRef<any>(null);
-  const userAccuracyCircleRef = useRef<any>(null);
+function GeofenceMap({ eventLat, eventLng, radius, userLocation, isWithinGeofence, isDark, locationName }: GeofenceMapProps) {
+  const mapInstanceRef = useRef<LeafletMap | null>(null);
+  const eventMarkerRef = useRef<LeafletMarker | null>(null);
+  const geofenceCircleRef = useRef<LeafletCircle | null>(null);
+  const userMarkerRef = useRef<LeafletMarker | null>(null);
+  const userAccuracyCircleRef = useRef<LeafletCircle | null>(null);
   const mapId = useRef(`geofence-map-${Date.now()}`);
 
   useEffect(() => {
@@ -663,7 +661,7 @@ function GeofenceMap({ eventLat, eventLng, radius, userLocation, isWithinGeofenc
         mapInstanceRef.current = null;
       }
     };
-  }, []);
+  }, [eventLat, eventLng, locationName, radius, userLocation]);
 
   // Update user location marker when it changes
   useEffect(() => {
@@ -892,7 +890,7 @@ function EventCardSkeleton({ isDark }: { isDark: boolean }) {
   );
 }
 
-export default function AttendanceRecordingPage({ onClose, isDark, initialEventId, initialMode, buildShareableUrl }: AttendanceRecordingPageProps) {
+export default function AttendanceRecordingPage({ onClose, isDark, initialEventId, initialMode }: AttendanceRecordingPageProps) {
   // Wizard state
   const [currentStep, setCurrentStep] = useState<Step>("event-selection");
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -945,8 +943,24 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
   const [isBatchRecording, setIsBatchRecording] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
-  const [previousRecord, setPreviousRecord] = useState<any>(null);
-  const [pendingRecord, setPendingRecord] = useState<any>(null);
+  interface AttendancePreviewRecord {
+    memberData: MemberForAttendance;
+    member: string;
+    event: string;
+    timeType: string;
+    status: string;
+    timestamp: string;
+    date: string;
+    eventId?: string;
+    attendanceId?: string;
+    timeIn?: string;
+    needsConfirmation?: boolean;
+    isOffline?: boolean;
+    isExternal?: boolean;
+  }
+
+  const [previousRecord, setPreviousRecord] = useState<AttendancePreviewRecord | null>(null);
+  const [pendingRecord, setPendingRecord] = useState<AttendancePreviewRecord | null>(null);
   
   // External attendee confirmation state
   const [showExternalConfirmModal, setShowExternalConfirmModal] = useState(false);
@@ -955,8 +969,6 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     timestamp: string;
     fullDate: string;
   } | null>(null);
-  const [isCheckingRecipient, setIsCheckingRecipient] = useState(false);
-  
   // @recipients command state - for showing expected participants
   const [showRecipientsMode, setShowRecipientsMode] = useState(false);
   const [recipientMembers, setRecipientMembers] = useState<MemberForAttendance[]>([]);
@@ -1020,6 +1032,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
   const [pendingAttendanceQueue, setPendingAttendanceQueue] = useState<PendingAttendanceRecord[]>([]);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const syncPendingRecordsRef = useRef<() => Promise<void>>(async () => {});
 
   // Load pending queue from localStorage on mount
   const loadPendingQueue = useCallback((): PendingAttendanceRecord[] => {
@@ -1078,7 +1091,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
   }, [savePendingQueue]);
 
   // Member cache is now permanent (no TTL expiry)
-  const loadMembersFromCache = (): MemberForAttendance[] | null => {
+  const loadMembersFromCache = useCallback((): MemberForAttendance[] | null => {
     try {
       // No TTL check - cache is permanent until manually cleared
       const raw = localStorage.getItem(MEMBERS_CACHE_KEY);
@@ -1089,9 +1102,9 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     } catch {
       return null;
     }
-  };
+  }, [MEMBERS_CACHE_KEY]);
 
-  const saveMembersToCache = (membersToCache: MemberForAttendance[]) => {
+  const saveMembersToCache = useCallback((membersToCache: MemberForAttendance[]) => {
     try {
       // Merge with existing cache - update existing members and add new ones
       const existing = loadMembersFromCache() || [];
@@ -1110,10 +1123,10 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       console.warn("Cache write failed:", error);
       // Ignore cache write failures (e.g., storage full or disabled).
     }
-  };
+  }, [MEMBERS_CACHE_KEY, MEMBERS_CACHE_TS_KEY, loadMembersFromCache]);
 
-  const normalizeMemberId = (value: string): string =>
-    value.trim().toLowerCase().replace(/\s+/g, "");
+  const normalizeMemberId = useCallback((value: string): string =>
+    value.trim().toLowerCase().replace(/\s+/g, ""), []);
 
   const extractMemberIdFromQr = (raw: string): string => {
     const trimmed = raw.trim();
@@ -1138,11 +1151,11 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     return trimmed;
   };
 
-  const cacheMember = (member: MemberForAttendance) => {
+  const cacheMember = useCallback((member: MemberForAttendance) => {
     const normalizedId = normalizeMemberId(member.id);
     memberCacheRef.current.set(member.id, member);
     memberCacheRef.current.set(normalizedId, member);
-  };
+  }, [normalizeMemberId]);
 
   // Toast management functions
   const addUploadToast = (message: UploadToastMessage) => {
@@ -1527,14 +1540,15 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     setPendingAttendanceQueue(queue);
 
     const handleOnline = () => {
+      const pendingCount = loadPendingQueue().length;
       setIsOnline(true);
       toast.success("Back online!", {
-        description: pendingAttendanceQueue.length > 0 
-          ? `Syncing ${pendingAttendanceQueue.length} pending record(s)...` 
+        description: pendingCount > 0 
+          ? `Syncing ${pendingCount} pending record(s)...` 
           : "Network connection restored.",
       });
       // Trigger sync
-      syncPendingRecords();
+      void syncPendingRecordsRef.current();
     };
 
     const handleOffline = () => {
@@ -1604,6 +1618,10 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     }
   }, [loadPendingQueue, markAsSynced, markAsFailed, isSyncing]);
 
+  useEffect(() => {
+    syncPendingRecordsRef.current = syncPendingRecords;
+  }, [syncPendingRecords]);
+
   // Try to sync when online status changes
   useEffect(() => {
     if (isOnline && pendingAttendanceQueue.length > 0) {
@@ -1662,7 +1680,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         setIsLoadingMembers(false);
       }
     }
-  }, [isOnline]);
+  }, [cacheMember, isOnline, isReload, loadMembersFromCache, saveMembersToCache]);
 
   // Load recipients for the selected event when @recipients command is triggered
   const loadEventRecipients = useCallback(async () => {
@@ -1801,7 +1819,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         setShowMemberDropdown(true);
         break;
     }
-  }, [loadEventRecipients, members, isOnline, cacheMember, selectedMembers]);
+  }, [loadEventRecipients, members, isOnline, cacheMember, saveMembersToCache, selectedMembers]);
   
   // Handle committee selection from @committee command
   const handleSelectCommittee = useCallback(async (committeeId: string, committeeName: string) => {
@@ -1840,7 +1858,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       setShowCommandSuggestions(false);
       setCommandSearchQuery('');
     }
-  }, [members, isOnline, cacheMember, selectedMembers]);
+  }, [members, isOnline, cacheMember, saveMembersToCache, selectedMembers]);
   
   // Handle batch comma/Enter input for multiple names
   const handleBatchNameInput = useCallback((input: string) => {
@@ -2118,7 +2136,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
           hour12: true
         });
       }
-    } catch (e) {
+    } catch {
       // Fall through to return original value
     }
     
@@ -2134,47 +2152,6 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     }
     // Get first letter of first name and first letter of last name
     return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
-  };
-
-  // Render avatar with image or initials fallback
-  const renderAvatar = (profilePicture: string | undefined, name: string, size: 'sm' | 'md' | 'lg' = 'md') => {
-    const sizeClasses = {
-      sm: 'w-10 h-10 text-sm',
-      md: 'w-16 h-16 md:w-20 md:h-20 text-xl md:text-2xl',
-      lg: 'w-20 h-20 md:w-24 md:h-24 text-2xl md:text-3xl',
-    };
-    
-    if (profilePicture) {
-      return (
-        <img 
-          src={profilePicture}
-          alt={name}
-          className={`${sizeClasses[size].split(' ').slice(0, 2).join(' ')} rounded-full object-cover border-4 shadow-lg`}
-          style={{
-            borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
-          }}
-          onError={(e) => {
-            // If image fails to load, replace with initials
-            const target = e.target as HTMLImageElement;
-            target.style.display = 'none';
-            target.nextElementSibling?.classList.remove('hidden');
-          }}
-        />
-      );
-    }
-    
-    // Initials fallback
-    return (
-      <div 
-        className={`${sizeClasses[size]} rounded-full flex items-center justify-center font-bold text-white border-4 shadow-lg`}
-        style={{
-          background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)',
-          borderColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.9)',
-        }}
-      >
-        {getInitials(name)}
-      </div>
-    );
   };
 
   // Close member dropdown when clicking outside
@@ -2293,7 +2270,6 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       // Check if member is a target recipient (only when online)
       let isTargetRecipient = true; // Default to true for offline or if check fails
       if (isOnline && selectedEvent) {
-        setIsCheckingRecipient(true);
         try {
           const recipientCheck = await checkIsTargetRecipient(selectedEvent.id, member.id);
           isTargetRecipient = recipientCheck.isTarget;
@@ -2301,8 +2277,6 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
           console.error("Failed to check target recipient status:", error);
           // Default to true if check fails - allow recording
           isTargetRecipient = true;
-        } finally {
-          setIsCheckingRecipient(false);
         }
       }
 
@@ -2350,6 +2324,9 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     }
   };
 
+  const processQRScanRef = useRef(processQRScan);
+  processQRScanRef.current = processQRScan;
+
   // Confirm and record attendance after user verifies identity
   const confirmAndRecordAttendance = async () => {
     if (!pendingRecord?.memberData || !selectedEvent) {
@@ -2371,7 +2348,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         memberId: member.id,
         memberName: member.name,
         memberData: member,
-        status: pendingRecord.status || 'Present',
+        status: (pendingRecord.status as 'Present' | 'Late' | 'Excused' | 'Absent') || 'Present',
         timeType: timeType,
         timestamp: timestamp,
         fullDate: fullDate,
@@ -2567,7 +2544,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
   };
 
   // QR Scanner handlers - using html5-qrcode for real QR scanning
-  const handleStartScanning = async () => {
+  const handleStartScanning = useCallback(async () => {
     if (isScanning || isStartingScannerRef.current) {
       return;
     }
@@ -2607,7 +2584,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         console.warn("QR Code scanned:", decodedText);
 
         // Process the scanned QR code (member ID)
-        await processQRScan(decodedText.trim());
+        await processQRScanRef.current(decodedText.trim());
       };
 
       const config = { 
@@ -2625,7 +2602,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         { facingMode: "environment" },
         config,
         qrCodeSuccessCallback,
-        (errorMessage) => {
+        (_errorMessage) => {
           // QR code parse error - this is called frequently, just ignore
           // console.warn("QR parse error:", errorMessage);
         }
@@ -2641,10 +2618,10 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     } finally {
       isStartingScannerRef.current = false;
     }
-  };
+  }, [isScanning, qrScannerContainerId]);
 
   // Stop QR scanning - with improved mobile handling
-  const handleStopScanning = async () => {
+  const handleStopScanning = useCallback(async () => {
     console.warn("🛑 Stop scanning requested, current state:", {
       hasScanner: !!qrScannerRef.current,
       isScanning,
@@ -2689,7 +2666,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     if (wasScanning) {
       toast.info("Camera stopped", { duration: 2000 });
     }
-  };
+  }, [isScanning, qrScannerContainerId]);
 
   // Cleanup scanner on unmount or when leaving QR mode
   useEffect(() => {
@@ -2710,7 +2687,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     if (currentStep !== "recording" || selectedMode !== "qr") {
       handleStopScanning();
     }
-  }, [currentStep, selectedMode]);
+  }, [currentStep, selectedMode, handleStopScanning]);
 
   // Auto-start scanning when entering QR mode (only on initial entry, not after manual stop)
   useEffect(() => {
@@ -2725,7 +2702,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     ) {
       handleStartScanning();
     }
-  }, [currentStep, selectedMode, cameraPermission, isScanning, showVerificationModal, showOverwriteWarning]);
+  }, [currentStep, selectedMode, cameraPermission, isScanning, showVerificationModal, showOverwriteWarning, handleStartScanning]);
 
   // Manual attendance handlers - with real backend
   const handleRecordAttendance = async () => {
@@ -2770,15 +2747,12 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       // Check if member is a target recipient (only when online)
       let isTargetRecipient = true;
       if (isOnline && selectedEvent) {
-        setIsCheckingRecipient(true);
         try {
           const recipientCheck = await checkIsTargetRecipient(selectedEvent.id, member.id);
           isTargetRecipient = recipientCheck.isTarget;
         } catch (error) {
           console.error("Failed to check target recipient status:", error);
           isTargetRecipient = true; // Default to true if check fails
-        } finally {
-          setIsCheckingRecipient(false);
         }
       }
 
@@ -3103,7 +3077,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     }
   };
 
-  const handleSuccessModalClose = (showToast: boolean = true) => {
+  const handleSuccessModalClose = (_showToast: boolean = true) => {
     // If record still needs confirmation, this is a cancellation - don't record
     if (pendingRecord?.needsConfirmation) {
       toast.info("Attendance not recorded", {
@@ -3304,7 +3278,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                                   </h3>
                                 </div>
                                 <div
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs flex-shrink-0"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs shrink-0"
                                   style={{
                                     backgroundColor: statusInfo.bgColor,
                                     color: statusInfo.color,
@@ -3321,7 +3295,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                               {/* Event Details */}
                               <div className="space-y-1.5 md:space-y-2 mb-3 md:mb-4">
                                 <div className="flex items-center gap-2 text-xs md:text-sm">
-                                  <Calendar className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                  <Calendar className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] shrink-0" />
                                   <span className="text-muted-foreground truncate">
                                     {new Date(event.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} 
                                     {event.startDate !== event.endDate && ` - ${new Date(event.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
@@ -3329,7 +3303,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                                 </div>
                                 {event.startTime && (
                                   <div className="flex items-center gap-2 text-xs md:text-sm">
-                                    <Clock className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                    <Clock className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] shrink-0" />
                                     <span className="text-muted-foreground truncate">
                                       {formatEventTime(event.startTime)}{event.endTime && ` - ${formatEventTime(event.endTime)}`}
                                     </span>
@@ -3337,7 +3311,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                                 )}
                                 {event.locationName && (
                                   <div className="flex items-center gap-2 text-xs md:text-sm">
-                                    <MapPin className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                    <MapPin className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] shrink-0" />
                                     <span className="text-muted-foreground truncate">{event.locationName}</span>
                                   </div>
                                 )}
@@ -3426,7 +3400,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                                       </h3>
                                     </div>
                                     <div
-                                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs flex-shrink-0"
+                                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs shrink-0"
                                       style={{
                                         backgroundColor: statusInfo.bgColor,
                                         color: statusInfo.color,
@@ -3443,7 +3417,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                                   {/* Event Details */}
                                   <div className="space-y-1.5 md:space-y-2 mb-3 md:mb-4">
                                     <div className="flex items-center gap-2 text-xs md:text-sm">
-                                      <Calendar className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                      <Calendar className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] shrink-0" />
                                       <span className="text-muted-foreground truncate">
                                         {new Date(event.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} 
                                         {event.startDate !== event.endDate && ` - ${new Date(event.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
@@ -3451,7 +3425,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                                     </div>
                                     {event.startTime && (
                                       <div className="flex items-center gap-2 text-xs md:text-sm">
-                                        <Clock className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                        <Clock className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] shrink-0" />
                                         <span className="text-muted-foreground truncate">
                                           {formatEventTime(event.startTime)}{event.endTime && ` - ${formatEventTime(event.endTime)}`}
                                         </span>
@@ -3459,7 +3433,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                                     )}
                                     {event.locationName && (
                                       <div className="flex items-center gap-2 text-xs md:text-sm">
-                                        <MapPin className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] flex-shrink-0" />
+                                        <MapPin className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#ee8724] shrink-0" />
                                         <span className="text-muted-foreground truncate">{event.locationName}</span>
                                       </div>
                                     )}
@@ -3789,7 +3763,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                   <X className="w-6 h-6" />
                 </button>
                 {/* Scanning indicator overlay */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-center pointer-events-none">
+                <div className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-black/80 to-transparent p-4 text-center pointer-events-none">
                   <p className="text-white text-sm font-medium flex items-center justify-center gap-2">
                     <QrCode className="w-4 h-4 animate-pulse" />
                     Scanning for QR Code...
@@ -3857,7 +3831,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
           >
             <div className="flex items-start gap-2 md:gap-3">
               <CheckCircle
-                className="flex-shrink-0 mt-0.5 md:mt-1"
+                className="shrink-0 mt-0.5 md:mt-1"
                 style={{ width: "18px", height: "18px", color: DESIGN_TOKENS.colors.status.present }}
               />
               <div>
@@ -4170,7 +4144,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               {batchNotFoundNames.length > 0 && (
                 <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
                   <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
                         Names not found ({batchNotFoundNames.length}):
@@ -4281,7 +4255,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                       }`}
                     >
                       <span className="font-medium truncate flex-1">{result.name}</span>
-                      <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
                         {result.status === 'success' && <CheckCircle2 className="w-4 h-4 text-green-500" />}
                         {result.status === 'error' && <XCircle className="w-4 h-4 text-red-500" />}
                         {result.status === 'pending' && <Loader2 className="w-4 h-4 animate-spin text-gray-500" />}
@@ -4381,11 +4355,11 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                               <img 
                                 src={member.profilePicture}
                                 alt={member.name}
-                                className="w-10 h-10 rounded-full object-cover flex-shrink-0 ring-2 ring-orange-300 dark:ring-orange-600"
+                                className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-orange-300 dark:ring-orange-600"
                               />
                             ) : (
                               <div 
-                                className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0 ring-2 ring-orange-300 dark:ring-orange-600"
+                                className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0 ring-2 ring-orange-300 dark:ring-orange-600"
                                 style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
                               >
                                 {getInitials(member.name)}
@@ -4402,7 +4376,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                                 {member.position} • {member.committee}
                               </p>
                             </div>
-                            <div className="flex-shrink-0">
+                            <div className="shrink-0">
                               <span className="text-xs px-2 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
                                 Expected
                               </span>
@@ -4452,11 +4426,11 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                           <img 
                             src={member.profilePicture}
                             alt={member.name}
-                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                            className="w-10 h-10 rounded-full object-cover shrink-0"
                           />
                         ) : (
                           <div 
-                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0"
                             style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
                           >
                             {getInitials(member.name)}
@@ -4519,11 +4493,11 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                           <img 
                             src={member.profilePicture}
                             alt={member.name}
-                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                            className="w-10 h-10 rounded-full object-cover shrink-0"
                           />
                         ) : (
                           <div 
-                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0"
                             style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
                           >
                             {getInitials(member.name)}
@@ -4540,7 +4514,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                             {member.position} • {member.committee}
                           </p>
                         </div>
-                        <span className="text-xs text-orange-500 flex-shrink-0">+ Add</span>
+                        <span className="text-xs text-orange-500 shrink-0">+ Add</span>
                       </button>
                     ))
                   ) : (
@@ -4570,11 +4544,11 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                           <img 
                             src={member.profilePicture}
                             alt={member.name}
-                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                            className="w-10 h-10 rounded-full object-cover shrink-0"
                           />
                         ) : (
                           <div 
-                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0"
                             style={{ background: 'linear-gradient(135deg, #ee8724 0%, #f6421f 100%)' }}
                           >
                             {getInitials(member.name)}
@@ -4588,7 +4562,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                             {member.position} • {member.committee}
                           </p>
                         </div>
-                        <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                        <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />
                       </>
                     ) : null;
                   })()}
@@ -4648,7 +4622,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
             </label>
             <CustomDropdown
               value={status}
-              onChange={(value) => setStatus(value as any)}
+              onChange={(value) => setStatus(value as "Present" | "Late" | "Excused" | "Absent")}
               options={[
                 { value: "Present", label: "Present" },
                 { value: "Late", label: "Late" },
@@ -4663,7 +4637,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
           {/* Business Rule Notice */}
           {(status === "Absent" || status === "Excused") && (
             <div className="mb-4 md:mb-6 flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-              <AlertCircle className="w-4 h-4 md:w-5 md:h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+              <AlertCircle className="w-4 h-4 md:w-5 md:h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <span className="text-xs md:text-sm text-amber-800 dark:text-amber-300">
                 <strong>Note:</strong> Time Out cannot be recorded for Absent or Excused status
               </span>
@@ -4719,7 +4693,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       {/* Overwrite Confirmation Modal */}
       {showOverwriteWarning && previousRecord && pendingRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-9999 flex items-center justify-center p-4 sm:p-6 md:p-8"
           onClick={() => {
             setShowOverwriteWarning(false);
             scanPauseRef.current = false;
@@ -4774,7 +4748,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               >
                 <div className="flex items-center gap-3 md:gap-4 mb-4">
                   {/* Profile Picture */}
-                  <div className="flex-shrink-0">
+                  <div className="shrink-0">
                     {previousRecord.memberData?.profilePicture ? (
                       <img 
                         src={previousRecord.memberData.profilePicture} 
@@ -4844,7 +4818,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               <div className="space-y-3">
                 {/* Previous Time */}
                 <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
-                  <Clock className="w-5 h-5 text-[#f59e0b] flex-shrink-0 mt-0.5" />
+                  <Clock className="w-5 h-5 text-[#f59e0b] shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-muted-foreground mb-1">Previous Record</p>
                     <p 
@@ -4860,7 +4834,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
 
             {/* Sticky Footer with Action Buttons */}
             <div 
-              className="flex-shrink-0 p-5 md:p-7 pt-4 border-t flex gap-3"
+              className="shrink-0 p-5 md:p-7 pt-4 border-t flex gap-3"
               style={{
                 background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
                 borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
@@ -4894,7 +4868,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       {/* Event Details Modal */}
       {showEventDetailsModal && selectedEvent && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-9999 flex items-center justify-center p-4"
           onClick={() => setShowEventDetailsModal(false)}
         >
           <div
@@ -4917,7 +4891,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
           >
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <div 
-                className="w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                className="w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center shrink-0"
                 style={{
                   background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
                 }}
@@ -4941,7 +4915,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
             </div>
             <button
               onClick={() => setShowEventDetailsModal(false)}
-              className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flex-shrink-0"
+              className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0"
               title="Close"
             >
               <X className="w-5 h-5" />
@@ -4956,7 +4930,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                 const statusInfo = getEventStatusInfo(selectedEvent.status);
                 return (
                   <div
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs flex-shrink-0"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs shrink-0"
                     style={{
                       backgroundColor: statusInfo.bgColor,
                       color: statusInfo.color,
@@ -4993,7 +4967,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
             {selectedEvent.status !== 'happening' && selectedEvent.status !== 'completed' && selectedEvent.status !== 'cancelled' && (
               <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
                 <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
                       Event has not started yet
@@ -5014,7 +4988,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
             <div className="grid gap-3 mb-4">
               {/* Date Information */}
               <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800">
-                <Calendar className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                <Calendar className="w-5 h-5 text-[#ee8724] shrink-0 mt-0.5" />
                 <div className="flex-1">
                   <p className="text-xs text-muted-foreground mb-1">Event Date</p>
                   <p className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
@@ -5043,7 +5017,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               {/* Time Information */}
               {selectedEvent.startTime && (
                 <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800">
-                  <Clock className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                  <Clock className="w-5 h-5 text-[#ee8724] shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <p className="text-xs text-muted-foreground mb-1">Event Time</p>
                     <p className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
@@ -5055,7 +5029,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
 
               {/* Location Information */}
               <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800">
-                <MapPin className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                <MapPin className="w-5 h-5 text-[#ee8724] shrink-0 mt-0.5" />
                 <div className="flex-1">
                   <p className="text-xs text-muted-foreground mb-1">Event Location</p>
                   <p className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
@@ -5070,7 +5044,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               {/* Geofence Radius - Only show if geofencing is enabled */}
               {selectedEvent.geofenceEnabled !== false && (
                 <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800">
-                  <Navigation className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                  <Navigation className="w-5 h-5 text-[#ee8724] shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <p className="text-xs text-muted-foreground mb-1">Geofence Radius</p>
                     <p className="text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
@@ -5086,7 +5060,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               {/* Geofencing Disabled Notice */}
               {selectedEvent.geofenceEnabled === false && (
                 <div className="flex items-start gap-3 p-3 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-                  <CheckCircle2 className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <p className="text-xs text-muted-foreground mb-1">Location Check</p>
                     <p className="text-sm text-blue-600 dark:text-blue-400" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
@@ -5306,7 +5280,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               
               // Determine button state and message
               let buttonContent;
-              let buttonDisabled = !canProceed;
+              const buttonDisabled = !canProceed;
               
               if (!eventHasStarted) {
                 buttonContent = <><Clock className="w-4 h-4" /><span>Event Not Started</span></>;
@@ -5342,7 +5316,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       {/* Verification Modal */}
       {showVerificationModal && pendingRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-9999 flex items-center justify-center p-4 sm:p-6 md:p-8"
           onClick={handleDismissVerificationModal}
         >
           <div
@@ -5437,7 +5411,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               >
                 <div className="flex items-center gap-3 md:gap-4 mb-4">
                   {/* Profile Picture */}
-                  <div className="flex-shrink-0">
+                  <div className="shrink-0">
                     {pendingRecord.memberData?.profilePicture ? (
                       <img 
                         src={pendingRecord.memberData.profilePicture} 
@@ -5528,7 +5502,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               <div className="space-y-3">
                 {/* Event */}
                 <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
-                  <Calendar className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                  <Calendar className="w-5 h-5 text-[#ee8724] shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-muted-foreground mb-1">Event</p>
                     <p 
@@ -5542,7 +5516,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
 
                 {/* Date & Time */}
                 <div className="flex items-start gap-3 p-3 md:p-4 rounded-lg bg-gray-100 dark:bg-gray-800">
-                  <Clock className="w-5 h-5 text-[#ee8724] flex-shrink-0 mt-0.5" />
+                  <Clock className="w-5 h-5 text-[#ee8724] shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-muted-foreground mb-1">Date & Time</p>
                     <p 
@@ -5561,7 +5535,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
 
             {/* Sticky Footer with Verify Button */}
             <div 
-              className="flex-shrink-0 p-5 md:p-7 pt-4 border-t"
+              className="shrink-0 p-5 md:p-7 pt-4 border-t"
               style={{
                 background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
                 borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
@@ -5611,7 +5585,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       {/* External Attendee Confirmation Modal */}
       {showExternalConfirmModal && pendingExternalRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-9999 flex items-center justify-center p-4 sm:p-6 md:p-8"
           onClick={handleRejectExternalAttendee}
         >
           <div
@@ -5674,7 +5648,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
               <div className="mb-5 p-4 rounded-xl" style={{ background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.02)', border: isDark ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(0, 0, 0, 0.1)' }}>
                 <div className="flex items-center gap-3">
                   <div 
-                    className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                    className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
                     style={{ 
                       background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
                       boxShadow: '0 4px 8px rgba(245, 158, 11, 0.3)',
@@ -5709,7 +5683,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
 
             {/* Footer Buttons */}
             <div 
-              className="flex-shrink-0 p-5 md:p-7 pt-4 border-t space-y-3"
+              className="shrink-0 p-5 md:p-7 pt-4 border-t space-y-3"
               style={{
                 background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
                 borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',

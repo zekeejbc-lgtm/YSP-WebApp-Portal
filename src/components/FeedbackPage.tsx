@@ -1522,7 +1522,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
           {/* Back Button */}
           <button
             onClick={onClose}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 hover:scale-105 active:scale-95 flex-shrink-0"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 hover:scale-105 active:scale-95 shrink-0"
             style={{
               background: 'linear-gradient(135deg, rgba(238, 135, 36, 0.15), rgba(246, 66, 31, 0.15))',
               border: '2px solid rgba(238, 135, 36, 0.3)',
@@ -1555,7 +1555,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
           </div>
 
           {/* Empty div to balance the header layout */}
-          <div className="w-20 sm:w-24 flex-shrink-0" />
+          <div className="w-20 sm:w-24 shrink-0" />
         </div>
       </header>
 
@@ -2399,7 +2399,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                 WebkitBackdropFilter: 'blur(20px)',
               }}
             >
-              <div className="flex-shrink-0 p-4 sm:p-6 border-b flex items-center justify-between"
+              <div className="shrink-0 p-4 sm:p-6 border-b flex items-center justify-between"
                 style={{
                   background: isDark ? 'rgba(15, 23, 42, 0.98)' : 'rgba(255, 255, 255, 0.98)',
                   backdropFilter: 'blur(20px)',
@@ -2632,7 +2632,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
                 {/* Action Buttons - Fixed Footer */}
                 <div 
-                  className="flex-shrink-0 flex gap-3 p-4 sm:p-6 border-t"
+                  className="shrink-0 flex gap-3 p-4 sm:p-6 border-t"
                   style={{
                     background: isDark ? 'rgba(15, 23, 42, 0.98)' : 'rgba(255, 255, 255, 0.98)',
                     borderColor: isDark ? 'rgba(238, 135, 36, 0.2)' : 'rgba(238, 135, 36, 0.3)',
@@ -2770,7 +2770,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
                 }}
               >
                 <div className="flex items-start gap-3">
-                  <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`} />
+                  <AlertCircle className={`w-5 h-5 shrink-0 mt-0.5 ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`} />
                   <p className={`text-sm ${isDark ? 'text-yellow-300' : 'text-yellow-800'}`} style={{ fontWeight: '500', lineHeight: '1.5' }}>
                     <span style={{ fontWeight: '700' }}>Important:</span> Your feedback will disappear from "My Feedbacks" when you refresh the page. Use the search bar with your Feedback ID to find it again.
                   </p>

@@ -86,7 +86,7 @@ export function CustomToast({
 
   return (
     <div
-      className={`fixed top-6 right-6 z-[9999] flex items-start gap-3 px-5 py-4 rounded-xl shadow-2xl backdrop-blur-md border-2 transition-all duration-300 ${
+      className={`fixed top-6 right-6 z-9999 flex items-start gap-3 px-5 py-4 rounded-xl shadow-2xl backdrop-blur-md border-2 transition-all duration-300 ${
         isExiting ? "opacity-0 translate-x-8" : "opacity-100 translate-x-0"
       }`}
       style={{
@@ -97,7 +97,7 @@ export function CustomToast({
       }}
     >
       {/* Icon */}
-      <div className="flex-shrink-0 mt-0.5">{getIcon()}</div>
+      <div className="shrink-0 mt-0.5">{getIcon()}</div>
 
       {/* Message */}
       <p
@@ -115,7 +115,7 @@ export function CustomToast({
       {/* Close Button */}
       <button
         onClick={handleClose}
-        className={`flex-shrink-0 ${isDark ? "hover:bg-gray-700" : "hover:bg-gray-100"} rounded-lg p-1 transition-colors`}
+        className={`shrink-0 ${isDark ? "hover:bg-gray-700" : "hover:bg-gray-100"} rounded-lg p-1 transition-colors`}
         aria-label="Close notification"
       >
         <X className={`w-4 h-4 ${isDark ? "text-gray-400" : "text-gray-500"}`} />

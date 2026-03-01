@@ -99,7 +99,7 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
         {message.status === 'loading' && message.progress !== undefined && (
           <div className="h-1 bg-orange-50 overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-orange-500 to-orange-600 transition-all duration-300"
+              className="h-full bg-linear-to-r from-orange-500 to-orange-600 transition-all duration-300"
               style={{ width: `${message.progress}%` }}
             />
           </div>
@@ -108,7 +108,7 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
         <div className="p-4 space-y-3">
           {/* Header with icon */}
           <div className="flex items-start gap-3">
-          <div className={`flex-shrink-0 mt-0.5 ${
+          <div className={`shrink-0 mt-0.5 ${
               message.status === 'loading' ? 'text-orange-500' :
               message.status === 'success' ? 'text-green-500' :
               message.status === 'info' ? 'text-blue-500' :
@@ -173,7 +173,7 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
               </div>
               <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-orange-500 to-orange-600 rounded-full transition-all duration-300"
+                  className="h-full bg-linear-to-r from-orange-500 to-orange-600 rounded-full transition-all duration-300"
                   style={{ width: `${message.progress}%` }}
                 />
               </div>

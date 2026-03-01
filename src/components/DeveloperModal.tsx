@@ -788,7 +788,7 @@ export default function DeveloperModal({
           >
             Developer Profile
           </h2>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
             {isAdmin && isEditing && (
               <button
                 onClick={handleCancelEdit}
@@ -1142,7 +1142,7 @@ export default function DeveloperModal({
           </div>
 
           {/* Philosophy Section */}
-          <div className="space-y-4 p-4 md:p-6 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-2 border-blue-200 dark:border-blue-800 rounded-xl">
+          <div className="space-y-4 p-4 md:p-6 bg-linear-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-2 border-blue-200 dark:border-blue-800 rounded-xl">
             <h4
               style={{
                 fontFamily: 'var(--font-headings)',

@@ -324,7 +324,7 @@ export function DebugPill() {
         <motion.div
           layout
           className={`
-            relative backdrop-blur-xl bg-gradient-to-r
+            relative backdrop-blur-xl bg-linear-to-r
             ${isOnline 
               ? 'from-green-500/90 to-emerald-500/90 border-green-400' 
               : 'from-red-500/90 to-orange-500/90 border-red-400'

@@ -119,7 +119,7 @@ export function ProjectFormModal({
                 ? 'bg-red-900/20 border border-red-900/50 text-red-300'
                 : 'bg-red-50 border border-red-200 text-red-700'
             }`}>
-              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <p className="text-sm">{error}</p>
             </div>
           )}

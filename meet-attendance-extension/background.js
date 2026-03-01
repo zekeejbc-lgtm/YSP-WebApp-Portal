@@ -1,5 +1,15 @@
 'use strict';
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  YSP Meet Attendance Tracker — Background Service Worker v2.0
+ *  ─────────────────────────────────────────────────────────────────────────
+ *  • text/plain Content-Type (avoids CORS preflight on GAS)
+ *  • 3 retries with exponential back-off
+ *  • Persistent sync retry queue via chrome.storage.local + chrome.alarms
+ *  • Offline detection (navigator.onLine)
+ *  • Sync event log (last 30 events surfaced in popup diagnostics)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
 const STORAGE_KEYS = {
   enabled: 'ysp_tracker_enabled',
   active: 'ysp_tracker_active',
@@ -8,7 +18,16 @@ const STORAGE_KEYS = {
   lastSyncOk: 'ysp_tracker_last_sync_ok',
   lastSyncError: 'ysp_tracker_last_sync_error',
   lastMeetingOrigin: 'ysp_tracker_last_meeting_origin',
+  pendingSyncs: 'ysp_tracker_pending_syncs',
+  syncLog: 'ysp_tracker_sync_log',
 };
+
+const RETRY_ALARM_NAME = 'ysp-sync-retry';
+const RETRY_ALARM_PERIOD_MINUTES = 1;
+const MAX_PENDING_QUEUE = 50;
+const MAX_SYNC_LOG = 30;
+
+/* ─── Install / Startup ─────────────────────────────────────────────────── */
 
 chrome.runtime.onInstalled.addListener(function () {
   chrome.storage.local.get({ ysp_tracker_enabled: true }, function (items) {
@@ -16,7 +35,71 @@ chrome.runtime.onInstalled.addListener(function () {
       chrome.storage.local.set({ ysp_tracker_enabled: true });
     }
   });
+  ensureRetryAlarm_();
 });
+
+chrome.runtime.onStartup.addListener(function () {
+  ensureRetryAlarm_();
+});
+
+function ensureRetryAlarm_() {
+  chrome.alarms.get(RETRY_ALARM_NAME, function (alarm) {
+    if (!alarm) {
+      chrome.alarms.create(RETRY_ALARM_NAME, { periodInMinutes: RETRY_ALARM_PERIOD_MINUTES });
+    }
+  });
+}
+
+/* ─── Alarm Handler — drain pending queue ────────────────────────────── */
+
+chrome.alarms.onAlarm.addListener(function (alarm) {
+  if (alarm.name === RETRY_ALARM_NAME) {
+    drainPendingQueue_();
+  }
+});
+
+async function drainPendingQueue_() {
+  if (!navigator.onLine) return;
+
+  const items = await chromeStorageGet_({ [STORAGE_KEYS.pendingSyncs]: [] });
+  const queue = Array.isArray(items[STORAGE_KEYS.pendingSyncs])
+    ? items[STORAGE_KEYS.pendingSyncs]
+    : [];
+
+  if (queue.length === 0) return;
+
+  const remaining = [];
+  for (let i = 0; i < queue.length; i++) {
+    const entry = queue[i];
+    if (!entry || !entry.payload || !entry.url) continue;
+
+    const result = await postWithRetry_(entry.url, entry.payload, 2);
+    if (result.ok) {
+      appendSyncLog_({
+        time: new Date().toISOString(),
+        payloadId: entry.payload.payloadId || '?',
+        result: 'ok (queued retry)',
+        latencyMs: 0,
+      });
+    } else {
+      entry.attempts = (entry.attempts || 0) + 1;
+      if (entry.attempts < 5) {
+        remaining.push(entry);
+      } else {
+        appendSyncLog_({
+          time: new Date().toISOString(),
+          payloadId: entry.payload.payloadId || '?',
+          result: 'failed (dropped after 5 attempts): ' + (result.error || ''),
+          latencyMs: 0,
+        });
+      }
+    }
+  }
+
+  chrome.storage.local.set({ [STORAGE_KEYS.pendingSyncs]: remaining });
+}
+
+/* ─── Message Handlers ───────────────────────────────────────────────── */
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (!message || typeof message !== 'object') return;
@@ -35,6 +118,19 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return true;
   }
 
+  if (message.type === 'YSP_FORCE_SYNC') {
+    // Forward to content script via active Meet tab
+    chrome.tabs.query({ url: 'https://meet.google.com/*' }, function (tabs) {
+      if (tabs && tabs.length > 0) {
+        for (let i = 0; i < tabs.length; i++) {
+          chrome.tabs.sendMessage(tabs[i].id, { type: 'YSP_FORCE_SYNC' });
+        }
+      }
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
   if (message.type === 'YSP_GET_TRACKER_STATUS') {
     chrome.storage.local.get({
       ysp_tracker_enabled: true,
@@ -47,12 +143,16 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       ysp_tracker_last_sync_ok: false,
       ysp_tracker_last_sync_error: '',
       ysp_tracker_last_meeting_origin: '',
+      ysp_tracker_pending_syncs: [],
+      ysp_tracker_sync_log: [],
     }, function (items) {
       sendResponse({ ok: true, status: items });
     });
     return true;
   }
 });
+
+/* ─── Sync Request Handler ───────────────────────────────────────────── */
 
 async function handleSyncRequest_(payload) {
   if (!payload || !payload.extensionSecret || !payload.action) {
@@ -64,7 +164,15 @@ async function handleSyncRequest_(payload) {
     return { ok: false, error: 'Missing backend URL in sync payload' };
   }
 
-  const result = await postWithRetry_(backendUrl, payload, 1);
+  // Offline → queue immediately
+  if (!navigator.onLine) {
+    await enqueueSync_(backendUrl, payload);
+    return { ok: false, error: 'Offline — queued for retry', queued: true };
+  }
+
+  const startMs = Date.now();
+  const result = await postWithRetry_(backendUrl, payload, 2); // 3 total attempts
+  const latencyMs = Date.now() - startMs;
   const nowIso = new Date().toISOString();
   const data = result && result.data ? result.data : {};
   const meetingOrigin = String(data.meetingOrigin || result.meetingOrigin || '');
@@ -77,16 +185,36 @@ async function handleSyncRequest_(payload) {
     store[STORAGE_KEYS.lastMeetingOrigin] = meetingOrigin;
   }
   chrome.storage.local.set(store);
+
+  // Log
+  appendSyncLog_({
+    time: nowIso,
+    payloadId: payload.payloadId || '?',
+    result: result.ok ? 'ok' : 'failed: ' + (result.error || ''),
+    latencyMs: latencyMs,
+  });
+
+  // If failed, queue for retry
+  if (!result.ok) {
+    await enqueueSync_(backendUrl, payload);
+  }
+
   return result;
 }
+
+/* ─── POST with Retry + Exponential Backoff ──────────────────────────── */
 
 async function postWithRetry_(url, payload, retries) {
   let lastError = '';
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 1.5s, 3s, 6s …
+      await delay_(1500 * Math.pow(2, attempt - 1));
+    }
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain' },  // Avoids CORS preflight on GAS
         body: JSON.stringify(payload),
         credentials: 'omit',
       });
@@ -99,7 +227,8 @@ async function postWithRetry_(url, payload, retries) {
       }
 
       if (!res.ok) {
-        lastError = 'HTTP ' + res.status + ': ' + (text || '');
+        lastError = 'HTTP ' + res.status + ': ' + (text || '').slice(0, 200);
+        continue;  // Retry on HTTP errors
       } else {
         const appOk = !!(parsed && parsed.success === true);
         if (!appOk) {
@@ -119,4 +248,55 @@ async function postWithRetry_(url, payload, retries) {
   }
 
   return { ok: false, error: lastError || 'Sync failed after retries' };
+}
+
+/* ─── Sync Queue Helpers ─────────────────────────────────────────────── */
+
+async function enqueueSync_(url, payload) {
+  const items = await chromeStorageGet_({ [STORAGE_KEYS.pendingSyncs]: [] });
+  const queue = Array.isArray(items[STORAGE_KEYS.pendingSyncs])
+    ? items[STORAGE_KEYS.pendingSyncs]
+    : [];
+
+  // Deduplicate by payloadId
+  const payloadId = payload.payloadId || '';
+  if (payloadId) {
+    for (let i = 0; i < queue.length; i++) {
+      if (queue[i] && queue[i].payload && queue[i].payload.payloadId === payloadId) {
+        queue[i] = { url: url, payload: payload, attempts: queue[i].attempts || 0, queuedAt: new Date().toISOString() };
+        chrome.storage.local.set({ [STORAGE_KEYS.pendingSyncs]: queue });
+        return;
+      }
+    }
+  }
+
+  queue.push({ url: url, payload: payload, attempts: 0, queuedAt: new Date().toISOString() });
+  // Cap queue size
+  while (queue.length > MAX_PENDING_QUEUE) queue.shift();
+  chrome.storage.local.set({ [STORAGE_KEYS.pendingSyncs]: queue });
+  ensureRetryAlarm_();
+}
+
+async function appendSyncLog_(entry) {
+  const items = await chromeStorageGet_({ [STORAGE_KEYS.syncLog]: [] });
+  const log = Array.isArray(items[STORAGE_KEYS.syncLog])
+    ? items[STORAGE_KEYS.syncLog]
+    : [];
+  log.push(entry);
+  while (log.length > MAX_SYNC_LOG) log.shift();
+  chrome.storage.local.set({ [STORAGE_KEYS.syncLog]: log });
+}
+
+/* ─── Utility ────────────────────────────────────────────────────────── */
+
+function delay_(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+function chromeStorageGet_(defaults) {
+  return new Promise(function (resolve) {
+    chrome.storage.local.get(defaults, function (items) {
+      resolve(items || defaults);
+    });
+  });
 }

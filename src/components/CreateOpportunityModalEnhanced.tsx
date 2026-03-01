@@ -139,7 +139,7 @@ export default function CreateOpportunityModalEnhanced({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b flex-shrink-0" style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}>
+        <div className="flex items-center justify-between p-6 border-b shrink-0" style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}>
           <h3
             style={{
               fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
@@ -297,7 +297,7 @@ export default function CreateOpportunityModalEnhanced({
         </div>
 
         {/* Footer */}
-        <div className="flex gap-3 p-6 border-t flex-shrink-0" style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}>
+        <div className="flex gap-3 p-6 border-t shrink-0" style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}>
           <Button variant="secondary" onClick={onClose} className="flex-1" disabled={isSaving}>
             Cancel
           </Button>

@@ -134,7 +134,7 @@ export default function PageLayout({
             <div className="flex items-center gap-2 md:hidden">
               <button
                 onClick={onClose}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all duration-300 hover:scale-105 active:scale-95 flex-shrink-0"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all duration-300 hover:scale-105 active:scale-95 shrink-0"
                 style={{
                   background: 'linear-gradient(135deg, rgba(238, 135, 36, 0.15), rgba(246, 66, 31, 0.15))',
                   border: '2px solid rgba(238, 135, 36, 0.3)',
@@ -163,7 +163,7 @@ export default function PageLayout({
                 </h1>
               </div>
 
-              {actions && <div className="flex-shrink-0">{actions}</div>}
+              {actions && <div className="shrink-0">{actions}</div>}
             </div>
 
             {/* Desktop Layout - Horizontal */}
@@ -171,7 +171,7 @@ export default function PageLayout({
               {/* Back Button - Left */}
               <button
                 onClick={onClose}
-                className="flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 hover:scale-105 active:scale-95 flex-shrink-0"
+                className="flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 hover:scale-105 active:scale-95 shrink-0"
                 style={{
                   background: 'linear-gradient(135deg, rgba(238, 135, 36, 0.15), rgba(246, 66, 31, 0.15))',
                   border: '2px solid rgba(238, 135, 36, 0.3)',
@@ -212,7 +212,7 @@ export default function PageLayout({
               </div>
 
               {/* Right Side - Actions */}
-              <div className="flex-shrink-0 flex items-center justify-end" style={{ minWidth: actions ? 'auto' : '80px' }}>
+              <div className="shrink-0 flex items-center justify-end" style={{ minWidth: actions ? 'auto' : '80px' }}>
                 {actions || null}
               </div>
             </div>

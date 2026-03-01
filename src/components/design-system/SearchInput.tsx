@@ -20,7 +20,7 @@
  * =============================================================================
  */
 
-import { Search, X, Loader2 } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { DESIGN_TOKENS, getGlassStyle } from "./tokens";
 
 interface Suggestion {
@@ -145,7 +145,7 @@ export default function SearchInput({
             >
               {/* Profile Picture with Initials Fallback */}
               <div 
-                className="flex-shrink-0 rounded-full flex items-center justify-center"
+                className="shrink-0 rounded-full flex items-center justify-center"
                 style={{
                   width: "40px",
                   height: "40px",

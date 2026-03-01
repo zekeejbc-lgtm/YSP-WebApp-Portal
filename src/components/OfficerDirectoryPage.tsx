@@ -66,7 +66,7 @@ function OfficerDetailsSkeleton({ isDark }: { isDark: boolean }) {
       <div className={`p-6 border-b ${isDark ? "border-white/10" : "border-gray-100"}`}>
         <div className="flex items-start gap-4">
           {/* Profile picture skeleton */}
-          <Skeleton isDark={isDark} className="w-20 h-20 rounded-full flex-shrink-0" />
+          <Skeleton isDark={isDark} className="w-20 h-20 rounded-full shrink-0" />
           
           <div className="flex-1 min-w-0">
             {/* Name skeleton */}
@@ -709,7 +709,7 @@ export default function OfficerDirectoryPage({
               : "bg-red-50 border-red-200 text-red-600"
           }`}
         >
-          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="font-medium">Error</p>
             <p className="text-sm opacity-80">{error}</p>
@@ -718,7 +718,7 @@ export default function OfficerDirectoryPage({
             variant="ghost"
             size="sm"
             onClick={handleRetry}
-            className="flex-shrink-0"
+            className="shrink-0"
           >
             <RefreshCw className="w-4 h-4 mr-1" />
             Retry

@@ -28,6 +28,8 @@ interface ButtonProps {
   type?: "button" | "submit" | "reset";
   className?: string;
   style?: React.CSSProperties;
+  "aria-label"?: string;
+  title?: string;
 }
 
 export default function Button({
@@ -41,6 +43,8 @@ export default function Button({
   type = "button",
   className = "",
   style = {},
+  "aria-label": ariaLabel,
+  title,
 }: ButtonProps) {
   const baseStyles = {
     display: "inline-flex",
@@ -109,6 +113,8 @@ export default function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
+      title={title}
       className={`hover:scale-105 active:scale-95 ${className}`}
       style={{
         ...baseStyles,

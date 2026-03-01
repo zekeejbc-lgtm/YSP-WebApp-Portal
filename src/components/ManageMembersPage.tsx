@@ -2501,7 +2501,7 @@ function ApplicationPanel({
           <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4 sm:gap-6 mb-8 pb-6 border-b" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
             <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 flex-1 min-w-0">
               <div
-                className="w-20 h-20 sm:w-24 sm:h-24 lg:w-28 lg:h-28 rounded-full flex items-center justify-center bg-gradient-to-br from-[#f6421f] to-[#ee8724] text-white overflow-hidden shrink-0"
+                className="w-20 h-20 sm:w-24 sm:h-24 lg:w-28 lg:h-28 rounded-full flex items-center justify-center bg-linear-to-br from-[#f6421f] to-[#ee8724] text-white overflow-hidden shrink-0"
                 style={{ border: '4px solid #ee8724' }}
               >
                 {displayedProfileUrl && !profileImageFailed ? (

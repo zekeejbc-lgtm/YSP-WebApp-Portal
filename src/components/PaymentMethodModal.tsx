@@ -109,7 +109,7 @@ export default function PaymentMethodModal({
           </div>
           <button
             onClick={onClose}
-            className="ml-4 p-2 rounded-lg transition-all duration-300 hover:scale-110 flex-shrink-0"
+            className="ml-4 p-2 rounded-lg transition-all duration-300 hover:scale-110 shrink-0"
             style={{
               background: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
               color: isDark ? '#fff' : '#1e293b',
@@ -198,7 +198,7 @@ export default function PaymentMethodModal({
                 </p>
                 <button
                   onClick={handleCopy}
-                  className="p-2 rounded-lg transition-all duration-300 hover:scale-110 flex-shrink-0"
+                  className="p-2 rounded-lg transition-all duration-300 hover:scale-110 shrink-0"
                   style={{
                     background: isDark ? 'rgba(238, 135, 36, 0.2)' : 'rgba(238, 135, 36, 0.15)',
                     color: '#ee8724',

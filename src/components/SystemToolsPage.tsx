@@ -171,7 +171,7 @@ function ToolCardSkeleton({ isDark }: { isDark: boolean }) {
     >
       <ShimmerStyles />
       <div className="flex items-start gap-4">
-        <SkeletonLine width="48px" height="48px" className="rounded-lg flex-shrink-0" />
+        <SkeletonLine width="48px" height="48px" className="rounded-lg shrink-0" />
         <div className="flex-1">
           <SkeletonLine width="120px" height="20px" className="mb-2" />
           <SkeletonLine width="100%" height="14px" className="mb-2" />
@@ -1597,7 +1597,7 @@ export default function SystemToolsPage({
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     {isActive && (
                       <Shield
-                        className="w-4 h-4 flex-shrink-0"
+                        className="w-4 h-4 shrink-0"
                         style={{ color: DESIGN_TOKENS.colors.brand.yellow }}
                       />
                     )}

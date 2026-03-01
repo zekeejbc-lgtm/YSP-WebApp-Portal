@@ -201,7 +201,7 @@ export default function MaintenanceScreen({
                   <ImageWithFallback
                     src="https://i.imgur.com/J4wddTW.png"
                     alt="YSP Logo"
-                    className="w-20 h-20 sm:w-20 sm:h-20 md:w-24 md:h-24 object-contain flex-shrink-0"
+                    className="w-20 h-20 sm:w-20 sm:h-20 md:w-24 md:h-24 object-contain shrink-0"
                   />
                   <div className="text-center sm:text-left flex flex-col justify-center" style={{ paddingTop: "0.25rem" }}>
                     <h2
@@ -269,7 +269,7 @@ export default function MaintenanceScreen({
                       className={`inline-flex items-center gap-3 px-5 py-3 rounded-xl border-2 ${isDark ? "bg-gray-800/50 border-gray-700" : "bg-gray-100 border-gray-200"}`}
                     >
                       <Clock 
-                        className="w-5 h-5 flex-shrink-0" 
+                        className="w-5 h-5 shrink-0" 
                         style={{ color: DESIGN_TOKENS.colors.brand.orange }}
                       />
                       <span
@@ -495,7 +495,7 @@ export default function MaintenanceScreen({
                           >
                             <div className="flex items-center gap-4 p-4">
                               <div 
-                                className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                                className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
                                 style={{
                                   background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}, ${DESIGN_TOKENS.colors.brand.orange})`,
                                 }}
@@ -545,7 +545,7 @@ export default function MaintenanceScreen({
                           >
                             <div className="flex items-center gap-4 p-4">
                               <div 
-                                className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                                className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
                                 style={{
                                   background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.orange}, ${DESIGN_TOKENS.colors.brand.yellow})`,
                                 }}
@@ -595,7 +595,7 @@ export default function MaintenanceScreen({
                           >
                             <div className="flex items-center gap-4 p-4">
                               <div 
-                                className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                                className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
                                 style={{
                                   background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.yellow}, ${DESIGN_TOKENS.colors.brand.orange})`,
                                 }}
@@ -647,7 +647,7 @@ export default function MaintenanceScreen({
                           >
                             <div className="flex items-center gap-4 p-4">
                               <div 
-                                className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                                className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
                                 style={{
                                   background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}, ${DESIGN_TOKENS.colors.brand.yellow})`,
                                 }}

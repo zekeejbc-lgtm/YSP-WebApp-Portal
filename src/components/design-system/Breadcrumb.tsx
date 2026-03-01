@@ -92,7 +92,7 @@ export default function Breadcrumb({ items, isDark }: BreadcrumbProps) {
             {/* Divider */}
             {!isLast && (
               <ChevronRight
-                className="flex-shrink-0"
+                className="shrink-0"
                 style={{
                   width: "16px",
                   height: "16px",

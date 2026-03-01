@@ -15,8 +15,9 @@
  * =============================================================================
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle, ChevronDown, ChevronUp, MapPin, Loader2, Timer, CheckCircle2, PlayCircle, Archive } from "lucide-react";
+import React, { useState, useEffect, useCallback } from "react";
+import type { Map as LeafletMap, Marker as LeafletMarker, Circle as LeafletCircle } from "leaflet";
+import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle, ChevronDown, ChevronUp, MapPin, Loader2, Timer, CheckCircle2, Archive } from "lucide-react";
 import { PageLayout, StatusChip, DESIGN_TOKENS, getGlassStyle, Button } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import { getMemberAttendanceHistory, type AttendanceRecord as BackendAttendanceRecord } from "../services/gasAttendanceService";
@@ -398,8 +399,8 @@ function PaginationControls({
 
 function SkeletonCard({ isDark }: { isDark: boolean }) {
   const shimmer = isDark 
-    ? "bg-gradient-to-r from-gray-700 via-gray-600 to-gray-700" 
-    : "bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200";
+    ? "bg-linear-to-r from-gray-700 via-gray-600 to-gray-700" 
+    : "bg-linear-to-r from-gray-200 via-gray-100 to-gray-200";
   
   return (
     <div
@@ -431,8 +432,8 @@ function SkeletonCard({ isDark }: { isDark: boolean }) {
 
 function SkeletonTableRow({ isDark }: { isDark: boolean }) {
   const shimmer = isDark 
-    ? "bg-gradient-to-r from-gray-700 via-gray-600 to-gray-700" 
-    : "bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200";
+    ? "bg-linear-to-r from-gray-700 via-gray-600 to-gray-700" 
+    : "bg-linear-to-r from-gray-200 via-gray-100 to-gray-200";
   
   return (
     <tr
@@ -455,8 +456,8 @@ function SkeletonTableRow({ isDark }: { isDark: boolean }) {
 
 function SkeletonSummaryCard({ isDark }: { isDark: boolean }) {
   const shimmer = isDark 
-    ? "bg-gradient-to-r from-gray-700 via-gray-600 to-gray-700" 
-    : "bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200";
+    ? "bg-linear-to-r from-gray-700 via-gray-600 to-gray-700" 
+    : "bg-linear-to-r from-gray-200 via-gray-100 to-gray-200";
   
   return (
     <div
@@ -534,9 +535,9 @@ function EventGeofenceMap({
   isDark: boolean;
 }) {
   const mapContainerRef = React.useRef<HTMLDivElement>(null);
-  const mapInstanceRef = React.useRef<any>(null);
-  const userMarkerRef = React.useRef<any>(null);
-  const userAccuracyCircleRef = React.useRef<any>(null);
+  const mapInstanceRef = React.useRef<LeafletMap | null>(null);
+  const userMarkerRef = React.useRef<LeafletMarker | null>(null);
+  const userAccuracyCircleRef = React.useRef<LeafletCircle | null>(null);
   const [userLocation, setUserLocation] = React.useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [isLocating, setIsLocating] = React.useState(true);
   const watchIdRef = React.useRef<number | null>(null);
@@ -1490,7 +1491,7 @@ export default function AttendanceTransparencyPage({
                           <div className="flex items-start justify-between gap-2">
                             <h4 className="text-sm font-medium truncate flex-1">{event.Title}</h4>
                             <div 
-                              className="px-2 py-0.5 rounded-full text-xs flex-shrink-0"
+                              className="px-2 py-0.5 rounded-full text-xs shrink-0"
                               style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
                             >
                               <CheckCircle2 className="w-3 h-3 inline mr-1" />

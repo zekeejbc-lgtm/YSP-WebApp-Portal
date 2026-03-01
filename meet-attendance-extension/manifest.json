@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YSP Google Meet Attendance Tracker",
-  "version": "1.0.0",
-  "description": "Silently tracks Google Meet attendance and syncs to YSP GAS backend.",
+  "version": "2.0.0",
+  "description": "Tracks Google Meet attendance with high reliability and syncs to YSP GAS backend.",
   "icons": {
     "16": "icons/icon-128.png",
     "32": "icons/icon-128.png",
@@ -22,7 +22,7 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "alarms"],
   "host_permissions": [
     "https://meet.google.com/*",
     "https://script.google.com/*",
@@ -32,7 +32,13 @@
     {
       "matches": ["https://meet.google.com/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/icon-128.png"],
+      "matches": ["https://meet.google.com/*"]
     }
   ]
 }

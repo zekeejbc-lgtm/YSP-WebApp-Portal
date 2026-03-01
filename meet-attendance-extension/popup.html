@@ -3,24 +3,52 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>YSP Meet Tracker</title>
+    <title>YSP Meet Tracker v2</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main class="card">
-      <h1>YSP Meet Tracker</h1>
+
+      <!-- Header -->
+      <div class="header-row">
+        <h1>YSP Meet Tracker</h1>
+        <span id="health" class="health-dot" title="Connection health"></span>
+      </div>
+
+      <!-- Enable toggle -->
       <label class="row">
         <span>Tracking Enabled</span>
         <input id="enabled" type="checkbox" />
       </label>
-      <p id="active" class="muted">Active: No</p>
-      <p id="meeting" class="muted">Meeting: -</p>
-      <p id="origin" class="muted">Origin: -</p>
-      <p id="coverage" class="muted">Coverage: Live 0 | Seen 0 | Capture 0</p>
-      <p id="sync" class="muted">Last Sync: -</p>
-      <p id="error" class="error"></p>
-      <button id="refresh" type="button">Refresh</button>
+
+      <!-- Status section -->
+      <section class="section">
+        <p id="active" class="muted">Active: No</p>
+        <p id="meeting" class="muted">Meeting: -</p>
+        <p id="origin" class="muted">Origin: -</p>
+        <p id="coverage" class="muted">Coverage: Live 0 | Seen 0 | Capture 0</p>
+        <p id="sync" class="muted">Last Sync: -</p>
+        <p id="pending" class="muted">Pending Queue: 0</p>
+        <p id="error" class="error"></p>
+      </section>
+
+      <!-- Action buttons -->
+      <div class="btn-row">
+        <button id="refresh" type="button" class="btn-secondary">Refresh</button>
+        <button id="forceSync" type="button" class="btn-primary">Force Sync</button>
+      </div>
+
+      <!-- Diagnostics toggle -->
+      <details class="diag-section">
+        <summary class="diag-toggle">Diagnostics</summary>
+        <div id="diagContent" class="diag-content">
+          <p class="muted" id="diagEmpty">No sync events yet.</p>
+          <ul id="syncLog" class="sync-log"></ul>
+        </div>
+      </details>
+
+      <p class="version">v2.0.0</p>
     </main>
     <script src="popup.js"></script>
   </body>
-  </html>
+</html>
