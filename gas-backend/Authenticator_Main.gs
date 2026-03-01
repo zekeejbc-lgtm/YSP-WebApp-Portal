@@ -720,6 +720,7 @@ function handleEnrollUser2FA(username, code) {
 
 function handleDisableUser2FA(username, currentPassword, totpCode) {
   try {
+    // ggignore: not a secret, just parameter validation
     if (!username || !currentPassword || !totpCode) {
       return createErrorResponse('Username, current password, and authenticator code are required', 400);
     }
@@ -776,6 +777,7 @@ function handleDisableUser2FA(username, currentPassword, totpCode) {
 
 function handleEnableUser2FA(username, currentPassword, totpCode) {
   try {
+    // ggignore: not a secret, just parameter validation
     if (!username || !currentPassword || !totpCode) {
       return createErrorResponse('Username, current password, and authenticator code are required', 400);
     }
@@ -816,6 +818,7 @@ function handleEnableUser2FA(username, currentPassword, totpCode) {
 
 function handleBeginTotpSecretReset(username, currentPassword, totpCode) {
   try {
+    // ggignore: not a secret, just parameter validation
     if (!username || !currentPassword || !totpCode) {
       return createErrorResponse('Username, current password, and authenticator code are required', 400);
     }
