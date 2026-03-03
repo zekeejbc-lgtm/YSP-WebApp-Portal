@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   Building2,
   CalendarClock,
   CheckCircle,
   CheckCircle2,
+  ChevronDown,
+  Download,
   ExternalLink,
+  FileSpreadsheet,
+  FileText,
   Globe,
   Loader2,
   Plus,
@@ -35,6 +41,11 @@ import {
   type MeetAttendanceMeeting,
   type MeetDashboardCard,
 } from "../services/gasMeetService";
+
+// PDF Constants
+const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
+const ORG_NAME = "Youth Service Philippines";
+const ORG_CHAPTER = "Tagum Chapter";
 
 interface KaagapAIMeetPageProps {
   onClose: () => void;
@@ -68,6 +79,22 @@ function formatDateTime(value?: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleString();
+}
+
+// Format date for PDF in Philippine 12-hour format
+function formatDateTimePdf(value?: string): string {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString("en-PH", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Manila",
+  });
 }
 
 function formatDuration(totalSeconds?: number): string {
@@ -226,6 +253,16 @@ export default function KaagapAIMeetPage({
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState<MeetDashboardCard | null>(null);
   const [selectedMeeting, setSelectedMeeting] = useState<MeetAttendanceMeeting | null>(null);
+
+  // Export functionality states
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [exportDropdownPosition, setExportDropdownPosition] = useState<"above" | "below">("above");
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   const user = getStoredUser();
   const canComplete = useMemo(() => {
@@ -438,6 +475,307 @@ export default function KaagapAIMeetPage({
     } catch (error) {
       toast.error((error as Error).message || "Failed to mark complete");
     }
+  };
+
+  // Close export dropdown when clicking outside
+  useEffect(() => {
+    if (!showExportDropdown) return;
+    
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const clickedButton = exportDropdownRef.current?.contains(target);
+      const clickedMenu = exportMenuRef.current?.contains(target);
+      if (!clickedButton && !clickedMenu) {
+        setShowExportDropdown(false);
+      }
+    };
+    
+    // Defer adding listener to avoid catching the same click that opened dropdown
+    const timeoutId = setTimeout(() => {
+      document.addEventListener("mousedown", handleClickOutside);
+    }, 0);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showExportDropdown]);
+
+  // Helper: Load image for PDF
+  const loadImageForPdf = (url: string): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
+  };
+
+  // Generate Meet Attendance PDF Document
+  const generateMeetAttendancePDF = async () => {
+    if (!selectedMeeting || !selectedCard) throw new Error("No meeting selected");
+
+    const doc = new jsPDF("portrait", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    const generatedTimestamp = new Date().toLocaleString("en-PH", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Manila",
+    });
+    const orgMotto = "Shaping the Future to a Greater Society";
+    const attendees = selectedMeeting.attendees || [];
+
+    // Helper: Draw page footer
+    const drawFooter = (pageNum: number, totalPages: number) => {
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.5);
+      doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+      doc.setFontSize(7);
+      doc.setTextColor(100, 100, 100);
+      doc.setFont("helvetica", "normal");
+      doc.text("Youth Service Philippines - Tagum Chapter", margin, pageHeight - 10);
+      doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: "right" });
+      doc.setFont("helvetica", "italic");
+      doc.text(`"${orgMotto}"`, pageWidth / 2, pageHeight - 10, { align: "center" });
+    };
+
+    // Header with logo
+    let logoLoaded = false;
+    try {
+      const logoImg = await loadImageForPdf(ORG_LOGO_URL);
+      doc.setFillColor(246, 66, 31);
+      doc.rect(0, 0, pageWidth, 45, "F");
+      const logoSize = 30;
+      const logoX = margin;
+      const logoY = 7.5;
+      doc.setFillColor(255, 255, 255);
+      doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 2, "F");
+      doc.addImage(logoImg, "PNG", logoX, logoY, logoSize, logoSize);
+      logoLoaded = true;
+    } catch {
+      doc.setFillColor(246, 66, 31);
+      doc.rect(0, 0, pageWidth, 45, "F");
+    }
+
+    // Organization name and report title
+    doc.setTextColor(255, 255, 255);
+    const orgNameX = logoLoaded ? margin + 35 : margin;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text(ORG_NAME, orgNameX, 18);
+    doc.setFontSize(12);
+    doc.text(ORG_CHAPTER, orgNameX, 26);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text("MEET ATTENDANCE REPORT", orgNameX, 35);
+    doc.setFontSize(8);
+    doc.text(`Generated: ${generatedTimestamp}`, pageWidth - margin, 35, { align: "right" });
+
+    let yPosition = 52;
+
+    // Divider
+    doc.setDrawColor(246, 66, 31);
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPosition, pageWidth - margin, yPosition);
+    yPosition += 8;
+
+    // Meeting Info Card
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 35, 3, 3, "FD");
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(246, 66, 31);
+    doc.text("MEETING DETAILS", margin + 6, yPosition + 8);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(51, 65, 85);
+    const meetingTitle = selectedCard.title || selectedCard.meetingId || "Untitled Meeting";
+    const meetingDateFormatted = formatDateTimePdf(selectedMeeting.meetingDate || selectedCard.scheduledStart);
+    doc.text(`Title: ${meetingTitle}`, margin + 6, yPosition + 16);
+    doc.text(`Meeting ID: ${selectedCard.meetingId}`, margin + 6, yPosition + 22);
+    doc.text(`Date: ${meetingDateFormatted}`, margin + 6, yPosition + 28);
+    doc.text(`Total Attendees: ${attendees.length}`, pageWidth / 2, yPosition + 16);
+    doc.text(`Duration: ${formatDuration(selectedMeeting.totalDurationSeconds)}`, pageWidth / 2, yPosition + 22);
+    doc.text(`Status: ${selectedCard.status || "Unknown"}`, pageWidth / 2, yPosition + 28);
+    yPosition += 45;
+
+    // Summary Stats Boxes
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(30, 41, 59);
+    doc.text("ATTENDANCE SUMMARY", margin, yPosition);
+    doc.setDrawColor(246, 66, 31);
+    doc.setLineWidth(0.3);
+    doc.line(margin, yPosition + 2, margin + 50, yPosition + 2);
+    yPosition += 8;
+
+    const internalCount = attendees.filter((a) => !a.isExternalParticipant).length;
+    const externalCount = attendees.filter((a) => a.isExternalParticipant).length;
+    const matchedCount = attendees.filter((a) => a.directoryName).length;
+
+    const statBoxWidth = (pageWidth - 2 * margin - 9) / 4;
+    const statBoxHeight = 22;
+    const stats = [
+      { name: "TOTAL", color: [246, 66, 31], count: attendees.length },
+      { name: "INTERNAL", color: [34, 197, 94], count: internalCount },
+      { name: "EXTERNAL", color: [59, 130, 246], count: externalCount },
+      { name: "MATCHED", color: [168, 85, 247], count: matchedCount },
+    ];
+
+    stats.forEach((stat, index) => {
+      const boxX = margin + index * (statBoxWidth + 3);
+      doc.setFillColor(stat.color[0], stat.color[1], stat.color[2]);
+      doc.roundedRect(boxX, yPosition, statBoxWidth, statBoxHeight, 2, 2, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text(String(stat.count), boxX + statBoxWidth / 2, yPosition + 10, { align: "center" });
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      doc.text(stat.name, boxX + statBoxWidth / 2, yPosition + 17, { align: "center" });
+    });
+    yPosition += statBoxHeight + 12;
+
+    // Attendees Table
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(30, 41, 59);
+    doc.text("ATTENDEE LIST", margin, yPosition);
+    doc.setDrawColor(246, 66, 31);
+    doc.line(margin, yPosition + 2, margin + 35, yPosition + 2);
+    yPosition += 5;
+
+    const tableData = attendees.map((a, index) => [
+      String(index + 1),
+      a.name || "Unknown",
+      a.directoryName || "-",
+      a.directoryIdCode || "-",
+      a.committee || "-",
+      a.position || "-",
+      formatDuration(a.totalDurationSeconds),
+    ]);
+
+    autoTable(doc, {
+      startY: yPosition,
+      head: [["#", "Display Name", "Directory Name", "ID Code", "Committee", "Position", "Duration"]],
+      body: tableData.length > 0 ? tableData : [["-", "No attendees recorded", "-", "-", "-", "-", "-"]],
+      theme: "grid",
+      headStyles: {
+        fillColor: [246, 66, 31],
+        textColor: 255,
+        fontStyle: "bold",
+        fontSize: 8,
+      },
+      bodyStyles: { fontSize: 8, textColor: [50, 50, 50] },
+      columnStyles: {
+        0: { cellWidth: 8, halign: "center" },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 20 },
+        4: { cellWidth: 25 },
+        5: { cellWidth: 25 },
+        6: { cellWidth: 20, halign: "center" },
+      },
+      margin: { left: margin, right: margin },
+      styles: { overflow: "linebreak", cellPadding: 2 },
+    });
+
+    // Update footers on all pages
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      drawFooter(i, totalPages);
+    }
+
+    return doc;
+  };
+
+  const handleExportPDF = async () => {
+    if (!selectedCard || !selectedMeeting) return;
+    setShowExportDropdown(false);
+    setIsExporting(true);
+    setIsGeneratingPdf(true);
+    const toastId = `export_pdf_${Date.now()}`;
+    addUploadToast?.({
+      id: toastId,
+      title: "Exporting PDF",
+      message: "Generating attendance report...",
+      status: "loading",
+      progress: 20,
+    });
+    try {
+      // Revoke previous URL if exists
+      if (pdfPreviewUrl) {
+        URL.revokeObjectURL(pdfPreviewUrl);
+        setPdfPreviewUrl(null);
+      }
+      updateUploadToast?.(toastId, { progress: 50, message: "Creating PDF document..." });
+      const doc = await generateMeetAttendancePDF();
+      updateUploadToast?.(toastId, { progress: 80, message: "Preparing preview..." });
+      const pdfBlob = doc.output("blob");
+      const url = URL.createObjectURL(pdfBlob);
+      setPdfPreviewUrl(url);
+      setShowExportModal(true);
+      updateUploadToast?.(toastId, { progress: 100, status: "success", message: "PDF generated!" });
+      setTimeout(() => removeUploadToast?.(toastId), 2000);
+    } catch (error) {
+      console.error("PDF generation error:", error);
+      updateUploadToast?.(toastId, { status: "error", message: (error as Error).message || "Failed to generate PDF" });
+      setTimeout(() => removeUploadToast?.(toastId), 4000);
+    } finally {
+      setIsGeneratingPdf(false);
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (!selectedMeeting || !selectedCard) return;
+    setShowExportDropdown(false);
+    try {
+      const attendees = selectedMeeting.attendees || [];
+      const headers = ["Name", "Directory Name", "ID Code", "Committee", "Position", "First Join", "Last Leave", "Duration (sec)"];
+      const rows = attendees.map((a) => [
+        a.name || "Unknown",
+        a.directoryName || "",
+        a.directoryIdCode || "",
+        a.committee || "",
+        a.position || "",
+        a.firstJoinTime || "",
+        a.lastLeaveTime || "",
+        String(a.totalDurationSeconds || 0),
+      ]);
+      const csvContent = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `meet_attendance_${selectedCard.meetingId}_${new Date().toISOString().split("T")[0]}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("CSV exported successfully");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to export CSV");
+    }
+  };
+
+  const handleDownloadPDF = () => {
+    if (!pdfPreviewUrl || !selectedCard) return;
+    const link = document.createElement("a");
+    link.href = pdfPreviewUrl;
+    link.download = `meet_attendance_${selectedCard.meetingId}_${new Date().toISOString().split("T")[0]}.pdf`;
+    link.click();
+    toast.success("PDF downloaded");
+    setShowExportModal(false);
+    URL.revokeObjectURL(pdfPreviewUrl);
+    setPdfPreviewUrl(null);
   };
 
   const statusOptions = [
@@ -671,7 +1009,7 @@ export default function KaagapAIMeetPage({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: "16px",
+    padding: "clamp(24px, 5vw, 48px) clamp(24px, 5vw, 64px)",
   };
 
   const attendance = (selectedMeeting?.attendees || []).filter((item) => isLikelyParticipantDisplayName(item.name));
@@ -784,8 +1122,10 @@ export default function KaagapAIMeetPage({
           <div style={floatingOverlayStyle} onClick={() => setIsCreateOpen(false)}>
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-2xl rounded-2xl border overflow-visible"
+              className="w-full rounded-2xl border overflow-visible"
               style={{
+                maxWidth: "min(640px, calc(100vw - clamp(48px, 10vw, 128px)))",
+                maxHeight: "min(85vh, calc(100vh - clamp(48px, 10vh, 96px)))",
                 background: isDark ? "rgba(15,23,42,0.96)" : "rgba(255,255,255,0.97)",
                 borderColor: isDark ? "rgba(148,163,184,0.24)" : "rgba(15,23,42,0.1)",
                 boxShadow: isDark ? "0 20px 60px rgba(0,0,0,0.4)" : "0 20px 60px rgba(0,0,0,0.2)",
@@ -1170,11 +1510,14 @@ export default function KaagapAIMeetPage({
           <div style={floatingOverlayStyle} onClick={() => setIsDetailOpen(false)}>
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-5xl max-h-[88vh] rounded-2xl border overflow-hidden flex flex-col"
+              className="w-full rounded-2xl border flex flex-col"
               style={{
+                maxWidth: "min(960px, calc(100vw - clamp(48px, 10vw, 128px)))",
+                maxHeight: "min(85vh, calc(100vh - clamp(48px, 10vh, 96px)))",
                 background: isDark ? "rgba(15,23,42,0.96)" : "rgba(255,255,255,0.97)",
                 borderColor: isDark ? "rgba(148,163,184,0.24)" : "rgba(15,23,42,0.1)",
                 boxShadow: isDark ? "0 20px 60px rgba(0,0,0,0.4)" : "0 20px 60px rgba(0,0,0,0.2)",
+                overflow: "visible",
               }}
             >
               <div
@@ -1243,8 +1586,8 @@ export default function KaagapAIMeetPage({
                     </div>
 
                     <div className="border rounded-lg overflow-hidden">
-                      <div className="max-h-[40vh] overflow-auto">
-                        <table className="w-full text-xs">
+                      <div className="overflow-auto" style={{ maxHeight: "min(45vh, 360px)" }}>
+                        <table className="w-full text-xs" style={{ minWidth: "640px" }}>
                           <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
                           <tr>
                             <th className="p-2 text-left">Name</th>
@@ -1303,7 +1646,7 @@ export default function KaagapAIMeetPage({
               </div>
 
               <div
-                className="px-5 py-4 border-t flex items-center justify-between gap-2"
+                className="px-5 py-4 border-t flex items-center justify-between gap-2 overflow-visible"
                 style={{ borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)" }}
               >
                 <a
@@ -1315,16 +1658,175 @@ export default function KaagapAIMeetPage({
                   Open Meet <ExternalLink className="w-3.5 h-3.5" />
                 </a>
 
-                {canComplete && selectedCard.status !== "completed" && selectedCard.status !== "manual" && (
-                  <button
-                    onClick={onComplete}
-                    className="px-3 py-2 rounded-lg text-xs font-semibold text-white"
-                    style={{ background: "linear-gradient(135deg, #22c55e 0%, #16a34a 100%)" }}
+                <div className="flex items-center gap-2">
+                  {/* Export Dropdown */}
+                  <div className="relative" ref={exportDropdownRef}>
+                    <button
+                      onClick={() => {
+                        if (!showExportDropdown && exportDropdownRef.current) {
+                          const rect = exportDropdownRef.current.getBoundingClientRect();
+                          const dropdownHeight = 90; // Approximate height of dropdown
+                          const spaceBelow = window.innerHeight - rect.bottom;
+                          const spaceAbove = rect.top;
+                          setExportDropdownPosition(spaceBelow < dropdownHeight && spaceAbove > dropdownHeight ? "above" : "below");
+                        }
+                        setShowExportDropdown(!showExportDropdown);
+                      }}
+                      disabled={isExporting}
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold border disabled:opacity-50"
+                      style={{
+                        borderColor: isDark ? "rgba(148,163,184,0.3)" : "rgba(15,23,42,0.2)",
+                        background: isDark ? "rgba(30,41,59,0.8)" : "rgba(255,255,255,0.9)",
+                      }}
+                    >
+                      {isExporting ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          Exporting...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-3.5 h-3.5" />
+                          Export
+                          <ChevronDown className="w-3 h-3" />
+                        </>
+                      )}
+                    </button>
+                    {showExportDropdown && (
+                      <div
+                        ref={exportMenuRef}
+                        className={`absolute right-0 w-40 rounded-lg shadow-2xl border overflow-hidden ${
+                          exportDropdownPosition === "above" ? "bottom-full mb-2" : "top-full mt-2"
+                        }`}
+                        style={{
+                          background: isDark ? "#1e293b" : "#ffffff",
+                          borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)",
+                          zIndex: 99999,
+                          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
+                        }}
+                      >
+                        <button
+                          onClick={handleExportPDF}
+                          className="w-full px-3 py-2.5 text-left text-xs font-medium flex items-center gap-2 hover:bg-orange-500/10"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-orange-500" />
+                          Export as PDF
+                        </button>
+                        <button
+                          onClick={handleExportCSV}
+                          className="w-full px-3 py-2.5 text-left text-xs font-medium flex items-center gap-2 hover:bg-green-500/10"
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />
+                          Export as CSV
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {canComplete && selectedCard.status !== "completed" && selectedCard.status !== "manual" && (
+                    <button
+                      onClick={onComplete}
+                      className="px-3 py-2 rounded-lg text-xs font-semibold text-white"
+                      style={{ background: "linear-gradient(135deg, #22c55e 0%, #16a34a 100%)" }}
+                    >
+                      <CheckCircle2 className="inline w-3.5 h-3.5 mr-1" />
+                      Mark Complete
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* PDF Export Preview Modal */}
+      {showExportModal &&
+        pdfPreviewUrl &&
+        createPortal(
+          <div
+            className="fixed inset-0 flex items-center justify-center p-4"
+            style={{ background: "rgba(0, 0, 0, 0.9)", zIndex: 99999999 }}
+            onClick={() => {
+              setShowExportModal(false);
+              if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+              setPdfPreviewUrl(null);
+            }}
+          >
+            <div
+              className="relative w-full max-w-4xl h-[85vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+              style={{
+                background: isDark
+                  ? "linear-gradient(145deg, #1e293b, #0f172a)"
+                  : "linear-gradient(145deg, #ffffff, #f8fafc)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div
+                className="flex items-center justify-between px-5 py-4 border-b"
+                style={{ borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)" }}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="p-2 rounded-lg"
+                    style={{ background: "linear-gradient(135deg, #f97316 0%, #ea580c 100%)" }}
                   >
-                    <CheckCircle2 className="inline w-3.5 h-3.5 mr-1" />
-                    Mark Complete
-                  </button>
-                )}
+                    <FileText className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold">PDF Preview</h3>
+                    <p className="text-xs opacity-70">Meet Attendance Report</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowExportModal(false);
+                    if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+                    setPdfPreviewUrl(null);
+                  }}
+                  className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* PDF Preview */}
+              <div className="flex-1 p-4 overflow-hidden">
+                <iframe
+                  src={pdfPreviewUrl}
+                  className="w-full h-full rounded-lg border"
+                  style={{ borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)" }}
+                  title="PDF Preview"
+                />
+              </div>
+
+              {/* Modal Footer */}
+              <div
+                className="px-5 py-4 border-t flex items-center justify-end gap-3"
+                style={{ borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)" }}
+              >
+                <button
+                  onClick={() => {
+                    setShowExportModal(false);
+                    if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+                    setPdfPreviewUrl(null);
+                  }}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold border"
+                  style={{
+                    borderColor: isDark ? "rgba(148,163,184,0.3)" : "rgba(15,23,42,0.2)",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDownloadPDF}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white flex items-center gap-2"
+                  style={{ background: "linear-gradient(135deg, #f97316 0%, #ea580c 100%)" }}
+                >
+                  <Download className="w-4 h-4" />
+                  Download PDF
+                </button>
               </div>
             </div>
           </div>,

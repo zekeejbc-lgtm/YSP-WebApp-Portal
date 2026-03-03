@@ -38,6 +38,10 @@ export interface MeetAttendanceDetail {
   isPresent: boolean;
   isExternalParticipant: boolean;
   profilePictureURL?: string;
+  directoryName?: string;
+  directoryIdCode?: string;
+  committee?: string;
+  position?: string;
 }
 
 export interface MeetAttendanceMeeting {
@@ -143,4 +147,17 @@ export async function getMeetMembers(search = '', limit = 2000): Promise<MeetDir
 export async function getMeetCommittees(): Promise<MeetCommittee[]> {
   const res = await callMeetApi<{ success: boolean; data?: MeetCommittee[] }>('getCommittees');
   return Array.isArray(res.data) ? res.data : [];
+}
+
+export interface MeetExportPdfResponse {
+  success: boolean;
+  meetingId: string;
+  fileName: string;
+  mimeType: string;
+  pdfBase64: string;
+  downloadUrl?: string;
+}
+
+export async function exportMeetAttendancePDF(meetingId: string): Promise<MeetExportPdfResponse> {
+  return callMeetApi<MeetExportPdfResponse>('exportMeetAttendancePDF', { meetingId });
 }

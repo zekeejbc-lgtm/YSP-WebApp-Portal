@@ -33,6 +33,78 @@
     consecutiveMissesForLeave: 3,     // v2: confidence-based (replaces leaveGraceMs)
     debug: false,
   };
+  
+  // Diagnostic logging control - set to true for verbose scan-by-scan logs
+  var VERBOSE_DIAG = false;
+  
+  // INJECT HELPERS INTO MAIN PAGE CONTEXT (so they're accessible from DevTools console)
+  // Defer until DOM is ready since we run at document_start
+  function injectPageHelpers_() {
+    // Wait for document.documentElement to be available
+    if (typeof document === 'undefined' || !document.documentElement) {
+      setTimeout(injectPageHelpers_, 50);
+      return;
+    }
+    // Wait for either head or body to be available for safe injection
+    var target = document.head || document.body;
+    if (!target) {
+      // If neither head nor body exists yet, wait for DOMContentLoaded
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', injectPageHelpers_, { once: true });
+        return;
+      }
+      // Fallback: use documentElement
+      target = document.documentElement;
+    }
+    try {
+      var script = document.createElement('script');
+      script.textContent = '(' + function() {
+        window.yspFullDump = function() {
+          console.log('[YSP DIAG] ========== FULL DOCUMENT DUMP ==========');
+          var allSpans = document.querySelectorAll('span');
+          var spanTexts = [];
+          for (var i = 0; i < allSpans.length; i++) {
+            var txt = (allSpans[i].textContent || '').trim();
+            if (txt && txt.length > 1 && txt.length < 80 && spanTexts.indexOf(txt) === -1) spanTexts.push(txt);
+          }
+          console.log('[YSP DIAG] ALL span texts (' + spanTexts.length + '):', spanTexts);
+          var dirAutoEls = document.querySelectorAll('[dir=auto]');
+          var dirAutoTexts = [];
+          for (var j = 0; j < dirAutoEls.length; j++) {
+            var dt = (dirAutoEls[j].textContent || '').trim();
+            if (dt && dirAutoTexts.indexOf(dt) === -1) dirAutoTexts.push(dt);
+          }
+          console.log('[YSP DIAG] ALL [dir=auto]:', dirAutoTexts);
+          var participants = document.querySelectorAll('[data-participant-id], [data-member-id]');
+          console.log('[YSP DIAG] Participant containers:', participants.length);
+          for (var p = 0; p < participants.length; p++) {
+            console.log('[YSP DIAG]   #' + p + ':', {
+              pid: participants[p].getAttribute('data-participant-id'),
+              mid: participants[p].getAttribute('data-member-id'),
+              text: (participants[p].textContent || '').substring(0, 100)
+            });
+          }
+          var sidebars = document.querySelectorAll('[role=complementary]');
+          console.log('[YSP DIAG] Sidebars:', sidebars.length);
+          for (var k = 0; k < sidebars.length; k++) {
+            console.log('[YSP DIAG]   #' + k + ':', {
+              ariaLabel: sidebars[k].getAttribute('aria-label'),
+              text: (sidebars[k].textContent || '').substring(0, 200)
+            });
+          }
+          console.log('[YSP DIAG] ========== FULL DOCUMENT DUMP END ==========');
+        };
+        console.log('[YSP] Console helper available: yspFullDump()');
+      }.toString() + ')();';
+      target.appendChild(script);
+      script.remove();
+    } catch (e) {
+      // Ignore injection errors - this is optional diagnostic feature
+      console.warn('[YSP] Script injection failed:', e.message);
+    }
+  }
+  injectPageHelpers_();
+  
   var TRACKER_VERSION = '2.0.0';
   var MEETING_ORIGIN_HINT = 'meet_page_auto';
 
@@ -57,18 +129,116 @@
     'camera off', 'microphone off', 'turn on microphone',
     'turn off microphone', 'turn on camera', 'turn off camera',
     'present', 'more options', 'captions', 'cast',
+    'more actions', 'more_vert', 'morevert', 'morevertmore actions',
+    'add people', 'invite', 'close', 'expand', 'collapse',
+    'minimize', 'maximize', 'send message', 'spotlight', 'call',
+    'remove', 'pin', 'unpin', 'mute', 'unmute', 'presenting',
+    'in the meeting', 'in this call', 'contributors', 'everyone',
+    'host', 'organizer', 'co-host', 'co host',
+    // Google Meet admission/control buttons
+    'admit', 'deny', 'ask to join', 'waiting', 'joining',
+    'stop presenting', 'share screen', 'end call', 'rejoin',
+    'ask to unmute', 'hand raised', 'lower hand', 'reactions',
+    'activities', 'breakout rooms', 'whiteboard', 'recording',
+    'start recording', 'stop recording', 'turn on captions',
+    'turn off captions', 'apply visual effects', 'change layout',
+    'full screen', 'exit full screen', 'settings', 'report a problem',
+    'report abuse', 'help', 'keyboard shortcuts', 'view', 'cancel',
+    'confirm', 'ok', 'yes', 'no', 'done', 'apply', 'save',
+    'back', 'next', 'previous', 'skip', 'learn more', 'got it',
+    'dismiss', 'send', 'submit', 'join now', 'ask to join',
+    'request to join', 'knock', 'knocking', 'waiting room',
+    'in call', 'not in call', 'offline', 'online', 'busy',
+    'view all', 'show all', 'hide', 'show', 'more', 'less',
+    'info', 'details', 'options', 'menu', 'actions',
   ]);
 
   var NOISE_PATTERNS = [
     /more options for/i,
-    /^more_vert$/i,
+    /more actions for/i,
+    /^more_vert/i,
+    /more_vert/i,
+    /^morevert/i,
+    /morevertmore/i,
+    /^more actions$/i,
+    /^more options$/i,
     /^\d+\s*participant/i,
     /^presenting$/i,
     /^pin$/i,
     /^unpin$/i,
     /^you$/i,
+    /^\(you\)$/i,
     /^muted?$/i,
     /^unmuted?$/i,
+    /^remove$/i,
+    /^add people$/i,
+    /^invite$/i,
+    /^close$/i,
+    /^expand$/i,
+    /^collapse$/i,
+    /^minimize$/i,
+    /^maximize$/i,
+    /^send message$/i,
+    /^spotlight$/i,
+    /^call$/i,
+    // Google Meet admission/control UI
+    /^admit$/i,
+    /^deny$/i,
+    /^ask to join$/i,
+    /^waiting$/i,
+    /^joining$/i,
+    /^rejoin$/i,
+    /^stop presenting$/i,
+    /^share screen$/i,
+    /^end call$/i,
+    /^hand raised$/i,
+    /^lower hand$/i,
+    /^reactions$/i,
+    /^activities$/i,
+    /^breakout rooms?$/i,
+    /^whiteboard$/i,
+    /^recording$/i,
+    /^start recording$/i,
+    /^stop recording$/i,
+    /^captions?$/i,
+    /^settings$/i,
+    /^help$/i,
+    /^cancel$/i,
+    /^confirm$/i,
+    /^done$/i,
+    /^apply$/i,
+    /^save$/i,
+    /^back$/i,
+    /^next$/i,
+    /^skip$/i,
+    /^learn more$/i,
+    /^got it$/i,
+    /^dismiss$/i,
+    /^send$/i,
+    /^submit$/i,
+    /^join now$/i,
+    /^knock$/i,
+    /^knocking$/i,
+    /^info$/i,
+    /^details$/i,
+    /^options$/i,
+    /^menu$/i,
+    /^actions$/i,
+    /^show$/i,
+    /^hide$/i,
+    /^view$/i,
+    /^more$/i,
+    /^view all$/i,
+    /^show all$/i,
+    // Single-word UI garbage (very short)
+    /^ok$/i,
+    /^yes$/i,
+    /^no$/i,
+    // Anything that looks like an action button
+    /^turn (on|off)/i,
+    /^ask to/i,
+    /microphone$/i,
+    /camera$/i,
   ];
 
   /* ─── Modern multi-strategy DOM selectors (2024-2026+ Meet UI) ────── */
@@ -242,6 +412,11 @@
     // MutationObserver — target participant container, fall back to body
     setupMutationObserver_();
 
+    // DIAGNOSTIC: Dump all participant-related DOM on startup
+    setTimeout(function() {
+      dumpParticipantDom_();
+    }, 5000);
+
     // Meeting end detection
     window.addEventListener('beforeunload', function () { finalizeAndSync_('page_unload'); });
     document.addEventListener('pagehide', function () { finalizeAndSync_('page_hide'); });
@@ -358,16 +533,30 @@
     }
 
     var isHighConfidence = isPanelCurrentlyOpen && (countHint <= 0 || names.size >= countHint);
+    
+    // DIAGNOSTIC: Log extracted participants
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] extractParticipants_ result:', {
+      namesArray: Array.from(names),
+      namesCount: names.size,
+      idsCount: ids.size,
+      countHint: countHint,
+      panelOpen: isPanelCurrentlyOpen,
+      isHighConfidence: isHighConfidence
+    });
+    
     return { names: names, ids: ids, isHighConfidence: isHighConfidence };
   }
 
   /* Strategy 1: Main grid DOM */
   function extractParticipantsFromDom_(names, ids) {
     var i, j, nodes, text, pidEl, pid;
+    var rawTextsFound = [];
+    
     for (i = 0; i < GRID_SELECTORS.length; i++) {
       nodes = document.querySelectorAll(GRID_SELECTORS[i]);
       for (j = 0; j < nodes.length; j++) {
         text = extractNameFromNode_(nodes[j]);
+        rawTextsFound.push({ selector: GRID_SELECTORS[i], text: text });
         if (isLikelyParticipantName_(text)) {
           names.add(normalizeSpacing_(text));
           pidEl = nodes[j].closest('[data-participant-id]') || nodes[j].closest('[data-member-id]');
@@ -379,14 +568,24 @@
       }
     }
 
+    var ariaNames = [];
     var ariaNodes = document.querySelectorAll('[aria-label]');
     for (i = 0; i < ariaNodes.length; i++) {
       var label = String(ariaNodes[i].getAttribute('aria-label') || '').trim();
       var fromMoreActions = label.match(/more (?:actions|options) for (.+)$/i);
-      if (fromMoreActions && fromMoreActions[1] && isLikelyParticipantName_(fromMoreActions[1])) {
-        names.add(normalizeSpacing_(fromMoreActions[1]));
+      if (fromMoreActions && fromMoreActions[1]) {
+        ariaNames.push(fromMoreActions[1]);
+        if (isLikelyParticipantName_(fromMoreActions[1])) {
+          names.add(normalizeSpacing_(fromMoreActions[1]));
+        }
       }
     }
+    
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] extractParticipantsFromDom_ raw:', { 
+      rawTextsFound: rawTextsFound.slice(0, 20), 
+      ariaNames: ariaNames,
+      namesAfterGrid: Array.from(names)
+    });
   }
 
   /* Strategy 2: People panel with async scroll */
@@ -394,16 +593,24 @@
     var result = { names: new Set(), ids: new Map(), panelWasOpen: false };
 
     var panelAlreadyOpen = !!findPeoplePanelRoot_();
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] Panel already open:', panelAlreadyOpen);
+    
     if (!panelAlreadyOpen) {
       var opened = await ensurePeoplePanelOpen_();
+      if (VERBOSE_DIAG) console.log('[YSP DIAG] Attempted to open panel, success:', opened);
       if (!opened) return result;
     }
 
     var panelRoot = findPeoplePanelRoot_();
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] Panel root found:', !!panelRoot);
     if (!panelRoot) return result;
     result.panelWasOpen = true;
 
+    // Enhanced diagnostic: dump panel structure (only if verbose)
+    if (VERBOSE_DIAG) dumpPanelParticipants_(panelRoot);
+
     collectParticipantNamesFromRoot_(panelRoot, result.names, result.ids);
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] Panel names after initial collect:', Array.from(result.names));
 
     if (!allowDeepScan) return result;
 
@@ -640,14 +847,28 @@
     var activeKeys = new Set();
     var countHint = Number(state.meta.capture && state.meta.capture.participantCountHint || 0);
     var isUndercaptured = countHint > 0 && currentNamesSet.size < countHint;
+    
+    // DIAGNOSTIC: Log incoming names to updateTrackingState_
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] updateTrackingState_ called:', {
+      incomingNames: Array.from(currentNamesSet),
+      incomingCount: currentNamesSet.size,
+      countHint: countHint,
+      isUndercaptured: isUndercaptured,
+      currentStateKeys: Object.keys(state.attendees || {})
+    });
 
     currentNamesSet.forEach(function (displayName) {
       var normalizedName = normalizeName_(displayName);
-      if (!normalizedName) return;
+      if (VERBOSE_DIAG) console.log('[YSP DIAG] Processing name: "' + displayName + '" -> normalized: "' + normalizedName + '"');
+      if (!normalizedName) {
+        if (VERBOSE_DIAG) console.log('[YSP DIAG] SKIPPED - empty normalized name');
+        return;
+      }
       var key = normalizedName;
       activeKeys.add(key);
 
       if (!state.attendees[key]) {
+        if (VERBOSE_DIAG) console.log('[YSP DIAG] NEW attendee added with key: "' + key + '"');
         state.attendees[key] = {
           participantKey: key,
           name: displayName,
@@ -720,6 +941,14 @@
     }
 
     recomputeAllDurations_(nowIso);
+    
+    // DIAGNOSTIC: Final state summary
+    var finalKeys = Object.keys(state.attendees || {});
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] updateTrackingState_ FINAL:', {
+      totalAttendees: finalKeys.length,
+      attendeeKeys: finalKeys,
+      presentCount: finalKeys.filter(function(k) { return state.attendees[k] && state.attendees[k].isPresent; }).length
+    });
   }
 
   /* ─── Synthetic / Noise Cleanup ────────────────────────────────────── */
@@ -801,6 +1030,12 @@
       });
     }
 
+    // DIAGNOSTIC: Log attendees being sent
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] buildPayload_ attendees:', {
+      count: attendees.length,
+      attendees: attendees.map(function(a) { return { pk: a.participantKey, name: a.name, normalized: a.normalizedName, present: a.isPresent }; })
+    });
+    
     return {
       action: 'syncMeetAttendance',
       extensionSecret: CONFIG.sharedSecret,
@@ -875,7 +1110,19 @@
     if (!CONFIG.sharedSecret) return;
 
     var payload = buildPayload_(!!isFinal, reason);
-    if (!shouldSync_(payload, !!isFinal)) return;
+    
+    // DIAGNOSTIC: Log full payload before sync check
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] sync_ payload built:', {
+      meetingId: payload.meeting && payload.meeting.id,
+      attendeesCount: payload.attendees ? payload.attendees.length : 0,
+      isFinal: isFinal,
+      reason: reason
+    });
+    
+    if (!shouldSync_(payload, !!isFinal)) {
+      if (VERBOSE_DIAG) console.log('[YSP DIAG] sync_ SKIPPED by shouldSync_');
+      return;
+    }
 
     lastSyncAt = Date.now();
     state.meta.syncCount = Number(state.meta.syncCount || 0) + 1;
@@ -919,7 +1166,9 @@
     }
 
     var outgoing = Object.assign({}, payload, { backendUrl: CONFIG.backendUrl });
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] sendSyncToBackground_ sending', outgoing.attendees ? outgoing.attendees.length : 0, 'attendees');
     safeRuntimeSendMessage_({ type: 'YSP_MEET_SYNC', payload: outgoing }, function (resp, hasRuntimeError) {
+      if (VERBOSE_DIAG) console.log('[YSP DIAG] sendSyncToBackground_ response:', { resp: resp, hasRuntimeError: hasRuntimeError });
       if (hasRuntimeError || !resp || !resp.ok) {
         sendSyncDirect_(payload, isFinal, reason);
         return;
@@ -942,6 +1191,7 @@
   }
 
   function sendSyncDirect_(payload, isFinal, reason) {
+    if (VERBOSE_DIAG) console.log('[YSP DIAG] sendSyncDirect_ sending', payload.attendees ? payload.attendees.length : 0, 'attendees to', CONFIG.backendUrl);
     fetch(CONFIG.backendUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
@@ -952,8 +1202,10 @@
     })
       .then(function (res) { return res.text(); })
       .then(function (text) {
+        if (VERBOSE_DIAG) console.log('[YSP DIAG] sendSyncDirect_ raw response:', text);
         var parsed = null;
         try { parsed = JSON.parse(String(text || '{}')); } catch (e) { parsed = null; }
+        if (VERBOSE_DIAG) console.log('[YSP DIAG] sendSyncDirect_ parsed response:', parsed);
 
         if (parsed && parsed.success) {
           var origin = parsed.meetingOrigin || (parsed.data && parsed.data.meetingOrigin) || '';
@@ -1100,6 +1352,135 @@
     return { liveCount: liveCount, seenCount: keys.length, captureCount: captureCount };
   }
 
+  /* ─── DIAGNOSTIC: DOM Dump ─────────────────────────────────────────── */
+  
+  function dumpParticipantDom_() {
+    console.log('[YSP DIAG] ========== DOM DUMP START ==========');
+    
+    // 1. All data-participant-id elements
+    var participantEls = document.querySelectorAll('[data-participant-id]');
+    console.log('[YSP DIAG] [data-participant-id] elements:', participantEls.length);
+    participantEls.forEach(function(el, i) {
+      var pid = el.getAttribute('data-participant-id');
+      var textContent = (el.textContent || '').substring(0, 100);
+      console.log('[YSP DIAG]   #' + i + ' pid=' + pid + ' text=' + textContent);
+    });
+    
+    // 2. All data-member-id elements
+    var memberEls = document.querySelectorAll('[data-member-id]');
+    console.log('[YSP DIAG] [data-member-id] elements:', memberEls.length);
+    memberEls.forEach(function(el, i) {
+      var mid = el.getAttribute('data-member-id');
+      var textContent = (el.textContent || '').substring(0, 100);
+      console.log('[YSP DIAG]   #' + i + ' mid=' + mid + ' text=' + textContent);
+    });
+    
+    // 3. All role="listitem" elements (panel list)
+    var listItems = document.querySelectorAll('[role="listitem"]');
+    console.log('[YSP DIAG] [role="listitem"] elements:', listItems.length);
+    listItems.forEach(function(el, i) {
+      var textContent = (el.textContent || '').substring(0, 100);
+      console.log('[YSP DIAG]   #' + i + ' text=' + textContent);
+    });
+    
+    // 4. "more actions for X" aria labels
+    var moreActionsEls = document.querySelectorAll('[aria-label*="more actions for"], [aria-label*="More actions for"], [aria-label*="more options for"], [aria-label*="More options for"]');
+    console.log('[YSP DIAG] "more actions/options for" elements:', moreActionsEls.length);
+    moreActionsEls.forEach(function(el, i) {
+      console.log('[YSP DIAG]   #' + i + ' aria-label=' + el.getAttribute('aria-label'));
+    });
+    
+    // 5. Video tiles / name overlays
+    var videoNames = document.querySelectorAll('[dir="auto"]');
+    var uniqueVideoNames = [];
+    videoNames.forEach(function(el) {
+      var txt = (el.textContent || '').trim();
+      if (txt && txt.length > 1 && txt.length < 60 && uniqueVideoNames.indexOf(txt) === -1) {
+        uniqueVideoNames.push(txt);
+      }
+    });
+    console.log('[YSP DIAG] Unique [dir="auto"] texts:', uniqueVideoNames);
+    
+    // 6. Participant count indicator
+    var countHint = getParticipantCountHint_();
+    console.log('[YSP DIAG] Participant count hint from UI:', countHint);
+    
+    // 7. Panel root check
+    var panelRoot = findPeoplePanelRoot_();
+    console.log('[YSP DIAG] People panel root found:', !!panelRoot);
+    if (panelRoot) {
+      console.log('[YSP DIAG] Panel root innerHTML preview:', (panelRoot.innerHTML || '').substring(0, 500));
+    }
+    
+    console.log('[YSP DIAG] ========== DOM DUMP END ==========');
+  }
+
+  function dumpPanelParticipants_(panelRoot) {
+    if (!panelRoot) return;
+    console.log('[YSP DIAG] ========== PANEL DUMP START ==========');
+    
+    // Find all li, list items in the panel
+    var listItems = panelRoot.querySelectorAll('li, [role="listitem"], [role="row"]');
+    console.log('[YSP DIAG] Panel list items (li, listitem, row):', listItems.length);
+    for (var i = 0; i < listItems.length; i++) {
+      var el = listItems[i];
+      console.log('[YSP DIAG]   ListItem #' + i + ':', {
+        text: (el.textContent || '').substring(0, 120),
+        tagName: el.tagName,
+        role: el.getAttribute('role'),
+        ariaLabel: el.getAttribute('aria-label')
+      });
+    }
+    
+    // Find all elements with names using diverse selectors
+    var nameSelectors = [
+      '[data-participant-id]',
+      '[data-member-id]',
+      'span[dir="auto"]',
+      '[dir="auto"]',
+      '[data-hovercard-id]',
+      '[data-tooltip]',
+      '[aria-labelledby]',
+    ];
+    
+    for (var s = 0; s < nameSelectors.length; s++) {
+      var selector = nameSelectors[s];
+      var els = panelRoot.querySelectorAll(selector);
+      if (els.length > 0) {
+        console.log('[YSP DIAG] Panel "' + selector + '" elements:', els.length);
+        for (var j = 0; j < els.length; j++) {
+          var text = (els[j].textContent || '').trim().substring(0, 80);
+          console.log('[YSP DIAG]     #' + j + ': "' + text + '"');
+        }
+      }
+    }
+    
+    // Get all spans with any text
+    var allSpans = panelRoot.querySelectorAll('span');
+    var spanTexts = [];
+    for (var k = 0; k < allSpans.length; k++) {
+      var spanText = (allSpans[k].textContent || '').trim();
+      if (spanText && spanText.length > 1 && spanText.length < 60) {
+        if (spanTexts.indexOf(spanText) === -1) {
+          spanTexts.push(spanText);
+        }
+      }
+    }
+    console.log('[YSP DIAG] Panel unique span texts:', spanTexts);
+    
+    // Get all divs with aria-label (potential participant rows)
+    var ariaRows = panelRoot.querySelectorAll('[aria-label]');
+    console.log('[YSP DIAG] Panel elements with aria-label:', ariaRows.length);
+    for (var m = 0; m < Math.min(ariaRows.length, 15); m++) {
+      var label = ariaRows[m].getAttribute('aria-label') || '';
+      if (label.length > 5) {
+        console.log('[YSP DIAG]   aria-label: "' + label.substring(0, 100) + '"');
+      }
+    }
+    
+    console.log('[YSP DIAG] ========== PANEL DUMP END ==========');
+  }
+
   /* ─── Utility ──────────────────────────────────────────────────────── */
 
   function extractMeetingId_(url) {
@@ -1174,4 +1555,10 @@
     args.unshift('[YSP Meet Tracker v2]');
     console.log.apply(console, args);
   }
+  
+  // DIAGNOSTIC: Expose dump function globally for manual console calls
+  // Note: yspFullDump() and yspVerbose() are exposed at the top of the file (before early return)
+  window.yspDumpParticipants = dumpParticipantDom_;
+  window.yspForceSync = function() { sync_(true, 'manual_console'); };
+  console.log('[YSP] Tracker ACTIVE. Additional helpers: yspDumpParticipants(), yspForceSync()');
 })();

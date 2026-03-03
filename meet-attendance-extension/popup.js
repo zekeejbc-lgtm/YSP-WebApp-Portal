@@ -15,6 +15,11 @@ const elHealth     = document.getElementById('health');
 const elSyncLog    = document.getElementById('syncLog');
 const elDiagEmpty  = document.getElementById('diagEmpty');
 
+// Register ad-hoc meeting elements
+const elRegisterSection = document.getElementById('registerSection');
+const elMeetingTitle    = document.getElementById('meetingTitle');
+const elRegisterMeeting = document.getElementById('registerMeeting');
+
 /* ── Storage keys ───────────────────────────────────────────────────── */
 const KEYS = {
   enabled:      'ysp_tracker_enabled',
@@ -40,6 +45,9 @@ function init_() {
   });
   elRefresh.addEventListener('click', refresh_);
   elForceSync.addEventListener('click', forceSync_);
+  if (elRegisterMeeting) {
+    elRegisterMeeting.addEventListener('click', registerMeeting_);
+  }
   refresh_();
 }
 
@@ -123,6 +131,9 @@ function renderStatus_(status) {
 
   // Sync diagnostics log
   renderSyncLog_(status[KEYS.syncLog]);
+
+  // Show register section if meeting is active but not from frontend
+  updateRegisterSection_(active, meeting, origin);
 }
 
 function renderPendingCount_(raw) {
@@ -188,4 +199,89 @@ function formatShortTime_(value) {
   } catch (e) {
     return d.toLocaleTimeString();
   }
+}
+
+/* ── Register Ad-hoc Meeting ────────────────────────────────────────── */
+
+function updateRegisterSection_(active, meetingCode, origin) {
+  if (!elRegisterSection) return;
+  
+  // Show register section only if:
+  // - Active meeting detected
+  // - Meeting code exists
+  // - Origin is NOT 'frontend' (meaning it's an unregistered ad-hoc meeting)
+  const shouldShow = active && meetingCode && origin !== 'frontend';
+  elRegisterSection.style.display = shouldShow ? 'block' : 'none';
+}
+
+function registerMeeting_() {
+  if (!elRegisterMeeting) return;
+  
+  elRegisterMeeting.disabled = true;
+  elRegisterMeeting.textContent = 'Registering…';
+  if (elError) elError.textContent = '';
+
+  // Get current meeting info from the active tab
+  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    const activeTab = tabs && tabs[0];
+    if (!activeTab || !activeTab.url || !activeTab.url.includes('meet.google.com')) {
+      showRegisterError_('No active Meet tab found');
+      return;
+    }
+
+    // Extract meet code from URL
+    const meetCode = extractMeetCode_(activeTab.url);
+    if (!meetCode) {
+      showRegisterError_('Could not extract meeting code from URL');
+      return;
+    }
+
+    const title = (elMeetingTitle && elMeetingTitle.value.trim()) || 'Ad-hoc Meeting';
+
+    // Send register request to background/content script
+    chrome.runtime.sendMessage({
+      type: 'YSP_REGISTER_ADHOC_MEETING',
+      meetCode: meetCode,
+      meetUrl: activeTab.url,
+      title: title,
+    }, function (resp) {
+      if (chrome.runtime.lastError) {
+        showRegisterError_('Extension error: ' + chrome.runtime.lastError.message);
+        return;
+      }
+
+      if (!resp || !resp.ok) {
+        showRegisterError_(resp && resp.error ? resp.error : 'Registration failed');
+        return;
+      }
+
+      // Success!
+      elRegisterMeeting.textContent = resp.alreadyRegistered ? 'Already Registered ✓' : 'Registered ✓';
+      elRegisterMeeting.style.background = '#16a34a';
+      
+      // Hide the section after a delay and refresh
+      setTimeout(function () {
+        if (elRegisterSection) elRegisterSection.style.display = 'none';
+        elRegisterMeeting.disabled = false;
+        elRegisterMeeting.textContent = 'Register & Track Meeting';
+        elRegisterMeeting.style.background = '';
+        refresh_();
+      }, 2000);
+    });
+  });
+}
+
+function showRegisterError_(message) {
+  if (elError) elError.textContent = message;
+  if (elRegisterMeeting) {
+    elRegisterMeeting.disabled = false;
+    elRegisterMeeting.textContent = 'Register & Track Meeting';
+  }
+}
+
+function extractMeetCode_(url) {
+  if (!url) return '';
+  // Match pattern: meet.google.com/xxx-xxxx-xxx
+  const match = url.match(/meet\.google\.com\/([a-z]{3}-[a-z]{4}-[a-z]{3})/i);
+  return match ? match[1].toLowerCase() : '';
 }

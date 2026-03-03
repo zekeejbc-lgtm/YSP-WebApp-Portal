@@ -150,6 +150,20 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     });
     return true;
   }
+
+  if (message.type === 'YSP_REGISTER_ADHOC_MEETING') {
+    handleRegisterAdHocMeeting_(message)
+      .then(function (result) {
+        sendResponse(result);
+      })
+      .catch(function (error) {
+        sendResponse({
+          ok: false,
+          error: String(error && (error.message || error.toString()) || error),
+        });
+      });
+    return true;
+  }
 });
 
 /* ─── Sync Request Handler ───────────────────────────────────────────── */
@@ -200,6 +214,81 @@ async function handleSyncRequest_(payload) {
   }
 
   return result;
+}
+
+/* ─── Register Ad-hoc Meeting Handler ────────────────────────────────── */
+
+const ADHOC_CONFIG = {
+  backendUrl: 'https://script.google.com/macros/s/AKfycbyTYEMa5apc6ZSCVce1qowpbcooRB88OjtW-nSvsb4ZK-W8N9XcQp2dbigoaPTg316J/exec',
+  sharedSecret: 'P37-5mgdNfjRd9KcSt4gw5SYVfzO5EHFyq4XYHKVe7PpL7FRbwab_czEa3ez4YsN',
+};
+
+async function handleRegisterAdHocMeeting_(message) {
+  const meetCode = String(message.meetCode || '').trim().toLowerCase();
+  const meetUrl = String(message.meetUrl || '').trim();
+  const title = String(message.title || 'Ad-hoc Meeting').trim();
+
+  if (!meetCode || !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(meetCode)) {
+    return { ok: false, error: 'Invalid meeting code format' };
+  }
+
+  if (!navigator.onLine) {
+    return { ok: false, error: 'You are offline. Please try again when connected.' };
+  }
+
+  const payload = {
+    action: 'registerAdHocMeeting',
+    extensionSecret: ADHOC_CONFIG.sharedSecret,
+    meetCode: meetCode,
+    meetUrl: meetUrl || ('https://meet.google.com/' + meetCode),
+    title: title,
+    registeredBy: 'extension',
+  };
+
+  try {
+    const res = await fetch(ADHOC_CONFIG.backendUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload),
+      credentials: 'omit',
+      mode: 'cors',
+    });
+
+    const text = await res.text();
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      return { ok: false, error: 'Invalid response from server' };
+    }
+
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error || 'Registration failed' };
+    }
+
+    // Update storage with new origin
+    chrome.storage.local.set({
+      [STORAGE_KEYS.lastMeetingOrigin]: 'frontend',
+    });
+
+    // Trigger a force sync to the content script to pick up the new meeting ID
+    chrome.tabs.query({ url: 'https://meet.google.com/*' }, function (tabs) {
+      if (tabs && tabs.length > 0) {
+        for (let i = 0; i < tabs.length; i++) {
+          chrome.tabs.sendMessage(tabs[i].id, { type: 'YSP_FORCE_SYNC' });
+        }
+      }
+    });
+
+    return {
+      ok: true,
+      alreadyRegistered: !!parsed.alreadyRegistered,
+      meeting: parsed.meeting || {},
+      message: parsed.message || 'Meeting registered',
+    };
+  } catch (error) {
+    return { ok: false, error: 'Network error: ' + (error.message || error) };
+  }
 }
 
 /* ─── POST with Retry + Exponential Backoff ──────────────────────────── */

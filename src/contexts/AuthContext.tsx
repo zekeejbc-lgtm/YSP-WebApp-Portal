@@ -72,7 +72,7 @@ interface AuthContextType {
   
   // Actions
   login: (username: string, password: string, rememberMe: boolean) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
   continueSession: () => Promise<boolean>;
   hasRoleAccess: (requiredRoles: string[] | undefined) => boolean;
   
@@ -316,19 +316,29 @@ export function AuthProvider({ children, onCacheClearRequest }: AuthProviderProp
   }, [setUserFromLogin]);
 
   // Logout function
-  const logout = useCallback(() => {
-    if (user?.name) {
-      void logLogout(user.name);
-      
-      const storedUser = getStoredUser();
-      if (storedUser?.username) {
-        clearUserProfileCache(storedUser.username);
-      }
-    }
+  const logout = useCallback(async () => {
+    const toastId = toast.loading('Logging out...');
     
-    clearSession();
-    clearUserState();
-    toast.success('Successfully logged out');
+    try {
+      if (user?.name) {
+        // Wait for logout to be recorded in the backend
+        await logLogout(user.name);
+        
+        const storedUser = getStoredUser();
+        if (storedUser?.username) {
+          clearUserProfileCache(storedUser.username);
+        }
+      }
+      
+      clearSession();
+      clearUserState();
+      toast.success('Successfully logged out', { id: toastId });
+    } catch (error) {
+      // Still logout even if logging fails
+      clearSession();
+      clearUserState();
+      toast.success('Successfully logged out', { id: toastId });
+    }
   }, [user, clearUserState]);
 
   // Refresh user info from storage

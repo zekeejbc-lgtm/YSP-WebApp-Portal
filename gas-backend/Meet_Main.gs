@@ -79,7 +79,9 @@ function doPost(e) {
   try {
     const requestData = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     const action = sanitizeMeetText_(requestData.action);
-    const requiresUserAccess = action && action !== 'syncMeetAttendance';
+    // Actions that use extensionSecret instead of username for auth
+    const extensionAuthActions = ['syncMeetAttendance', 'registerAdHocMeeting'];
+    const requiresUserAccess = action && extensionAuthActions.indexOf(action) === -1;
 
     if (requiresUserAccess) {
       const username = sanitizeMeetText_(requestData.username);
@@ -100,6 +102,8 @@ function doPost(e) {
         return handleGetMeetCommittees();
       case 'createMeetSession':
         return handleCreateMeetSession(requestData);
+      case 'registerAdHocMeeting':
+        return handleRegisterAdHocMeeting(requestData);
       case 'markMeetSessionComplete':
         return handleMarkMeetSessionComplete(requestData);
       case 'getMeetDashboard':
@@ -418,6 +422,100 @@ function handleCreateMeetSession(requestData) {
   }
 }
 
+/**
+ * Register an ad-hoc Google Meet that was not created through the frontend.
+ * This creates a schedule entry for the existing meeting without creating a new link.
+ * Called from the Chrome extension when tracking an unregistered meeting.
+ */
+function handleRegisterAdHocMeeting(requestData) {
+  try {
+    // Validate extension secret
+    const secret = String(requestData.extensionSecret || '').trim();
+    const expected = String(MEET_ATTENDANCE_CONFIG.EXTENSION_SECRET || '').trim();
+    if (!expected) {
+      return createErrorResponse('Server misconfigured: MEET_EXTENSION_SHARED_SECRET missing', 503);
+    }
+    if (!secret || secret !== expected) {
+      return createErrorResponse('Unauthorized extension request', 401);
+    }
+
+    const meetCode = sanitizeMeetText_(requestData.meetCode);
+    const meetUrl = sanitizeMeetText_(requestData.meetUrl) || ('https://meet.google.com/' + meetCode);
+    const title = sanitizeMeetText_(requestData.title) || 'Ad-hoc Meeting';
+    const notes = sanitizeMeetText_(requestData.notes) || 'Registered via YSP Meet Extension';
+    const registeredBy = sanitizeMeetText_(requestData.registeredBy) || 'extension';
+
+    if (!meetCode || !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(meetCode)) {
+      return createErrorResponse('Valid meetCode is required (e.g., abc-defg-hij)', 400);
+    }
+
+    // Check if already registered
+    const existingContext = resolveMeetingSyncContext_(meetCode, meetUrl);
+    if (existingContext.meetingOrigin === 'frontend' && existingContext.matchedScheduledMeetingId) {
+      // Already registered - return existing info
+      return createSuccessResponse({
+        success: true,
+        alreadyRegistered: true,
+        meeting: {
+          meetingId: existingContext.matchedScheduledMeetingId,
+          meetCode: meetCode,
+          meetUrl: meetUrl,
+          origin: 'frontend',
+        },
+        message: 'Meeting already registered',
+      });
+    }
+
+    // Register as a new scheduled meeting (ad-hoc type)
+    const meetingId = generateMeetBusinessId_();
+    const createdAt = new Date().toISOString();
+    const startIso = createdAt;
+    const endIso = new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(); // +2 hours default
+
+    const sheet = ensureMeetScheduleSheet_();
+    sheet.appendRow([
+      meetingId,                // MeetingId
+      title,                    // Title
+      'adhoc',                  // Mode (adhoc type)
+      meetUrl,                  // MeetUrl
+      startIso,                 // ScheduledStart
+      endIso,                   // ScheduledEnd
+      'ongoing',                // Status
+      createdAt,                // CreatedAt
+      registeredBy,             // CreatedBy
+      '',                       // CompletedAt
+      '',                       // CompletedBy
+      notes,                    // Notes
+      '[]',                     // ExpectedAttendees JSON
+      0,                        // EmailSentCount
+      '',                       // EmailSentAt
+      '',                       // CalendarEventId
+    ]);
+
+    Logger.log('Ad-hoc meeting registered: ' + meetingId + ' for ' + meetCode);
+
+    return createSuccessResponse({
+      success: true,
+      alreadyRegistered: false,
+      meeting: {
+        meetingId: meetingId,
+        meetCode: meetCode,
+        meetUrl: meetUrl,
+        title: title,
+        mode: 'adhoc',
+        status: 'ongoing',
+        createdAt: createdAt,
+        registeredBy: registeredBy,
+        origin: 'frontend',
+      },
+      message: 'Meeting registered successfully',
+    });
+  } catch (error) {
+    Logger.log('handleRegisterAdHocMeeting Error: ' + error.toString());
+    return createErrorResponse('Failed to register meeting: ' + error.message, 500);
+  }
+}
+
 function handleMarkMeetSessionComplete(requestData) {
   try {
     const meetingId = sanitizeMeetText_(requestData.meetingId);
@@ -555,6 +653,8 @@ function handleSyncMeetAttendance(requestData) {
     const syncContext = resolveMeetingSyncContext_(incomingMeetingId, meetingUrl);
     const meetingId = syncContext.meetingId;
     const attendees = Array.isArray(requestData.attendees) ? requestData.attendees : [];
+    Logger.log('[SYNC DEBUG] meetingId=' + meetingId + ', incoming attendees count=' + attendees.length);
+    Logger.log('[SYNC DEBUG] Raw attendees array: ' + JSON.stringify(attendees.map(function(a){ return { name: a.name, pk: a.participantKey }; })));
 
     if (!meetingId) {
       return createErrorResponse('meeting.id is required', 400);
@@ -575,9 +675,15 @@ function handleSyncMeetAttendance(requestData) {
     const payloadVersion = sanitizeMeetText_(requestData.payloadVersion) || '1';
     const payloadId = sanitizeMeetText_(requestData.payloadId) || (meetingId + '-' + Date.now());
 
+    Logger.log('[SYNC DEBUG] Processing ' + attendees.length + ' incoming attendees');
     for (let i = 0; i < attendees.length; i++) {
+      Logger.log('[SYNC DEBUG] Attendee ' + i + ' raw: ' + JSON.stringify(attendees[i]));
       const parsed = normalizeIncomingAttendee_(attendees[i]);
-      if (!parsed.participantKey || !parsed.name) continue;
+      Logger.log('[SYNC DEBUG] Attendee ' + i + ' parsed: pk=' + parsed.participantKey + ', name=' + parsed.name + ', normalized=' + parsed.normalizedName);
+      if (!parsed.participantKey || !parsed.name) {
+        Logger.log('[SYNC DEBUG] Attendee ' + i + ' SKIPPED - missing participantKey or name');
+        continue;
+      }
 
       const directoryMatch = findBestDirectoryMatchForMeet_(parsed.normalizedName, directoryMap, directoryList);
       const isExternal = !directoryMatch;
@@ -609,15 +715,19 @@ function handleSyncMeetAttendance(requestData) {
       ];
 
       const existingEntry = findMeetExistingEntryForParsed_(existingLookup, parsed);
+      Logger.log('[SYNC DEBUG] Attendee ' + i + ' existingEntry found: ' + (existingEntry ? 'row ' + existingEntry.rowIndex : 'NO'));
       if (existingEntry && existingEntry.rowIndex) {
         const mergedValues = mergeMeetAttendanceRowValues_(existingEntry.rowValues, rowValues);
         sheet.getRange(existingEntry.rowIndex, 1, 1, MEET_ATTENDANCE_HEADERS.length).setValues([mergedValues]);
+        Logger.log('[SYNC DEBUG] Attendee ' + i + ' UPDATED at row ' + existingEntry.rowIndex);
         updated++;
       } else {
         rowsToAppend.push(rowValues);
+        Logger.log('[SYNC DEBUG] Attendee ' + i + ' QUEUED for insert');
       }
     }
 
+    Logger.log('[SYNC DEBUG] Final: inserting ' + rowsToAppend.length + ' rows, updated ' + updated);
     if (rowsToAppend.length) {
       const startRow = sheet.getLastRow() + 1;
       sheet.getRange(startRow, 1, rowsToAppend.length, MEET_ATTENDANCE_HEADERS.length).setValues(rowsToAppend);
@@ -695,6 +805,8 @@ function handleGetMeetAttendance(requestData) {
         directoryName: sanitizeMeetText_(row[13]),
         directoryIdCode: sanitizeMeetText_(row[14]),
         profilePictureURL: sanitizeMeetText_(row[15]),
+        committee: '',
+        position: '',
       };
 
       groups[meetingId].attendees.push(attendee);
@@ -717,6 +829,23 @@ function handleGetMeetAttendance(requestData) {
     });
 
     if (meetingIdFilter) {
+      // Enrich attendees with committee and position from directory lookup
+      if (meetings.length > 0) {
+        const directoryLookup = buildDirectoryLookupForMeet_();
+        const meeting = meetings[0];
+        for (let a = 0; a < meeting.attendees.length; a++) {
+          const attendee = meeting.attendees[a];
+          const match = findBestDirectoryMatchForMeet_(attendee.normalizedName, directoryLookup.map, directoryLookup.list);
+          if (match) {
+            attendee.committee = match.committee || '';
+            attendee.position = match.position || '';
+            // Also update profilePictureURL if empty
+            if (!attendee.profilePictureURL && match.profilePictureURL) {
+              attendee.profilePictureURL = match.profilePictureURL;
+            }
+          }
+        }
+      }
       return createSuccessResponse({
         success: true,
         meetings: [],
@@ -837,6 +966,9 @@ function createMeetAttendancePdfHtml_(meeting, logoBase64) {
   const dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MM/dd/yyyy, hh:mm:ss a');
   const meetingLabel = sanitizeMeetText_(meeting.meetingId || '');
   const meetingDate = sanitizeMeetText_(meeting.meetingDate || '');
+  const meetingTitle = sanitizeMeetText_(meeting.title || meeting.meetingId || 'Untitled Meeting');
+  const meetingUrl = sanitizeMeetText_(meeting.meetUrl || '');
+  const organizer = sanitizeMeetText_(meeting.organizer || '');
   const logoSrc = logoBase64 || MEET_ATTENDANCE_CONFIG.LOGO_URL;
   const rows = Array.isArray(meeting.attendees) ? meeting.attendees : [];
 
@@ -844,7 +976,7 @@ function createMeetAttendancePdfHtml_(meeting, logoBase64) {
     if (!value) return '-';
     const d = new Date(value);
     if (isNaN(d.getTime())) return value;
-    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'MM/dd/yyyy hh:mm:ss a');
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'hh:mm:ss a');
   }
 
   function fmtDuration(totalSeconds) {
@@ -857,17 +989,38 @@ function createMeetAttendancePdfHtml_(meeting, logoBase64) {
 
   const tableRows = rows
     .map(function (r, idx) {
+      const displayName = escapeHtmlMeet_(r.directoryName || r.name || '');
+      const committee = escapeHtmlMeet_(r.committee || '-');
+      const position = escapeHtmlMeet_(r.position || '-');
       return (
         '<tr>' +
         '<td style="text-align:center;color:#64748b;font-weight:bold;">' + (idx + 1) + '</td>' +
-        '<td>' + escapeHtmlMeet_(r.name || '') + '</td>' +
+        '<td>' + displayName + '</td>' +
+        '<td>' + committee + '</td>' +
+        '<td>' + position + '</td>' +
         '<td>' + escapeHtmlMeet_(fmtDate(r.firstJoinTime)) + '</td>' +
-        '<td>' + escapeHtmlMeet_(fmtDate(r.lastLeaveTime)) + '</td>' +
         '<td>' + escapeHtmlMeet_(fmtDuration(r.totalDurationSeconds)) + '</td>' +
         '</tr>'
       );
     })
     .join('');
+
+  // Meeting details section
+  var meetingDetailsHtml = '<div class="meeting-details">' +
+    '<div class="section-heading">MEETING DETAILS</div>' +
+    '<div class="details-grid">' +
+    '<div class="detail-item"><span class="detail-label">Title:</span> <span class="detail-value">' + escapeHtmlMeet_(meetingTitle) + '</span></div>' +
+    '<div class="detail-item"><span class="detail-label">Meeting ID:</span> <span class="detail-value">' + escapeHtmlMeet_(meetingLabel) + '</span></div>' +
+    '<div class="detail-item"><span class="detail-label">Date:</span> <span class="detail-value">' + escapeHtmlMeet_(meetingDate) + '</span></div>';
+  
+  if (organizer) {
+    meetingDetailsHtml += '<div class="detail-item"><span class="detail-label">Organizer:</span> <span class="detail-value">' + escapeHtmlMeet_(organizer) + '</span></div>';
+  }
+  if (meetingUrl) {
+    meetingDetailsHtml += '<div class="detail-item"><span class="detail-label">Meet URL:</span> <span class="detail-value">' + escapeHtmlMeet_(meetingUrl) + '</span></div>';
+  }
+  meetingDetailsHtml += '<div class="detail-item"><span class="detail-label">Total Attendees:</span> <span class="detail-value">' + rows.length + '</span></div>' +
+    '</div></div>';
 
   return (
     '<!DOCTYPE html>' +
@@ -875,16 +1028,20 @@ function createMeetAttendancePdfHtml_(meeting, logoBase64) {
     '@page{size:A4 landscape;margin-top:0;margin-left:0;margin-right:0;margin-bottom:50px;}' +
     'body{font-family:Helvetica,Arial,sans-serif;margin:0;padding:0;background:#fff;-webkit-print-color-adjust:exact;}' +
     '.header-banner{background:#F6421F;height:120px;width:100%;color:#fff;padding:0 50px;display:flex;align-items:center;position:relative;box-sizing:border-box;}' +
-    '.logo-container{width:70px;height:70px;margin-right:25px;margin-top:25px;background:#fff;border-radius:50%;padding:5px;box-sizing:border-box;}' +
+    '.logo-container{width:70px;height:70px;float:left;margin-right:25px;margin-top:25px;background:#fff;border-radius:50%;padding:5px;box-sizing:border-box;}' +
     '.logo-img{width:100%;height:100%;object-fit:contain;}' +
-    '.header-text{margin-top:25px;}' +
+    '.header-text{float:left;margin-top:25px;}' +
     '.org-title{font-size:24px;font-weight:bold;margin:0;line-height:1.2;}' +
-    '.chapter-subtitle{font-size:16px;margin:4px 0 0 0;opacity:.9;}' +
+    '.chapter-subtitle{font-size:16px;font-weight:normal;margin:4px 0 0 0;opacity:.9;}' +
     '.report-label{margin-top:10px;font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.8;}' +
     '.meta-data{position:absolute;right:50px;bottom:20px;text-align:right;font-size:10px;opacity:.9;}' +
     '.main-content{padding:30px 60px;box-sizing:border-box;width:100%;margin:0 auto;}' +
     '.section-heading{font-size:14px;font-weight:bold;border-bottom:3px solid #F6421F;padding-bottom:8px;margin-bottom:15px;display:block;text-transform:uppercase;width:100%;color:#F6421F;}' +
-    '.summary-meta{font-size:11px;color:#334155;margin-bottom:14px;}' +
+    '.meeting-details{margin-bottom:25px;}' +
+    '.details-grid{display:flex;flex-wrap:wrap;gap:8px 30px;}' +
+    '.detail-item{font-size:11px;color:#334155;}' +
+    '.detail-label{font-weight:bold;color:#1e293b;}' +
+    '.detail-value{color:#475569;}' +
     'table{width:100%;border-collapse:collapse;margin-bottom:20px;}' +
     'thead{display:table-header-group;}' +
     'tr{page-break-inside:avoid;}' +
@@ -903,12 +1060,10 @@ function createMeetAttendancePdfHtml_(meeting, logoBase64) {
     '<div class="meta-data">Exported: ' + dateStr + '</div>' +
     '</div>' +
     '<div class="main-content">' +
-    '<div class="section-heading">MEETING ATTENDANCE</div>' +
-    '<div class="summary-meta"><strong>Meeting ID:</strong> ' + escapeHtmlMeet_(meetingLabel) + '</div>' +
-    '<div class="summary-meta"><strong>Meeting Date:</strong> ' + escapeHtmlMeet_(meetingDate) + '</div>' +
-    '<div class="summary-meta"><strong>Total Attendees:</strong> ' + rows.length + '</div>' +
+    meetingDetailsHtml +
+    '<div class="section-heading">ATTENDANCE LIST</div>' +
     '<table>' +
-    '<thead><tr><th style="width:5%;text-align:center;">#</th><th style="width:35%;">NAME</th><th style="width:20%;">JOIN TIME</th><th style="width:20%;">LEAVE TIME</th><th style="width:20%;">DURATION</th></tr></thead>' +
+    '<thead><tr><th style="width:5%;text-align:center;">#</th><th style="width:30%;">NAME</th><th style="width:20%;">COMMITTEE</th><th style="width:20%;">POSITION</th><th style="width:13%;">JOIN TIME</th><th style="width:12%;">DURATION</th></tr></thead>' +
     '<tbody>' + tableRows + '</tbody></table>' +
     '</div>' +
     '<div class="footer"><span>Youth Service Philippines - Tagum Chapter</span></div>' +
@@ -1057,6 +1212,8 @@ function buildDirectoryLookupForMeet_() {
   const picIdx = idx['ProfilePictureURL'];
   const roleIdx = idx['Role'];
   const statusIdx = idx['Status'];
+  const committeeIdx = idx['Committee'];
+  const positionIdx = idx['Position'];
   if (fullNameIdx === undefined) return { map: map, list: list };
 
   for (let i = 1; i < data.length; i++) {
@@ -1078,6 +1235,8 @@ function buildDirectoryLookupForMeet_() {
         normalizedName: normalized,
         idCode: idCodeIdx !== undefined ? sanitizeMeetText_(row[idCodeIdx]) : '',
         profilePictureURL: picIdx !== undefined ? sanitizeMeetText_(row[picIdx]) : '',
+        committee: committeeIdx !== undefined ? sanitizeMeetText_(row[committeeIdx]) : '',
+        position: positionIdx !== undefined ? sanitizeMeetText_(row[positionIdx]) : '',
       };
       map[normalized] = entry;
       list.push(entry);
@@ -1090,25 +1249,104 @@ function buildDirectoryLookupForMeet_() {
 function findBestDirectoryMatchForMeet_(normalizedName, directoryMap, directoryList) {
   const key = sanitizeMeetText_(normalizedName);
   if (!key) return null;
+  
+  // 1. Exact match
   if (directoryMap && directoryMap[key]) return directoryMap[key];
 
   const list = Array.isArray(directoryList) ? directoryList : [];
   if (!list.length) return null;
 
-  let best = null;
-  let bestScore = 0;
-  for (let i = 0; i < list.length; i++) {
-    const item = list[i];
+  const inputTokens = key.split(/\s+/).filter(function(t) { return t.length >= 2; });
+  if (!inputTokens.length) return null;
+
+  // Build candidates with multiple scoring strategies
+  var candidates = [];
+  
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i];
     if (!item || !item.normalizedName) continue;
-    const score = computeMeetNameSimilarity_(key, item.normalizedName);
-    if (score > bestScore) {
-      bestScore = score;
-      best = item;
+    
+    var dirName = item.normalizedName;
+    var dirTokens = dirName.split(/\s+/).filter(function(t) { return t.length >= 2; });
+    
+    var scores = [];
+    
+    // Strategy 1: Levenshtein similarity on full normalized name
+    var levScore = computeMeetNameSimilarity_(key, dirName);
+    scores.push({ type: 'levenshtein', score: levScore });
+    
+    // Strategy 2: Token containment - how many input tokens are in directory name
+    var containedCount = 0;
+    for (var j = 0; j < inputTokens.length; j++) {
+      if (dirName.indexOf(inputTokens[j]) !== -1) containedCount++;
+    }
+    var tokenContainScore = inputTokens.length > 0 ? containedCount / inputTokens.length : 0;
+    scores.push({ type: 'tokenContain', score: tokenContainScore });
+    
+    // Strategy 3: Token overlap (Jaccard-like)
+    var inputSet = {};
+    var dirSet = {};
+    for (var j = 0; j < inputTokens.length; j++) inputSet[inputTokens[j]] = true;
+    for (var j = 0; j < dirTokens.length; j++) dirSet[dirTokens[j]] = true;
+    var intersection = 0;
+    for (var t in inputSet) {
+      if (dirSet[t]) intersection++;
+    }
+    var union = Object.keys(inputSet).length + Object.keys(dirSet).length - intersection;
+    var jaccardScore = union > 0 ? intersection / union : 0;
+    scores.push({ type: 'jaccard', score: jaccardScore });
+    
+    // Strategy 4: First token matching (first name match)
+    var firstNameScore = 0;
+    if (inputTokens[0] && dirTokens.length > 0) {
+      for (var j = 0; j < dirTokens.length; j++) {
+        var sim = computeMeetNameSimilarity_(inputTokens[0], dirTokens[j]);
+        if (sim > firstNameScore) firstNameScore = sim;
+      }
+    }
+    scores.push({ type: 'firstName', score: firstNameScore });
+    
+    // Strategy 5: Substring check - input is substring of directory name or vice versa
+    var substringScore = 0;
+    if (dirName.indexOf(key) !== -1) substringScore = 0.95;
+    else if (key.indexOf(dirName) !== -1) substringScore = 0.9;
+    scores.push({ type: 'substring', score: substringScore });
+    
+    // Strategy 6: Sorted tokens comparison (handles name reordering)
+    var sortedInput = inputTokens.slice().sort().join(' ');
+    var sortedDir = dirTokens.slice().sort().join(' ');
+    var sortedScore = computeMeetNameSimilarity_(sortedInput, sortedDir);
+    scores.push({ type: 'sorted', score: sortedScore });
+    
+    // Compute weighted best score
+    // Prioritize: levenshtein (strong), sorted (name order), tokenContain, jaccard
+    var weightedScore = Math.max(
+      levScore,
+      sortedScore * 0.98,
+      substringScore,
+      (tokenContainScore >= 0.8 && firstNameScore >= 0.9) ? 0.88 : 0,
+      (jaccardScore >= 0.5 && firstNameScore >= 0.85) ? 0.85 : 0
+    );
+    
+    if (weightedScore > 0.5) {
+      candidates.push({
+        item: item,
+        score: weightedScore,
+        levScore: levScore,
+        scores: scores
+      });
     }
   }
-
-  // Very high-confidence match only (as requested).
-  return bestScore >= 0.99 ? best : null;
+  
+  // Sort by score descending
+  candidates.sort(function(a, b) { return b.score - a.score; });
+  
+  // Return best match if score >= 0.75 (lowered threshold for better matching)
+  if (candidates.length > 0 && candidates[0].score >= 0.75) {
+    return candidates[0].item;
+  }
+  
+  return null;
 }
 
 function computeMeetNameSimilarity_(a, b) {
@@ -1199,7 +1437,10 @@ function isLikelyMeetParticipantName_(value) {
   if (!/[a-z0-9]/i.test(cleaned)) return false;
 
   const lower = cleaned.toLowerCase();
+  
+  // Comprehensive list of Google Meet UI action texts and button labels to filter out
   const disallowed = [
+    // Original disallowed
     'more options for',
     'more_vert',
     'frame_person',
@@ -1216,15 +1457,184 @@ function isLikelyMeetParticipantName_(value) {
     'search',
     'people',
     'chat',
+    // Admit/Deny actions
+    'admit',
+    'deny',
+    'deny entry',
+    'admit all',
+    'deny all',
+    'waiting',
+    'let in',
+    'remove',
+    'remove from call',
+    'remove participant',
+    // Hand raise actions
+    'lower hand',
+    'raised hand',
+    'hand raised',
+    'hands',
+    // Reactions
+    'react',
+    'reactions',
+    'send a reaction',
+    'thumbs up',
+    'thumbs down',
+    'clap',
+    'heart',
+    'joy',
+    'surprised',
+    'thinking',
+    'tada',
+    'party popper',
+    // Pin/Spotlight actions
+    'pin',
+    'unpin',
+    'pin to main screen',
+    'spotlight',
+    'add spotlight',
+    'remove spotlight',
+    // Audio/Video controls
+    'mute',
+    'unmute',
+    'mute all',
+    'turn off camera',
+    'turn on camera',
+    'turn off microphone',
+    'turn on microphone',
+    'stop video',
+    'start video',
+    'host controls',
+    'co-host',
+    'make host',
+    'make co-host',
+    // Presentation
+    'present',
+    'stop presenting',
+    'share screen',
+    'share audio',
+    'share a tab',
+    'your entire screen',
+    'a window',
+    'a chrome tab',
+    // Captions
+    'captions',
+    'turn on captions',
+    'turn off captions',
+    'live captions',
+    // Effects and settings
+    'apply visual effects',
+    'change background',
+    'blur',
+    'blur background',
+    'settings',
+    'audio settings',
+    'video settings',
+    // Breakout rooms
+    'breakout rooms',
+    'join room',
+    'leave room',
+    'open rooms',
+    'close rooms',
+    // Whiteboard
+    'whiteboard',
+    'start whiteboard',
+    'open whiteboard',
+    // Recording
+    'record',
+    'start recording',
+    'stop recording',
+    'recording',
+    // Live stream
+    'live stream',
+    'start live stream',
+    'stop live stream',
+    // Q&A and Polls
+    'q&a',
+    'questions',
+    'polls',
+    'start poll',
+    // Activities
+    'activities',
+    'activity',
+    // General UI elements
+    'more actions',
+    'more',
+    'show more',
+    'show less',
+    'close',
+    'cancel',
+    'confirm',
+    'ok',
+    'yes',
+    'no',
+    'done',
+    'save',
+    'apply',
+    'expand',
+    'collapse',
+    'minimize',
+    'maximize',
+    'fullscreen',
+    'exit fullscreen',
+    'add people',
+    'invite',
+    'copy joining info',
+    'info',
+    'details',
+    // Status indicators
+    'presenting',
+    'speaking',
+    'muted',
+    'mic off',
+    'cam off',
+    'poor connection',
+    'reconnecting',
+    'you',
+    '(you)',
+    // Layout
+    'tiled',
+    'spotlight',
+    'sidebar',
+    'auto',
+    'layout',
+    'change layout',
+    // Waiting room
+    'waiting room',
+    'lobby',
+    'in the waiting room',
+    'ask to join',
+    'joining',
+    // Time/Duration
+    'started at',
+    'call started',
+    'elapsed time',
+    // Empty/default states
+    'no one else is here',
+    'waiting for others',
+    'you are the only one here',
   ];
+  
   for (let i = 0; i < disallowed.length; i++) {
-    if (lower.indexOf(disallowed[i]) !== -1) return false;
+    if (lower === disallowed[i] || lower.indexOf(disallowed[i]) !== -1) return false;
   }
 
+  // Also check for exact match with common single-word actions
+  const exactDisallowed = [
+    'admit', 'deny', 'pin', 'unpin', 'mute', 'unmute', 'remove', 'hand',
+    'react', 'present', 'you', 'more', 'close', 'cancel', 'ok', 'yes', 'no',
+    'done', 'save', 'apply', 'info', 'host', 'muted', 'call', 'waiting',
+  ];
+  if (exactDisallowed.indexOf(lower) !== -1) return false;
+
+  // Check if string is just repeated characters or patterns
   if (cleaned.length % 2 === 0 && cleaned.length >= 8) {
     const half = cleaned.length / 2;
     if (cleaned.slice(0, half) === cleaned.slice(half)) return false;
   }
+
+  // Filter out strings that are mostly numbers (like phone numbers or IDs)
+  const alphaCount = (cleaned.match(/[a-z]/gi) || []).length;
+  if (alphaCount < 2) return false;
 
   return true;
 }
@@ -1847,12 +2257,214 @@ function parseExpectedAttendees_(value) {
   }
 }
 
+function formatMeetIcsDateUtc_(date) {
+  return Utilities.formatDate(date, 'UTC', "yyyyMMdd'T'HHmmss'Z'");
+}
+
+function escapeIcsTextMeet_(value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\\;');
+}
+
+function buildMeetCalendarIcsBlob_(context) {
+  var startDate = new Date(context.scheduledStart);
+  var endDate = new Date(context.scheduledEnd);
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return null;
+
+  var uid = (context.meetingId || Utilities.getUuid()) + '@ysp-tagum-meet';
+  var nowStamp = formatMeetIcsDateUtc_(new Date());
+  var title = escapeIcsTextMeet_(context.title || 'KaagapAI Meet Session');
+  var description = escapeIcsTextMeet_(
+    'Meeting ID: ' + (context.meetingId || '') +
+    '\\nMode: ' + (context.mode || 'instant') +
+    '\\nInitiated By: ' + (context.createdBy || '') +
+    '\\nJoin: ' + (context.meetUrl || '') +
+    (context.notes ? '\\nNotes: ' + context.notes : '')
+  );
+  var location = escapeIcsTextMeet_(context.meetUrl || '');
+
+  var ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//YSP Tagum//KaagapAI Meet//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:REQUEST',
+    'X-WR-TIMEZONE:Asia/Manila',
+    'BEGIN:VEVENT',
+    'UID:' + uid,
+    'DTSTAMP:' + nowStamp,
+    'DTSTART:' + formatMeetIcsDateUtc_(startDate),
+    'DTEND:' + formatMeetIcsDateUtc_(endDate),
+    'SUMMARY:' + title,
+    'DESCRIPTION:' + description,
+    'LOCATION:' + location,
+    'URL:' + (context.meetUrl || ''),
+    'STATUS:CONFIRMED',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  return Utilities.newBlob(ics, 'text/calendar', 'meet-invite.ics');
+}
+
+function buildMeetGoogleCalendarUrl_(context) {
+  var startDate = new Date(context.scheduledStart);
+  var endDate = new Date(context.scheduledEnd);
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return '';
+
+  var dates = formatMeetIcsDateUtc_(startDate) + '/' + formatMeetIcsDateUtc_(endDate);
+  var details = 'Meeting ID: ' + (context.meetingId || '') +
+    '\nMode: ' + (context.mode || 'instant') +
+    '\nInitiated By: ' + (context.createdBy || '') +
+    '\nJoin: ' + (context.meetUrl || '') +
+    (context.notes ? '\nNotes: ' + context.notes : '');
+
+  var params = [
+    'action=TEMPLATE',
+    'text=' + encodeURIComponent(String(context.title || 'KaagapAI Meet Session')),
+    'details=' + encodeURIComponent(details),
+    'location=' + encodeURIComponent(String(context.meetUrl || '')),
+    'dates=' + encodeURIComponent(dates)
+  ];
+  return 'https://calendar.google.com/calendar/render?' + params.join('&');
+}
+
+function buildMeetInviteEmailHtml_(attendeeName, context, googleCalUrl) {
+  var logoUrl = MEET_ATTENDANCE_CONFIG.LOGO_URL || 'https://i.imgur.com/J4wddTW.png';
+  var webAppUrl = 'https://www.youthservicephilippinestagum.me/';
+  var fbPageUrl = 'https://www.facebook.com/YSPTagumChapter';
+  var name = escapeHtmlMeet_(attendeeName || 'Member');
+  var title = escapeHtmlMeet_(context.title || 'KaagapAI Meet Session');
+  var meetingId = escapeHtmlMeet_(context.meetingId || '');
+  var mode = escapeHtmlMeet_(context.mode === 'scheduled' ? 'Scheduled' : 'Instant');
+  var meetUrl = escapeHtmlMeet_(context.meetUrl || '');
+  var createdBy = escapeHtmlMeet_(context.createdBy || '');
+  var notes = context.notes ? escapeHtmlMeet_(context.notes) : '';
+
+  var startStr = '';
+  var endStr = '';
+  try {
+    var tz = Session.getScriptTimeZone();
+    var s = new Date(context.scheduledStart);
+    var e = new Date(context.scheduledEnd);
+    if (!isNaN(s.getTime())) startStr = Utilities.formatDate(s, tz, 'MMMM d, yyyy h:mm a');
+    if (!isNaN(e.getTime())) endStr = Utilities.formatDate(e, tz, 'MMMM d, yyyy h:mm a');
+  } catch (err) {
+    startStr = escapeHtmlMeet_(context.scheduledStart || '');
+    endStr = escapeHtmlMeet_(context.scheduledEnd || '');
+  }
+
+  var notesSection = notes
+    ? '<tr><td style="padding:6px 0"><span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Notes</span></td></tr>' +
+      '<tr><td style="padding:0 0 6px 0;font-size:14px;color:#334155;line-height:1.5">' + notes + '</td></tr>'
+    : '';
+
+  var calendarButtonHtml = '';
+  if (googleCalUrl) {
+    calendarButtonHtml =
+      '<a href="' + escapeHtmlMeet_(googleCalUrl) + '" target="_blank" ' +
+      'style="display:inline-block;background-color:#ffffff;color:#334155;border:1px solid #e2e8f0;' +
+      'font-family:\'Segoe UI\',Roboto,Arial,sans-serif;font-weight:600;font-size:14px;padding:12px 24px;' +
+      'text-decoration:none;border-radius:6px;margin:0 6px 8px 0">Add to Calendar</a>';
+  }
+
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">' +
+    '<meta http-equiv="X-UA-Compatible" content="IE=edge">' +
+    '<style type="text/css">' +
+    'body,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}' +
+    'table,td{mso-table-lspace:0pt;mso-table-rspace:0pt}' +
+    'img{-ms-interpolation-mode:bicubic;border:0;height:auto;line-height:100%;outline:none;text-decoration:none}' +
+    'body{margin:0;padding:0;width:100%!important;min-width:100%!important}' +
+    '@media only screen and (max-width:620px){' +
+    '.email-container{width:100%!important;max-width:100%!important}' +
+    '.email-padding{padding:20px 16px!important}' +
+    '.email-header{padding:20px 16px!important}' +
+    '.btn-row a{display:block!important;width:100%!important;max-width:100%!important;text-align:center!important;margin:4px 0!important;box-sizing:border-box!important}' +
+    '}' +
+    '</style></head>' +
+    '<body style="margin:0;padding:0;background:#f4f6f8;font-family:Roboto,\'Segoe UI\',Arial,Helvetica,sans-serif">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8">' +
+    '<tr><td align="center" style="padding:30px 10px">' +
+
+    // Main container
+    '<table role="presentation" class="email-container" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08)">' +
+
+    // Header banner (matches existing YSP email style)
+    '<tr><td align="center" class="email-header" style="background:linear-gradient(135deg,#FF8800 0%,#F97316 100%);padding:28px 20px">' +
+    '<img src="' + logoUrl + '" width="64" height="64" alt="YSP Logo" style="border-radius:50%;background:#fff;padding:3px;display:block;margin:0 auto" />' +
+    '<div style="color:#ffffff;font-weight:700;font-size:22px;margin-top:10px;letter-spacing:-0.3px">Youth Service Philippines</div>' +
+    '<div style="color:#ffe7cc;font-size:13px;margin-top:2px">Tagum Chapter</div></td></tr>' +
+
+    // Content area
+    '<tr><td class="email-padding" style="padding:30px">' +
+
+    // Greeting
+    '<div style="font-size:20px;font-weight:700;color:#1a1a1a;margin-bottom:6px;line-height:1.3">Hello, ' + name + '</div>' +
+    '<div style="color:#64748b;font-size:14px;margin-bottom:18px;line-height:1.4">You have been invited to a Google Meet session.</div>' +
+
+    // Meeting details card
+    '<table width="100%" cellpadding="0" cellspacing="0" style="background:#F8FAFC;border-radius:8px;border:1px solid #E2E8F0;margin-bottom:20px">' +
+    '<tr><td style="padding:16px 20px">' +
+    '<div style="font-size:13px;font-weight:700;color:#334155;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px">Meeting Details</div>' +
+    '<table width="100%" cellpadding="0" cellspacing="0">' +
+    '<tr><td style="padding:6px 0"><span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Title</span></td></tr>' +
+    '<tr><td style="padding:0 0 6px 0;font-size:14px;color:#1a1a1a;font-weight:600">' + title + '</td></tr>' +
+    '<tr><td style="padding:6px 0"><span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Meeting ID</span></td></tr>' +
+    '<tr><td style="padding:0 0 6px 0;font-size:14px;color:#334155">' + meetingId + '</td></tr>' +
+    '<tr><td style="padding:6px 0"><span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Mode</span></td></tr>' +
+    '<tr><td style="padding:0 0 6px 0;font-size:14px;color:#334155">' + mode + '</td></tr>' +
+    '<tr><td style="padding:6px 0"><span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Start</span></td></tr>' +
+    '<tr><td style="padding:0 0 6px 0;font-size:14px;color:#334155">' + startStr + '</td></tr>' +
+    '<tr><td style="padding:6px 0"><span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">End</span></td></tr>' +
+    '<tr><td style="padding:0 0 6px 0;font-size:14px;color:#334155">' + endStr + '</td></tr>' +
+    '<tr><td style="padding:6px 0"><span style="font-size:12px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Initiated By</span></td></tr>' +
+    '<tr><td style="padding:0 0 6px 0;font-size:14px;color:#334155">' + createdBy + '</td></tr>' +
+    notesSection +
+    '</table>' +
+    '</td></tr></table>' +
+
+    // Action buttons
+    '<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px"><tr><td class="btn-row">' +
+    '<a href="' + meetUrl + '" target="_blank" ' +
+    'style="display:inline-block;background-color:#FF8800;color:#ffffff;font-family:\'Segoe UI\',Roboto,Arial,sans-serif;font-weight:600;font-size:14px;padding:12px 24px;text-decoration:none;border-radius:6px;margin:0 6px 8px 0;box-shadow:0 2px 4px rgba(255,136,0,0.3)">Join Meeting</a>' +
+    calendarButtonHtml +
+    '<a href="' + webAppUrl + '" target="_blank" ' +
+    'style="display:inline-block;background-color:#ffffff;color:#4a5568;border:1px solid #e2e8f0;font-family:\'Segoe UI\',Roboto,Arial,sans-serif;font-weight:600;font-size:14px;padding:12px 24px;text-decoration:none;border-radius:6px;margin:0 6px 8px 0">Open Web App</a>' +
+    '</td></tr></table>' +
+
+    // Notice
+    '<div style="margin-top:20px;border-top:1px solid #eeeeee;padding-top:16px">' +
+    '<table width="100%"><tr>' +
+    '<td style="font-size:12px;color:#888;line-height:1.5">' +
+    '<strong>Notice:</strong> This meeting was created through the YSP KaagapAI Meet system. ' +
+    'If you did not expect this invitation, please contact the meeting organizer.' +
+    '</td></tr></table></div>' +
+
+    '</td></tr>' +
+
+    // Footer (matches existing YSP style)
+    '<tr><td style="padding:16px 30px;background:#F8FAFC;border-top:1px solid #E2E8F0;text-align:center">' +
+    '<div style="font-size:11px;color:#94a3b8;line-height:1.5">' +
+    'Youth Service Philippines &bull; Tagum Chapter<br/>' +
+    'This is an automated notification from the YSP Web App.' +
+    '</div></td></tr>' +
+
+    '</table></td></tr></table></body></html>';
+}
+
 function sendMeetInviteEmails_(attendees, context) {
   const recipients = Array.isArray(attendees) ? attendees : [];
   const sentAt = new Date().toISOString();
   if (!recipients.length) {
     return { sentCount: 0, failedCount: 0, sentAt: '' };
   }
+
+  // Build calendar attachments and link
+  var calendarIcsBlob = buildMeetCalendarIcsBlob_(context);
+  var googleCalUrl = buildMeetGoogleCalendarUrl_(context);
 
   let sentCount = 0;
   let failedCount = 0;
@@ -1864,27 +2476,21 @@ function sendMeetInviteEmails_(attendees, context) {
     const subject = context.mode === 'scheduled'
       ? ('[YSP] Scheduled Meet: ' + context.title)
       : ('[YSP] Meet Invite: ' + context.title);
-    const htmlBody =
-      '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1e293b;">' +
-      '<p>Hello ' + escapeHtmlMeet_(attendee.name || 'Member') + ',</p>' +
-      '<p>You are invited to a Google Meet session.</p>' +
-      '<p><strong>Title:</strong> ' + escapeHtmlMeet_(context.title) + '</p>' +
-      '<p><strong>Meeting ID:</strong> ' + escapeHtmlMeet_(context.meetingId) + '</p>' +
-      '<p><strong>Mode:</strong> ' + escapeHtmlMeet_(context.mode) + '</p>' +
-      '<p><strong>Start:</strong> ' + escapeHtmlMeet_(context.scheduledStart) + '</p>' +
-      '<p><strong>End:</strong> ' + escapeHtmlMeet_(context.scheduledEnd) + '</p>' +
-      '<p><strong>Initiated By:</strong> ' + escapeHtmlMeet_(context.createdBy) + '</p>' +
-      '<p><strong>Meet Link:</strong> <a href="' + escapeHtmlMeet_(context.meetUrl) + '">' + escapeHtmlMeet_(context.meetUrl) + '</a></p>' +
-      (context.notes ? ('<p><strong>Notes:</strong> ' + escapeHtmlMeet_(context.notes) + '</p>') : '') +
-      '<p>Thank you,<br>Youth Service Philippines - Tagum Chapter</p>' +
-      '</div>';
+    const htmlBody = buildMeetInviteEmailHtml_(attendee.name, context, googleCalUrl);
+
+    var emailPayload = {
+      to: to,
+      subject: subject,
+      htmlBody: htmlBody,
+    };
+
+    // Attach .ics calendar file so recipients can add to any calendar app
+    if (calendarIcsBlob) {
+      emailPayload.attachments = [calendarIcsBlob];
+    }
 
     try {
-      MailApp.sendEmail({
-        to: to,
-        subject: subject,
-        htmlBody: htmlBody,
-      });
+      MailApp.sendEmail(emailPayload);
       sentCount++;
     } catch (error) {
       failedCount++;
