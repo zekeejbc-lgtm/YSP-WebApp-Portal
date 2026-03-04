@@ -495,9 +495,10 @@ function initializeMaintenanceSheet() {
       ]]);
       
       // Add default page rows
-      maintenanceSheet.getRange(2, 1, 2, 9).setValues([
+      maintenanceSheet.getRange(2, 1, 3, 9).setValues([
         ['fullPWA', 'FALSE', '', '', '', '', '', '', ''],
-        ['issuance', 'FALSE', '', '', '', '', '', '', '']
+        ['issuance', 'FALSE', '', '', '', '', '', '', ''],
+        ['email-system', 'FALSE', '', '', '', '', '', '', '']
       ]);
       
       // Format header row

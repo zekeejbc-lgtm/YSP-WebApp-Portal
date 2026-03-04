@@ -80,7 +80,7 @@ function doPost(e) {
     const requestData = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     const action = sanitizeMeetText_(requestData.action);
     // Actions that use extensionSecret instead of username for auth
-    const extensionAuthActions = ['syncMeetAttendance', 'registerAdHocMeeting'];
+    const extensionAuthActions = ['syncMeetAttendance', 'registerAdHocMeeting', 'checkMeetingExists'];
     const requiresUserAccess = action && extensionAuthActions.indexOf(action) === -1;
 
     if (requiresUserAccess) {
@@ -102,8 +102,12 @@ function doPost(e) {
         return handleGetMeetCommittees();
       case 'createMeetSession':
         return handleCreateMeetSession(requestData);
+      case 'updateMeetSession':
+        return handleUpdateMeetSession(requestData);
       case 'registerAdHocMeeting':
         return handleRegisterAdHocMeeting(requestData);
+      case 'checkMeetingExists':
+        return handleCheckMeetingExists(requestData);
       case 'markMeetSessionComplete':
         return handleMarkMeetSessionComplete(requestData);
       case 'getMeetDashboard':
@@ -348,6 +352,7 @@ function handleCreateMeetSession(requestData) {
     const scheduledStart = normalizeMeetDateTimeInput_(requestData.scheduledStart);
     const scheduledEnd = normalizeMeetDateTimeInput_(requestData.scheduledEnd);
     const expectedAttendees = normalizeExpectedAttendees_(requestData.expectedAttendees);
+    const customMeetUrl = sanitizeMeetText_(requestData.customMeetUrl); // Custom meet link support
 
     let startIso = scheduledStart;
     let endIso = scheduledEnd;
@@ -361,8 +366,18 @@ function handleCreateMeetSession(requestData) {
       endIso = new Date(Date.parse(startIso) + (60 * 60 * 1000)).toISOString();
     }
 
-    const meetData = createGoogleMeetLink_(title, startIso, endIso, notes, expectedAttendees);
-    const meetUrl = meetData.meetUrl;
+    // If custom meet URL is provided, skip Google Meet generation
+    let meetUrl = '';
+    let calendarEventId = '';
+    if (customMeetUrl && /^https:\/\/(meet\.google\.com\/|[a-z0-9.-]+)/i.test(customMeetUrl)) {
+      meetUrl = customMeetUrl;
+      // No calendar event created for custom URLs
+    } else {
+      const meetData = createGoogleMeetLink_(title, startIso, endIso, notes, expectedAttendees);
+      meetUrl = meetData.meetUrl;
+      calendarEventId = meetData.calendarEventId || '';
+    }
+    
     const meetingId = generateMeetBusinessId_();
     const createdAt = new Date().toISOString();
     const emailDispatch = sendMeetInviteEmails_(expectedAttendees, {
@@ -393,7 +408,7 @@ function handleCreateMeetSession(requestData) {
       JSON.stringify(expectedAttendees),
       emailDispatch.sentCount,
       emailDispatch.sentAt,
-      meetData.calendarEventId || '',
+      calendarEventId,
     ]);
 
     return createSuccessResponse({
@@ -409,11 +424,13 @@ function handleCreateMeetSession(requestData) {
         createdAt: createdAt,
         createdBy: username,
         expectedAttendees: expectedAttendees,
+        isCustomMeetUrl: !!customMeetUrl,
       },
       meta: {
-        calendarEventId: meetData.calendarEventId || '',
+        calendarEventId: calendarEventId,
         emailSentCount: emailDispatch.sentCount,
         emailFailedCount: emailDispatch.failedCount,
+        isCustomMeetUrl: !!customMeetUrl,
       },
     });
   } catch (error) {
@@ -516,6 +533,170 @@ function handleRegisterAdHocMeeting(requestData) {
   }
 }
 
+/**
+ * Check if a meeting exists in the backend (for extension to verify before syncing).
+ * Can be called with meet code (from URL) or meeting ID.
+ */
+function handleCheckMeetingExists(requestData) {
+  try {
+    // Validate extension secret
+    const secret = String(requestData.extensionSecret || '').trim();
+    const expected = String(MEET_ATTENDANCE_CONFIG.EXTENSION_SECRET || '').trim();
+    if (!expected) {
+      return createErrorResponse('Server misconfigured: MEET_EXTENSION_SHARED_SECRET missing', 503);
+    }
+    if (!secret || secret !== expected) {
+      return createErrorResponse('Unauthorized extension request', 401);
+    }
+
+    const meetCode = sanitizeMeetText_(requestData.meetCode);
+    const meetUrl = sanitizeMeetText_(requestData.meetUrl) || ('https://meet.google.com/' + meetCode);
+
+    if (!meetCode || !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(meetCode)) {
+      return createErrorResponse('Valid meetCode is required (e.g., abc-defg-hij)', 400);
+    }
+
+    // Check if meeting exists using the resolve context function
+    const context = resolveMeetingSyncContext_(meetCode, meetUrl);
+    const exists = context.meetingOrigin === 'frontend' && !!context.matchedScheduledMeetingId;
+
+    return createSuccessResponse({
+      success: true,
+      exists: exists,
+      meetingId: exists ? context.matchedScheduledMeetingId : '',
+      meetCode: context.detectedMeetCode || meetCode,
+      origin: context.meetingOrigin,
+    });
+  } catch (error) {
+    Logger.log('handleCheckMeetingExists Error: ' + error.toString());
+    return createErrorResponse('Failed to check meeting: ' + error.message, 500);
+  }
+}
+
+/**
+ * Update an existing meeting session (to add more participants, update title, notes, etc.)
+ * while keeping the same meet link.
+ */
+function handleUpdateMeetSession(requestData) {
+  try {
+    const username = sanitizeMeetText_(requestData.username) || 'meet-webapp';
+    const meetingId = sanitizeMeetText_(requestData.meetingId);
+    
+    if (!meetingId) {
+      return createErrorResponse('meetingId is required', 400);
+    }
+
+    const sheet = ensureMeetScheduleSheet_();
+    const lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return createErrorResponse('Meeting not found', 404);
+
+    // Find the row with this meeting ID
+    const values = sheet.getRange(2, 1, lastRow - 1, MEET_SCHEDULE_HEADERS.length).getValues();
+    let rowIndex = -1;
+    let existingRow = null;
+    for (let i = 0; i < values.length; i++) {
+      if (sanitizeMeetText_(values[i][0]) === meetingId) {
+        rowIndex = i + 2;
+        existingRow = values[i];
+        break;
+      }
+    }
+    if (rowIndex === -1 || !existingRow) {
+      return createErrorResponse('Meeting not found', 404);
+    }
+
+    // Check if meeting is already completed
+    const currentStatus = sanitizeMeetText_(existingRow[6]);
+    if (currentStatus === 'completed') {
+      return createErrorResponse('Cannot edit completed meetings', 400);
+    }
+
+    // Update allowed fields
+    const updatedTitle = requestData.title !== undefined ? sanitizeMeetText_(requestData.title) : sanitizeMeetText_(existingRow[1]);
+    const updatedMode = requestData.mode !== undefined ? sanitizeMeetText_(requestData.mode) : sanitizeMeetText_(existingRow[2]);
+    const updatedNotes = requestData.notes !== undefined ? sanitizeMeetText_(requestData.notes) : sanitizeMeetText_(existingRow[11]);
+    const updatedScheduledStart = requestData.scheduledStart !== undefined ? normalizeMeetDateTimeInput_(requestData.scheduledStart) : sanitizeMeetText_(existingRow[4]);
+    const updatedScheduledEnd = requestData.scheduledEnd !== undefined ? normalizeMeetDateTimeInput_(requestData.scheduledEnd) : sanitizeMeetText_(existingRow[5]);
+    
+    // Merge expected attendees: existing + new
+    let existingAttendees = parseExpectedAttendees_(existingRow[12]);
+    let newAttendees = normalizeExpectedAttendees_(requestData.expectedAttendees);
+    
+    // Combine attendees, avoiding duplicates by email
+    const emailSet = {};
+    existingAttendees.forEach(function(a) {
+      if (a.email) emailSet[a.email.toLowerCase()] = a;
+    });
+    newAttendees.forEach(function(a) {
+      if (a.email) emailSet[a.email.toLowerCase()] = a;
+    });
+    const mergedAttendees = Object.keys(emailSet).map(function(key) { return emailSet[key]; });
+
+    // Update the row
+    if (requestData.title !== undefined) sheet.getRange(rowIndex, 2).setValue(updatedTitle);
+    if (requestData.mode !== undefined) sheet.getRange(rowIndex, 3).setValue(updatedMode);
+    if (requestData.scheduledStart !== undefined) sheet.getRange(rowIndex, 5).setValue(updatedScheduledStart);
+    if (requestData.scheduledEnd !== undefined) sheet.getRange(rowIndex, 6).setValue(updatedScheduledEnd);
+    if (requestData.notes !== undefined) sheet.getRange(rowIndex, 12).setValue(updatedNotes);
+    
+    // Always update expected attendees if new ones provided
+    if (requestData.expectedAttendees !== undefined && newAttendees.length > 0) {
+      sheet.getRange(rowIndex, 13).setValue(JSON.stringify(mergedAttendees));
+      
+      // Send invite emails to new attendees only
+      const existingEmails = new Set();
+      existingAttendees.forEach(function(a) {
+        if (a.email) existingEmails.add(a.email.toLowerCase());
+      });
+      const trulyNewAttendees = newAttendees.filter(function(a) {
+        return a.email && !existingEmails.has(a.email.toLowerCase());
+      });
+      
+      if (trulyNewAttendees.length > 0) {
+        const meetUrl = sanitizeMeetText_(existingRow[3]);
+        const emailDispatch = sendMeetInviteEmails_(trulyNewAttendees, {
+          title: updatedTitle,
+          mode: updatedMode,
+          meetUrl: meetUrl,
+          scheduledStart: updatedScheduledStart,
+          scheduledEnd: updatedScheduledEnd,
+          notes: updatedNotes,
+          createdBy: username,
+          meetingId: meetingId,
+        });
+        
+        // Update email counts
+        const prevEmailCount = Number(existingRow[13]) || 0;
+        sheet.getRange(rowIndex, 14).setValue(prevEmailCount + emailDispatch.sentCount);
+        sheet.getRange(rowIndex, 15).setValue(emailDispatch.sentAt);
+      }
+    }
+
+    return createSuccessResponse({
+      success: true,
+      meeting: {
+        meetingId: meetingId,
+        title: updatedTitle,
+        mode: updatedMode,
+        meetUrl: sanitizeMeetText_(existingRow[3]),
+        scheduledStart: updatedScheduledStart,
+        scheduledEnd: updatedScheduledEnd,
+        status: currentStatus,
+        notes: updatedNotes,
+        expectedAttendees: mergedAttendees,
+      },
+      meta: {
+        updatedBy: username,
+        updatedAt: new Date().toISOString(),
+        newAttendeesAdded: (requestData.expectedAttendees && newAttendees.length > 0) ? newAttendees.length : 0,
+      },
+    });
+  } catch (error) {
+    Logger.log('handleUpdateMeetSession Error: ' + error.toString());
+    return createErrorResponse('Failed to update meeting: ' + error.message, 500);
+  }
+}
+
 function handleMarkMeetSessionComplete(requestData) {
   try {
     const meetingId = sanitizeMeetText_(requestData.meetingId);
@@ -564,9 +745,14 @@ function handleGetMeetDashboard(requestData) {
     const schedules = getMeetScheduleRows_();
     const attendanceSummaryByMeeting = getMeetAttendanceSummaryMap_();
 
-    const createdMeetings = [];
+    const ongoingMeetings = [];
+    const scheduledMeetings = [];
     const completedMeetings = [];
     const createdIds = {};
+
+    // Get current time in Manila timezone for scheduling comparison
+    const nowManila = new Date();
+    const nowManilaMs = nowManila.getTime();
 
     for (let i = 0; i < schedules.length; i++) {
       const item = schedules[i];
@@ -592,10 +778,23 @@ function handleGetMeetDashboard(requestData) {
         calendarEventId: item.calendarEventId,
         attendance: summary,
       };
+      
       if (item.status === 'completed') {
         completedMeetings.push(card);
       } else {
-        createdMeetings.push(card);
+        // Check if this is a scheduled meeting that hasn't started yet
+        const scheduledStartMs = Date.parse(item.scheduledStart);
+        const isScheduledForFuture = item.mode === 'scheduled' && 
+                                      !isNaN(scheduledStartMs) && 
+                                      scheduledStartMs > nowManilaMs;
+        
+        if (isScheduledForFuture) {
+          card.status = 'scheduled';
+          scheduledMeetings.push(card);
+        } else {
+          card.status = 'ongoing';
+          ongoingMeetings.push(card);
+        }
       }
     }
 
@@ -619,13 +818,22 @@ function handleGetMeetDashboard(requestData) {
       return db - da;
     }
 
-    createdMeetings.sort(sortDescByDate);
+    // Sort scheduled meetings by scheduledStart ascending (soonest first)
+    function sortAscByScheduledStart(a, b) {
+      const da = Date.parse(a.scheduledStart || '') || 0;
+      const db = Date.parse(b.scheduledStart || '') || 0;
+      return da - db;
+    }
+
+    ongoingMeetings.sort(sortDescByDate);
+    scheduledMeetings.sort(sortAscByScheduledStart);
     completedMeetings.sort(sortDescByDate);
     manualMeetings.sort(sortDescByDate);
 
     return createSuccessResponse({
       success: true,
-      createdMeetings: createdMeetings.slice(0, limit),
+      createdMeetings: ongoingMeetings.slice(0, limit),
+      scheduledMeetings: scheduledMeetings.slice(0, limit),
       completedMeetings: completedMeetings.slice(0, limit),
       manualMeetings: manualMeetings.slice(0, limit),
     });
@@ -734,6 +942,14 @@ function handleSyncMeetAttendance(requestData) {
       inserted = rowsToAppend.length;
     }
 
+    // Auto-cleanup noise rows after sync (runs quickly, no user impact)
+    let cleanupResult = { deleted: 0 };
+    try {
+      cleanupResult = cleanupMeetAttendanceNoiseRows_();
+    } catch (cleanupErr) {
+      Logger.log('[SYNC] Cleanup error (non-fatal): ' + cleanupErr.message);
+    }
+
     return createSuccessResponse({
       success: true,
       meetingId: meetingId,
@@ -745,6 +961,7 @@ function handleSyncMeetAttendance(requestData) {
       externalParticipants: externalCount,
       totalIncoming: attendees.length,
       syncedAt: updatedAt,
+      noiseRowsDeleted: cleanupResult.deleted,
     });
   } catch (error) {
     Logger.log('handleSyncMeetAttendance Error: ' + error.toString());
@@ -1253,10 +1470,17 @@ function findBestDirectoryMatchForMeet_(normalizedName, directoryMap, directoryL
   // 1. Exact match
   if (directoryMap && directoryMap[key]) return directoryMap[key];
 
+  // 1b. Try with suffix-stripped version
+  const strippedKey = stripDisplayNameSuffixes_(key);
+  if (strippedKey && strippedKey !== key && directoryMap && directoryMap[strippedKey]) {
+    return directoryMap[strippedKey];
+  }
+
   const list = Array.isArray(directoryList) ? directoryList : [];
   if (!list.length) return null;
 
   const inputTokens = key.split(/\s+/).filter(function(t) { return t.length >= 2; });
+  const strippedTokens = strippedKey ? strippedKey.split(/\s+/).filter(function(t) { return t.length >= 2; }) : inputTokens;
   if (!inputTokens.length) return null;
 
   // Build candidates with multiple scoring strategies
@@ -1275,6 +1499,10 @@ function findBestDirectoryMatchForMeet_(normalizedName, directoryMap, directoryL
     var levScore = computeMeetNameSimilarity_(key, dirName);
     scores.push({ type: 'levenshtein', score: levScore });
     
+    // Strategy 1b: Levenshtein on suffix-stripped name (handles "Einreb Official" -> "Einreb")
+    var strippedLevScore = strippedKey ? computeMeetNameSimilarity_(strippedKey, dirName) : 0;
+    scores.push({ type: 'strippedLevenshtein', score: strippedLevScore });
+    
     // Strategy 2: Token containment - how many input tokens are in directory name
     var containedCount = 0;
     for (var j = 0; j < inputTokens.length; j++) {
@@ -1282,6 +1510,14 @@ function findBestDirectoryMatchForMeet_(normalizedName, directoryMap, directoryL
     }
     var tokenContainScore = inputTokens.length > 0 ? containedCount / inputTokens.length : 0;
     scores.push({ type: 'tokenContain', score: tokenContainScore });
+    
+    // Strategy 2b: Token containment with stripped tokens
+    var strippedContainedCount = 0;
+    for (var j = 0; j < strippedTokens.length; j++) {
+      if (dirName.indexOf(strippedTokens[j]) !== -1) strippedContainedCount++;
+    }
+    var strippedTokenContainScore = strippedTokens.length > 0 ? strippedContainedCount / strippedTokens.length : 0;
+    scores.push({ type: 'strippedTokenContain', score: strippedTokenContainScore });
     
     // Strategy 3: Token overlap (Jaccard-like)
     var inputSet = {};
@@ -1306,10 +1542,22 @@ function findBestDirectoryMatchForMeet_(normalizedName, directoryMap, directoryL
     }
     scores.push({ type: 'firstName', score: firstNameScore });
     
+    // Strategy 4b: First token from stripped name (handles prefix removal like "The Einreb")
+    var strippedFirstNameScore = 0;
+    if (strippedTokens[0] && dirTokens.length > 0) {
+      for (var j = 0; j < dirTokens.length; j++) {
+        var sim = computeMeetNameSimilarity_(strippedTokens[0], dirTokens[j]);
+        if (sim > strippedFirstNameScore) strippedFirstNameScore = sim;
+      }
+    }
+    scores.push({ type: 'strippedFirstName', score: strippedFirstNameScore });
+    
     // Strategy 5: Substring check - input is substring of directory name or vice versa
     var substringScore = 0;
     if (dirName.indexOf(key) !== -1) substringScore = 0.95;
     else if (key.indexOf(dirName) !== -1) substringScore = 0.9;
+    else if (strippedKey && dirName.indexOf(strippedKey) !== -1) substringScore = 0.93;
+    else if (strippedKey && strippedKey.indexOf(dirName) !== -1) substringScore = 0.88;
     scores.push({ type: 'substring', score: substringScore });
     
     // Strategy 6: Sorted tokens comparison (handles name reordering)
@@ -1318,14 +1566,25 @@ function findBestDirectoryMatchForMeet_(normalizedName, directoryMap, directoryL
     var sortedScore = computeMeetNameSimilarity_(sortedInput, sortedDir);
     scores.push({ type: 'sorted', score: sortedScore });
     
+    // Strategy 6b: Sorted stripped tokens
+    var sortedStrippedInput = strippedTokens.slice().sort().join(' ');
+    var sortedStrippedScore = computeMeetNameSimilarity_(sortedStrippedInput, sortedDir);
+    scores.push({ type: 'sortedStripped', score: sortedStrippedScore });
+    
     // Compute weighted best score
     // Prioritize: levenshtein (strong), sorted (name order), tokenContain, jaccard
     var weightedScore = Math.max(
       levScore,
+      strippedLevScore * 0.99,
       sortedScore * 0.98,
+      sortedStrippedScore * 0.97,
       substringScore,
       (tokenContainScore >= 0.8 && firstNameScore >= 0.9) ? 0.88 : 0,
-      (jaccardScore >= 0.5 && firstNameScore >= 0.85) ? 0.85 : 0
+      (jaccardScore >= 0.5 && firstNameScore >= 0.85) ? 0.85 : 0,
+      // New: High score if stripped name has full token containment and strong first name match
+      // This handles cases like "Einreb Official" where stripped = "Einreb" matches "alfonso einreb r"
+      (strippedTokenContainScore >= 1.0 && strippedFirstNameScore >= 0.95) ? 0.92 : 0,
+      (strippedTokenContainScore >= 0.8 && strippedFirstNameScore >= 0.9) ? 0.88 : 0
     );
     
     if (weightedScore > 0.5) {
@@ -1623,6 +1882,8 @@ function isLikelyMeetParticipantName_(value) {
     'admit', 'deny', 'pin', 'unpin', 'mute', 'unmute', 'remove', 'hand',
     'react', 'present', 'you', 'more', 'close', 'cancel', 'ok', 'yes', 'no',
     'done', 'save', 'apply', 'info', 'host', 'muted', 'call', 'waiting',
+    'lower', 'raise', 'raised', 'join', 'leave', 'left', 'rejoin', 'knock',
+    'spotlight', 'expand', 'collapse', 'hide', 'show', 'view', 'copy',
   ];
   if (exactDisallowed.indexOf(lower) !== -1) return false;
 
@@ -1645,6 +1906,103 @@ function sanitizeMeetText_(value) {
     .trim();
 }
 
+/**
+ * Clean up noise/garbage rows from the MeetAttendance sheet.
+ * Deletes rows where the participant name looks like a UI action text.
+ * Called automatically during sync and can be triggered manually.
+ */
+function cleanupMeetAttendanceNoiseRows_() {
+  const sheet = ensureMeetAttendanceSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return { deleted: 0, checked: 0 };
+
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, MEET_ATTENDANCE_HEADERS.length);
+  const values = dataRange.getValues();
+  const rowsToDelete = [];
+
+  // Name is in column 5 (index 4), normalizedName is column 6 (index 5)
+  for (let i = 0; i < values.length; i++) {
+    const name = sanitizeMeetText_(values[i][4]);
+    const normalizedName = sanitizeMeetText_(values[i][5]);
+    
+    // Check if either name or normalizedName is noise
+    if (!isLikelyMeetParticipantName_(name) || isNoiseParticipantName_(name) || isNoiseParticipantName_(normalizedName)) {
+      rowsToDelete.push(i + 2); // +2 because data starts at row 2
+    }
+  }
+
+  // Delete rows from bottom to top to preserve row indices
+  let deleted = 0;
+  for (let j = rowsToDelete.length - 1; j >= 0; j--) {
+    try {
+      sheet.deleteRow(rowsToDelete[j]);
+      deleted++;
+    } catch (e) {
+      Logger.log('Failed to delete noise row ' + rowsToDelete[j] + ': ' + e.message);
+    }
+  }
+
+  if (deleted > 0) {
+    Logger.log('[CLEANUP] Deleted ' + deleted + ' noise rows from MeetAttendance sheet');
+  }
+
+  return { deleted: deleted, checked: values.length };
+}
+
+/**
+ * Check if a name matches known noise patterns (UI actions, buttons, etc.)
+ */
+function isNoiseParticipantName_(name) {
+  if (!name) return true;
+  const lower = String(name).toLowerCase().trim();
+  if (!lower || lower.length < 2) return true;
+
+  // Exact matches for common garbage
+  const exactNoise = [
+    'lower', 'raise', 'raised', 'hand', 'admit', 'deny', 'pin', 'unpin',
+    'mute', 'unmute', 'remove', 'react', 'present', 'you', 'more',
+    'close', 'cancel', 'ok', 'yes', 'no', 'done', 'save', 'apply',
+    'info', 'host', 'muted', 'call', 'waiting', 'join', 'leave', 'left',
+    'rejoin', 'knock', 'spotlight', 'expand', 'collapse', 'hide', 'show',
+    'view', 'copy', 'participants', 'people', 'chat', 'search', 'menu',
+    'actions', 'options', 'settings', 'record', 'recording', 'captions',
+    'whiteboard', 'activities', 'reactions', 'effects', 'background',
+    'blur', 'layout', 'tiled', 'sidebar', 'auto', 'fullscreen', 'details',
+  ];
+  if (exactNoise.indexOf(lower) !== -1) return true;
+
+  // Pattern matches
+  const noisePatterns = [
+    /^more (actions|options)/i,
+    /^(turn|switch) (on|off)/i,
+    /^(start|stop) (recording|presenting|video|sharing)/i,
+    /^(lower|raise) hand/i,
+    /^(add|remove|invite) (people|participant)/i,
+    /^\d+ participants?$/i,
+    /^\(you\)$/i,
+    /^you$/i,
+    /^external participant #?\d*$/i,
+    /^frame_person/i,
+    /^more_vert/i,
+    /^morevert/i,
+  ];
+
+  for (let i = 0; i < noisePatterns.length; i++) {
+    if (noisePatterns[i].test(lower)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Manual cleanup trigger - can be run from Apps Script editor
+ */
+function runMeetAttendanceCleanup() {
+  const result = cleanupMeetAttendanceNoiseRows_();
+  Logger.log('Manual cleanup complete: deleted ' + result.deleted + ' noise rows out of ' + result.checked + ' checked');
+  return result;
+}
+
 function normalizeMeetName_(value) {
   return sanitizeMeetText_(value)
     .toLowerCase()
@@ -1652,6 +2010,45 @@ function normalizeMeetName_(value) {
     .replace(/[^a-z0-9 ]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Strips common social media / display name suffixes that people add
+ * to their Google account names but aren't part of their real name.
+ * Examples: "Einreb Official", "Juan Gaming", "Maria YT"
+ */
+function stripDisplayNameSuffixes_(normalizedName) {
+  const suffixes = [
+    'official', 'off', 'ofc',
+    'gaming', 'gamer', 'games',
+    'yt', 'youtube', 'vlog', 'vlogs', 'vlogger',
+    'tv', 'channel', 'live', 'stream', 'streamer',
+    'music', 'beats', 'studio', 'studios',
+    'ph', 'phl', 'philippines',
+    'edits', 'edit', 'clips',
+    'fan', 'fans', 'fanpage',
+    'real', 'the', 'iam', 'its', 'im',
+  ];
+  
+  var tokens = normalizedName.split(/\s+/).filter(function(t) { return t.length >= 1; });
+  
+  // Only strip if we have more than one token and last token is a known suffix
+  if (tokens.length > 1) {
+    var lastToken = tokens[tokens.length - 1];
+    if (suffixes.indexOf(lastToken) !== -1) {
+      tokens = tokens.slice(0, tokens.length - 1);
+    }
+  }
+  
+  // Also strip leading common prefixes
+  if (tokens.length > 1) {
+    var firstToken = tokens[0];
+    if (['the', 'iam', 'its', 'im', 'real'].indexOf(firstToken) !== -1) {
+      tokens = tokens.slice(1);
+    }
+  }
+  
+  return tokens.join(' ').trim();
 }
 
 function escapeHtmlMeet_(value) {

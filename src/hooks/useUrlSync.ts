@@ -46,6 +46,7 @@ interface PageStateMap {
   showMyProfile: boolean;
   showAnnouncements: boolean;
   showIssuanceCenter: boolean;
+  showEmailSystem: boolean;
   showAccessLogs: boolean;
   showSystemTools: boolean;
   showManageMembers: boolean;
@@ -69,6 +70,7 @@ interface PageSetterMap {
   setShowMyProfile: (v: boolean) => void;
   setShowAnnouncements: (v: boolean) => void;
   setShowIssuanceCenter: (v: boolean) => void;
+  setShowEmailSystem: (v: boolean) => void;
   setShowAccessLogs: (v: boolean) => void;
   setShowSystemTools: (v: boolean) => void;
   setShowManageMembers: (v: boolean) => void;
@@ -94,6 +96,7 @@ const PAGE_TO_STATE: Record<string, keyof PageStateMap> = {
   'MyProfile': 'showMyProfile',
   'Announcements': 'showAnnouncements',
   'IssuanceCenter': 'showIssuanceCenter',
+  'EmailSystem': 'showEmailSystem',
   'AccessLogs': 'showAccessLogs',
   'SystemTools': 'showSystemTools',
   'ManageMembers': 'showManageMembers',
@@ -153,6 +156,7 @@ const PAGE_ROLE_REQUIREMENTS: Record<string, UserRole> = {
   'MyProfile': 'member',
   'Announcements': 'member',
   'IssuanceCenter': 'member',
+  'EmailSystem': 'admin',
   'MembershipEditor': 'admin',
   'Settings': 'member',
   'OfficerDirectory': 'head',

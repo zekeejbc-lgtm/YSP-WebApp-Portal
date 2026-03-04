@@ -37,73 +37,8 @@
   // Diagnostic logging control - set to true for verbose scan-by-scan logs
   var VERBOSE_DIAG = false;
   
-  // INJECT HELPERS INTO MAIN PAGE CONTEXT (so they're accessible from DevTools console)
-  // Defer until DOM is ready since we run at document_start
-  function injectPageHelpers_() {
-    // Wait for document.documentElement to be available
-    if (typeof document === 'undefined' || !document.documentElement) {
-      setTimeout(injectPageHelpers_, 50);
-      return;
-    }
-    // Wait for either head or body to be available for safe injection
-    var target = document.head || document.body;
-    if (!target) {
-      // If neither head nor body exists yet, wait for DOMContentLoaded
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', injectPageHelpers_, { once: true });
-        return;
-      }
-      // Fallback: use documentElement
-      target = document.documentElement;
-    }
-    try {
-      var script = document.createElement('script');
-      script.textContent = '(' + function() {
-        window.yspFullDump = function() {
-          console.log('[YSP DIAG] ========== FULL DOCUMENT DUMP ==========');
-          var allSpans = document.querySelectorAll('span');
-          var spanTexts = [];
-          for (var i = 0; i < allSpans.length; i++) {
-            var txt = (allSpans[i].textContent || '').trim();
-            if (txt && txt.length > 1 && txt.length < 80 && spanTexts.indexOf(txt) === -1) spanTexts.push(txt);
-          }
-          console.log('[YSP DIAG] ALL span texts (' + spanTexts.length + '):', spanTexts);
-          var dirAutoEls = document.querySelectorAll('[dir=auto]');
-          var dirAutoTexts = [];
-          for (var j = 0; j < dirAutoEls.length; j++) {
-            var dt = (dirAutoEls[j].textContent || '').trim();
-            if (dt && dirAutoTexts.indexOf(dt) === -1) dirAutoTexts.push(dt);
-          }
-          console.log('[YSP DIAG] ALL [dir=auto]:', dirAutoTexts);
-          var participants = document.querySelectorAll('[data-participant-id], [data-member-id]');
-          console.log('[YSP DIAG] Participant containers:', participants.length);
-          for (var p = 0; p < participants.length; p++) {
-            console.log('[YSP DIAG]   #' + p + ':', {
-              pid: participants[p].getAttribute('data-participant-id'),
-              mid: participants[p].getAttribute('data-member-id'),
-              text: (participants[p].textContent || '').substring(0, 100)
-            });
-          }
-          var sidebars = document.querySelectorAll('[role=complementary]');
-          console.log('[YSP DIAG] Sidebars:', sidebars.length);
-          for (var k = 0; k < sidebars.length; k++) {
-            console.log('[YSP DIAG]   #' + k + ':', {
-              ariaLabel: sidebars[k].getAttribute('aria-label'),
-              text: (sidebars[k].textContent || '').substring(0, 200)
-            });
-          }
-          console.log('[YSP DIAG] ========== FULL DOCUMENT DUMP END ==========');
-        };
-        console.log('[YSP] Console helper available: yspFullDump()');
-      }.toString() + ')();';
-      target.appendChild(script);
-      script.remove();
-    } catch (e) {
-      // Ignore injection errors - this is optional diagnostic feature
-      console.warn('[YSP] Script injection failed:', e.message);
-    }
-  }
-  injectPageHelpers_();
+  // NOTE: Page helper injection (yspFullDump) removed due to Google Meet CSP blocking inline scripts.
+  // Use yspDumpParticipants() from the console instead (exposed at the bottom of this file).
   
   var TRACKER_VERSION = '2.0.0';
   var MEETING_ORIGIN_HINT = 'meet_page_auto';
@@ -318,12 +253,31 @@
   var mutationObserver = null;
   var trackerBadgeEl = null;
   var isPanelCurrentlyOpen = false;
+  var meetingVerified = false; // Whether the meeting exists in backend
+  var meetingVerificationPending = false;
+  var meetingVerificationError = '';
 
   /* ─── Initialization (document_start compatible) ───────────────────── */
 
   waitForMeetUI_().then(function () {
     initializeTrackerSettings_();
-    startTracking_();
+    // First verify if meeting exists in backend, then start tracking
+    verifyMeetingExists_().then(function(exists) {
+      meetingVerified = exists;
+      if (exists) {
+        log_('Meeting verified in backend, starting full tracking');
+      } else {
+        log_('Meeting not found in backend, tracking locally only (use popup to register)');
+      }
+      startTracking_();
+      // Notify popup about verification status
+      updateMeetingVerificationStatus_();
+    }).catch(function(err) {
+      log_('Meeting verification failed, continuing with tracking', err);
+      meetingVerificationError = String(err && err.message || err);
+      startTracking_();
+      updateMeetingVerificationStatus_();
+    });
   });
 
   /* ─── Wait for Meet UI to be ready ─────────────────────────────────── */
@@ -351,6 +305,72 @@
         document.addEventListener('DOMContentLoaded', check, { once: true });
       }
     });
+  }
+
+  /* ─── Meeting Verification ─────────────────────────────────────────── */
+
+  function verifyMeetingExists_() {
+    return new Promise(function(resolve, reject) {
+      if (meetingVerificationPending) {
+        resolve(meetingVerified);
+        return;
+      }
+      meetingVerificationPending = true;
+      
+      var payload = JSON.stringify({
+        action: 'checkMeetingExists',
+        extSecret: CONFIG.sharedSecret,
+        source: CONFIG.source,
+        meetingId: meetingId,
+        meetUrl: 'https://meet.google.com/' + meetingId
+      });
+      
+      fetch(CONFIG.backendUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: payload,
+        credentials: 'omit',
+        mode: 'cors'
+      })
+      .then(function(res) { return res.text(); })
+      .then(function(text) {
+        meetingVerificationPending = false;
+        try {
+          var parsed = JSON.parse(text || '{}');
+          if (parsed.success && parsed.data) {
+            resolve(parsed.data.exists === true);
+          } else {
+            meetingVerificationError = parsed.error || 'Unknown verification error';
+            resolve(false);
+          }
+        } catch (e) {
+          meetingVerificationError = 'Failed to parse verification response';
+          resolve(false);
+        }
+      })
+      .catch(function(err) {
+        meetingVerificationPending = false;
+        meetingVerificationError = String(err && err.message || err);
+        reject(err);
+      });
+    });
+  }
+
+  function updateMeetingVerificationStatus_() {
+    if (!CHROME_OK) return;
+    var patch = {};
+    patch['ysp_meeting_verified'] = meetingVerified;
+    patch['ysp_meeting_verification_error'] = meetingVerificationError;
+    patch['ysp_meeting_id'] = meetingId;
+    safeChromeStorageSet_(patch);
+  }
+
+  function registerMeetingAndSync_() {
+    // Force sync to register the meeting in backend (it will auto-create as manual meeting)
+    meetingVerified = true;
+    updateMeetingVerificationStatus_();
+    sync_(true, 'manual_register');
+    log_('Meeting registered via manual sync');
   }
 
   /* ─── State Management ─────────────────────────────────────────────── */
@@ -422,12 +442,18 @@
     document.addEventListener('pagehide', function () { finalizeAndSync_('page_hide'); });
     setInterval(detectMeetingEnded_, 5000);
 
-    // Listen for force sync from popup
+    // Listen for force sync and register meeting from popup
     if (CHROME_OK) {
       try {
         chrome.runtime.onMessage.addListener(function (msg) {
           if (msg && msg.type === 'YSP_FORCE_SYNC') {
             sync_(true, 'manual_force');
+          }
+          if (msg && msg.type === 'YSP_REGISTER_MEETING') {
+            registerMeetingAndSync_();
+          }
+          if (msg && msg.type === 'YSP_GET_VERIFICATION_STATUS') {
+            updateMeetingVerificationStatus_();
           }
         });
       } catch (e) { /* ignore */ }
@@ -1108,6 +1134,12 @@
     if (!trackingEnabled && !isFinal) return;
     if (!CONFIG.backendUrl || !/^https:\/\/script\.google\.com\/macros\/s\//.test(CONFIG.backendUrl)) return;
     if (!CONFIG.sharedSecret) return;
+    
+    // Skip sync if meeting not verified in backend (unless it's a manual force/register)
+    if (!meetingVerified && reason !== 'manual_force' && reason !== 'manual_register') {
+      if (VERBOSE_DIAG) console.log('[YSP DIAG] sync_ SKIPPED - meeting not verified in backend');
+      return;
+    }
 
     var payload = buildPayload_(!!isFinal, reason);
     
@@ -1178,8 +1210,15 @@
       state.meta.lastServerAckAt = new Date().toISOString();
       state.meta.lastServerMeetingOrigin = origin;
       saveState_();
+      
+      // Mark meeting as verified since sync succeeded
+      if (!meetingVerified) {
+        meetingVerified = true;
+        updateMeetingVerificationStatus_();
+        log_('Meeting now verified (sync succeeded)');
+      }
 
-      var storagePatch = {};
+      var storagePatch = {};;
       storagePatch[STORAGE_KEYS.lastSyncAt] = state.meta.lastServerAckAt;
       storagePatch[STORAGE_KEYS.lastSyncOk] = true;
       storagePatch[STORAGE_KEYS.lastSyncError] = '';
@@ -1212,6 +1251,13 @@
           state.meta.lastServerAckAt = new Date().toISOString();
           state.meta.lastServerMeetingOrigin = String(origin || '');
           saveState_();
+          
+          // Mark meeting as verified since sync succeeded
+          if (!meetingVerified) {
+            meetingVerified = true;
+            updateMeetingVerificationStatus_();
+            log_('Meeting now verified (direct sync succeeded)');
+          }
         }
 
         if (isExtensionContextAlive_()) {

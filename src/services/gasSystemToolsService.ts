@@ -710,6 +710,7 @@ export const AVAILABLE_PAGES_BACKEND = [
   { id: 'system-tools', name: 'System Tools' },
   { id: 'kaagapai-meet', name: 'KaagapAI Meet (Google Meet)' },
   { id: 'issuance', name: 'Issuance Center' },
+  { id: 'email-system', name: 'Email System' },
 ];
 
 // =================== ACCESS LOGGING ===================

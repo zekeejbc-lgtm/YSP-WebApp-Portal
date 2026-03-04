@@ -14,7 +14,7 @@
  * =============================================================================
  */
 
-import { ChevronDown, X, Moon, Sun, User, LogOut, Home as HomeIcon, Menu } from "lucide-react";
+import { ChevronDown, X, Moon, Sun, User, LogOut, Home as HomeIcon, Menu, Loader2 } from "lucide-react";
 import { useState, createContext, useContext, ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { DESIGN_TOKENS } from "./tokens";
@@ -68,6 +68,7 @@ interface SideBarProps {
   logoUrl?: string;
   userName?: string;
   userProfilePicture?: string;
+  isLoggingOut?: boolean;
 }
 
 export default function SideBar(props: SideBarProps) {
@@ -119,6 +120,7 @@ function DesktopSideBar({
   logoUrl,
   userName = "Juan Dela Cruz",
   userProfilePicture,
+  isLoggingOut = false,
 }: SideBarProps & {
   visibleGroups: NavGroup[];
   isExpanded: boolean;
@@ -422,14 +424,23 @@ function DesktopSideBar({
               {/* Logout Button */}
               <button
                 onClick={onLogout}
+                disabled={isLoggingOut}
                 className="w-full flex items-center gap-3 rounded-lg transition-all text-white"
                 style={{
-                  background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                  background: isLoggingOut 
+                    ? "#9ca3af" 
+                    : "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
                   justifyContent: isExpanded ? "center" : "center",
                   padding: isExpanded ? "10px 12px" : "10px",
+                  cursor: isLoggingOut ? "not-allowed" : "pointer",
+                  opacity: isLoggingOut ? 0.7 : 1,
                 }}
               >
-                <LogOut className="w-5 h-5 shrink-0" />
+                {isLoggingOut ? (
+                  <Loader2 className="w-5 h-5 shrink-0 animate-spin" />
+                ) : (
+                  <LogOut className="w-5 h-5 shrink-0" />
+                )}
                 <motion.span
                   animate={{
                     opacity: isExpanded ? 1 : 0,
@@ -443,7 +454,7 @@ function DesktopSideBar({
                     overflow: "hidden",
                   }}
                 >
-                  Log Out
+                  {isLoggingOut ? "Logging out..." : "Log Out"}
                 </motion.span>
               </button>
             </>
@@ -500,6 +511,7 @@ function MobileSideBar({
   logoUrl,
   userName = "Juan Dela Cruz",
   userProfilePicture,
+  isLoggingOut = false,
 }: SideBarProps & { visibleGroups: NavGroup[] }) {
   return (
     <>
@@ -829,19 +841,30 @@ function MobileSideBar({
                     {/* Log Out Button */}
                     <button
                       onClick={() => {
-                        onLogout();
-                        onClose();
+                        if (!isLoggingOut) {
+                          onLogout();
+                          onClose();
+                        }
                       }}
+                      disabled={isLoggingOut}
                       className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg transition-all text-white"
                       style={{
-                        background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
-                        boxShadow: "0 2px 8px rgba(246, 66, 31, 0.3)",
+                        background: isLoggingOut 
+                          ? "#9ca3af" 
+                          : "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)",
+                        boxShadow: isLoggingOut ? "none" : "0 2px 8px rgba(246, 66, 31, 0.3)",
                         fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
                         fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        cursor: isLoggingOut ? "not-allowed" : "pointer",
+                        opacity: isLoggingOut ? 0.7 : 1,
                       }}
                     >
-                      <LogOut className="w-5 h-5" />
-                      Log Out
+                      {isLoggingOut ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <LogOut className="w-5 h-5" />
+                      )}
+                      {isLoggingOut ? "Logging out..." : "Log Out"}
                     </button>
                   </>
                 ) : (

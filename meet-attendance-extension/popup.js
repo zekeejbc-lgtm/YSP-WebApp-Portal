@@ -34,6 +34,8 @@ const KEYS = {
   captureCount: 'ysp_tracker_capture_count',
   syncLog:      'ysp_tracker_sync_log',
   pendingSyncs: 'ysp_tracker_pending_syncs',
+  verified:     'ysp_meeting_verified',
+  verifyError:  'ysp_meeting_verification_error',
 };
 
 /* ── Init ───────────────────────────────────────────────────────────── */
@@ -76,6 +78,8 @@ function loadFromStorageFallback_() {
   defaults[KEYS.syncErr]      = 'Unable to contact background service worker';
   defaults[KEYS.syncLog]      = '[]';
   defaults[KEYS.pendingSyncs] = '[]';
+  defaults[KEYS.verified]     = false;
+  defaults[KEYS.verifyError]  = '';
 
   chrome.storage.local.get(defaults, function (status) {
     renderStatus_(status || {});
@@ -132,8 +136,9 @@ function renderStatus_(status) {
   // Sync diagnostics log
   renderSyncLog_(status[KEYS.syncLog]);
 
-  // Show register section if meeting is active but not from frontend
-  updateRegisterSection_(active, meeting, origin);
+  // Show register section if meeting is active but not verified in backend
+  const isVerified = !!status[KEYS.verified];
+  updateRegisterSection_(active, meeting, origin, isVerified);
 }
 
 function renderPendingCount_(raw) {
@@ -203,14 +208,14 @@ function formatShortTime_(value) {
 
 /* ── Register Ad-hoc Meeting ────────────────────────────────────────── */
 
-function updateRegisterSection_(active, meetingCode, origin) {
+function updateRegisterSection_(active, meetingCode, origin, isVerified) {
   if (!elRegisterSection) return;
   
   // Show register section only if:
   // - Active meeting detected
   // - Meeting code exists
-  // - Origin is NOT 'frontend' (meaning it's an unregistered ad-hoc meeting)
-  const shouldShow = active && meetingCode && origin !== 'frontend';
+  // - NOT verified in backend (new check) OR origin is not 'frontend'
+  const shouldShow = active && meetingCode && !isVerified && origin !== 'frontend';
   elRegisterSection.style.display = shouldShow ? 'block' : 'none';
 }
 

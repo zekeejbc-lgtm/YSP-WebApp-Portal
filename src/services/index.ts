@@ -225,3 +225,28 @@ export {
   type CachedHomepageOther,
   type CachedProject,
 } from './localStorageCache';
+
+// Email System Service
+export {
+  getEmails,
+  getEmailLogs,
+  addEmailRecipient,
+  updateEmailRecipient,
+  deleteEmailRecipient,
+  sendEmails,
+  batchSendAll,
+  checkEmailQuota,
+  getDirectoryMembers,
+  clearEmailSystemCache,
+  formatEmailDate,
+  formatEmailTime,
+  getEmailStatusColor,
+  getTemplateIcon,
+  EMAIL_TEMPLATES,
+  type EmailTemplateType,
+  type EmailRecipient,
+  type EmailLog,
+  type EmailQuota,
+  type SendEmailResult,
+  type EmailTemplate,
+} from './gasEmailSystemService';

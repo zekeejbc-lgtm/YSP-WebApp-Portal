@@ -7,6 +7,7 @@ interface ImportMetaEnv {
   readonly VITE_GAS_CONTACT_API_URL?: string;
   readonly VITE_GAS_OFFICERS_API_URL?: string;
   readonly VITE_GAS_NOTIFICATIONS_API_URL?: string;
+  readonly VITE_GAS_EMAIL_SYSTEM_API_URL?: string;
   readonly VITE_FIREBASE_API_KEY?: string;
   readonly VITE_FIREBASE_AUTH_DOMAIN?: string;
   readonly VITE_FIREBASE_PROJECT_ID?: string;

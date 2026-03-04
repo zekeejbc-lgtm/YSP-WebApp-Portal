@@ -5,6 +5,11 @@
  * ============================================================
  */
 
+// --- SPREADSHEET ID (Required for Web API) ---
+// Set this to your Email System spreadsheet ID
+// You can find this in the spreadsheet URL: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
+const SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('EMAIL_SYSTEM_SPREADSHEET_ID') || '';
+
 const GLOBAL_MOTTO = "Shaping the Future to a Greater Society";
 const TIMEZONE = "Asia/Manila"; // Manila local time (UTC+8)
 const LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -890,4 +895,609 @@ function createIcsBlob(title, dateObj, timeObj, venue, description) {
     Logger.log("ICS Error: " + e.toString());
     return null; // Fail gracefully if date is invalid
   }
+}
+
+// =============================================================================
+// WEB API HANDLERS
+// =============================================================================
+
+/**
+ * Helper: Return JSON success response
+ */
+function jsonSuccess_(data) {
+  return ContentService
+    .createTextOutput(JSON.stringify({ success: true, data: data }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Helper: Return JSON error response
+ */
+function jsonError_(message, code) {
+  return ContentService
+    .createTextOutput(JSON.stringify({ success: false, error: message, code: code || 500 }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Convert byte array to hex string (for HMAC signature comparison)
+ */
+function bytesToHex_(bytes) {
+  return bytes.map(function(b) {
+    return ('0' + ((b < 0 ? b + 256 : b).toString(16))).slice(-2);
+  }).join('');
+}
+
+/**
+ * Verify HMAC session token
+ * Must match the encoding used in Loginpage_Main.gs (hex, not base64)
+ */
+function verifyHmacToken_(token) {
+  if (!token || typeof token !== 'string') return null;
+  try {
+    var secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
+    if (!secret) {
+      Logger.log('WARNING: SESSION_SECRET_KEY not set in EmailSystem');
+      return null;
+    }
+    var parts = token.split('.');
+    if (parts.length !== 2) return null;
+    var payload = parts[0];
+    var signature = parts[1];
+    var expectedSig = bytesToHex_(Utilities.computeHmacSha256Signature(payload, secret));
+    if (signature !== expectedSig) {
+      Logger.log('EmailSystem: Signature mismatch');
+      return null;
+    }
+    var decoded = Utilities.newBlob(Utilities.base64Decode(payload)).getDataAsString();
+    var fields = decoded.split('|');
+    if (fields.length < 2) return null;
+    var username = fields[0];
+    var expiry = parseInt(fields[1], 10);
+    if (isNaN(expiry) || new Date().getTime() > expiry) {
+      Logger.log('EmailSystem: Token expired');
+      return null;
+    }
+    return { username: username };
+  } catch (e) {
+    Logger.log('EmailSystem verifyHmacToken_ error: ' + e.toString());
+    return null;
+  }
+}
+
+/**
+ * GET handler - health check and read operations
+ */
+function doGet(e) {
+  var params = e && e.parameter ? e.parameter : {};
+  var action = params.action || 'health';
+
+  if (action === 'health') {
+    return jsonSuccess_({ status: 'healthy', service: 'EmailSystem', timestamp: new Date().toISOString() });
+  }
+
+  // Verify token for non-health actions
+  var tokenUser = verifyHmacToken_(params.sessionToken);
+  if (!tokenUser) {
+    return jsonError_('Invalid or expired session token', 401);
+  }
+
+  try {
+    switch (action) {
+      case 'getEmails':
+        return jsonSuccess_(handleGetEmails_(params));
+      case 'getEmailLogs':
+        return jsonSuccess_(handleGetEmailLogs_(params));
+      case 'checkQuota':
+        return jsonSuccess_(handleCheckQuota_());
+      case 'getDirectoryMembers':
+        return jsonSuccess_(handleGetDirectoryMembers_());
+      default:
+        return jsonError_('Invalid action: ' + action, 400);
+    }
+  } catch (error) {
+    Logger.log('EmailSystem doGet error: ' + error);
+    return jsonError_('Server error: ' + (error.message || error), 500);
+  }
+}
+
+/**
+ * POST handler - write operations
+ */
+function doPost(e) {
+  try {
+    var body = JSON.parse(e.postData.contents || '{}');
+    var action = body.action || '';
+
+    // Verify token for all actions
+    var tokenUser = verifyHmacToken_(body.sessionToken);
+    if (!tokenUser) {
+      return jsonError_('Invalid or expired session token', 401);
+    }
+    body.username = tokenUser.username;
+
+    switch (action) {
+      case 'addEmailRecipient':
+        return jsonSuccess_(handleAddEmailRecipient_(body));
+      case 'updateEmailRecipient':
+        return jsonSuccess_(handleUpdateEmailRecipient_(body));
+      case 'deleteEmailRecipient':
+        return jsonSuccess_(handleDeleteEmailRecipient_(body));
+      case 'sendEmails':
+        return jsonSuccess_(handleSendEmails_(body));
+      case 'batchSendAll':
+        return jsonSuccess_(handleBatchSendAll_(body));
+      default:
+        return jsonError_('Invalid action: ' + action, 400);
+    }
+  } catch (error) {
+    Logger.log('EmailSystem doPost error: ' + error);
+    return jsonError_('Server error: ' + (error.message || error), 500);
+  }
+}
+
+// =============================================================================
+// API ACTION HANDLERS
+// =============================================================================
+
+function normalizeProfilePictureUrl_(rawValue) {
+  var raw = String(rawValue || '').trim();
+  if (!raw) return '';
+
+  // Handle spreadsheet IMAGE("...") formulas.
+  var imageFormulaMatch = raw.match(/=IMAGE\(\s*"([^"]+)"/i);
+  if (imageFormulaMatch && imageFormulaMatch[1]) {
+    raw = imageFormulaMatch[1].trim();
+  }
+
+  var driveMatch = raw.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  var idParamMatch = raw.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
+  var gusercontentMatch = raw.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]{20,})/);
+  var fileId = '';
+
+  if (driveMatch && driveMatch[1]) fileId = driveMatch[1];
+  if (!fileId && idParamMatch && idParamMatch[1]) fileId = idParamMatch[1];
+  if (!fileId && gusercontentMatch && gusercontentMatch[1]) fileId = gusercontentMatch[1];
+
+  if (fileId) {
+    return 'https://lh3.googleusercontent.com/d/' + fileId + '=s240';
+  }
+
+  if (raw.indexOf('http://') === 0 || raw.indexOf('https://') === 0) {
+    return raw;
+  }
+
+  return '';
+}
+
+/**
+ * Get directory members for batch import
+ * Reads from the directory/login spreadsheet
+ */
+function handleGetDirectoryMembers_() {
+  var directoryId = PropertiesService.getScriptProperties().getProperty('DIRECTORY_SPREADSHEET_ID') ||
+                    PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
+  
+  if (!directoryId) {
+    Logger.log('WARNING: DIRECTORY_SPREADSHEET_ID not set');
+    return []; // Return empty array if no directory configured
+  }
+  
+  try {
+    var ss = SpreadsheetApp.openById(directoryId);
+    var sheet = ss.getSheetByName('User Profiles') || ss.getSheetByName('Directory') || ss.getSheets()[0];
+    
+    if (!sheet) {
+      return [];
+    }
+    
+    var data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
+    
+    var headers = data[0].map(function(h) { return String(h).toLowerCase().trim(); });
+    
+    // Find column indices
+    var nameIdx = headers.indexOf('full name');
+    if (nameIdx === -1) nameIdx = headers.indexOf('name');
+    if (nameIdx === -1) nameIdx = headers.indexOf('fullname');
+    
+    var emailIdx = headers.indexOf('email');
+    if (emailIdx === -1) emailIdx = headers.indexOf('email address');
+    
+    var committeeIdx = headers.indexOf('committee');
+    if (committeeIdx === -1) committeeIdx = headers.indexOf('department');
+    if (committeeIdx === -1) committeeIdx = headers.indexOf('team');
+
+    var photoIdx = headers.indexOf('profile picture');
+    if (photoIdx === -1) photoIdx = headers.indexOf('profile image');
+    if (photoIdx === -1) photoIdx = headers.indexOf('profile photo');
+    if (photoIdx === -1) photoIdx = headers.indexOf('profilepicture');
+    if (photoIdx === -1) photoIdx = headers.indexOf('profilepictureurl');
+    if (photoIdx === -1) photoIdx = headers.indexOf('profile pic');
+    if (photoIdx === -1) photoIdx = headers.indexOf('profilepic');
+    if (photoIdx === -1) photoIdx = headers.indexOf('picture url');
+    if (photoIdx === -1) photoIdx = headers.indexOf('photo url');
+    if (photoIdx === -1) photoIdx = headers.indexOf('image url');
+    if (photoIdx === -1) photoIdx = headers.indexOf('photo');
+    if (photoIdx === -1) photoIdx = headers.indexOf('avatar');
+    if (photoIdx === -1) photoIdx = headers.indexOf('picture');
+    
+    var statusIdx = headers.indexOf('status');
+    
+    if (nameIdx === -1 || emailIdx === -1) {
+      Logger.log('Could not find name or email columns in directory');
+      return [];
+    }
+    
+    var members = [];
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var name = String(row[nameIdx] || '').trim();
+      var email = String(row[emailIdx] || '').trim();
+      var status = statusIdx !== -1 ? String(row[statusIdx] || '').toLowerCase().trim() : 'active';
+      
+      // Skip empty rows and inactive members
+      if (!name || !email) continue;
+      if (status === 'inactive' || status === 'removed' || status === 'suspended') continue;
+      
+      members.push({
+        name: name,
+        email: email,
+        committee: committeeIdx !== -1 ? String(row[committeeIdx] || '').trim() : '',
+        profilePicture: photoIdx !== -1 ? normalizeProfilePictureUrl_(row[photoIdx]) : ''
+      });
+    }
+    
+    return members;
+  } catch (e) {
+    Logger.log('Error reading directory: ' + e.toString());
+    return [];
+  }
+}
+
+/**
+ * Get all emails for a template type
+ */
+function handleGetEmails_(params) {
+  var templateType = params.templateType;
+  if (!templateType || !SHEET_LAYOUTS[templateType]) {
+    throw new Error('Invalid template type: ' + templateType);
+  }
+
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(templateType);
+  if (!sheet) {
+    throw new Error('Sheet not found: ' + templateType);
+  }
+
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return []; // Empty or headers only
+
+  var headers = data[0];
+  var emails = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var email = {};
+    email.RowIndex = i + 1; // 1-based row index
+
+    for (var j = 0; j < headers.length; j++) {
+      var header = String(headers[j]).trim();
+      var value = row[j];
+      
+      // Handle Date objects
+      if (value instanceof Date) {
+        if (header === 'Date') {
+          value = Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+        } else if (header === 'Time') {
+          value = Utilities.formatDate(value, Session.getScriptTimeZone(), 'HH:mm');
+        } else {
+          value = value.toISOString();
+        }
+      }
+      
+      email[header] = value || '';
+    }
+
+    // Always expose normalized fields for frontend consistency
+    var map = SHEET_LAYOUTS[templateType].map || {};
+    email.RecipientName = map.name !== undefined ? (row[map.name] || '') : '';
+    email.Email = map.email !== undefined ? (row[map.email] || '') : '';
+    email.Headline = map.headline !== undefined ? (row[map.headline] || '') : '';
+    email.Message = map.msg !== undefined ? (row[map.msg] || '') : '';
+    email.Date = map.date !== undefined ? (row[map.date] || '') : '';
+    email.Time = map.time !== undefined ? (row[map.time] || '') : '';
+    email.Venue = map.venue !== undefined ? (row[map.venue] || '') : '';
+    email.Amount = map.amount !== undefined ? (row[map.amount] || '') : '';
+    email.Link = map.link !== undefined ? (row[map.link] || '') : '';
+    email.Attachments = map.attach !== undefined ? (row[map.attach] || '') : '';
+    email.Status = row[headers.length] || '';
+    email.Response = row[headers.length + 1] || '';
+    email.TrackingEmail = row[headers.length + 2] || '';
+    email.EmailId = row[headers.length + 3] || '';
+
+    emails.push(email);
+  }
+
+  return emails;
+}
+
+/**
+ * Get email logs from MASTER_LOG
+ */
+function handleGetEmailLogs_(params) {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName('MASTER_LOG');
+  if (!sheet) {
+    return [];
+  }
+
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+
+  var logs = [];
+  var limit = params.limit ? parseInt(params.limit, 10) : 100;
+  var search = params.search ? String(params.search).toLowerCase() : '';
+  var templateFilter = params.templateType || '';
+
+  for (var i = data.length - 1; i >= 1 && logs.length < limit; i--) {
+    var row = data[i];
+    var log = {
+      EmailId: row[0] || '',
+      Name: row[1] || '',
+      Email: row[2] || '',
+      Headline: row[3] || '',
+      Template: row[4] || '',
+      Timestamp: row[5] instanceof Date ? row[5].toISOString() : String(row[5])
+    };
+
+    // Apply filters
+    if (templateFilter && log.Template !== templateFilter) continue;
+    if (search) {
+      var searchStr = (log.Name + log.Email + log.Headline).toLowerCase();
+      if (searchStr.indexOf(search) === -1) continue;
+    }
+
+    logs.push(log);
+  }
+
+  return logs;
+}
+
+/**
+ * Check email quota
+ */
+function handleCheckQuota_() {
+  var remaining = MailApp.getRemainingDailyQuota();
+  var dailyLimit = 1500; // Google Workspace limit
+  var used = dailyLimit - remaining;
+  return {
+    remaining: remaining,
+    dailyLimit: dailyLimit,
+    percentageUsed: Math.round((used / dailyLimit) * 100)
+  };
+}
+
+/**
+ * Add a new email recipient
+ */
+function handleAddEmailRecipient_(body) {
+  var templateType = body.templateType;
+  if (!templateType || !SHEET_LAYOUTS[templateType]) {
+    throw new Error('Invalid template type: ' + templateType);
+  }
+
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(templateType);
+  if (!sheet) {
+    throw new Error('Sheet not found: ' + templateType);
+  }
+
+  var layout = SHEET_LAYOUTS[templateType];
+  var headers = layout.headers;
+  var map = layout.map || {};
+  var newRow = [];
+
+  for (var i = 0; i < headers.length; i++) {
+    var header = headers[i];
+    var value = body[header];
+    if (value === undefined || value === null || value === '') {
+      if (map.name === i) value = body.RecipientName || body.Name || '';
+      else if (map.email === i) value = body.Email || '';
+      else if (map.headline === i) value = body.Headline || '';
+      else if (map.msg === i) value = body.Message || '';
+      else if (map.date === i) value = body.Date || '';
+      else if (map.time === i) value = body.Time || '';
+      else if (map.venue === i) value = body.Venue || '';
+      else if (map.amount === i) value = body.Amount || '';
+      else if (map.link === i) value = body.Link || '';
+      else if (map.attach === i) value = body.Attachments || '';
+      else value = '';
+    }
+    
+    // Set defaults
+    if (header === 'Status' && !value) value = 'Draft';
+    if (header === 'EmailId' && !value) value = Utilities.getUuid();
+    
+    newRow.push(value);
+  }
+
+  sheet.appendRow(newRow);
+  var rowIndex = sheet.getLastRow();
+
+  return { rowIndex: rowIndex };
+}
+
+/**
+ * Update an email recipient
+ */
+function handleUpdateEmailRecipient_(body) {
+  var templateType = body.templateType;
+  var rowIndex = parseInt(body.rowIndex, 10);
+
+  if (!templateType || !SHEET_LAYOUTS[templateType]) {
+    throw new Error('Invalid template type: ' + templateType);
+  }
+  if (!rowIndex || rowIndex < 2) {
+    throw new Error('Invalid row index');
+  }
+
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(templateType);
+  if (!sheet) {
+    throw new Error('Sheet not found: ' + templateType);
+  }
+
+  var layout = SHEET_LAYOUTS[templateType];
+  var headers = layout.headers;
+  var map = layout.map || {};
+
+  // Get current row and update values
+  var range = sheet.getRange(rowIndex, 1, 1, headers.length);
+  var currentValues = range.getValues()[0];
+
+  for (var i = 0; i < headers.length; i++) {
+    var header = headers[i];
+    var hasCanonical =
+      (map.name === i && body.hasOwnProperty('RecipientName')) ||
+      (map.email === i && body.hasOwnProperty('Email')) ||
+      (map.headline === i && body.hasOwnProperty('Headline')) ||
+      (map.msg === i && body.hasOwnProperty('Message')) ||
+      (map.date === i && body.hasOwnProperty('Date')) ||
+      (map.time === i && body.hasOwnProperty('Time')) ||
+      (map.venue === i && body.hasOwnProperty('Venue')) ||
+      (map.amount === i && body.hasOwnProperty('Amount')) ||
+      (map.link === i && body.hasOwnProperty('Link')) ||
+      (map.attach === i && body.hasOwnProperty('Attachments'));
+
+    if (body.hasOwnProperty(header) && header !== 'RowIndex') {
+      currentValues[i] = body[header];
+    } else if (hasCanonical) {
+      if (map.name === i) currentValues[i] = body.RecipientName;
+      else if (map.email === i) currentValues[i] = body.Email;
+      else if (map.headline === i) currentValues[i] = body.Headline;
+      else if (map.msg === i) currentValues[i] = body.Message;
+      else if (map.date === i) currentValues[i] = body.Date;
+      else if (map.time === i) currentValues[i] = body.Time;
+      else if (map.venue === i) currentValues[i] = body.Venue;
+      else if (map.amount === i) currentValues[i] = body.Amount;
+      else if (map.link === i) currentValues[i] = body.Link;
+      else if (map.attach === i) currentValues[i] = body.Attachments;
+    }
+  }
+
+  range.setValues([currentValues]);
+  return { success: true };
+}
+
+/**
+ * Delete an email recipient
+ */
+function handleDeleteEmailRecipient_(body) {
+  var templateType = body.templateType;
+  var rowIndex = parseInt(body.rowIndex, 10);
+
+  if (!templateType || !SHEET_LAYOUTS[templateType]) {
+    throw new Error('Invalid template type: ' + templateType);
+  }
+  if (!rowIndex || rowIndex < 2) {
+    throw new Error('Invalid row index');
+  }
+
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(templateType);
+  if (!sheet) {
+    throw new Error('Sheet not found: ' + templateType);
+  }
+
+  sheet.deleteRow(rowIndex);
+  return { success: true };
+}
+
+/**
+ * Send emails based on sendMode
+ */
+function handleSendEmails_(body) {
+  var templateType = body.templateType;
+  var sendMode = body.sendMode || 'all';
+  var selectedRowIndices = body.selectedRowIndices || [];
+
+  if (!templateType || !SHEET_LAYOUTS[templateType]) {
+    throw new Error('Invalid template type: ' + templateType);
+  }
+
+  var result = {
+    success: true,
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+    details: []
+  };
+
+  if (sendMode === 'single' && selectedRowIndices.length > 0) {
+    // Send single email
+    var rowIndex = selectedRowIndices[0];
+    var singleResult = sendSingleRow(templateType, rowIndex);
+    if (singleResult.status === 'sent') {
+      result.sent = 1;
+    } else if (singleResult.status === 'failed') {
+      result.failed = 1;
+    } else {
+      result.skipped = 1;
+    }
+    result.details.push({
+      rowIndex: rowIndex,
+      email: singleResult.email || '',
+      name: singleResult.name || '',
+      status: singleResult.status
+    });
+  } else if (sendMode === 'selected' && selectedRowIndices.length > 0) {
+    // Send selected emails
+    for (var i = 0; i < selectedRowIndices.length; i++) {
+      var idx = selectedRowIndices[i];
+      var selResult = sendSingleRow(templateType, idx);
+      if (selResult.status === 'sent') {
+        result.sent++;
+      } else if (selResult.status === 'failed') {
+        result.failed++;
+      } else {
+        result.skipped++;
+      }
+      result.details.push({
+        rowIndex: idx,
+        email: selResult.email || '',
+        name: selResult.name || '',
+        status: selResult.status
+      });
+    }
+  } else {
+    // Send all with 'Send' or 'Force' status
+    var batchResult = processBatch(templateType);
+    result.sent = batchResult.sent || 0;
+    result.failed = batchResult.errors || 0;
+    result.skipped = batchResult.skipped || 0;
+  }
+
+  return result;
+}
+
+/**
+ * Batch send all pending emails
+ */
+function handleBatchSendAll_(body) {
+  var templateType = body.templateType;
+
+  if (!templateType || !SHEET_LAYOUTS[templateType]) {
+    throw new Error('Invalid template type: ' + templateType);
+  }
+
+  var batchResult = processBatch(templateType);
+  
+  return {
+    success: true,
+    sent: batchResult.sent || 0,
+    failed: batchResult.errors || 0,
+    skipped: batchResult.skipped || 0,
+    details: []
+  };
 }

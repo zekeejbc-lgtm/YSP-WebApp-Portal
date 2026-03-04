@@ -24,6 +24,7 @@ const AttendanceTransparencyPage = lazy(() => import('../components/AttendanceTr
 const MyProfilePage = lazy(() => import('../components/MyProfilePage'));
 const AnnouncementsPage = lazy(() => import('../components/AnnouncementsPage_Enhanced'));
 const IssuanceCenterPage = lazy(() => import('../components/IssuanceCenterPage'));
+const EmailSystemPage = lazy(() => import('../components/EmailSystemPage'));
 const AccessLogsPage = lazy(() => import('../components/AccessLogsPage'));
 const SystemToolsPage = lazy(() => import('../components/SystemToolsPage'));
 const ManageMembersPage = lazy(() => import('../components/ManageMembersPage'));
@@ -88,6 +89,12 @@ export const routes: AppRoute[] = [
     element: IssuanceCenterPage,
     requiredRoles: ['member'],
     title: 'Issuance Center - YSP Tagum',
+  },
+  {
+    path: '/email-system',
+    element: EmailSystemPage,
+    requiredRoles: ['admin'],
+    title: 'Email System - YSP Tagum',
   },
   {
     path: '/applications',

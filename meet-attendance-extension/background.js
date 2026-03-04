@@ -145,6 +145,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       ysp_tracker_last_meeting_origin: '',
       ysp_tracker_pending_syncs: [],
       ysp_tracker_sync_log: [],
+      ysp_meeting_verified: false,
+      ysp_meeting_verification_error: '',
     }, function (items) {
       sendResponse({ ok: true, status: items });
     });

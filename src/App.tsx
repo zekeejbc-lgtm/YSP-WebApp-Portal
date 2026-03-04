@@ -112,6 +112,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
   const MyProfilePage = lazy(() => import("./components/MyProfilePage"));
   const AnnouncementsPage = lazy(() => import("./components/AnnouncementsPage_Enhanced"));
   const IssuanceCenterPage = lazy(() => import("./components/IssuanceCenterPage"));
+  const EmailSystemPage = lazy(() => import("./components/EmailSystemPage"));
   const SystemToolsPage = lazy(() => import("./components/SystemToolsPage"));
   const ManageMembersPage = lazy(() => import("./components/ManageMembersPage"));
   const MembershipApplicationsPage = lazy(() => import("./components/MembershipApplicationsPage"));
@@ -162,6 +163,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
     "my-profile": "profile",
     announcements: "announcements",
     "issuance-center": "issuance",
+    "email-system": "email-system",
     "access-logs": "admin/logs",
     "system-tools": "admin/tools",
     "manage-members": "admin/members",
@@ -301,6 +303,7 @@ export default function App() {
     const [isAdmin, setIsAdmin] = useState(false);
     const [sessionChecked, setSessionChecked] = useState(false);
     const [showLoginPrepLoader, setShowLoginPrepLoader] = useState(false);
+    const [isLoggingOut, setIsLoggingOut] = useState(false);
     const [userRole, setUserRole] = useState<string>("guest"); // guest, member, admin
     const [userName, setUserName] = useState<string>(""); // Display name (e.g., "John Doe")
     const [userUsername, setUserUsername] = useState<string>(""); // Actual username for API calls (e.g., "JohnDoe123")
@@ -329,6 +332,7 @@ export default function App() {
     const [showMyProfile, setShowMyProfile] = useState(false);
     const [showAnnouncements, setShowAnnouncements] = useState(false);
     const [showIssuanceCenter, setShowIssuanceCenter] = useState(false);
+    const [showEmailSystem, setShowEmailSystem] = useState(false);
     const [showAccessLogs, setShowAccessLogs] = useState(false);
     const [showSystemTools, setShowSystemTools] = useState(false);
     const [showManageMembers, setShowManageMembers] = useState(false);
@@ -398,6 +402,7 @@ export default function App() {
       setShowMyProfile,
       setShowAnnouncements,
       setShowIssuanceCenter,
+      setShowEmailSystem,
       setShowAccessLogs,
       setShowSystemTools,
       setShowManageMembers,
@@ -1980,6 +1985,18 @@ export default function App() {
             roles: ["admin", "auditor", "head", "member"], // All logged-in users can view their issuances
           },
           {
+            id: "email-system",
+            label: "Email System",
+            action: () => {
+              setActivePage("email-system");
+              setShowEmailSystem(true);
+              setOpenDropdown(null);
+              setIsMenuOpen(false);
+            },
+            icon: <Mail className="w-4 h-4" />,
+            roles: ["admin", "auditor"], // Admin and Auditor only
+          },
+          {
             id: "membership-editor",
             label: "Opportunities Editor",
             action: () => {
@@ -2921,31 +2938,37 @@ export default function App() {
 
     const handleLogout = () => {
       const executeLogout = async () => {
-        // Log logout before clearing session (need username)
-        if (userName) {
-          await logLogout(userName);
+        setIsLoggingOut(true);
+        
+        try {
+          // Log logout before clearing session (need username)
+          if (userName) {
+            await logLogout(userName);
 
-          // Clear the user's profile cache on logout
-          const storedUser = getStoredUser();
-          if (storedUser?.username) {
-            clearUserProfileCache(storedUser.username);
+            // Clear the user's profile cache on logout
+            const storedUser = getStoredUser();
+            if (storedUser?.username) {
+              clearUserProfileCache(storedUser.username);
+            }
           }
+
+          // Clear session from storage
+          clearSession();
+          setShowLoginPrepLoader(false);
+
+          setIsAdmin(false);
+          setUserRole("guest");
+          setUserName("");
+          setUserUsername("");
+          setUserEmail("");
+          setUserIdCode("");
+          setUserPosition("");
+          setUserProfilePicture("");
+          setActivePage("home");
+          toast.success('Successfully logged out');
+        } finally {
+          setIsLoggingOut(false);
         }
-
-        // Clear session from storage
-        clearSession();
-        setShowLoginPrepLoader(false);
-
-        setIsAdmin(false);
-        setUserRole("guest");
-        setUserName("");
-        setUserUsername("");
-        setUserEmail("");
-        setUserIdCode("");
-        setUserPosition("");
-        setUserProfilePicture("");
-        setActivePage("home");
-        toast.success('Successfully logged out');
       };
 
       void executeLogout();
@@ -4053,6 +4076,39 @@ export default function App() {
       );
     }
 
+    // Show Email System page
+    if (showEmailSystem && isPageAllowed("email-system")) {
+      if (isPageInMaintenance("email-system")) {
+        const config = getPageMaintenanceConfig("email-system");
+        return (
+          <>
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Email System" onBack={() => setShowEmailSystem(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <Suspense fallback={null}>
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+            </Suspense>
+            {chatbot}
+          </>
+        );
+      }
+      return (
+        <>
+          <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
+          <Suspense fallback={getPageLoadingFallback("Email System")}>
+            <EmailSystemPage 
+              onClose={() => setShowEmailSystem(false)} 
+              isDark={isDark} 
+              userRole={userRole} 
+              username={userUsername || 'admin'} 
+              userEmail={userEmail}
+              onModalStateChange={setIssuanceModalOpen}
+              buildShareableUrl={buildShareableUrl}
+            />
+          </Suspense>
+          {chatbot}
+        </>
+      );
+    }
+
     // Show Access Logs page
     if (showAccessLogs && isPageAllowed("access-logs")) {
       if (isPageInMaintenance("access-logs")) {
@@ -4354,7 +4410,7 @@ export default function App() {
         {/* Top Bar - Floating Header - Only on Homepage */}
         {!showOfficerDirectory && !showAttendanceDashboard && !showAttendanceRecording && 
         !showManageEvents && !showMyQRID && 
-        !showAttendanceTransparency && !showAnnouncements && !showIssuanceCenter && !showAccessLogs && 
+        !showAttendanceTransparency && !showAnnouncements && !showIssuanceCenter && !showEmailSystem && !showAccessLogs && 
         !showSystemTools && !showManageMembers && !showFeedbackPage && 
         !showMembershipApplicationsPage && !showMyProfile && !showSettings && !showKaagapAIMeet && (
           <TopBar
@@ -4455,6 +4511,7 @@ export default function App() {
             setIsSidebarOpen(false);
           }}
           logoUrl={logoError ? fallbackLogoUrl : primaryLogoUrl}
+          isLoggingOut={isLoggingOut}
         />
 
         {/* Top Controls when logged in */}

@@ -85,6 +85,7 @@ export interface MeetDashboardCard {
 export interface MeetDashboardResponse {
   success: boolean;
   createdMeetings: MeetDashboardCard[];
+  scheduledMeetings: MeetDashboardCard[];
   completedMeetings: MeetDashboardCard[];
   manualMeetings: MeetDashboardCard[];
 }
@@ -116,13 +117,34 @@ export async function createMeetSession(params: {
   scheduledEnd?: string;
   notes?: string;
   expectedAttendees?: Array<{ name: string; email?: string; committee?: string }>;
+  customMeetUrl?: string;
 }) {
   const user = getStoredUser();
   return callMeetApi<{
     success: boolean;
     meeting: MeetDashboardCard;
-    meta?: { calendarEventId?: string; emailSentCount?: number; emailFailedCount?: number };
+    meta?: { calendarEventId?: string; emailSentCount?: number; emailFailedCount?: number; isCustomMeetUrl?: boolean };
   }>('createMeetSession', {
+    ...params,
+    username: user?.username || 'meet-webapp',
+  });
+}
+
+export async function updateMeetSession(params: {
+  meetingId: string;
+  title?: string;
+  mode?: 'instant' | 'scheduled';
+  scheduledStart?: string;
+  scheduledEnd?: string;
+  notes?: string;
+  expectedAttendees?: Array<{ name: string; email?: string; committee?: string }>;
+}) {
+  const user = getStoredUser();
+  return callMeetApi<{
+    success: boolean;
+    meeting: MeetDashboardCard;
+    meta?: { updatedBy?: string; updatedAt?: string; newAttendeesAdded?: number };
+  }>('updateMeetSession', {
     ...params,
     username: user?.username || 'meet-webapp',
   });

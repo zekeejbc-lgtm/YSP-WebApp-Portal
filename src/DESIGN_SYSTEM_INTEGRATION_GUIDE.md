@@ -1,6 +1,33 @@
 # YSP Design System Integration Guide
 
-## ✅ What Has Been Created
+## Important Design Rules
+
+### Icons & Symbols
+- **NEVER use emojis in the UI** - Use professional Lucide React icons instead
+- Import icons from `lucide-react` package
+- Common icon mappings:
+  - Calendar events: `Calendar`
+  - Time/schedule: `Clock`
+  - Location/venue: `MapPin`
+  - Documents: `FileText`
+  - Messages: `MessageSquare`
+  - Alerts/warnings: `AlertTriangle`
+  - Success: `CheckCircle`
+  - Error: `XCircle`
+  
+### Example:
+```tsx
+// BAD - Never do this:
+<span>📅 Date</span>
+
+// GOOD - Use Lucide icons:
+import { Calendar } from "lucide-react";
+<span className="flex items-center gap-1.5">
+  <Calendar className="w-4 h-4" /> Date
+</span>
+```
+
+## What Has Been Created
 
 ### 1. Design System Foundation (`/components/design-system/`)
 

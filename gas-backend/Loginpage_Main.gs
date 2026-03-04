@@ -1095,6 +1095,7 @@ function canAccessPathByRole_(roleName, pagePath) {
     'admin/logs': 'page_admin_logs',
     'admin/tools': 'page_admin_tools',
     'kaagapai-meet': 'page_kaagapai_meet',
+    'email-system': 'page_email_system',
   };
   const explicitPageKey = pagePermissionMap[path];
   if (explicitPageKey) {
@@ -1139,6 +1140,12 @@ function canAccessPathByRole_(roleName, pagePath) {
 
   if (path === 'admin/members') {
     if (roleRecord) return level >= 8 || has('canManageUsers');
+    return role === 'admin' || role === 'auditor' || role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1;
+  }
+
+  // Email System - admin/auditor only
+  if (path === 'email-system') {
+    if (roleRecord) return level >= 8 || has('canManageEmailSystem');
     return role === 'admin' || role === 'auditor' || role.indexOf('admin') !== -1 || role.indexOf('auditor') !== -1;
   }
 

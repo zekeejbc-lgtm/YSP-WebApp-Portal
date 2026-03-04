@@ -157,6 +157,12 @@ export function UploadToast({ message, onDismiss }: UploadToastProps) {
               role="button"
               tabIndex={0}
               aria-label="Dismiss notification"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  dismissToast();
+                }
+              }}
             >
               <X style={{ width: '20px', height: '20px' }} />
             </div>
@@ -209,7 +215,7 @@ interface UploadToastContainerProps {
   isDark?: boolean;
 }
 
-export function UploadToastContainer({ messages, onDismiss, isDark }: UploadToastContainerProps) {
+export function UploadToastContainer({ messages, onDismiss, isDark: _isDark }: UploadToastContainerProps) {
   // Use portal to render at document.body level - ensures it's above everything including chatbot
   return createPortal(
     <div 

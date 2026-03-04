@@ -8,7 +8,9 @@ import {
   CheckCircle,
   CheckCircle2,
   ChevronDown,
+  Clock,
   Download,
+  Edit3,
   ExternalLink,
   FileSpreadsheet,
   FileText,
@@ -36,6 +38,7 @@ import {
   getMeetAttendance,
   getMeetDashboard,
   markMeetSessionComplete,
+  updateMeetSession,
   type MeetCommittee as Committee,
   type MeetAttendanceDetail,
   type MeetAttendanceMeeting,
@@ -55,7 +58,7 @@ interface KaagapAIMeetPageProps {
   removeUploadToast?: (id: string) => void;
 }
 
-type StatusFilter = "all" | "ongoing" | "completed" | "manual";
+type StatusFilter = "all" | "ongoing" | "scheduled" | "completed" | "manual";
 type RecipientOption = {
   id?: string;
   name: string;
@@ -215,6 +218,7 @@ export default function KaagapAIMeetPage({
   removeUploadToast,
 }: KaagapAIMeetPageProps) {
   const [createdMeetings, setCreatedMeetings] = useState<MeetDashboardCard[]>([]);
+  const [scheduledMeetings, setScheduledMeetings] = useState<MeetDashboardCard[]>([]);
   const [completedMeetings, setCompletedMeetings] = useState<MeetDashboardCard[]>([]);
   const [manualMeetings, setManualMeetings] = useState<MeetDashboardCard[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -230,6 +234,7 @@ export default function KaagapAIMeetPage({
     scheduledStart: "",
     scheduledEnd: "",
     notes: "",
+    customMeetUrl: "",
   });
   const [recipientQuery, setRecipientQuery] = useState("");
   const [commandSearchQuery, setCommandSearchQuery] = useState("");
@@ -264,6 +269,21 @@ export default function KaagapAIMeetPage({
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
+  // Edit meeting functionality states
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [editRecipients, setEditRecipients] = useState<RecipientOption[]>([]);
+  const [editRecipientQuery, setEditRecipientQuery] = useState("");
+  const [editCommandSearchQuery, setEditCommandSearchQuery] = useState("");
+  const [activeEditRecipientCommand, setActiveEditRecipientCommand] = useState<RecipientCommand | null>(null);
+  const [editExternalName, setEditExternalName] = useState("");
+  const [editExternalEmail, setEditExternalEmail] = useState("");
+  const [isEditRecipientOpen, setIsEditRecipientOpen] = useState(false);
+  const [editRecipientDropdownStyle, setEditRecipientDropdownStyle] = useState<CSSProperties | null>(null);
+  const editRecipientSearchRef = useRef<HTMLDivElement | null>(null);
+  const editRecipientInputRef = useRef<HTMLInputElement | null>(null);
+  const editRecipientInputWrapperRef = useRef<HTMLDivElement | null>(null);
+
   const user = getStoredUser();
   const canComplete = useMemo(() => {
     const role = String(user?.role || "").toLowerCase();
@@ -275,6 +295,7 @@ export default function KaagapAIMeetPage({
       setIsLoading(true);
       const res = await getMeetDashboard();
       setCreatedMeetings(res.createdMeetings || []);
+      setScheduledMeetings(res.scheduledMeetings || []);
       setCompletedMeetings(res.completedMeetings || []);
       setManualMeetings(res.manualMeetings || []);
     } catch (error) {
@@ -327,6 +348,44 @@ export default function KaagapAIMeetPage({
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [isCreateOpen]);
+
+  // Load members for edit modal
+  useEffect(() => {
+    if (!isEditOpen) return;
+    // Use cached members if available, otherwise load
+    if (recipientPool.length === 0 && !isLoadingMembers) {
+      setIsLoadingMembers(true);
+      getMeetMembers("", 5000)
+        .then((rows) => {
+          const mapped = mapMembersToRecipients(rows || []);
+          setRecipientPool(mapped);
+          saveMeetMembersToCache(mapped);
+          setIsLoadingMembers(false);
+        })
+        .catch(() => {
+          setRecipientPool([]);
+          setIsLoadingMembers(false);
+        });
+    }
+    if (committees.length === 0) {
+      getMeetCommittees()
+        .then((rows) => setCommittees(rows || []))
+        .catch(() => setCommittees([]));
+    }
+  }, [isEditOpen, recipientPool.length, isLoadingMembers, committees.length]);
+
+  // Close edit recipient dropdown on outside click
+  useEffect(() => {
+    if (!isEditOpen) return;
+    const onDocClick = (event: MouseEvent) => {
+      if (!editRecipientSearchRef.current) return;
+      if (!editRecipientSearchRef.current.contains(event.target as Node)) {
+        setIsEditRecipientOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [isEditOpen]);
 
   useEffect(() => {
     if (!isCreateOpen || !isRecipientOpen) {
@@ -420,7 +479,7 @@ export default function KaagapAIMeetPage({
         });
       }
       if (updateUploadToast) {
-        updateUploadToast(toastId, { progress: 45, message: "Generating Meet link..." });
+        updateUploadToast(toastId, { progress: 45, message: form.customMeetUrl ? "Using custom link..." : "Generating Meet link..." });
       }
       const result = await createMeetSession({
         ...form,
@@ -430,7 +489,7 @@ export default function KaagapAIMeetPage({
         updateUploadToast(toastId, {
           progress: 100,
           status: "success",
-          message: `Meeting created. ${result.meta?.emailSentCount || 0} invite emails sent.`,
+          message: `Meeting created${result.meta?.isCustomMeetUrl ? " (custom link)" : ""}. ${result.meta?.emailSentCount || 0} invite emails sent.`,
         });
       }
       if (removeUploadToast) {
@@ -438,7 +497,7 @@ export default function KaagapAIMeetPage({
       }
       toast.success("Meeting created");
       setIsCreateOpen(false);
-      setForm({ title: "", mode: "instant", scheduledStart: "", scheduledEnd: "", notes: "" });
+      setForm({ title: "", mode: "instant", scheduledStart: "", scheduledEnd: "", notes: "", customMeetUrl: "" });
       setSelectedRecipients([]);
       setRecipientQuery("");
       setCommandSearchQuery("");
@@ -474,6 +533,77 @@ export default function KaagapAIMeetPage({
       setSelectedCard((prev) => (prev ? { ...prev, status: "completed" } : prev));
     } catch (error) {
       toast.error((error as Error).message || "Failed to mark complete");
+    }
+  };
+
+  // Open edit modal with current meeting data
+  const openEditModal = () => {
+    if (!selectedCard || !selectedMeeting) return;
+    // Pre-populate edit recipients with current expected attendees
+    const currentRecipients: RecipientOption[] = selectedMeeting.expectedAttendees?.map((a) => ({
+      type: a.email.endsWith("@ysptagum.com") || a.email.endsWith("@ysptagum.ph") ? "internal" : "external" as "internal" | "external",
+      name: a.name,
+      email: a.email,
+    })) || [];
+    setEditRecipients(currentRecipients);
+    setEditRecipientQuery("");
+    setEditCommandSearchQuery("");
+    setActiveEditRecipientCommand(null);
+    setEditExternalName("");
+    setEditExternalEmail("");
+    setIsEditOpen(true);
+  };
+
+  const onEditMeeting = async () => {
+    if (!selectedCard) return;
+    try {
+      setIsUpdating(true);
+      const toastId = `meet-update-${Date.now()}`;
+      if (addUploadToast) {
+        addUploadToast({
+          id: toastId,
+          title: "Updating Meeting",
+          message: "Saving changes...",
+          status: "loading",
+          progress: 30,
+        });
+      }
+      const result = await updateMeetSession({
+        meetingId: selectedCard.meetingId,
+        expectedAttendees: editRecipients,
+      });
+      if (updateUploadToast) {
+        updateUploadToast(toastId, {
+          progress: 100,
+          status: "success",
+          message: `Meeting updated. ${result.meta?.newEmailsSent || 0} new invite emails sent.`,
+        });
+      }
+      if (removeUploadToast) {
+        setTimeout(() => removeUploadToast(toastId), 3500);
+      }
+      toast.success("Meeting updated");
+      setIsEditOpen(false);
+      // Refresh the detail
+      const detail = await getMeetAttendance(selectedCard.meetingId);
+      setSelectedMeeting(detail);
+      await loadDashboard();
+    } catch (error) {
+      const toastId = `meet-update-fail-${Date.now()}`;
+      if (addUploadToast) {
+        addUploadToast({
+          id: toastId,
+          title: "Updating Meeting",
+          message: (error as Error).message || "Failed to update meeting",
+          status: "error",
+        });
+      }
+      if (removeUploadToast) {
+        setTimeout(() => removeUploadToast(toastId), 5000);
+      }
+      toast.error((error as Error).message || "Failed to update meeting");
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -598,12 +728,31 @@ export default function KaagapAIMeetPage({
     doc.setFont("helvetica", "normal");
     doc.setTextColor(51, 65, 85);
     const meetingTitle = selectedCard.title || selectedCard.meetingId || "Untitled Meeting";
-    const meetingDateFormatted = formatDateTimePdf(selectedMeeting.meetingDate || selectedCard.scheduledStart);
+    // Use scheduledStart for proper date/time, fallback to meetingDate
+    const meetingDateFormatted = formatDateTimePdf(selectedCard.scheduledStart || selectedMeeting?.meetingDate);
+    // Calculate meeting duration - prefer actual duration (createdAt to completedAt for completed meetings)
+    let meetingDurationSeconds = 0;
+    if (selectedCard.status === "completed" && selectedCard.createdAt && selectedCard.completedAt) {
+      // Actual duration for completed meetings
+      const startMs = Date.parse(selectedCard.createdAt);
+      const endMs = Date.parse(selectedCard.completedAt);
+      if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs > startMs) {
+        meetingDurationSeconds = Math.floor((endMs - startMs) / 1000);
+      }
+    } else if (selectedCard.createdAt && selectedCard.status === "ongoing") {
+      // Live duration for ongoing meetings
+      const startMs = Date.parse(selectedCard.createdAt);
+      meetingDurationSeconds = Math.floor((Date.now() - startMs) / 1000);
+    }
+    // Fallback: use max attendee duration if actual duration is 0
+    if (meetingDurationSeconds === 0 && attendees.length > 0) {
+      meetingDurationSeconds = Math.max(...attendees.map((a) => Number(a.totalDurationSeconds || 0)));
+    }
     doc.text(`Title: ${meetingTitle}`, margin + 6, yPosition + 16);
     doc.text(`Meeting ID: ${selectedCard.meetingId}`, margin + 6, yPosition + 22);
     doc.text(`Date: ${meetingDateFormatted}`, margin + 6, yPosition + 28);
     doc.text(`Total Attendees: ${attendees.length}`, pageWidth / 2, yPosition + 16);
-    doc.text(`Duration: ${formatDuration(selectedMeeting.totalDurationSeconds)}`, pageWidth / 2, yPosition + 22);
+    doc.text(`Duration: ${formatDuration(meetingDurationSeconds)}`, pageWidth / 2, yPosition + 22);
     doc.text(`Status: ${selectedCard.status || "Unknown"}`, pageWidth / 2, yPosition + 28);
     yPosition += 45;
 
@@ -781,6 +930,7 @@ export default function KaagapAIMeetPage({
   const statusOptions = [
     { value: "all", label: "All Status" },
     { value: "ongoing", label: "Ongoing" },
+    { value: "scheduled", label: "Scheduled" },
     { value: "completed", label: "Completed" },
     { value: "manual", label: "Manual" },
   ];
@@ -801,6 +951,7 @@ export default function KaagapAIMeetPage({
   };
 
   const filteredCreated = createdMeetings.filter((m) => matchesQuery(m) && matchesStatus("ongoing"));
+  const filteredScheduled = scheduledMeetings.filter((m) => matchesQuery(m) && matchesStatus("scheduled"));
   const filteredManual = manualMeetings.filter((m) => matchesQuery(m) && matchesStatus("manual"));
   const filteredCompleted = completedMeetings.filter((m) => matchesQuery(m) && matchesStatus("completed"));
 
@@ -974,15 +1125,22 @@ export default function KaagapAIMeetPage({
     title: string;
     subtitle: string;
     items: MeetDashboardCard[];
-    status: "ongoing" | "manual" | "completed";
+    status: "ongoing" | "scheduled" | "manual" | "completed";
     emptyLabel: string;
   }> = [
     {
-      title: "Created Meetings",
-      subtitle: "Scheduled and instant meetings made from KaagapAI Meet.",
+      title: "Ongoing Meetings",
+      subtitle: "Active meetings currently in progress or ready to start.",
       items: filteredCreated,
       status: "ongoing",
-      emptyLabel: "No active created meetings.",
+      emptyLabel: "No ongoing meetings.",
+    },
+    {
+      title: "Scheduled Meetings",
+      subtitle: "Future meetings scheduled via KaagapAI Meet.",
+      items: filteredScheduled,
+      status: "scheduled",
+      emptyLabel: "No scheduled meetings.",
     },
     {
       title: "Manual Meetings",
@@ -1168,6 +1326,23 @@ export default function KaagapAIMeetPage({
                   placeholder="Notes (optional)"
                   className="px-3 py-2 rounded-lg border bg-transparent text-sm"
                 />
+
+                <div className="md:col-span-2">
+                  <input
+                    value={form.customMeetUrl}
+                    onChange={(e) => setForm((p) => ({ ...p, customMeetUrl: e.target.value }))}
+                    placeholder="Custom Meet URL (optional - leave empty to auto-generate)"
+                    className="w-full px-3 py-2 rounded-lg border bg-transparent text-sm"
+                    style={{
+                      borderColor: form.customMeetUrl ? "#10b981" : (isDark ? "rgba(148,163,184,0.3)" : "rgba(15,23,42,0.15)"),
+                    }}
+                  />
+                  {form.customMeetUrl && (
+                    <p className="text-xs mt-1 text-green-500">
+                      Using custom link — no new Meet will be generated
+                    </p>
+                  )}
+                </div>
 
                 {form.mode === "scheduled" && (
                   <>
@@ -1582,7 +1757,31 @@ export default function KaagapAIMeetPage({
                       <div className="rounded-lg border p-2">Total: {attendance.length}</div>
                       <div className="rounded-lg border p-2">Live: {attendance.filter((a) => a.isPresent).length}</div>
                       <div className="rounded-lg border p-2">External: {attendance.filter((a) => a.isExternalParticipant).length}</div>
-                      <div className="rounded-lg border p-2">Duration: {formatDuration(attendance.reduce((acc, a) => acc + Number(a.totalDurationSeconds || 0), 0))}</div>
+                      <div className="rounded-lg border p-2">
+                        Duration:{" "}
+                        {(() => {
+                          // For completed meetings: use actual duration (createdAt → completedAt)
+                          if (selectedCard.status === "completed" && selectedCard.createdAt && selectedCard.completedAt) {
+                            const startMs = Date.parse(selectedCard.createdAt);
+                            const endMs = Date.parse(selectedCard.completedAt);
+                            if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs > startMs) {
+                              return formatDuration(Math.floor((endMs - startMs) / 1000));
+                            }
+                          }
+                          // For ongoing meetings: live duration from createdAt
+                          if (selectedCard.status === "ongoing" && selectedCard.createdAt) {
+                            const startMs = Date.parse(selectedCard.createdAt);
+                            if (!Number.isNaN(startMs)) {
+                              return formatDuration(Math.floor((Date.now() - startMs) / 1000));
+                            }
+                          }
+                          // Fallback: max attendee duration
+                          if (attendance.length > 0) {
+                            return formatDuration(Math.max(...attendance.map((a) => Number(a.totalDurationSeconds || 0))));
+                          }
+                          return "-";
+                        })()}
+                      </div>
                     </div>
 
                     <div className="border rounded-lg overflow-hidden">
@@ -1723,6 +1922,21 @@ export default function KaagapAIMeetPage({
                     )}
                   </div>
 
+                  {/* Edit Button - for scheduled and ongoing meetings (not completed) */}
+                  {selectedCard.status !== "completed" && (
+                    <button
+                      onClick={openEditModal}
+                      className="px-3 py-2 rounded-lg text-xs font-semibold border"
+                      style={{
+                        borderColor: isDark ? "rgba(148,163,184,0.3)" : "rgba(15,23,42,0.2)",
+                        background: isDark ? "rgba(30,41,59,0.8)" : "rgba(255,255,255,0.9)",
+                      }}
+                    >
+                      <Edit3 className="inline w-3.5 h-3.5 mr-1" />
+                      Edit
+                    </button>
+                  )}
+
                   {canComplete && selectedCard.status !== "completed" && selectedCard.status !== "manual" && (
                     <button
                       onClick={onComplete}
@@ -1832,6 +2046,365 @@ export default function KaagapAIMeetPage({
           </div>,
           document.body
         )}
+
+      {/* Edit Meeting Modal */}
+      {isEditOpen && selectedCard && createPortal(
+        <div style={floatingOverlayStyle} onClick={() => setIsEditOpen(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full rounded-2xl border overflow-visible"
+            style={{
+              maxWidth: "min(600px, calc(100vw - clamp(48px, 10vw, 128px)))",
+              maxHeight: "min(80vh, calc(100vh - clamp(48px, 10vh, 96px)))",
+              background: isDark ? "rgba(15,23,42,0.96)" : "rgba(255,255,255,0.97)",
+              borderColor: isDark ? "rgba(148,163,184,0.24)" : "rgba(15,23,42,0.1)",
+              boxShadow: isDark ? "0 20px 60px rgba(0,0,0,0.4)" : "0 20px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div
+              className="px-5 py-4 border-b flex items-center justify-between"
+              style={{ borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)" }}
+            >
+              <div className="font-semibold">
+                <Edit3 className="inline w-4 h-4 mr-2" />
+                Edit Meeting
+              </div>
+              <button onClick={() => setIsEditOpen(false)} className="p-1 rounded hover:bg-black/10">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto" style={{ maxHeight: "calc(80vh - 140px)" }}>
+              {/* Meeting Info (Read Only) */}
+              <div className="p-3 rounded-lg border" style={{ background: isDark ? "rgba(30,41,59,0.5)" : "rgba(248,250,252,0.8)", borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)" }}>
+                <div className="text-sm font-medium mb-1">{selectedCard.title || selectedCard.meetingId}</div>
+                <div className="text-xs opacity-70">{selectedCard.meetUrl}</div>
+              </div>
+
+              <div className="text-sm font-medium">Participants ({editRecipients.length})</div>
+              <p className="text-xs opacity-70 -mt-2">Add more participants while keeping the same meet link.</p>
+
+              {/* Current Recipients Display */}
+              {editRecipients.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border" style={{ borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)", background: isDark ? "rgba(30,41,59,0.3)" : "rgba(248,250,252,0.5)" }}>
+                  {editRecipients.map((r, idx) => (
+                    <div
+                      key={getRecipientKey(r)}
+                      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium"
+                      style={{
+                        background: r.type === "internal"
+                          ? (isDark ? "rgba(59, 130, 246, 0.2)" : "rgba(59, 130, 246, 0.1)")
+                          : (isDark ? "rgba(168, 85, 247, 0.2)" : "rgba(168, 85, 247, 0.1)"),
+                        color: r.type === "internal" ? "#3b82f6" : "#a855f7",
+                      }}
+                    >
+                      <span className="truncate max-w-[100px]">{r.name}</span>
+                      <button
+                        onClick={() => setEditRecipients((prev) => prev.filter((_, i) => i !== idx))}
+                        className="hover:opacity-70"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add Recipients Section */}
+              <div className="space-y-3" ref={editRecipientSearchRef}>
+                <div className="relative">
+                  <div className="relative" ref={editRecipientInputWrapperRef}>
+                    {activeEditRecipientCommand && (() => {
+                      const cmd = RECIPIENT_COMMANDS.find((c) => c.command === activeEditRecipientCommand);
+                      return cmd ? <cmd.icon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5" style={{ color: cmd.color }} /> : null;
+                    })()}
+                    {!activeEditRecipientCommand && (
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    )}
+                    <input
+                      ref={editRecipientInputRef}
+                      type="text"
+                      value={activeEditRecipientCommand ? editCommandSearchQuery : editRecipientQuery}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (activeEditRecipientCommand) {
+                          setEditCommandSearchQuery(val);
+                        } else {
+                          setEditRecipientQuery(val);
+                        }
+                      }}
+                      onFocus={() => setIsEditRecipientOpen(true)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Backspace" && !editCommandSearchQuery && activeEditRecipientCommand) {
+                          e.preventDefault();
+                          setActiveEditRecipientCommand(null);
+                        }
+                        if (e.key === "Escape") {
+                          setIsEditRecipientOpen(false);
+                          setActiveEditRecipientCommand(null);
+                          setEditCommandSearchQuery("");
+                          setEditRecipientQuery("");
+                        }
+                      }}
+                      placeholder={
+                        activeEditRecipientCommand === "@Person" ? "Search by name or email..." :
+                        activeEditRecipientCommand === "@Committee" ? "Search committees..." :
+                        activeEditRecipientCommand === "@External" ? "Enter: Name <email@example.com>" :
+                        "Type @ to see commands"
+                      }
+                      className="w-full py-3 pl-12 pr-4 rounded-xl border-2 transition-all focus:outline-none"
+                      style={{
+                        background: activeEditRecipientCommand
+                          ? (isDark ? `${RECIPIENT_COMMANDS.find((c) => c.command === activeEditRecipientCommand)?.color}15` : `${RECIPIENT_COMMANDS.find((c) => c.command === activeEditRecipientCommand)?.color}08`)
+                          : (isDark ? "rgba(30, 41, 59, 0.8)" : "rgba(255, 255, 255, 0.9)"),
+                        borderColor: activeEditRecipientCommand
+                          ? `${RECIPIENT_COMMANDS.find((c) => c.command === activeEditRecipientCommand)?.color}50`
+                          : (isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"),
+                        color: isDark ? "#fff" : "#000",
+                      }}
+                    />
+                  </div>
+
+                  {isEditRecipientOpen && (
+                    <div
+                      className="absolute z-50 w-full rounded-xl border shadow-xl overflow-y-auto mt-2"
+                      style={{
+                        background: isDark ? "rgba(17, 24, 39, 0.98)" : "rgba(255, 255, 255, 0.98)",
+                        borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+                        maxHeight: "200px",
+                        ...(editRecipientDropdownStyle || {}),
+                      }}
+                    >
+                      {/* Command suggestions */}
+                      {!activeEditRecipientCommand && editRecipientQuery.startsWith("@") && (
+                        <>
+                          <div className="px-3 py-2 text-xs font-semibold opacity-75 border-b" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                            Commands
+                          </div>
+                          {RECIPIENT_COMMANDS.filter((cmd) =>
+                            cmd.command.toLowerCase().includes(editRecipientQuery.toLowerCase())
+                          ).map((cmd) => (
+                            <button
+                              key={cmd.command}
+                              onClick={() => {
+                                setActiveEditRecipientCommand(cmd.command);
+                                setEditRecipientQuery("");
+                                setEditCommandSearchQuery("");
+                                editRecipientInputRef.current?.focus();
+                              }}
+                              className="w-full p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+                            >
+                              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${cmd.color}20` }}>
+                                <cmd.icon className="w-4 h-4" style={{ color: cmd.color }} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold" style={{ color: cmd.color }}>{cmd.command}</p>
+                                <p className="text-xs opacity-70">{cmd.label}</p>
+                              </div>
+                            </button>
+                          ))}
+                        </>
+                      )}
+
+                      {/* Empty state */}
+                      {!activeEditRecipientCommand && !editRecipientQuery.startsWith("@") && !editRecipientQuery && (
+                        <div className="p-4 text-center">
+                          <p className="text-sm opacity-75 mb-3">
+                            Type <span className="font-mono text-[#f6421f]">@</span> to see available commands
+                          </p>
+                          <div className="flex flex-wrap justify-center gap-2">
+                            {RECIPIENT_COMMANDS.map((cmd) => (
+                              <button
+                                key={cmd.command}
+                                onClick={() => {
+                                  setActiveEditRecipientCommand(cmd.command);
+                                  setEditRecipientQuery("");
+                                  editRecipientInputRef.current?.focus();
+                                }}
+                                className="px-2 py-1 rounded-md text-xs font-medium transition-all hover:scale-105"
+                                style={{ background: `${cmd.color}15`, color: cmd.color, border: `1px solid ${cmd.color}30` }}
+                              >
+                                {cmd.command}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Person search results */}
+                      {activeEditRecipientCommand === "@Person" && isLoadingMembers && (
+                        <div className="p-6 text-center">
+                          <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: "#3b82f6" }} />
+                          <p className="text-sm opacity-75">Loading members...</p>
+                        </div>
+                      )}
+
+                      {activeEditRecipientCommand === "@Person" && !isLoadingMembers && (
+                        <>
+                          <div className="px-3 py-2 text-xs font-semibold opacity-75 border-b" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                            Members ({recipientPool.length} total)
+                          </div>
+                          {recipientPool
+                            .filter((m) =>
+                              !editCommandSearchQuery ||
+                              m.name.toLowerCase().includes(editCommandSearchQuery.toLowerCase()) ||
+                              m.email?.toLowerCase().includes(editCommandSearchQuery.toLowerCase())
+                            )
+                            .slice(0, 15)
+                            .map((member) => (
+                              <button
+                                key={member.id || member.email || member.name}
+                                onClick={() => {
+                                  const key = getRecipientKey(member);
+                                  const alreadySelected = editRecipients.some((r) => getRecipientKey(r) === key);
+                                  if (!alreadySelected && member.email) {
+                                    setEditRecipients((prev) => [...prev, member]);
+                                  }
+                                  setEditCommandSearchQuery("");
+                                }}
+                                className="w-full p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+                                disabled={!member.email}
+                              >
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)" }}>
+                                  {String(member.name || "?").slice(0, 1).toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium truncate" style={{ color: isDark ? "#fff" : "#000" }}>{member.name}</p>
+                                  <p className="text-xs opacity-70 truncate">{member.email || "No email"}</p>
+                                </div>
+                                {editRecipients.some((r) => getRecipientKey(r) === getRecipientKey(member)) && (
+                                  <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                                )}
+                              </button>
+                            ))}
+                        </>
+                      )}
+
+                      {/* Committee search results */}
+                      {activeEditRecipientCommand === "@Committee" && (
+                        <>
+                          <div className="px-3 py-2 text-xs font-semibold opacity-75 border-b" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
+                            Committees - Click to load members
+                          </div>
+                          {committees
+                            .filter((c) =>
+                              !editCommandSearchQuery ||
+                              c.name.toLowerCase().includes(editCommandSearchQuery.toLowerCase())
+                            )
+                            .map((committee) => (
+                              <button
+                                key={committee.id}
+                                onClick={async () => {
+                                  try {
+                                    const members = await getCommitteeMembers(committee.id);
+                                    const mapped = mapMembersToRecipients(members || []);
+                                    const newRecipients = mapped.filter(
+                                      (m) => m.email && !editRecipients.some((r) => getRecipientKey(r) === getRecipientKey(m))
+                                    );
+                                    setEditRecipients((prev) => [...prev, ...newRecipients]);
+                                    toast.success(`Added ${newRecipients.length} members from ${committee.name}`);
+                                  } catch {
+                                    toast.error("Failed to load committee members");
+                                  }
+                                }}
+                                className="w-full p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+                              >
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "#10b98120" }}>
+                                  <UsersRound className="w-4 h-4" style={{ color: "#10b981" }} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium truncate">{committee.name}</p>
+                                  <p className="text-xs opacity-70">{committee.memberCount || 0} members</p>
+                                </div>
+                              </button>
+                            ))}
+                        </>
+                      )}
+
+                      {/* External input */}
+                      {activeEditRecipientCommand === "@External" && (
+                        <div className="p-4">
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={editExternalName}
+                              onChange={(e) => setEditExternalName(e.target.value)}
+                              placeholder="Name"
+                              className="w-full px-3 py-2 rounded-lg border text-sm"
+                              style={{
+                                background: isDark ? "rgba(30,41,59,0.8)" : "#fff",
+                                borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+                              }}
+                            />
+                            <input
+                              type="email"
+                              value={editExternalEmail}
+                              onChange={(e) => setEditExternalEmail(e.target.value)}
+                              placeholder="email@example.com"
+                              className="w-full px-3 py-2 rounded-lg border text-sm"
+                              style={{
+                                background: isDark ? "rgba(30,41,59,0.8)" : "#fff",
+                                borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                if (editExternalName && editExternalEmail && editExternalEmail.includes("@")) {
+                                  const newRecipient: RecipientOption = {
+                                    type: "external",
+                                    name: editExternalName,
+                                    email: editExternalEmail,
+                                  };
+                                  if (!editRecipients.some((r) => getRecipientKey(r) === getRecipientKey(newRecipient))) {
+                                    setEditRecipients((prev) => [...prev, newRecipient]);
+                                  }
+                                  setEditExternalName("");
+                                  setEditExternalEmail("");
+                                  setActiveEditRecipientCommand(null);
+                                  setIsEditRecipientOpen(false);
+                                } else {
+                                  toast.error("Please enter a valid name and email");
+                                }
+                              }}
+                              className="w-full py-2 rounded-lg text-sm font-semibold text-white"
+                              style={{ background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)" }}
+                            >
+                              Add External
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div
+              className="px-5 py-4 border-t flex items-center justify-end gap-2"
+              style={{ borderColor: isDark ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.1)" }}
+            >
+              <button
+                onClick={() => setIsEditOpen(false)}
+                className="px-4 py-2 rounded-lg text-sm font-semibold border"
+                style={{ borderColor: isDark ? "rgba(148,163,184,0.3)" : "rgba(15,23,42,0.2)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onEditMeeting}
+                disabled={isUpdating}
+                className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 flex items-center gap-2"
+                style={{ background: "linear-gradient(135deg, #f6421f 0%, #ee8724 100%)" }}
+              >
+                {isUpdating && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isUpdating ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </PageLayout>
   );
 }
