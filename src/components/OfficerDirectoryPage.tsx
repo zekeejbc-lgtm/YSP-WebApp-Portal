@@ -17,7 +17,8 @@
  */
 
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
-import { Mail, Phone, Calendar, User as UserIcon, Hash, Briefcase, Users, AlertCircle, RefreshCw, Facebook, Instagram, Globe, CheckCircle, XCircle } from "lucide-react";
+import { Mail, Phone, Calendar, User as UserIcon, Hash, Briefcase, Users, AlertCircle, RefreshCw, Facebook, Instagram, Globe, CheckCircle, XCircle, QrCode, Download, X } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { openEmailApp } from "../utils/externalLinks";
 
 // Custom X (formerly Twitter) logo component
@@ -343,6 +344,22 @@ export default function OfficerDirectoryPage({
   // Error state
   const [error, setError] = useState<string | null>(null);
   
+  // QR Code modal state
+  const [showQRModal, setShowQRModal] = useState(false);
+  const qrRef = useRef<HTMLDivElement>(null);
+  
+  // Hide chatbot when QR modal is open
+  useEffect(() => {
+    if (showQRModal) {
+      document.body.classList.add('ysp-modal-open');
+    } else {
+      document.body.classList.remove('ysp-modal-open');
+    }
+    return () => {
+      document.body.classList.remove('ysp-modal-open');
+    };
+  }, [showQRModal]);
+  
   // Debounce timer ref
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSearchRequestRef = useRef<number | null>(null);
@@ -630,6 +647,87 @@ export default function OfficerDirectoryPage({
     }
   };
 
+  // =================== QR CODE HANDLERS ===================
+
+  const handleDownloadQR = useCallback(() => {
+    if (!selectedOfficer || !qrRef.current) return;
+
+    const svg = qrRef.current.querySelector('svg');
+    if (!svg) return;
+
+    // Create canvas to convert SVG to PNG
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const padding = 32;
+    const qrSize = 256;
+    const nameHeight = 36;
+    const idHeight = 28;
+    const spacing = 16;
+
+    canvas.width = qrSize + (padding * 2);
+    canvas.height = nameHeight + spacing + qrSize + spacing + idHeight + (padding * 2);
+
+    // White background
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Name text
+    ctx.fillStyle = '#f6421f';
+    ctx.font = 'bold 18px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(selectedOfficer.fullName, canvas.width / 2, padding + (nameHeight / 2));
+
+    // Orange border around QR
+    const qrBoxX = padding;
+    const qrBoxY = padding + nameHeight + spacing;
+    const borderWidth = 4;
+    
+    ctx.fillStyle = '#ee8724';
+    ctx.beginPath();
+    ctx.roundRect(qrBoxX - borderWidth, qrBoxY - borderWidth, qrSize + (borderWidth * 2), qrSize + (borderWidth * 2), 12);
+    ctx.fill();
+
+    // White inner box
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.roundRect(qrBoxX, qrBoxY, qrSize, qrSize, 8);
+    ctx.fill();
+
+    // Draw the QR code from SVG
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    const img = new Image();
+    img.onload = () => {
+      const qrPadding = 16;
+      ctx.drawImage(img, qrBoxX + qrPadding, qrBoxY + qrPadding, qrSize - (qrPadding * 2), qrSize - (qrPadding * 2));
+      URL.revokeObjectURL(url);
+
+      // ID code text
+      ctx.fillStyle = '#6B7280';
+      ctx.font = '600 14px system-ui, -apple-system, sans-serif';
+      ctx.fillText(`ID: ${selectedOfficer.idCode}`, canvas.width / 2, qrBoxY + qrSize + spacing + (idHeight / 2));
+
+      // Download
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = `${selectedOfficer.idCode}_${selectedOfficer.fullName.replace(/\s+/g, '_')}_QR.png`;
+        link.href = blobUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      }, 'image/png');
+    };
+    img.src = url;
+  }, [selectedOfficer]);
+
   // =================== SUGGESTIONS FORMATTING ===================
 
   // Helper function to get initials from full name
@@ -870,21 +968,144 @@ export default function OfficerDirectoryPage({
             </div>
           </div>
 
-          <div className={`p-4 border-t ${isDark ? "border-white/10" : "border-gray-100"} flex justify-end gap-3`}>
-            <Button variant="secondary" onClick={handleClear}>
+          <div className={`p-4 border-t ${isDark ? "border-white/10" : "border-gray-100"} flex flex-wrap justify-end gap-2`}>
+            <button
+              onClick={handleClear}
+              className="px-4 py-2.5 rounded-lg transition-all duration-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center gap-2"
+              style={{
+                background: isDark ? 'rgba(238, 135, 36, 0.15)' : 'rgba(238, 135, 36, 0.1)',
+                border: '1.5px solid rgba(238, 135, 36, 0.4)',
+                color: '#ee8724',
+                fontWeight: '600',
+              }}
+            >
               Clear
-            </Button>
+            </button>
+            <button
+              onClick={() => setShowQRModal(true)}
+              className="px-4 py-2.5 rounded-lg text-white transition-all duration-300 hover:shadow-xl hover:scale-105 active:scale-95 flex items-center gap-2"
+              style={{
+                background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                fontWeight: '600',
+                boxShadow: '0 4px 15px rgba(246, 66, 31, 0.35)'
+              }}
+            >
+              <QrCode className="w-4 h-4" />
+              View QR Code
+            </button>
             {displayEmail && (
-              <Button
-                variant="primary"
+              <button
                 onClick={() => {
                   console.warn('[Email Debug] OfficerDirectory Send Email button clicked:', displayEmail);
                   openEmailApp(displayEmail);
                 }}
+                className="px-4 py-2.5 rounded-lg text-white transition-all duration-300 hover:shadow-xl hover:scale-105 active:scale-95 flex items-center gap-2"
+                style={{
+                  background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                  fontWeight: '600',
+                  boxShadow: '0 4px 15px rgba(246, 66, 31, 0.35)'
+                }}
               >
+                <Mail className="w-4 h-4" />
                 Send Email
-              </Button>
+              </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Modal */}
+      {showQRModal && selectedOfficer && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/50 backdrop-blur-sm"
+          onClick={() => setShowQRModal(false)}
+        >
+          <div 
+            className={`relative w-full max-w-xs sm:max-w-sm max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl ${
+              isDark ? 'bg-[#1e1e1e]' : 'bg-white'
+            }`}
+            style={{ 
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)',
+              scrollbarWidth: 'thin',
+              scrollbarColor: isDark ? 'rgba(255,255,255,0.2) transparent' : 'rgba(0,0,0,0.2) transparent',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button
+              onClick={() => setShowQRModal(false)}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-full transition-all duration-200 ${
+                isDark 
+                  ? 'hover:bg-white/10 text-white/60 hover:text-white' 
+                  : 'hover:bg-gray-100 text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Modal Content */}
+            <div className="p-5 sm:p-6">
+              {/* Header */}
+              <div className="text-center mb-5">
+                <div 
+                  className="inline-flex items-center justify-center w-12 h-12 rounded-full mb-3"
+                  style={{ 
+                    background: 'linear-gradient(135deg, rgba(246, 66, 31, 0.15) 0%, rgba(238, 135, 36, 0.15) 100%)',
+                  }}
+                >
+                  <QrCode className="w-6 h-6" style={{ color: '#ee8724' }} />
+                </div>
+                <h3 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Member QR Code
+                </h3>
+                <p className={`text-sm mt-1 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                  {selectedOfficer.fullName}
+                </p>
+              </div>
+
+              {/* QR Code */}
+              <div 
+                ref={qrRef}
+                className="flex justify-center p-4 sm:p-6 rounded-xl mb-4"
+                style={{
+                  background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.02)',
+                  border: '3px solid #ee8724',
+                }}
+              >
+                <QRCodeSVG 
+                  value={selectedOfficer.idCode} 
+                  size={180} 
+                  level="H"
+                  bgColor="transparent"
+                  fgColor={isDark ? '#ffffff' : '#000000'}
+                />
+              </div>
+
+              {/* ID Code display */}
+              <div 
+                className={`text-center mb-5 px-4 py-2 rounded-lg ${
+                  isDark ? 'bg-white/5' : 'bg-gray-50'
+                }`}
+              >
+                <span className={`font-mono text-sm ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  ID: {selectedOfficer.idCode}
+                </span>
+              </div>
+
+              {/* Download button */}
+              <button
+                onClick={handleDownloadQR}
+                className="w-full px-4 py-3 rounded-lg text-white transition-all duration-300 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                style={{
+                  background: 'linear-gradient(135deg, #f6421f 0%, #ee8724 100%)',
+                  fontWeight: '600',
+                  boxShadow: '0 4px 15px rgba(246, 66, 31, 0.35)'
+                }}
+              >
+                <Download className="w-4 h-4" />
+                Download QR Code
+              </button>
+            </div>
           </div>
         </div>
       )}

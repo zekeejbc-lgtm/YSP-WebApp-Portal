@@ -90,6 +90,7 @@ interface AttendanceRecordingPageProps {
   initialEventId?: string;
   initialMode?: 'qr' | 'manual';
   buildShareableUrl?: (pageName: string, params?: DeepLinkParams) => string;
+  onModalStateChange?: (isOpen: boolean) => void; // Callback when any modal opens/closes (to hide chatbot)
 }
 
 type Step = "event-selection" | "mode-selection" | "recording";
@@ -170,18 +171,35 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
   endDate.setHours(23, 59, 59, 999);
   
   // Helper to parse time string (handles "7:13 PM", "19:13", or ISO date strings)
+  // Converts UTC to Manila time (UTC+8) for proper timezone handling
   const parseTimeToHoursMinutes = (timeStr: string): { hours: number; minutes: number } | null => {
     if (!timeStr) return null;
     
-    // Handle ISO date string (1899-12-30T11:13:00.000Z from Google Sheets)
-    if (timeStr.includes('T') && timeStr.includes('1899')) {
+    // Helper to convert UTC Date to Manila time (UTC+8)
+    const toManilaTime = (date: Date): { hours: number; minutes: number } => {
+      const manilaOffset = 8 * 60; // Manila is UTC+8 in minutes
+      const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
+      const manilaTime = new Date(utcTime + (manilaOffset * 60000));
+      return { hours: manilaTime.getHours(), minutes: manilaTime.getMinutes() };
+    };
+    
+    // Handle ISO date string with timezone (1899-12-30T11:13:00.000Z from Google Sheets)
+    if (timeStr.includes('T') && (timeStr.includes('Z') || timeStr.includes('+'))) {
       try {
         const date = new Date(timeStr);
         if (!isNaN(date.getTime())) {
-          return { hours: date.getHours(), minutes: date.getMinutes() };
+          return toManilaTime(date);
         }
       } catch {
         // Fall through to other parsing
+      }
+    }
+    
+    // Handle ISO datetime without timezone (assume already Manila time)
+    if (timeStr.includes('T')) {
+      const timeMatch = timeStr.match(/T(\d{2}):(\d{2})/);
+      if (timeMatch) {
+        return { hours: parseInt(timeMatch[1], 10), minutes: parseInt(timeMatch[2], 10) };
       }
     }
     
@@ -373,17 +391,22 @@ function getEventStatusInfo(status: EventStatus): { label: string; color: string
 function formatEventTime(timeStr: string | undefined): string {
   if (!timeStr) return '';
   
+  // Helper to convert UTC Date to Manila time (UTC+8)
+  const toManilaTime = (date: Date): { hours: number; minutes: number } => {
+    const manilaOffset = 8 * 60; // Manila is UTC+8 in minutes
+    const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
+    const manilaTime = new Date(utcTime + (manilaOffset * 60000));
+    return { hours: manilaTime.getHours(), minutes: manilaTime.getMinutes() };
+  };
+  
   // Check if it's an ISO date string (like "1899-12-30T11:13:00.000Z")
   // This happens when Google Sheets stores time as a Date value
   if (timeStr.includes('T') && timeStr.includes('1899')) {
-    // Google Sheets stores the time in the spreadsheet as-is but when read via API,
-    // it returns as UTC. We need to parse as Date and use LOCAL time (which converts UTC to local)
     try {
       const date = new Date(timeStr);
       if (!isNaN(date.getTime())) {
-        // Use local time - this correctly converts UTC to Manila time (UTC+8)
-        const hours = date.getHours();
-        const minutes = date.getMinutes();
+        // Convert UTC to Manila time (UTC+8)
+        const { hours, minutes } = toManilaTime(date);
         const ampm = hours >= 12 ? 'PM' : 'AM';
         const displayHours = hours % 12 || 12;
         return `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
@@ -409,12 +432,24 @@ function formatEventTime(timeStr: string | undefined): string {
       return `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
     }
     
-    // Handle ISO date-time string
-    if (timeStr.includes('T')) {
+    // Handle ISO date-time string (with Z or timezone)
+    if (timeStr.includes('T') && (timeStr.includes('Z') || timeStr.includes('+'))) {
       const date = new Date(timeStr);
       if (!isNaN(date.getTime())) {
-        const hours = date.getHours();
-        const minutes = date.getMinutes();
+        // Convert UTC to Manila time (UTC+8)
+        const { hours, minutes } = toManilaTime(date);
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours % 12 || 12;
+        return `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+      }
+    }
+    
+    // Handle ISO date-time string without timezone (assume already Manila time)
+    if (timeStr.includes('T')) {
+      const timeMatch = timeStr.match(/T(\d{2}):(\d{2})/);
+      if (timeMatch) {
+        const hours = parseInt(timeMatch[1], 10);
+        const minutes = parseInt(timeMatch[2], 10);
         const ampm = hours >= 12 ? 'PM' : 'AM';
         const displayHours = hours % 12 || 12;
         return `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
@@ -890,7 +925,7 @@ function EventCardSkeleton({ isDark }: { isDark: boolean }) {
   );
 }
 
-export default function AttendanceRecordingPage({ onClose, isDark, initialEventId, initialMode }: AttendanceRecordingPageProps) {
+export default function AttendanceRecordingPage({ onClose, isDark, initialEventId, initialMode, onModalStateChange }: AttendanceRecordingPageProps) {
   // Wizard state
   const [currentStep, setCurrentStep] = useState<Step>("event-selection");
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -1293,6 +1328,12 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     };
     initLoad();
   }, [loadEvents]);
+
+  // Notify parent when any modal opens/closes (to hide chatbot)
+  useEffect(() => {
+    const anyModalOpen = showEventDetailsModal || showVerificationModal || showOverwriteWarning || showExternalConfirmModal;
+    onModalStateChange?.(anyModalOpen);
+  }, [showEventDetailsModal, showVerificationModal, showOverwriteWarning, showExternalConfirmModal, onModalStateChange]);
 
   // Deep link: Auto-select event and mode from URL parameters
   useEffect(() => {
@@ -2591,22 +2632,48 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         fps: 20, 
         qrbox: { width: 280, height: 280 },
         aspectRatio: 1.0,
-        disableFlip: true,
+        disableFlip: false, // Allow flip for laptop webcams that may be mirrored
         experimentalFeatures: {
           useBarCodeDetectorIfSupported: true,
         },
       };
 
-      // Start scanning with back camera
-      await html5QrCode.start(
-        { facingMode: "environment" },
-        config,
-        qrCodeSuccessCallback,
-        (_errorMessage) => {
-          // QR code parse error - this is called frequently, just ignore
-          // console.warn("QR parse error:", errorMessage);
+      // Start scanning - try back camera first, fallback to any camera (for laptops)
+      try {
+        await html5QrCode.start(
+          { facingMode: "environment" },
+          config,
+          qrCodeSuccessCallback,
+          (_errorMessage) => {
+            // QR code parse error - this is called frequently, just ignore
+          }
+        );
+      } catch (envError) {
+        console.warn("Back camera failed, trying any available camera:", envError);
+        // Fallback: try user-facing camera (laptop webcam)
+        try {
+          await html5QrCode.start(
+            { facingMode: "user" },
+            config,
+            qrCodeSuccessCallback,
+            (_errorMessage) => {}
+          );
+        } catch (userError) {
+          console.warn("User camera failed, trying default camera:", userError);
+          // Final fallback: let browser choose any available camera
+          const devices = await Html5Qrcode.getCameras();
+          if (devices && devices.length > 0) {
+            await html5QrCode.start(
+              devices[0].id,
+              config,
+              qrCodeSuccessCallback,
+              (_errorMessage) => {}
+            );
+          } else {
+            throw new Error("No cameras found");
+          }
         }
-      );
+      }
 
     } catch (error) {
       console.error("Camera access error:", error);
@@ -2629,6 +2696,9 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     
     // Track if scanner was actually running to show toast only when needed
     const wasScanning = isScanning || !!qrScannerRef.current;
+    
+    // CRITICAL: Mark as manually stopped to prevent auto-restart effect
+    manuallyStoppedRef.current = true;
     
     // Immediately update UI state to provide feedback
     setIsScanning(false);
@@ -4693,7 +4763,8 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       {/* Overwrite Confirmation Modal */}
       {showOverwriteWarning && previousRecord && pendingRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-9999 flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 md:p-8"
+          style={{ zIndex: 9999 }}
           onClick={() => {
             setShowOverwriteWarning(false);
             scanPauseRef.current = false;
@@ -4868,7 +4939,8 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       {/* Event Details Modal */}
       {showEventDetailsModal && selectedEvent && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-9999 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          style={{ zIndex: 9999 }}
           onClick={() => setShowEventDetailsModal(false)}
         >
           <div
@@ -5316,7 +5388,8 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       {/* Verification Modal */}
       {showVerificationModal && pendingRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-9999 flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 md:p-8"
+          style={{ zIndex: 9999 }}
           onClick={handleDismissVerificationModal}
         >
           <div
@@ -5585,7 +5658,8 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       {/* External Attendee Confirmation Modal */}
       {showExternalConfirmModal && pendingExternalRecord && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-9999 flex items-center justify-center p-4 sm:p-6 md:p-8"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 md:p-8"
+          style={{ zIndex: 9999 }}
           onClick={handleRejectExternalAttendee}
         >
           <div

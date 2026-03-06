@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, Edit, Search, MapPin, Move, Trash2, Loader2, RefreshCw, X, ToggleLeft, ToggleRight, FileText, MapPinned, AlertTriangle, Users, Clock, UserCheck, Building, User, Check, Calendar, CheckCircle, Link } from "lucide-react";
+import { Plus, Edit, Search, MapPin, Move, Trash2, Loader2, RefreshCw, X, ToggleLeft, ToggleRight, FileText, MapPinned, AlertTriangle, Users, Clock, UserCheck, Building, User, CheckCircle, Link } from "lucide-react";
 import { toast } from "sonner";
 import { PageLayout, DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
@@ -70,8 +70,11 @@ function GeofenceMapPreview({
   onLocationChange: (lat: number, lng: number) => void;
 }) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapInstanceRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markerRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const circleRef = useRef<any>(null);
 
   useEffect(() => {
@@ -120,12 +123,14 @@ function GeofenceMapPreview({
       }).addTo(map);
 
       // Event Listeners
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       marker.on('dragend', function(e: any) {
         const position = e.target.getLatLng();
         onLocationChange(position.lat, position.lng);
         circle.setLatLng(position);
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       map.on('click', function(e: any) {
         const { lat, lng } = e.latlng;
         marker.setLatLng([lat, lng]);
@@ -152,6 +157,7 @@ function GeofenceMapPreview({
         mapInstanceRef.current = null;
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Update Map when props change
@@ -270,11 +276,36 @@ function convertToTimeInput(timeStr: string): string {
   if (!timeStr) return '';
   try {
     const timeValue = String(timeStr);
+    // Already in HH:mm format
     if (/^\d{2}:\d{2}$/.test(timeValue)) return timeValue;
+    
+    // Handle ISO datetime strings (e.g., "2026-02-21T08:30:00.000Z")
+    // These are in UTC - convert to Manila time (UTC+8)
+    if (timeValue.includes('T') && (timeValue.includes('Z') || timeValue.includes('+'))) {
+      try {
+        const date = new Date(timeValue);
+        if (!isNaN(date.getTime())) {
+          // Convert to Manila timezone (UTC+8)
+          const manilaOffset = 8 * 60; // Manila is UTC+8
+          const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
+          const manilaTime = new Date(utcTime + (manilaOffset * 60000));
+          const hours = manilaTime.getHours().toString().padStart(2, '0');
+          const minutes = manilaTime.getMinutes().toString().padStart(2, '0');
+          return `${hours}:${minutes}`;
+        }
+      } catch {
+        // Fall through to regex extraction
+      }
+    }
+    
+    // Handle ISO datetime without timezone (e.g., "2026-02-21T08:30:00")
+    // Assume it's already in local/Manila time
     if (timeValue.includes('T')) {
       const timeMatch = timeValue.match(/T(\d{2}):(\d{2})/);
       if (timeMatch) return `${timeMatch[1]}:${timeMatch[2]}`;
     }
+    
+    // Handle AM/PM format
     const ampmMatch = timeValue.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
     if (ampmMatch) {
       let hours = parseInt(ampmMatch[1], 10);
@@ -306,7 +337,9 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
     backendEvent.GeofenceEnabled === 'true' ||
     backendEvent.GeofenceEnabled === undefined;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rawStartDate = backendEvent.StartDate as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rawEndDate = backendEvent.EndDate as any;
 
   const startDateStr = rawStartDate instanceof Date 
@@ -335,10 +368,11 @@ function convertToFrontendEvent(backendEvent: EventData): Event {
     currentAttendees: backendEvent.CurrentAttendees || 0,
     // New fields
     recipients: parseEventRecipients(backendEvent.Recipients),
-    timeInStart: backendEvent.TimeInStart || '',
-    timeInEnd: backendEvent.TimeInEnd || '',
-    timeOutStart: backendEvent.TimeOutStart || '',
-    timeOutEnd: backendEvent.TimeOutEnd || '',
+    // Convert time window fields from potential ISO datetime strings to HH:mm format
+    timeInStart: convertToTimeInput(backendEvent.TimeInStart || ''),
+    timeInEnd: convertToTimeInput(backendEvent.TimeInEnd || ''),
+    timeOutStart: convertToTimeInput(backendEvent.TimeOutStart || ''),
+    timeOutEnd: convertToTimeInput(backendEvent.TimeOutEnd || ''),
   };
 }
 
@@ -495,17 +529,6 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
     onModalStateChange?.(showModal);
   }, [showModal, onModalStateChange]);
 
-  // Get unique committees from members
-  const uniqueCommittees = useMemo(() => {
-    const committees = new Set<string>();
-    allMembers.forEach(member => {
-      if (member.committee) {
-        committees.add(member.committee);
-      }
-    });
-    return Array.from(committees).sort();
-  }, [allMembers]);
-
   // Universal search suggestions based on active command
   const universalSearchSuggestions = useMemo(() => {
     const query = commandSearchQuery.toLowerCase().trim();
@@ -543,6 +566,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
       default:
         return [];
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCommand, commandSearchQuery, recipientSearchQuery, allMembers]);
 
   // Helper to get initials from a name
@@ -702,57 +726,6 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
   const handleClearCommand = () => {
     setActiveCommand(null);
     setCommandSearchQuery('');
-    setRecipientSearchQuery('');
-  };
-
-  // Filter members/committees based on search query and recipient type
-  const filteredRecipientOptions = useMemo(() => {
-    const query = recipientSearchQuery.toLowerCase().trim();
-    
-    if (formData.recipientType === 'Committee') {
-      return uniqueCommittees
-        .filter(committee => !query || committee.toLowerCase().includes(query))
-        .map(committee => ({
-          id: committee,
-          name: committee,
-          type: 'Committee' as const,
-          memberCount: allMembers.filter(m => m.committee === committee).length
-        }));
-    } else if (formData.recipientType === 'Person') {
-      return allMembers
-        .filter(member => 
-          !query || 
-          member.name.toLowerCase().includes(query) ||
-          (member.committee && member.committee.toLowerCase().includes(query))
-        )
-        .map(member => ({
-          id: member.id,
-          name: member.name,
-          type: 'Person' as const,
-          committee: member.committee
-        }));
-    }
-    return [];
-  }, [recipientSearchQuery, formData.recipientType, uniqueCommittees, allMembers]);
-
-  // Handle recipient selection (legacy - kept for backward compatibility but not used with smart search)
-  const handleRecipientSelect = (option: { id: string; name: string; type: 'Committee' | 'Person'; committee?: string }) => {
-    const isAlreadySelected = formData.selectedRecipients.some(r => r.id === option.id);
-    
-    if (!isAlreadySelected) {
-      setFormData(prev => ({
-        ...prev,
-        selectedRecipients: [
-          ...prev.selectedRecipients,
-          { 
-            id: option.id, 
-            name: option.name, 
-            type: option.type.toLowerCase() as 'person' | 'committee', // Convert to lowercase
-            committee: option.committee 
-          }
-        ]
-      }));
-    }
     setRecipientSearchQuery('');
   };
 
@@ -1155,11 +1128,11 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
       // Load recipient fields
       recipientType: recipients.type,
       selectedRecipients: selectedRecipients,
-      // Load time window fields
-      timeInStart: event.timeInStart || '',
-      timeInEnd: event.timeInEnd || '',
-      timeOutStart: event.timeOutStart || '',
-      timeOutEnd: event.timeOutEnd || '',
+      // Load time window fields - convert ISO datetime strings to time format
+      timeInStart: convertToTimeInput(event.timeInStart || ''),
+      timeInEnd: convertToTimeInput(event.timeInEnd || ''),
+      timeOutStart: convertToTimeInput(event.timeOutStart || ''),
+      timeOutEnd: convertToTimeInput(event.timeOutEnd || ''),
     });
     setGeofencingEnabled(event.geofenceEnabled);
     setActiveTab('details');
@@ -1972,7 +1945,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                   {geofencingEnabled && (
                     <>
                       <div>
-                        <label className="block mb-2 text-muted-foreground flex items-center gap-2 text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
+                        <label className="flex mb-2 text-muted-foreground items-center gap-2 text-sm" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.medium }}>
                           <MapPin className="w-4 h-4 text-[#f6421f]" /> Coordinates & Radius
                         </label>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
@@ -2032,7 +2005,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
       {/* Delete Confirmation Modal - Z-INDEX FIX APPLIED HERE */}
       {deleteConfirmModal.isOpen && deleteConfirmModal.event && (
         <div 
-          className="fixed inset-0 flex items-center justify-center z-9999 p-4" 
+          className="fixed inset-0 flex items-center justify-center z-[9999] p-4" 
           style={{ backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)' }}
         >
           <div 

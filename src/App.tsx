@@ -842,6 +842,9 @@ export default function App() {
     // Attendance Dashboard Modal State (to hide chatbot when modals are open)
     const [attendanceDashboardModalOpen, setAttendanceDashboardModalOpen] = useState(false);
     
+    // Attendance Recording Modal State (to hide chatbot when modals are open)
+    const [attendanceRecordingModalOpen, setAttendanceRecordingModalOpen] = useState(false);
+    
     // Manage Events Modal State (to hide chatbot when modals are open)
     const [manageEventsModalOpen, setManageEventsModalOpen] = useState(false);
     
@@ -1098,6 +1101,7 @@ export default function App() {
         setAccessLogsModalOpen(false);
         setIssuanceModalOpen(false);
         setAttendanceDashboardModalOpen(false);
+        setAttendanceRecordingModalOpen(false);
         setManageEventsModalOpen(false);
         setAttendanceTransparencyModalOpen(false);
         setMembershipAppsModalOpen(false);
@@ -3519,6 +3523,7 @@ export default function App() {
       accessLogsModalOpen ||
       issuanceModalOpen ||
       attendanceDashboardModalOpen ||
+      attendanceRecordingModalOpen ||
       manageEventsModalOpen ||
       attendanceTransparencyModalOpen ||
       !!modalProject ||
@@ -3858,6 +3863,7 @@ export default function App() {
               initialEventId={deepLinkParams.eventId}
               initialMode={deepLinkParams.mode}
               buildShareableUrl={buildShareableUrl}
+              onModalStateChange={setAttendanceRecordingModalOpen}
             />
           </Suspense>
           {chatbot}

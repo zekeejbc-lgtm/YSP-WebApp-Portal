@@ -135,6 +135,9 @@ const GAS_EVENTS_CONFIG = {
   // Deploy as: Execute as "Me", Who has access: "Anyone"
   API_URL: import.meta.env.VITE_GAS_EVENTS_API_URL || '',
   
+  // API Key for backend authentication
+  API_KEY: import.meta.env.VITE_GAS_API_KEY || '',
+  
   // Timeout for API calls (in milliseconds)
   TIMEOUT: 15000,
   
@@ -287,6 +290,12 @@ function isApiConfigured(): boolean {
 function buildUrl(action: string, params?: Record<string, string | number | boolean>): string {
   const url = new URL(GAS_EVENTS_CONFIG.API_URL);
   url.searchParams.append('action', action);
+  
+  // Include API key for backend authentication
+  if (GAS_EVENTS_CONFIG.API_KEY) {
+    url.searchParams.append('key', GAS_EVENTS_CONFIG.API_KEY);
+  }
+  
   const sessionToken = getSessionToken();
   if (sessionToken) {
     url.searchParams.append('sessionToken', sessionToken);
@@ -401,7 +410,11 @@ async function gasPost<T>(
       headers: {
         'Content-Type': 'text/plain', // GAS requires text/plain for CORS
       },
-      body: JSON.stringify({ ...payload, sessionToken: getSessionToken() }),
+      body: JSON.stringify({ 
+        ...payload, 
+        key: GAS_EVENTS_CONFIG.API_KEY,
+        sessionToken: getSessionToken() 
+      }),
       signal: controller.signal,
     });
 

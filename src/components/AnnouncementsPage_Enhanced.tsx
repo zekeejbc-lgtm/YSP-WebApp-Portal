@@ -144,6 +144,39 @@ const emptyEmailOptions = {
   rsvpMessageTemplate: "",
 };
 
+/**
+ * Convert ISO date string (e.g., "2026-02-21T08:30:00.000Z") to datetime-local format ("2026-02-21T16:30").
+ * datetime-local inputs require format "YYYY-MM-DDTHH:MM" without timezone suffix.
+ * Converts UTC to Manila time (UTC+8).
+ */
+function toDatetimeLocalValue(isoString: string): string {
+  if (!isoString) return "";
+  // If already in datetime-local format (no Z or timezone), return as-is
+  if (isoString.length <= 16 && !isoString.includes("Z") && !isoString.includes("+")) {
+    return isoString;
+  }
+  // Convert ISO string (UTC) to Manila time (UTC+8)
+  try {
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return isoString;
+    
+    // Convert to Manila timezone (UTC+8)
+    const manilaOffset = 8 * 60; // Manila is UTC+8 in minutes
+    const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
+    const manilaTime = new Date(utcTime + (manilaOffset * 60000));
+    
+    // Format as YYYY-MM-DDTHH:MM
+    const year = manilaTime.getFullYear();
+    const month = String(manilaTime.getMonth() + 1).padStart(2, '0');
+    const day = String(manilaTime.getDate()).padStart(2, '0');
+    const hours = String(manilaTime.getHours()).padStart(2, '0');
+    const minutes = String(manilaTime.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  } catch {
+    return isoString;
+  }
+}
+
 const BUTTON_TYPE_OPTIONS: { value: CustomButtonType; label: string; icon: typeof Link2; description: string }[] = [
   { value: "link", label: "Link", icon: ExternalLink, description: "Opens a URL (webpage, form, etc.)" },
   { value: "document", label: "Document", icon: FileText, description: "Links to an uploaded attachment" },
@@ -949,8 +982,8 @@ export default function AnnouncementsPageEnhanced({
     setEmailOptions({
       fileButtonLabel: storedEmailOptions.fileButtonLabel || "",
       fileButtonMatch: storedEmailOptions.fileButtonMatch || "",
-      eventStart: storedEmailOptions.eventStart || "",
-      eventEnd: storedEmailOptions.eventEnd || "",
+      eventStart: toDatetimeLocalValue(storedEmailOptions.eventStart || ""),
+      eventEnd: toDatetimeLocalValue(storedEmailOptions.eventEnd || ""),
       eventLocation: storedEmailOptions.eventLocation || "",
       rsvpEmail: storedEmailOptions.rsvpEmail || "",
       rsvpOptionsText: Array.isArray(storedEmailOptions.rsvpOptions)

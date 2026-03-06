@@ -149,7 +149,7 @@ export default function PageLayout({
 
               <div className="flex-1 min-w-0">
                 <h1
-                  className="break-words"
+                  className="wrap-break-word"
                   style={{
                     fontFamily: 'var(--font-headings)',
                     fontWeight: 'var(--font-weight-bold)',
