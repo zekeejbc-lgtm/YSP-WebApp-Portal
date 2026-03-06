@@ -61,6 +61,7 @@ interface EmailSystemPageProps {
   isDark: boolean;
   userRole: string;
   username?: string;
+  userEmail?: string;
   onModalStateChange?: (isOpen: boolean) => void;
 }
 
@@ -476,12 +477,12 @@ export default function EmailSystemPage({
   }, [recipients, searchQuery, filterMode, subjectTemplateFallback]);
 
   // Group recipients by Subject/Headline
-  type GroupedRecipients = { subject: string; recipients: EmailRecipient[]; sentCount: number; totalCount: number }[];
+  type GroupedRecipients = { subject: string; recipients: EmailRecipientRow[]; sentCount: number; totalCount: number }[];
   
   const groupedRecipients = useMemo<GroupedRecipients>(() => {
     if (!groupBySubject) return [];
     
-    const groups = new Map<string, EmailRecipient[]>();
+    const groups = new Map<string, EmailRecipientRow[]>();
     
     filteredRecipients.forEach(r => {
       const subject = getRecipientSubject(r, r.__templateKey || subjectTemplateFallback);
@@ -716,7 +717,7 @@ export default function EmailSystemPage({
     }
     
     // Load directory members if not loaded for @Person or @Committee
-    if ((command === '@Person' || command === '@Committee' || command === '@All') && directoryMembers.length === 0) {
+    if ((command === '@Person' || command === '@Committee') && directoryMembers.length === 0) {
       loadDirectoryMembers();
     }
     
@@ -1077,6 +1078,7 @@ export default function EmailSystemPage({
         Time: formData.Time,
         Venue: formData.Venue,
         Amount: formData.Amount,
+        OldPosition: formData.OldPosition,
         Link: formData.Link,
         Attachments: formData.Attachments,
       });
@@ -1135,6 +1137,7 @@ export default function EmailSystemPage({
         Time: formData.Time,
         Venue: formData.Venue,
         Amount: formData.Amount,
+        OldPosition: formData.OldPosition,
         Link: formData.Link,
         Attachments: formData.Attachments,
       });
@@ -2994,13 +2997,19 @@ export default function EmailSystemPage({
               {/* Headline/Subject */}
               <div>
                 <label className="block text-sm font-medium mb-1.5">
-                  {currentTemplate.type === 'event' ? 'Event Name / Subject' : 'Subject'} *
+                  {currentTemplate.type === 'event' ? 'Event Name / Subject' : 
+                   currentTemplate.type === 'appointment' ? 'New Position' :
+                   currentTemplate.type === 'payment' ? 'Payment For' : 'Subject'} *
                 </label>
                 <input
                   type="text"
                   value={formData.Headline || ''}
                   onChange={(e) => setFormData(prev => ({ ...prev, Headline: e.target.value }))}
-                  placeholder="Enter subject or event name"
+                  placeholder={
+                    currentTemplate.type === 'appointment' ? 'e.g., Vice President, Committee Head' :
+                    currentTemplate.type === 'payment' ? 'e.g., Membership Fee, Event Registration' :
+                    'Enter subject or event name'
+                  }
                   className="w-full px-4 py-2.5 rounded-xl border transition-colors focus:outline-none focus:ring-2"
                   style={{
                     borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
@@ -3081,7 +3090,7 @@ export default function EmailSystemPage({
               {currentTemplate.type === 'payment' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium mb-1.5">Amount Due (₱)</label>
+                    <label className="block text-sm font-medium mb-1.5">Amount Due (P)</label>
                     <input
                       type="text"
                       value={formData.Amount || ''}
@@ -3108,6 +3117,72 @@ export default function EmailSystemPage({
                       }}
                     />
                   </div>
+                </div>
+              )}
+
+              {/* Appointment-specific fields (Position Designations) */}
+              {currentTemplate.type === 'appointment' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1.5">Old Position</label>
+                    <input
+                      type="text"
+                      value={formData.OldPosition || ''}
+                      onChange={(e) => setFormData(prev => ({ ...prev, OldPosition: e.target.value }))}
+                      placeholder="e.g., Member, Committee Head"
+                      className="w-full px-4 py-2.5 rounded-xl border transition-colors focus:outline-none focus:ring-2"
+                      style={{
+                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                        background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.8)',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1.5">Effective Date</label>
+                    <input
+                      type="text"
+                      value={formData.Date || ''}
+                      onChange={(e) => setFormData(prev => ({ ...prev, Date: e.target.value }))}
+                      placeholder="e.g., Mar 15, 2026"
+                      className="w-full px-4 py-2.5 rounded-xl border transition-colors focus:outline-none focus:ring-2"
+                      style={{
+                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                        background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.8)',
+                      }}
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium mb-1.5">Department / Committee</label>
+                    <input
+                      type="text"
+                      value={formData.Venue || ''}
+                      onChange={(e) => setFormData(prev => ({ ...prev, Venue: e.target.value }))}
+                      placeholder="e.g., Membership Affairs, Events Committee"
+                      className="w-full px-4 py-2.5 rounded-xl border transition-colors focus:outline-none focus:ring-2"
+                      style={{
+                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                        background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.8)',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Deadline field for simple templates with deadline (Membership_Renewal, Doc_Acknowledgment) */}
+              {currentTemplate.hasDeadline && (
+                <div>
+                  <label className="block text-sm font-medium mb-1.5">Deadline</label>
+                  <input
+                    type="text"
+                    value={formData.Date || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, Date: e.target.value }))}
+                    placeholder="e.g., Mar 31, 2026"
+                    className="w-full px-4 py-2.5 rounded-xl border transition-colors focus:outline-none focus:ring-2"
+                    style={{
+                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                      background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.8)',
+                    }}
+                  />
                 </div>
               )}
 
@@ -3459,3 +3534,4 @@ export default function EmailSystemPage({
     </PageLayout>
   );
 }
+

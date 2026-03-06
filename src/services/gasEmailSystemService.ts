@@ -49,6 +49,7 @@ export interface EmailRecipient {
   Time?: string;
   Venue?: string;
   Amount?: string;
+  OldPosition?: string;  // For Appointments template (position transitions)
   Link?: string;
   Attachments?: string;
   Status: string;
@@ -62,8 +63,11 @@ export interface EmailTemplate {
   name: string;
   headers: string[];
   buttonText: string;
-  type: 'event' | 'payment' | 'simple' | 'urgent' | 'instruction';
+  declineButtonText?: string;  // For dual-button templates
+  type: 'event' | 'payment' | 'simple' | 'urgent' | 'instruction' | 'appointment';
   description: string;
+  hasOldPosition?: boolean;    // For Appointments template
+  hasDeadline?: boolean;       // For templates with deadline field (not event/payment)
 }
 
 export interface EmailLog {
@@ -127,11 +131,13 @@ export const EMAIL_TEMPLATES: Record<EmailTemplateType, EmailTemplate> = {
   },
   'Appointments': {
     code: 'AP',
-    name: 'Appointments',
-    headers: ['Candidate Name', 'Email', 'Role/Position', 'Message', 'Interview Date', 'Interview Time', 'Location/Link', 'Confirm Link', 'Attachments'],
-    buttonText: 'Accept Appointment',
-    type: 'event',
-    description: 'Send appointment confirmations and interview schedules'
+    name: 'Position Appointments',
+    headers: ['Appointee Name', 'Email', 'New Position', 'Message', 'Old Position', 'Effective Date', 'Department/Committee', 'Reference Link', 'Attachments'],
+    buttonText: 'Accept Designation',
+    declineButtonText: 'Decline Appointment',
+    type: 'appointment',
+    description: 'Send position/designation appointment notifications',
+    hasOldPosition: true
   },
   'Payment_Reminders': {
     code: 'PR',
@@ -155,7 +161,8 @@ export const EMAIL_TEMPLATES: Record<EmailTemplateType, EmailTemplate> = {
     headers: ['Recipient Name', 'Email', 'Document Name', 'Message', 'Policy Link', 'Deadline', 'Attachments'],
     buttonText: 'I Acknowledge Receipt',
     type: 'simple',
-    description: 'Send documents that require acknowledgment'
+    description: 'Send documents that require acknowledgment',
+    hasDeadline: true
   },
   'Volunteer_Call': {
     code: 'VC',
@@ -176,10 +183,11 @@ export const EMAIL_TEMPLATES: Record<EmailTemplateType, EmailTemplate> = {
   'Membership_Renewal': {
     code: 'MR',
     name: 'Membership Renewal',
-    headers: ['Member Name', 'Email', 'Membership Year', 'Message', 'Renewal Fee', 'Due Date', 'Payment Link', 'Attachments'],
-    buttonText: 'Renew Membership',
-    type: 'payment',
-    description: 'Send membership renewal notices'
+    headers: ['Member Name', 'Email', 'Membership Year', 'Message', 'Deadline', 'Renewal Form Link', 'Attachments'],
+    buttonText: 'Renew My Membership',
+    type: 'simple',
+    description: 'Send membership renewal notices with form link',
+    hasDeadline: true
   },
   'Resource_Share': {
     code: 'RS',
@@ -196,6 +204,97 @@ export const EMAIL_TEMPLATES: Record<EmailTemplateType, EmailTemplate> = {
     buttonText: 'I Am Safe / Read This',
     type: 'urgent',
     description: 'Send urgent emergency notifications'
+  }
+};
+
+/**
+ * RSVP Button Configuration per Template
+ * Defines button labels and pre-typed email text for each template type
+ */
+export const RSVP_CONFIG: Record<EmailTemplateType, {
+  primaryButton: string;
+  secondaryButton?: string;
+  confirmSubjectPrefix: string;
+  declineSubjectPrefix: string;
+  hasDualButtons: boolean;
+  secondaryIsExternal: boolean;
+}> = {
+  'Event_Invites': {
+    primaryButton: 'Confirm Attendance',
+    secondaryButton: 'Decline',
+    confirmSubjectPrefix: 'RSVP CONFIRM',
+    declineSubjectPrefix: 'RSVP DECLINE',
+    hasDualButtons: true,
+    secondaryIsExternal: false
+  },
+  'Appointments': {
+    primaryButton: 'Accept Designation',
+    secondaryButton: 'Decline Appointment',
+    confirmSubjectPrefix: 'DESIGNATION ACCEPTED',
+    declineSubjectPrefix: 'DESIGNATION DECLINED',
+    hasDualButtons: true,
+    secondaryIsExternal: false
+  },
+  'Volunteer_Call': {
+    primaryButton: "I'm In!",
+    secondaryButton: "Can't Make It",
+    confirmSubjectPrefix: 'VOLUNTEER CONFIRMED',
+    declineSubjectPrefix: 'VOLUNTEER UNAVAILABLE',
+    hasDualButtons: true,
+    secondaryIsExternal: false
+  },
+  'Payment_Reminders': {
+    primaryButton: 'I Have Paid',
+    secondaryButton: 'Pay Now',
+    confirmSubjectPrefix: 'PAYMENT CONFIRMATION',
+    declineSubjectPrefix: '',
+    hasDualButtons: true,
+    secondaryIsExternal: true
+  },
+  'Membership_Renewal': {
+    primaryButton: 'Renew My Membership',
+    secondaryButton: 'Contact Us',
+    confirmSubjectPrefix: 'MEMBERSHIP INQUIRY',
+    declineSubjectPrefix: '',
+    hasDualButtons: true,
+    secondaryIsExternal: false  // Secondary is mailto for inquiries
+  },
+  'Doc_Acknowledgment': {
+    primaryButton: 'I Acknowledge',
+    secondaryButton: 'View Document',
+    confirmSubjectPrefix: 'DOCUMENT ACKNOWLEDGED',
+    declineSubjectPrefix: '',
+    hasDualButtons: true,
+    secondaryIsExternal: true
+  },
+  'Emergency_Alert': {
+    primaryButton: 'I Am Safe',
+    secondaryButton: 'More Info',
+    confirmSubjectPrefix: 'SAFETY CHECK-IN',
+    declineSubjectPrefix: '',
+    hasDualButtons: true,
+    secondaryIsExternal: true
+  },
+  'General_Notices': {
+    primaryButton: 'View Document',
+    confirmSubjectPrefix: '',
+    declineSubjectPrefix: '',
+    hasDualButtons: false,
+    secondaryIsExternal: true
+  },
+  'Feedback_Request': {
+    primaryButton: 'Take Short Survey',
+    confirmSubjectPrefix: '',
+    declineSubjectPrefix: '',
+    hasDualButtons: false,
+    secondaryIsExternal: true
+  },
+  'Resource_Share': {
+    primaryButton: 'Download Toolkit',
+    confirmSubjectPrefix: '',
+    declineSubjectPrefix: '',
+    hasDualButtons: false,
+    secondaryIsExternal: true
   }
 };
 

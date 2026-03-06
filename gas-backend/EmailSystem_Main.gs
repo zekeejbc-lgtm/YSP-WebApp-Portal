@@ -34,10 +34,10 @@ const SHEET_LAYOUTS = {
     code: "EI" // Event Invites
   },
   "Appointments": {
-    headers: ["Candidate Name", "Email", "Role/Position", "Message", "Interview Date", "Interview Time", "Location/Link", "Confirm Link", "Attachments"],
-    map: { name:0, email:1, headline:2, msg:3, date:4, time:5, venue:6, link:7, attach:8 },
-    btn: "Accept Appointment",
-    type: "event",
+    headers: ["Appointee Name", "Email", "New Position", "Message", "Old Position", "Effective Date", "Department/Committee", "Reference Link", "Attachments"],
+    map: { name:0, email:1, headline:2, msg:3, oldPosition:4, date:5, venue:6, link:7, attach:8 },
+    btn: "Accept Designation",
+    type: "appointment",
     code: "AP" // Appointments
   },
   "Payment_Reminders": {
@@ -76,10 +76,10 @@ const SHEET_LAYOUTS = {
     code: "FR" // Feedback Request
   },
   "Membership_Renewal": {
-    headers: ["Member Name", "Email", "Membership Year", "Message", "Renewal Fee", "Due Date", "Payment Link", "Attachments"],
-    map: { name:0, email:1, headline:2, msg:3, amount:4, date:5, link:6, attach:7 },
-    btn: "Renew Membership",
-    type: "payment",
+    headers: ["Member Name", "Email", "Membership Year", "Message", "Deadline", "Renewal Form Link", "Attachments"],
+    map: { name:0, email:1, headline:2, msg:3, date:4, link:5, attach:6 },
+    btn: "Renew My Membership",
+    type: "simple",
     code: "MR" // Membership Renewal
   },
   "Resource_Share": {
@@ -116,15 +116,21 @@ function onOpen() {
     .addItem('🧪 3. POPULATE TEST DATA', 'populateTestData')
     .addSeparator()
     
-    // Section 2: PDF Export (NEW ADDITION)
+    // Section 2: Migration Tools
+    .addSubMenu(ui.createMenu('Migration Tools')
+        .addItem('Preview Migration (Dry Run)', 'previewMigration')
+        .addItem('Run Migration', 'migrateEmailSystemSchema'))
+    .addSeparator()
+    
+    // Section 3: PDF Export
     .addItem('📄 EXPORT CURRENT SHEET AS PDF', 'generateCurrentSheetPDF')
     .addSeparator()
     
-    // Section 3: Quota Check
+    // Section 4: Quota Check
     .addItem('📊 CHECK QUOTA', 'checkEmailQuota')
     .addSeparator()
     
-    // Section 4: Manual Batch Sending
+    // Section 5: Manual Batch Sending
     .addSubMenu(ui.createMenu('Batch Send Manual')
         .addItem('All Event Invites', 'sendEventInvites')
         .addItem('All Appointments', 'sendAppointments')
@@ -216,18 +222,20 @@ function sendSingleRow(sheet, rowIndex, config, statusColIndex) {
   }
 
   let info = {
-    name:     data[map.name],
-    email:    data[map.email],
-    headline: data[map.headline],
-    message:  data[map.msg],
-    date:     (map.date !== undefined) ? formatDate(data[map.date]) : "",
-    time:     (map.time !== undefined) ? formatTime(data[map.time]) : "",
-    venue:    (map.venue !== undefined) ? data[map.venue] : "",
-    amount:   (map.amount !== undefined) ? data[map.amount] : "",
-    link:     (map.link !== undefined) ? data[map.link] : "",
-    attach:   (map.attach !== undefined) ? data[map.attach] : "",
-    btnText:  config.btn,
-    type:     config.type
+    name:        data[map.name],
+    email:       data[map.email],
+    headline:    data[map.headline],
+    message:     data[map.msg],
+    date:        (map.date !== undefined) ? formatDate(data[map.date]) : "",
+    time:        (map.time !== undefined) ? formatTime(data[map.time]) : "",
+    venue:       (map.venue !== undefined) ? data[map.venue] : "",
+    amount:      (map.amount !== undefined) ? data[map.amount] : "",
+    link:        (map.link !== undefined) ? data[map.link] : "",
+    attach:      (map.attach !== undefined) ? data[map.attach] : "",
+    oldPosition: (map.oldPosition !== undefined) ? data[map.oldPosition] : "",
+    btnText:     config.btn,
+    type:        config.type,
+    sheetName:   sheet.getName()
   };
 
   if (info.email) {
@@ -243,8 +251,8 @@ function sendSingleRow(sheet, rowIndex, config, statusColIndex) {
       // 1. Get existing file attachments
       const blobs = getAttachments(info.attach);
 
-      // 2. Generate Calendar File for Events
-      if (info.type === "event" && data[map.date]) {
+      // 2. Generate Calendar File for Events (not for position appointments)
+      if (info.type === "event" && info.sheetName !== "Appointments" && data[map.date]) {
         const calendarBlob = createIcsBlob(
           info.headline, 
           data[map.date], 
@@ -422,6 +430,95 @@ function checkForDuplicate(recipientEmail, headline) {
   return null;
 }
 
+/**
+ * Helper: Generate dual mailto buttons (both buttons are mailto links)
+ */
+function generateDualMailtoButtons(linkYes, textYes, linkNo, textNo) {
+  return `
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
+      <tr>
+        <td align="center">
+          <!--[if mso]>
+          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${linkYes}" style="height:48px;v-text-anchor:middle;width:180px;" arcsize="10%" strokecolor="#F26522" fillcolor="#F26522">
+            <w:anchorlock/>
+            <center style="color:#ffffff;font-family:'Inter',sans-serif;font-size:14px;font-weight:600;">${textYes}</center>
+          </v:roundrect>
+          <![endif]-->
+          <!--[if !mso]><!-->
+          <a href="${linkYes}" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
+            ${textYes}
+          </a>
+          <!--<![endif]-->
+          <!--[if mso]>
+          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${linkNo}" style="height:48px;v-text-anchor:middle;width:180px;" arcsize="10%" strokecolor="#F26522" fillcolor="#ffffff">
+            <w:anchorlock/>
+            <center style="color:#F26522;font-family:'Inter',sans-serif;font-size:14px;font-weight:600;">${textNo}</center>
+          </v:roundrect>
+          <![endif]-->
+          <!--[if !mso]><!-->
+          <a href="${linkNo}" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+            ${textNo}
+          </a>
+          <!--<![endif]-->
+        </td>
+      </tr>
+    </table>`;
+}
+
+/**
+ * Helper: Generate dual buttons (primary mailto, secondary external link)
+ */
+function generateDualButtons(linkPrimary, textPrimary, linkSecondary, textSecondary) {
+  const secondaryLink = formatActionLink(linkSecondary) || "#";
+  return `
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
+      <tr>
+        <td align="center">
+          <!--[if !mso]><!-->
+          <a href="${linkPrimary}" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
+            ${textPrimary}
+          </a>
+          <!--<![endif]-->
+          <!--[if !mso]><!-->
+          <a href="${secondaryLink}" target="_blank" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+            ${textSecondary}
+          </a>
+          <!--<![endif]-->
+        </td>
+      </tr>
+    </table>`;
+}
+
+/**
+ * Helper: Auto-detect link type and format accordingly
+ * - Email addresses -> mailto:email
+ * - Already mailto/tel/http/https -> return as-is
+ * - Plain URLs without protocol -> add https://
+ */
+function formatActionLink(link) {
+  if (!link || link.trim() === '') return '#';
+  
+  const trimmed = link.trim();
+  
+  // Already has a protocol (mailto:, tel:, http://, https://, etc.)
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+    return trimmed;
+  }
+  
+  // Looks like an email address (contains @ and has valid domain)
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return 'mailto:' + trimmed;
+  }
+  
+  // Looks like a URL (has domain-like structure)
+  if (/^[\w.-]+\.[a-z]{2,}/i.test(trimmed)) {
+    return 'https://' + trimmed;
+  }
+  
+  // Default: return as-is (could be a relative path or other)
+  return trimmed;
+}
+
 function generateUniversalTemplate(data, trackingEmail, emailId) {
   // 1. Generate the Details Box (Date, Time, Venue)
   let detailBox = '';
@@ -429,7 +526,36 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
   // Check if we have any detail data to show
   const hasDetails = data.date || data.time || data.venue;
   
-  if (data.type === "payment") {
+  if (data.type === "appointment") {
+    // Appointment/Designation box - shows position transition
+    const oldPos = data.oldPosition || "N/A";
+    const newPos = data.headline || "New Position";
+    detailBox = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background: linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%); border-left:4px solid #16A34A; border-radius:8px; margin:24px 0;">
+        <tr>
+          <td style="padding: 24px;">
+            <p style="color:#166534; margin:0 0 16px 0; font-size:12px; text-transform:uppercase; letter-spacing:1px; font-family:'Inter', 'Segoe UI', sans-serif; font-weight:600; text-align:center;">Position Designation</p>
+            <table width="100%" border="0" cellpadding="0" cellspacing="0">
+              <tr>
+                <td width="45%" align="center" style="padding: 12px;">
+                  <p style="color:#6B7280; margin:0 0 4px 0; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; font-family:'Inter', 'Segoe UI', sans-serif;">From</p>
+                  <p style="font-size:16px; font-weight:600; margin:0; color:#374151; font-family:'Inter', 'Segoe UI', sans-serif;">${oldPos}</p>
+                </td>
+                <td width="10%" align="center" style="padding: 12px;">
+                  <span style="font-size:24px; color:#16A34A;">&#8594;</span>
+                </td>
+                <td width="45%" align="center" style="padding: 12px;">
+                  <p style="color:#6B7280; margin:0 0 4px 0; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; font-family:'Inter', 'Segoe UI', sans-serif;">To</p>
+                  <p style="font-size:16px; font-weight:700; margin:0; color:#16A34A; font-family:'Inter', 'Segoe UI', sans-serif;">${newPos}</p>
+                </td>
+              </tr>
+            </table>
+            ${data.date ? `<p style="color:#166534; margin:16px 0 0 0; font-size:13px; font-family:'Inter', 'Segoe UI', sans-serif; text-align:center;">Effective: <strong>${data.date}</strong></p>` : ''}
+            ${data.venue ? `<p style="color:#166534; margin:8px 0 0 0; font-size:13px; font-family:'Inter', 'Segoe UI', sans-serif; text-align:center;">Department: <strong>${data.venue}</strong></p>` : ''}
+          </td>
+        </tr>
+      </table>`;
+  } else if (data.type === "payment") {
     // Payment box - warm orange shade
     detailBox = `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background: linear-gradient(135deg, #FFF7ED 0%, #FFEDD5 100%); border-left:4px solid #EA580C; border-radius:8px; margin:24px 0;">
@@ -466,52 +592,98 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
       </table>`;
   }
 
-  // 2. Generate the Buttons (Mobile Friendly with Gaps)
+  // 2. Generate the Buttons (Per-Template RSVP)
   let buttonsHtml = '';
   
-  if (data.type === "event") {
-    // --- OPTION A: CONFIRM ---
+  // Template-specific RSVP buttons
+  if (data.sheetName === "Event_Invites") {
+    // Event Invites: Confirm Attendance / Decline
     const subYes = encodeURIComponent(`RSVP CONFIRM: ${data.headline}`);
     const bodyYes = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nI am writing to formally confirm my attendance for "${data.headline}".\n\nI have taken note of the schedule and venue. See you there!\n\nBest regards,\n${data.name}`);
     const linkYes = `mailto:${trackingEmail}?subject=${subYes}&body=${bodyYes}`;
 
-    // --- OPTION B: DECLINE ---
     const subNo = encodeURIComponent(`RSVP DECLINE: ${data.headline}`);
     const bodyNo = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nThank you for the invitation to "${data.headline}".\n\nRegrettably, I will not be able to attend.\n\nReason: [PLEASE TYPE YOUR REASON HERE]\n\nThank you for understanding.\n\nSincerely,\n${data.name}`);
     const linkNo = `mailto:${trackingEmail}?subject=${subNo}&body=${bodyNo}`;
 
+    buttonsHtml = generateDualMailtoButtons(linkYes, "Confirm Attendance", linkNo, "Decline");
+    
+  } else if (data.sheetName === "Appointments" || data.type === "appointment") {
+    // Appointments: Accept Designation / Decline Appointment
+    const oldPos = data.oldPosition || "current position";
+    const newPos = data.headline || "new position";
+    
+    const subYes = encodeURIComponent(`DESIGNATION ACCEPTED: ${newPos}`);
+    const bodyYes = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nI am honored to formally accept my designation as "${newPos}".\n\nI am committed to fulfilling this role with dedication and excellence. Thank you for your trust and confidence.\n\nBest regards,\n${data.name}`);
+    const linkYes = `mailto:${trackingEmail}?subject=${subYes}&body=${bodyYes}`;
+
+    const subNo = encodeURIComponent(`DESIGNATION DECLINED: ${newPos}`);
+    const bodyNo = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nThank you for considering me for the position of "${newPos}".\n\nAfter careful consideration, I must respectfully decline this appointment.\n\nReason: [PLEASE TYPE YOUR REASON HERE]\n\nI remain committed to supporting the organization in my ${oldPos} capacity.\n\nSincerely,\n${data.name}`);
+    const linkNo = `mailto:${trackingEmail}?subject=${subNo}&body=${bodyNo}`;
+
+    buttonsHtml = generateDualMailtoButtons(linkYes, "Accept Designation", linkNo, "Decline Appointment");
+    
+  } else if (data.sheetName === "Volunteer_Call") {
+    // Volunteer Call: I'm In! / Can't Make It
+    const subYes = encodeURIComponent(`VOLUNTEER CONFIRMED: ${data.headline}`);
+    const bodyYes = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nCount me in! I am excited to volunteer for "${data.headline}".\n\nI am ready to contribute and make a difference. Looking forward to it!\n\nBest regards,\n${data.name}`);
+    const linkYes = `mailto:${trackingEmail}?subject=${subYes}&body=${bodyYes}`;
+
+    const subNo = encodeURIComponent(`VOLUNTEER UNAVAILABLE: ${data.headline}`);
+    const bodyNo = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nThank you for the opportunity to volunteer for "${data.headline}".\n\nUnfortunately, I won't be able to participate this time.\n\nReason: [PLEASE TYPE YOUR REASON HERE]\n\nPlease keep me in mind for future volunteer opportunities!\n\nBest regards,\n${data.name}`);
+    const linkNo = `mailto:${trackingEmail}?subject=${subNo}&body=${bodyNo}`;
+
+    buttonsHtml = generateDualMailtoButtons(linkYes, "I'm In!", linkNo, "Can't Make It");
+    
+  } else if (data.sheetName === "Payment_Reminders") {
+    // Payment Reminders: I Have Paid (mailto) + Pay Now (external link)
+    const subPaid = encodeURIComponent(`PAYMENT CONFIRMATION: ${data.headline}`);
+    const bodyPaid = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nI am writing to confirm that I have completed my payment for "${data.headline}".\n\nPayment Details:\n- Amount: P${data.amount}\n- Date Paid: [DATE OF PAYMENT]\n- Reference/Receipt #: [REFERENCE NUMBER]\n\nPlease let me know if you need any additional information.\n\nBest regards,\n${data.name}`);
+    const linkPaid = `mailto:${trackingEmail}?subject=${subPaid}&body=${bodyPaid}`;
+
+    buttonsHtml = generateDualButtons(linkPaid, "I Have Paid", data.link, "Pay Now");
+    
+  } else if (data.sheetName === "Membership_Renewal") {
+    // Membership Renewal: Fill Renewal Form (external) + Contact Us (mailto)
+    const subContact = encodeURIComponent(`MEMBERSHIP INQUIRY: ${data.headline}`);
+    const bodyContact = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nI have a question regarding my membership renewal for "${data.headline}".\n\n[TYPE YOUR QUESTION HERE]\n\nThank you!\n\nBest regards,\n${data.name}`);
+    const linkContact = `mailto:${trackingEmail}?subject=${subContact}&body=${bodyContact}`;
+
+    // Primary button is the form link, secondary is contact
+    const formLink = formatActionLink(data.link);
     buttonsHtml = `
-      <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
-        <tr>
-          <td align="center">
-            <!--[if mso]>
-            <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${linkYes}" style="height:48px;v-text-anchor:middle;width:180px;" arcsize="10%" strokecolor="#F26522" fillcolor="#F26522">
-              <w:anchorlock/>
-              <center style="color:#ffffff;font-family:'Inter',sans-serif;font-size:14px;font-weight:600;">✓ Confirm Attendance</center>
-            </v:roundrect>
-            <![endif]-->
-            <!--[if !mso]><!-->
-            <a href="${linkYes}" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3); transition: all 0.2s;">
-              ✓ Confirm Attendance
-            </a>
-            <!--<![endif]-->
-            <!--[if mso]>
-            <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${linkNo}" style="height:48px;v-text-anchor:middle;width:180px;" arcsize="10%" strokecolor="#F26522" fillcolor="#ffffff">
-              <w:anchorlock/>
-              <center style="color:#F26522;font-family:'Inter',sans-serif;font-size:14px;font-weight:600;">✗ Decline</center>
-            </v:roundrect>
-            <![endif]-->
-            <!--[if !mso]><!-->
-            <a href="${linkNo}" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
-              ✗ Decline
-            </a>
-            <!--<![endif]-->
-          </td>
-        </tr>
-      </table>`;
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
+      <tr>
+        <td align="center">
+          <a href="${formLink}" target="_blank" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
+            Renew My Membership
+          </a>
+          <a href="${linkContact}" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+            Contact Us
+          </a>
+        </td>
+      </tr>
+    </table>`;
+    
+  } else if (data.sheetName === "Doc_Acknowledgment") {
+    // Doc Acknowledgment: I Acknowledge (mailto) + View Document (external link)
+    const subAck = encodeURIComponent(`DOCUMENT ACKNOWLEDGED: ${data.headline}`);
+    const bodyAck = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nI hereby acknowledge receipt and understanding of "${data.headline}".\n\nI have read and understood the contents of this document.\n\nBest regards,\n${data.name}`);
+    const linkAck = `mailto:${trackingEmail}?subject=${subAck}&body=${bodyAck}`;
+
+    buttonsHtml = generateDualButtons(linkAck, "I Acknowledge", data.link, "View Document");
+    
+  } else if (data.sheetName === "Emergency_Alert") {
+    // Emergency Alert: I Am Safe (mailto) + More Info (external link)
+    const subSafe = encodeURIComponent(`SAFETY CHECK-IN: ${data.headline}`);
+    const bodySafe = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nI am confirming that I am safe following the "${data.headline}" alert.\n\nCurrent Status: [SAFE / NEED ASSISTANCE]\nLocation: [YOUR CURRENT LOCATION]\n\nBest regards,\n${data.name}`);
+    const linkSafe = `mailto:${trackingEmail}?subject=${subSafe}&body=${bodySafe}`;
+
+    buttonsHtml = generateDualButtons(linkSafe, "I Am Safe", data.link, "More Info");
+    
   } else {
-    // --- STANDARD BUTTON ---
-    let link = data.link || "#";
+    // Default: Single button with external link (auto-detect format)
+    let link = formatActionLink(data.link);
     buttonsHtml = `
       <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
         <tr>
@@ -729,6 +901,262 @@ function setupEmailSystem() {
   }
   logToMaster("System", "N/A", "Setup", Utilities.formatDate(new Date(), TIMEZONE, "MMM dd, yyyy h:mm a"), "YSPTC-SY-" + Utilities.formatDate(new Date(), TIMEZONE, "yy") + "-000", "System Initialization");
   SpreadsheetApp.getUi().alert("✅ System Ready!\n\nNew columns added to existing sheets (data preserved).\nNew sheets created where missing.");
+}
+
+/**
+ * MIGRATION FUNCTION: Safely migrate sheet headers and reorder columns to match SHEET_LAYOUTS
+ * - Checks current headers vs expected headers
+ * - Adds missing columns in correct positions
+ * - Reorders columns to match expected layout
+ * - Preserves ALL existing data
+ * - Handles header renames via HEADER_RENAMES mapping
+ * 
+ * Run this manually from Script Editor when schema changes occur.
+ */
+function migrateEmailSystemSchema() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  // Define sheet-specific header renames here (old -> new)
+  // Only applies renames to the specific sheet they belong to
+  const SHEET_SPECIFIC_RENAMES = {
+    // Appointments sheet migration
+    "Appointments": {
+      "Interview Date": "Effective Date",
+      "Interview Time": "Old Position",
+      "Interview Location": "Department/Committee",
+      "Position Applied": "New Position",
+    },
+    // Membership_Renewal migration (payment -> form-based)
+    // Note: "Renewal Fee" column will be kept as extra (can delete manually)
+    "Membership_Renewal": {
+      "Payment Link": "Renewal Form Link",
+      "Benefits Link": "Renewal Form Link",
+      "Due Date": "Deadline",
+    }
+  };
+  
+  const report = [];
+  let totalChanges = 0;
+  
+  for (let sheetName in SHEET_LAYOUTS) {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      report.push(`[${sheetName}] Sheet not found - will be created on next setup`);
+      continue;
+    }
+    
+    // Get sheet-specific renames (or empty object if none)
+    const HEADER_RENAMES = SHEET_SPECIFIC_RENAMES[sheetName] || {};
+    
+    const layout = SHEET_LAYOUTS[sheetName];
+    const expectedHeaders = layout.headers.concat(["Status", "Response", "Unique Tracking Email", "Email ID"]);
+    
+    // Get current state
+    const lastCol = sheet.getLastColumn();
+    const lastRow = sheet.getLastRow();
+    
+    if (lastCol === 0) {
+      // Empty sheet - just write headers
+      sheet.getRange(1, 1, 1, expectedHeaders.length)
+        .setValues([expectedHeaders])
+        .setFontWeight("bold")
+        .setBackground("#F26522")
+        .setFontColor("white");
+      report.push(`[${sheetName}] Empty sheet - headers initialized`);
+      totalChanges++;
+      continue;
+    }
+    
+    const currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    
+    // Apply header renames first (update header row only)
+    let headersChanged = false;
+    const renamedHeaders = currentHeaders.map(h => {
+      if (HEADER_RENAMES[h]) {
+        headersChanged = true;
+        return HEADER_RENAMES[h];
+      }
+      return h;
+    });
+    
+    if (headersChanged) {
+      sheet.getRange(1, 1, 1, renamedHeaders.length).setValues([renamedHeaders]);
+      report.push(`[${sheetName}] Renamed headers: ${Object.keys(HEADER_RENAMES).filter(k => currentHeaders.includes(k)).join(", ")}`);
+      totalChanges++;
+    }
+    
+    // Now check for missing and extra columns
+    const currentSet = new Set(renamedHeaders);
+    const expectedSet = new Set(expectedHeaders);
+    
+    const missingHeaders = expectedHeaders.filter(h => !currentSet.has(h));
+    const extraHeaders = renamedHeaders.filter(h => !expectedSet.has(h));
+    
+    // Add missing columns at the end first
+    if (missingHeaders.length > 0) {
+      const startCol = sheet.getLastColumn() + 1;
+      sheet.getRange(1, startCol, 1, missingHeaders.length)
+        .setValues([missingHeaders])
+        .setFontWeight("bold")
+        .setBackground("#F26522")
+        .setFontColor("white");
+      report.push(`[${sheetName}] Added missing columns: ${missingHeaders.join(", ")}`);
+      totalChanges++;
+    }
+    
+    // Check if reordering is needed
+    const finalHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const needsReorder = !expectedHeaders.every((h, i) => finalHeaders[i] === h);
+    
+    if (needsReorder && lastRow > 1) {
+      // Reorder columns to match expected layout
+      // Get all data including headers
+      const allData = sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).getValues();
+      const headerRow = allData[0];
+      
+      // Create column index mapping: expected position -> current position
+      const colMapping = {};
+      expectedHeaders.forEach((expectedHeader, newIndex) => {
+        const currentIndex = headerRow.indexOf(expectedHeader);
+        if (currentIndex !== -1) {
+          colMapping[newIndex] = currentIndex;
+        }
+      });
+      
+      // Reorder all rows based on mapping
+      const reorderedData = allData.map(row => {
+        const newRow = [];
+        expectedHeaders.forEach((_, newIndex) => {
+          const oldIndex = colMapping[newIndex];
+          newRow.push(oldIndex !== undefined ? row[oldIndex] : "");
+        });
+        return newRow;
+      });
+      
+      // Clear and write reordered data
+      sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).clearContent();
+      sheet.getRange(1, 1, reorderedData.length, expectedHeaders.length).setValues(reorderedData);
+      
+      // Reapply header formatting
+      sheet.getRange(1, 1, 1, expectedHeaders.length)
+        .setFontWeight("bold")
+        .setBackground("#F26522")
+        .setFontColor("white");
+      
+      report.push(`[${sheetName}] Columns reordered to match schema`);
+      totalChanges++;
+    }
+    
+    // Log extra columns (kept but noted)
+    if (extraHeaders.length > 0) {
+      report.push(`[${sheetName}] Note: Extra columns preserved: ${extraHeaders.join(", ")}`);
+    }
+    
+    // Verify final state
+    const verifyHeaders = sheet.getRange(1, 1, 1, expectedHeaders.length).getValues()[0];
+    const isCorrect = expectedHeaders.every((h, i) => verifyHeaders[i] === h);
+    if (isCorrect) {
+      report.push(`[${sheetName}] Schema verified OK`);
+    }
+  }
+  
+  // Show summary
+  const summary = `MIGRATION COMPLETE\n\nTotal changes: ${totalChanges}\n\n${report.join("\n")}`;
+  Logger.log(summary);
+  ui.alert("Migration Report", summary, ui.ButtonSet.OK);
+  
+  return { changes: totalChanges, report: report };
+}
+
+/**
+ * DRY-RUN VERSION: Check what changes would be made without applying them
+ * Run this first to preview migration impact
+ */
+function previewMigration() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  // Define sheet-specific header renames
+  const SHEET_SPECIFIC_RENAMES = {
+    "Appointments": {
+      "Interview Date": "Effective Date",
+      "Interview Time": "Old Position",
+      "Interview Location": "Department/Committee",
+      "Position Applied": "New Position",
+    },
+    // Note: "Renewal Fee" will be kept as extra column
+    "Membership_Renewal": {
+      "Payment Link": "Renewal Form Link",
+      "Benefits Link": "Renewal Form Link",
+      "Due Date": "Deadline",
+    }
+  };
+  
+  const report = [];
+  
+  for (let sheetName in SHEET_LAYOUTS) {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      report.push(`[${sheetName}] WILL CREATE: New sheet`);
+      continue;
+    }
+    
+    // Get sheet-specific renames
+    const HEADER_RENAMES = SHEET_SPECIFIC_RENAMES[sheetName] || {};
+    
+    const layout = SHEET_LAYOUTS[sheetName];
+    const expectedHeaders = layout.headers.concat(["Status", "Response", "Unique Tracking Email", "Email ID"]);
+    
+    const lastCol = sheet.getLastColumn();
+    if (lastCol === 0) {
+      report.push(`[${sheetName}] WILL INIT: Headers (empty sheet)`);
+      continue;
+    }
+    
+    const currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    
+    // Check for renames
+    const renamesNeeded = Object.keys(HEADER_RENAMES).filter(k => currentHeaders.includes(k));
+    if (renamesNeeded.length > 0) {
+      report.push(`[${sheetName}] WILL RENAME: ${renamesNeeded.map(k => k + " -> " + HEADER_RENAMES[k]).join(", ")}`);
+    }
+    
+    // Apply theoretical renames for further checks
+    const theoreticalHeaders = currentHeaders.map(h => HEADER_RENAMES[h] || h);
+    
+    // Check missing
+    const missingHeaders = expectedHeaders.filter(h => !theoreticalHeaders.includes(h));
+    if (missingHeaders.length > 0) {
+      report.push(`[${sheetName}] WILL ADD: ${missingHeaders.join(", ")}`);
+    }
+    
+    // Check order
+    const theoreticalSet = new Set(theoreticalHeaders);
+    const matchingExpected = expectedHeaders.filter(h => theoreticalSet.has(h));
+    const currentOrder = theoreticalHeaders.filter(h => expectedHeaders.includes(h));
+    const needsReorder = !matchingExpected.every((h, i) => currentOrder[i] === h);
+    
+    if (needsReorder) {
+      report.push(`[${sheetName}] WILL REORDER: Columns to match schema`);
+    }
+    
+    // Check extra
+    const extraHeaders = theoreticalHeaders.filter(h => !expectedHeaders.includes(h));
+    if (extraHeaders.length > 0) {
+      report.push(`[${sheetName}] WILL KEEP (extra): ${extraHeaders.join(", ")}`);
+    }
+    
+    if (renamesNeeded.length === 0 && missingHeaders.length === 0 && !needsReorder) {
+      report.push(`[${sheetName}] NO CHANGES NEEDED`);
+    }
+  }
+  
+  const summary = `MIGRATION PREVIEW (Dry Run)\n\nNo changes applied. Review below:\n\n${report.join("\n")}`;
+  Logger.log(summary);
+  ui.alert("Migration Preview", summary, ui.ButtonSet.OK);
+  
+  return report;
 }
 
 function getAttachments(l) {
@@ -1310,6 +1738,7 @@ function handleAddEmailRecipient_(body) {
       else if (map.time === i) value = body.Time || '';
       else if (map.venue === i) value = body.Venue || '';
       else if (map.amount === i) value = body.Amount || '';
+      else if (map.oldPosition === i) value = body.OldPosition || '';
       else if (map.link === i) value = body.Link || '';
       else if (map.attach === i) value = body.Attachments || '';
       else value = '';
@@ -1367,6 +1796,7 @@ function handleUpdateEmailRecipient_(body) {
       (map.time === i && body.hasOwnProperty('Time')) ||
       (map.venue === i && body.hasOwnProperty('Venue')) ||
       (map.amount === i && body.hasOwnProperty('Amount')) ||
+      (map.oldPosition === i && body.hasOwnProperty('OldPosition')) ||
       (map.link === i && body.hasOwnProperty('Link')) ||
       (map.attach === i && body.hasOwnProperty('Attachments'));
 
@@ -1381,6 +1811,7 @@ function handleUpdateEmailRecipient_(body) {
       else if (map.time === i) currentValues[i] = body.Time;
       else if (map.venue === i) currentValues[i] = body.Venue;
       else if (map.amount === i) currentValues[i] = body.Amount;
+      else if (map.oldPosition === i) currentValues[i] = body.OldPosition;
       else if (map.link === i) currentValues[i] = body.Link;
       else if (map.attach === i) currentValues[i] = body.Attachments;
     }

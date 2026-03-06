@@ -19,7 +19,7 @@ import { useState } from "react";
 import { X, Mail, Send, FileText, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button, DESIGN_TOKENS } from "./design-system";
-import { MODAL_REGULATIONS, getModalStyles } from "./modal-regulations";
+import { getModalStyles } from "./modal-regulations";
 
 interface EmailComposerModalProps {
   isOpen: boolean;
@@ -101,7 +101,7 @@ export default function EmailComposerModal({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center p-4 md:p-8"
+      className="fixed inset-0 z-120 flex items-center justify-center p-4 md:p-8"
       style={{
         background: modalStyles.overlay.background,
         backdropFilter: modalStyles.overlay.backdropFilter,
@@ -160,7 +160,7 @@ export default function EmailComposerModal({
         <div className="p-4 md:p-6 overflow-y-auto flex-1 space-y-4" style={{ minHeight: 0 }}>
           {/* Email Templates */}
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Sparkles className="w-4 h-4 text-[#fbcb29]" />
               Quick Templates
             </label>
@@ -183,7 +183,7 @@ export default function EmailComposerModal({
 
           {/* To Field */}
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Mail className="w-4 h-4 text-[#3b82f6]" />
               To *
             </label>
@@ -244,7 +244,7 @@ export default function EmailComposerModal({
 
           {/* Subject */}
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <FileText className="w-4 h-4 text-[#ee8724]" />
               Subject *
             </label>
