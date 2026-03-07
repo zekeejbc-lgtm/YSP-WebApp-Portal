@@ -19,9 +19,9 @@
  * 
  * 1. MEMBER CACHING:
  *    - Both use loadMembersFromCache() and saveMembersToCache() 
- *    - Members are cached in localStorage with keys: MEMBERS_CACHE_KEY, MEMBERS_CACHE_TS_KEY
+ *    - Members are cached in encrypted sessionStorage with keys: MEMBERS_CACHE_KEY, MEMBERS_CACHE_TS_KEY
  *    - memberCacheRef (in-memory Map) is used for quick lookups in both modes
- *    - Cache is refreshed on background when online, persisted for offline use
+ *    - Cache is refreshed on background when online, encrypted for security
  * 
  * 2. TIME FORMATTING:
  *    - Both modes use the same timestamp format via toLocaleTimeString("en-PH")
@@ -58,6 +58,7 @@ import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import type { Map as LeafletMap, Marker as LeafletMarker, Circle as LeafletCircle } from "leaflet";
 import { PageLayout, Button, DESIGN_TOKENS, getGlassStyle } from "./design-system";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
+import { secureGetItem, secureSetItem, secureRemoveItem } from "../utils/secureStorage";
 import CustomDropdown from "./CustomDropdown";
 import type { DeepLinkParams } from "../hooks/useUrlSync";
 import { Camera, QrCode, CheckCircle, Save, AlertCircle, FileEdit, MapPin, Calendar, ArrowLeft, Clock, Navigation, RefreshCw, Loader2, PlayCircle, AlertTriangle, CheckCircle2, XCircle, Crosshair, X, ChevronDown, ChevronUp, Archive, StopCircle, Search, User, UserX, Users, Building, AtSign } from "lucide-react";
@@ -1069,10 +1070,10 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
   const [isSyncing, setIsSyncing] = useState(false);
   const syncPendingRecordsRef = useRef<() => Promise<void>>(async () => {});
 
-  // Load pending queue from localStorage on mount
+  // Load pending queue from encrypted sessionStorage on mount
   const loadPendingQueue = useCallback((): PendingAttendanceRecord[] => {
     try {
-      const raw = localStorage.getItem(PENDING_ATTENDANCE_KEY);
+      const raw = secureGetItem(PENDING_ATTENDANCE_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
@@ -1082,10 +1083,10 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     }
   }, []);
 
-  // Save pending queue to localStorage
+  // Save pending queue to encrypted sessionStorage
   const savePendingQueue = useCallback((queue: PendingAttendanceRecord[]) => {
     try {
-      localStorage.setItem(PENDING_ATTENDANCE_KEY, JSON.stringify(queue));
+      secureSetItem(PENDING_ATTENDANCE_KEY, JSON.stringify(queue));
     } catch {
       console.error('Failed to save pending attendance queue');
     }
@@ -1125,11 +1126,11 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     });
   }, [savePendingQueue]);
 
-  // Member cache is now permanent (no TTL expiry)
+  // Member cache is now permanent (no TTL expiry), encrypted in sessionStorage
   const loadMembersFromCache = useCallback((): MemberForAttendance[] | null => {
     try {
       // No TTL check - cache is permanent until manually cleared
-      const raw = localStorage.getItem(MEMBERS_CACHE_KEY);
+      const raw = secureGetItem(MEMBERS_CACHE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return null;
@@ -1151,9 +1152,9 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       }
       
       const merged = Array.from(existingMap.values());
-      localStorage.setItem(MEMBERS_CACHE_KEY, JSON.stringify(merged));
-      localStorage.setItem(MEMBERS_CACHE_TS_KEY, String(Date.now()));
-      console.warn(`📦 Saved ${merged.length} members to cache (${membersToCache.length} updated/added)`);
+      secureSetItem(MEMBERS_CACHE_KEY, JSON.stringify(merged));
+      secureSetItem(MEMBERS_CACHE_TS_KEY, String(Date.now()));
+      console.warn(`📦 Saved ${merged.length} members to encrypted cache (${membersToCache.length} updated/added)`);
     } catch (error) {
       console.warn("Cache write failed:", error);
       // Ignore cache write failures (e.g., storage full or disabled).
@@ -1562,8 +1563,8 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     setIsRefreshing(true);
     clearEventsCache();
     clearMembersCache();
-    localStorage.removeItem(MEMBERS_CACHE_KEY);
-    localStorage.removeItem(MEMBERS_CACHE_TS_KEY);
+    secureRemoveItem(MEMBERS_CACHE_KEY);
+    secureRemoveItem(MEMBERS_CACHE_TS_KEY);
     await loadEvents(true);
     await loadMembers(undefined, 100, true, false);
     setIsRefreshing(false);
@@ -1677,8 +1678,8 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     }
     try {
       if (!search && isReload) {
-        localStorage.removeItem(MEMBERS_CACHE_KEY);
-        localStorage.removeItem(MEMBERS_CACHE_TS_KEY);
+        secureRemoveItem(MEMBERS_CACHE_KEY);
+        secureRemoveItem(MEMBERS_CACHE_TS_KEY);
       }
       if (!search && useCache) {
         const cachedMembers = loadMembersFromCache();

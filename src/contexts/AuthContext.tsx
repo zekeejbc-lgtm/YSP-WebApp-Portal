@@ -26,6 +26,7 @@ import {
   logLogout,
 } from '../services/gasSystemToolsService';
 import { clearUserProfileCache } from '../services/localStorageCache';
+import { secureGetItem, secureSetItem, secureRemoveItem, clearSecureSessionStorage } from '../utils/secureStorage';
 import { toast } from 'sonner';
 import { determineRoleChangeType, type RoleChangeType } from '../components/CacheRefreshModals';
 
@@ -92,11 +93,11 @@ const REMEMBERED_USERNAME_KEY = 'ysp_remembered_username';
 
 function recordRecentUsername(username: string) {
   try {
-    const stored = localStorage.getItem(RECENT_USERNAMES_KEY);
+    const stored = secureGetItem(RECENT_USERNAMES_KEY, { persistent: true });
     const usernames: string[] = stored ? JSON.parse(stored) : [];
     const filtered = usernames.filter(u => u !== username);
     filtered.unshift(username);
-    localStorage.setItem(RECENT_USERNAMES_KEY, JSON.stringify(filtered.slice(0, 5)));
+    secureSetItem(RECENT_USERNAMES_KEY, JSON.stringify(filtered.slice(0, 5)), { persistent: true });
   } catch {
     // Ignore storage errors
   }
@@ -105,9 +106,9 @@ function recordRecentUsername(username: string) {
 function recordRememberedUsername(username: string, remember: boolean) {
   try {
     if (remember) {
-      localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
+      secureSetItem(REMEMBERED_USERNAME_KEY, username, { persistent: true });
     } else {
-      localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+      secureRemoveItem(REMEMBERED_USERNAME_KEY, { persistent: true });
     }
   } catch {
     // Ignore storage errors
@@ -330,11 +331,14 @@ export function AuthProvider({ children, onCacheClearRequest }: AuthProviderProp
         }
       }
       
+      // Clear all encrypted session data (cached members, homepage, etc.)
+      clearSecureSessionStorage();
       clearSession();
       clearUserState();
       toast.success('Successfully logged out', { id: toastId });
     } catch (error) {
       // Still logout even if logging fails
+      clearSecureSessionStorage();
       clearSession();
       clearUserState();
       toast.success('Successfully logged out', { id: toastId });

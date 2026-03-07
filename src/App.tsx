@@ -60,6 +60,7 @@
     type CachedHomepageOther,
     type CachedProject,
   } from "./services/localStorageCache";
+  import { secureGetItem, secureSetItem, secureRemoveItem } from "./utils/secureStorage";
   import {
     fetchAllProjects,
     addProject,
@@ -1175,7 +1176,7 @@ export default function App() {
       };
 
       try {
-        const stored = localStorage.getItem('YSP_HOMEPAGE_CONTENT');
+        const stored = secureGetItem('YSP_HOMEPAGE_CONTENT');
         if (stored) {
           return { ...defaultState, ...JSON.parse(stored) };
         }
@@ -1325,7 +1326,7 @@ export default function App() {
                   themeSong: content.themeSong,
                 };
                 try {
-                  localStorage.setItem('YSP_HOMEPAGE_CONTENT', JSON.stringify(updated));
+                  secureSetItem('YSP_HOMEPAGE_CONTENT', JSON.stringify(updated));
                 } catch (e) {
                   console.error('Failed to save homepage content to storage', e);
                 }
@@ -2740,12 +2741,12 @@ export default function App() {
       try {
         const listKey = "ysp_recent_usernames";
         const lastKey = "ysp_last_username";
-        const stored = localStorage.getItem(listKey);
+        const stored = secureGetItem(listKey);
         const parsed = stored ? JSON.parse(stored) : [];
         const existing = Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
         const next = [cleaned, ...existing.filter((item) => item !== cleaned)].slice(0, 5);
-        localStorage.setItem(listKey, JSON.stringify(next));
-        localStorage.setItem(lastKey, cleaned);
+        secureSetItem(listKey, JSON.stringify(next));
+        secureSetItem(lastKey, cleaned);
       } catch {
         // Ignore storage failures.
       }
@@ -2754,11 +2755,12 @@ export default function App() {
     const recordRememberedUsername = (identifier: string, remember: boolean) => {
       try {
         if (remember) {
-          localStorage.setItem("ysp_remember_username", "true");
-          localStorage.setItem("ysp_remembered_username", identifier.trim());
+          // Persist remembered username across sessions (uses localStorage with encryption)
+          secureSetItem("ysp_remember_username", "true", { persistent: true });
+          secureSetItem("ysp_remembered_username", identifier.trim(), { persistent: true });
         } else {
-          localStorage.removeItem("ysp_remember_username");
-          localStorage.removeItem("ysp_remembered_username");
+          secureRemoveItem("ysp_remember_username", { persistent: true });
+          secureRemoveItem("ysp_remembered_username", { persistent: true });
         }
       } catch {
         // Ignore storage failures.
@@ -3113,7 +3115,7 @@ export default function App() {
               }
             }
             try {
-              localStorage.setItem(LAST_SCROLL_KEY, String(window.scrollY));
+              secureSetItem(LAST_SCROLL_KEY, String(window.scrollY));
             } catch {
               // Ignore storage failures.
             }
@@ -3169,7 +3171,7 @@ export default function App() {
     useEffect(() => {
       if (!sessionChecked || !hasRestoredViewRef.current) return;
       try {
-        localStorage.setItem(LAST_VIEW_KEY, currentView);
+        secureSetItem(LAST_VIEW_KEY, currentView);
       } catch {
         // Ignore storage failures.
       }
@@ -3346,8 +3348,8 @@ export default function App() {
       let storedView: string | null = null;
       let storedScroll: string | null = null;
       try {
-        storedView = localStorage.getItem(LAST_VIEW_KEY);
-        storedScroll = localStorage.getItem(LAST_SCROLL_KEY);
+        storedView = secureGetItem(LAST_VIEW_KEY);
+        storedScroll = secureGetItem(LAST_SCROLL_KEY);
       } catch {
         hasRestoredViewRef.current = true;
         return;

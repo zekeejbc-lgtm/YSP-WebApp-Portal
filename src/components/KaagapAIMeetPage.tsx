@@ -30,6 +30,7 @@ import { PageLayout } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import { toast } from "sonner";
 import { getStoredUser } from "../services/gasLoginService";
+import { secureGetItem, secureSetItem } from "../utils/secureStorage";
 import type { UploadToastMessage } from "./UploadToast";
 import {
   createMeetSession,
@@ -183,7 +184,7 @@ function mapMembersToRecipients(rows: Array<{ name: string; email: string; commi
 
 function loadMeetMembersFromCache(): RecipientOption[] | null {
   try {
-    const raw = localStorage.getItem(MEET_MEMBERS_CACHE_KEY);
+    const raw = secureGetItem(MEET_MEMBERS_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length === 0) return null;
@@ -196,7 +197,7 @@ function loadMeetMembersFromCache(): RecipientOption[] | null {
 function saveMeetMembersToCache(items: RecipientOption[]) {
   try {
     if (!Array.isArray(items) || !items.length) return;
-    localStorage.setItem(MEET_MEMBERS_CACHE_KEY, JSON.stringify(items));
+    secureSetItem(MEET_MEMBERS_CACHE_KEY, JSON.stringify(items));
   } catch {
     // Ignore storage errors (quota/private mode).
   }

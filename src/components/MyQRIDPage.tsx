@@ -25,6 +25,7 @@ import jsPDF from "jspdf";
 import { PageLayout, DESIGN_TOKENS, Button } from "./design-system";
 import { getStoredUser, fetchUserProfile, checkEmailVerified } from "../services/gasLoginService";
 import { loadUserProfileFromCache } from "../services/localStorageCache";
+import { secureGetItem, secureSetItem, secureRemoveItem } from "../utils/secureStorage";
 import type { UploadToastMessage } from "./UploadToast";
 
 interface MyQRIDPageProps {
@@ -557,7 +558,7 @@ export default function MyQRIDPage({
     }
   };
 
-  // Cache ID card to localStorage for faster subsequent loads
+  // Cache ID card to encrypted sessionStorage for faster subsequent loads
   const cacheIDCard = (idCode: string, frontDataUrl: string, backDataUrl: string) => {
     try {
       const cacheData = {
@@ -567,17 +568,17 @@ export default function MyQRIDPage({
         timestamp: Date.now(),
         version: ID_CARD_CACHE_VERSION
       };
-      localStorage.setItem(`${ID_CARD_CACHE_KEY}_${idCode}`, JSON.stringify(cacheData));
+      secureSetItem(`${ID_CARD_CACHE_KEY}_${idCode}`, JSON.stringify(cacheData));
       logMyQRDebug('[MyQRIDPage] ID card cached successfully, version:', ID_CARD_CACHE_VERSION);
     } catch (e) {
       logMyQRDebug('[MyQRIDPage] Failed to cache ID card:', e);
     }
   };
 
-  // Load cached ID card from localStorage
+  // Load cached ID card from encrypted sessionStorage
   const loadCachedIDCard = (idCode: string): { front: string; back: string } | null => {
     try {
-      const cached = localStorage.getItem(`${ID_CARD_CACHE_KEY}_${idCode}`);
+      const cached = secureGetItem(`${ID_CARD_CACHE_KEY}_${idCode}`);
       if (cached) {
         const data = JSON.parse(cached);
         // Check version matches AND cache is less than 24 hours old
@@ -589,7 +590,7 @@ export default function MyQRIDPage({
         } else {
           logMyQRDebug('[MyQRIDPage] Cache invalidated - version mismatch or expired. Cached:', data.version, 'Current:', ID_CARD_CACHE_VERSION);
           // Clear old cache
-          localStorage.removeItem(`${ID_CARD_CACHE_KEY}_${idCode}`);
+          secureRemoveItem(`${ID_CARD_CACHE_KEY}_${idCode}`);
         }
       }
     } catch (e) {
@@ -601,7 +602,7 @@ export default function MyQRIDPage({
   // Clear ID card cache (when profile is updated)
   const clearIDCardCache = (idCode: string) => {
     try {
-      localStorage.removeItem(`${ID_CARD_CACHE_KEY}_${idCode}`);
+      secureRemoveItem(`${ID_CARD_CACHE_KEY}_${idCode}`);
     } catch (e) {
       logMyQRDebug('[MyQRIDPage] Failed to clear ID card cache:', e);
     }

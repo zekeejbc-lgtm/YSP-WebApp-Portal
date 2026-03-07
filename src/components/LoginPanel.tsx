@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, Lock, User, Eye, EyeOff, LogIn, AlertCircle, ShieldCheck } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { secureGetItem, secureRemoveItem } from '../utils/secureStorage';
 import ForgotPasswordModal from './ForgotPasswordModal';
 
 interface LoginPanelProps {
@@ -104,9 +105,9 @@ export default function LoginPanel({
   useEffect(() => {
     if (!isOpen) return;
     try {
-      const rememberedFlag = localStorage.getItem('ysp_remember_username') === 'true';
-      const rememberedUsername = localStorage.getItem('ysp_remembered_username') || '';
-      const stored = localStorage.getItem('ysp_recent_usernames');
+      const rememberedFlag = secureGetItem('ysp_remember_username', { persistent: true }) === 'true';
+      const rememberedUsername = secureGetItem('ysp_remembered_username', { persistent: true }) || '';
+      const stored = secureGetItem('ysp_recent_usernames', { persistent: true });
       const parsed = stored ? JSON.parse(stored) : [];
       const list = Array.isArray(parsed)
         ? parsed.filter((item) => typeof item === 'string' && item.trim().length > 0)
@@ -126,8 +127,8 @@ export default function LoginPanel({
 
   const handleClearSavedUsernames = () => {
     try {
-      localStorage.removeItem('ysp_recent_usernames');
-      localStorage.removeItem('ysp_last_username');
+      secureRemoveItem('ysp_recent_usernames', { persistent: true });
+      secureRemoveItem('ysp_last_username', { persistent: true });
     } catch {
       // Ignore storage failures.
     }

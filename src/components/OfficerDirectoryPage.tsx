@@ -28,6 +28,7 @@ const XIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 import { PageLayout, SearchInput, Button } from "./design-system";
+import { secureGetItem, secureSetItem, secureRemoveItem } from "../utils/secureStorage";
 import { 
   searchOfficers, 
   getAllOfficers,
@@ -384,7 +385,7 @@ export default function OfficerDirectoryPage({
     let isMounted = true;
 
     try {
-      const cached = localStorage.getItem(DIRECTORY_CACHE_KEY);
+      const cached = secureGetItem(DIRECTORY_CACHE_KEY);
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed?.officer) {
@@ -397,7 +398,7 @@ export default function OfficerDirectoryPage({
     }
 
     try {
-      const cachedAll = localStorage.getItem(DIRECTORY_ALL_CACHE_KEY);
+      const cachedAll = secureGetItem(DIRECTORY_ALL_CACHE_KEY);
       if (cachedAll) {
         const parsed = JSON.parse(cachedAll);
         if (Array.isArray(parsed?.officers)) {
@@ -431,7 +432,7 @@ export default function OfficerDirectoryPage({
 
         if (!isMounted) return;
         setAllOfficers(collected);
-        localStorage.setItem(
+        secureSetItem(
           DIRECTORY_ALL_CACHE_KEY,
           JSON.stringify({ officers: collected, timestamp: Date.now() })
         );
@@ -454,7 +455,7 @@ export default function OfficerDirectoryPage({
   useEffect(() => {
     if (!selectedOfficer) return;
     try {
-      localStorage.setItem(
+      secureSetItem(
         DIRECTORY_CACHE_KEY,
         JSON.stringify({
           officer: selectedOfficer,
@@ -637,7 +638,7 @@ export default function OfficerDirectoryPage({
     setShowSuggestions(false);
     setSearchResults([]);
     setError(null);
-    localStorage.removeItem(DIRECTORY_CACHE_KEY);
+    secureRemoveItem(DIRECTORY_CACHE_KEY);
   };
 
   const handleRetry = () => {

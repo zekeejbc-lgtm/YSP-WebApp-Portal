@@ -1,13 +1,26 @@
 /**
- * Local Storage Cache Service
- * Provides caching utilities for fast loading with background sync
+ * Secure Session Cache Service
+ * Provides encrypted caching utilities for fast loading with background sync
  * 
  * Features:
- * - Instant loading from cache
+ * - Encrypted storage (data is obfuscated in DevTools)
+ * - Session-scoped by default (clears on logout/tab close)
  * - Background sync with backend
  * - Change detection and smart updates
  * - Deleted items detection
+ * 
+ * Security:
+ * - All data is encrypted before storage
+ * - Uses sessionStorage by default (clears on tab close)
+ * - Prevents casual inspection via browser DevTools
  */
+
+import { 
+  secureSetItem, 
+  secureGetItem, 
+  secureRemoveItem,
+  clearSecureSessionStorage 
+} from '../utils/secureStorage';
 
 // =================== TYPES ===================
 
@@ -86,7 +99,7 @@ export function isCacheVersionValid(entry: CacheEntry<unknown>, currentVersion: 
 // =================== CACHE OPERATIONS ===================
 
 /**
- * Save data to cache
+ * Save data to cache (encrypted sessionStorage)
  */
 export function saveToCache<T>(key: string, data: T, version: string): void {
   try {
@@ -96,14 +109,15 @@ export function saveToCache<T>(key: string, data: T, version: string): void {
       version,
       checksum: generateChecksum(data),
     };
-    localStorage.setItem(key, JSON.stringify(entry));
+    // Use secure encrypted sessionStorage
+    secureSetItem(key, JSON.stringify(entry));
   } catch (error) {
     console.error(`[Cache] Failed to save to ${key}:`, error);
   }
 }
 
 /**
- * Load data from cache
+ * Load data from cache (decrypts from sessionStorage)
  * Returns null if cache doesn't exist, is expired, or version mismatch
  */
 export function loadFromCache<T>(
@@ -112,7 +126,7 @@ export function loadFromCache<T>(
   currentVersion: string
 ): { data: T; isStale: boolean } | null {
   try {
-    const stored = localStorage.getItem(key);
+    const stored = secureGetItem(key);
     if (!stored) {
       return null;
     }
@@ -121,7 +135,7 @@ export function loadFromCache<T>(
 
     // Check version
     if (!isCacheVersionValid(entry, currentVersion)) {
-      localStorage.removeItem(key);
+      secureRemoveItem(key);
       return null;
     }
 
@@ -131,7 +145,7 @@ export function loadFromCache<T>(
     return { data: entry.data, isStale };
   } catch (error) {
     console.error(`[Cache] Failed to load from ${key}:`, error);
-    localStorage.removeItem(key);
+    secureRemoveItem(key);
     return null;
   }
 }
@@ -141,7 +155,7 @@ export function loadFromCache<T>(
  */
 export function hasDataChanged<T>(key: string, newData: T): boolean {
   try {
-    const stored = localStorage.getItem(key);
+    const stored = secureGetItem(key);
     if (!stored) return true;
 
     const entry: CacheEntry<T> = JSON.parse(stored);
@@ -158,19 +172,21 @@ export function hasDataChanged<T>(key: string, newData: T): boolean {
  */
 export function clearCache(key: string): void {
   try {
-    localStorage.removeItem(key);
+    secureRemoveItem(key);
   } catch (error) {
     console.error(`[Cache] Failed to clear ${key}:`, error);
   }
 }
 
 /**
- * Clear all YSP caches
+ * Clear all YSP caches (session storage)
  */
 export function clearAllCaches(): void {
   Object.values(CACHE_KEYS).forEach(key => {
     clearCache(key);
   });
+  // Also clear entire session storage for complete cleanup
+  clearSecureSessionStorage();
 }
 
 // =================== USER PROFILE CACHE ===================

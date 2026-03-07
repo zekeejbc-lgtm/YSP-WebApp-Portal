@@ -6,6 +6,7 @@ import { getStoredUser } from "../services/gasLoginService";
 import { getFcmToken, isFirebaseConfigured, onForegroundMessage } from "../services/firebaseMessaging";
 import { isNotificationsApiConfigured, registerFcmTokenWithBackend } from "../services/notificationsService";
 import { incrementAppBadge } from "../utils/appBadge";
+import { secureGetItem, secureSetItem } from "../utils/secureStorage";
 
 const DISMISS_KEY = "push-notifications-dismissed-at";
 const ENABLED_KEY = "push-notifications-enabled";
@@ -25,8 +26,8 @@ export default function PushNotificationsPrompt() {
   const [mountedAt, setMountedAt] = useState<number | null>(null);
 
   useEffect(() => {
-    const rawDismissed = localStorage.getItem(DISMISS_KEY);
-    const rawEnabled = localStorage.getItem(ENABLED_KEY);
+    const rawDismissed = secureGetItem(DISMISS_KEY, { persistent: true });
+    const rawEnabled = secureGetItem(ENABLED_KEY, { persistent: true });
     const parsedDismissed = rawDismissed ? Number(rawDismissed) : null;
     if (parsedDismissed && !Number.isNaN(parsedDismissed)) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -76,7 +77,7 @@ export default function PushNotificationsPrompt() {
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
       const now = Date.now();
-      localStorage.setItem(DISMISS_KEY, String(now));
+      secureSetItem(DISMISS_KEY, String(now), { persistent: true });
       setDismissedAt(now);
       toast.warning("Notifications are disabled.");
       return;
@@ -103,14 +104,14 @@ export default function PushNotificationsPrompt() {
       return;
     }
 
-    localStorage.setItem(ENABLED_KEY, "true");
+    secureSetItem(ENABLED_KEY, "true", { persistent: true });
     setIsEnabled(true);
     toast.success("Notifications enabled.");
   };
 
   const handleDismiss = () => {
     const now = Date.now();
-    localStorage.setItem(DISMISS_KEY, String(now));
+    secureSetItem(DISMISS_KEY, String(now), { persistent: true });
     setDismissedAt(now);
   };
 

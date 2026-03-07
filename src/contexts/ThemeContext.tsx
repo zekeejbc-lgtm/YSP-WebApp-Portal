@@ -4,10 +4,11 @@
  * Provides:
  * - isDark state for dark/light mode
  * - toggleTheme function
- * - Persists preference to localStorage
+ * - Persists preference to encrypted localStorage (persistent across sessions)
  */
 
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import { secureGetItem, secureSetItem } from '../utils/secureStorage';
 
 interface ThemeContextType {
   isDark: boolean;
@@ -26,7 +27,7 @@ interface ThemeProviderProps {
 export function ThemeProvider({ children }: ThemeProviderProps) {
   const [isDark, setIsDark] = useState(() => {
     try {
-      const stored = localStorage.getItem(THEME_KEY);
+      const stored = secureGetItem(THEME_KEY, { persistent: true });
       if (stored !== null) {
         return stored === 'dark';
       }
@@ -41,7 +42,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
     try {
-      localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light');
+      secureSetItem(THEME_KEY, isDark ? 'dark' : 'light', { persistent: true });
     } catch {
       // Ignore storage errors
     }

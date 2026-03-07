@@ -4,10 +4,12 @@
  * =============================================================================
  * 
  * Manages maintenance mode state for pages and entire PWA
- * Uses localStorage for persistence
+ * Uses encrypted sessionStorage for persistence
  * 
  * =============================================================================
  */
+
+import { secureGetItem, secureSetItem } from './secureStorage';
 
 export interface MaintenanceConfig {
   enabled: boolean;
@@ -90,7 +92,7 @@ export const AVAILABLE_PAGES = [
 // Get current maintenance mode state
 export function getMaintenanceMode(): MaintenanceModeState {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = secureGetItem(STORAGE_KEY);
     if (stored) {
       return normalizeMaintenanceState(JSON.parse(stored));
     }
@@ -104,7 +106,7 @@ export function getMaintenanceMode(): MaintenanceModeState {
 // Save maintenance mode state
 export function saveMaintenanceMode(state: MaintenanceModeState): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeMaintenanceState(state)));
+    secureSetItem(STORAGE_KEY, JSON.stringify(normalizeMaintenanceState(state)));
   } catch (error) {
     console.error("Failed to save maintenance mode:", error);
   }

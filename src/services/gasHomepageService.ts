@@ -25,6 +25,7 @@
 /// <reference types="vite/client" />
 
 import { getSessionToken, getStoredUser } from './gasLoginService';
+import { secureGetItem, secureSetItem } from '../utils/secureStorage';
 
 /**
  * Get auth payload to include in every POST request.
@@ -128,10 +129,10 @@ const GAS_CONFIG = {
 let cachedContent: HomepageMainContent | null = null;
 let cacheTimestamp: number = 0;
 
-// Initialize from LocalStorage if available
+// Initialize from encrypted sessionStorage if available
 try {
-  const storedContent = localStorage.getItem(GAS_CONFIG.STORAGE_KEY);
-  const storedTs = localStorage.getItem(GAS_CONFIG.STORAGE_TS_KEY);
+  const storedContent = secureGetItem(GAS_CONFIG.STORAGE_KEY);
+  const storedTs = secureGetItem(GAS_CONFIG.STORAGE_TS_KEY);
   if (storedContent && storedTs) {
     cachedContent = JSON.parse(storedContent);
     cacheTimestamp = parseInt(storedTs, 10);
@@ -305,10 +306,10 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
     cachedContent = content;
     cacheTimestamp = Date.now();
 
-    // Persist to LocalStorage
+    // Persist to encrypted sessionStorage
     try {
-      localStorage.setItem(GAS_CONFIG.STORAGE_KEY, JSON.stringify(content));
-      localStorage.setItem(GAS_CONFIG.STORAGE_TS_KEY, cacheTimestamp.toString());
+      secureSetItem(GAS_CONFIG.STORAGE_KEY, JSON.stringify(content));
+      secureSetItem(GAS_CONFIG.STORAGE_TS_KEY, cacheTimestamp.toString());
     } catch (e) {
       console.warn('[GAS Homepage] Failed to persist cache', e);
     }

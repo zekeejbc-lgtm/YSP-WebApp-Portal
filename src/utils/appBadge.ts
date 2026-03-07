@@ -1,7 +1,9 @@
+import { secureGetItem, secureSetItem } from './secureStorage';
+
 const BADGE_KEY = "ysp-app-badge-count";
 
 const getStoredBadgeCount = () => {
-  const raw = localStorage.getItem(BADGE_KEY);
+  const raw = secureGetItem(BADGE_KEY, { persistent: true });
   const parsed = raw ? Number(raw) : 0;
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
   return parsed;
@@ -21,12 +23,12 @@ const applyBadgeCount = async (count: number) => {
 
 export const setAppBadge = async (count: number) => {
   const safeCount = Math.max(0, Math.floor(count));
-  localStorage.setItem(BADGE_KEY, String(safeCount));
+  secureSetItem(BADGE_KEY, String(safeCount), { persistent: true });
   await applyBadgeCount(safeCount);
 };
 
 export const clearAppBadge = async () => {
-  localStorage.setItem(BADGE_KEY, "0");
+  secureSetItem(BADGE_KEY, "0", { persistent: true });
   await applyBadgeCount(0);
 };
 

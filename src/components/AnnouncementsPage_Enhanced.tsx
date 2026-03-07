@@ -49,6 +49,7 @@ import {
 import CustomDropdown from "./CustomDropdown";
 import { toast } from "sonner";
 import { logCreate, logDelete, logEdit } from "../services/gasSystemToolsService";
+import { secureGetItem, secureSetItem, secureRemoveItem } from "../utils/secureStorage";
 import {
   addAnnouncementLinkAttachment,
   archiveAnnouncement,
@@ -211,7 +212,7 @@ const RECIPIENT_COMMANDS: {
   { command: "@External", icon: Globe, label: "Add external recipient", color: "#ec4899", recipientType: "Person" },
 ];
 
-/* ─────────────────────── localStorage caching ─────────────────────── */
+/* ─────────────────────── encrypted sessionStorage caching ─────────────────────── */
 
 const ANNOUNCEMENTS_CACHE_KEYS = {
   members: "ysp_announcements_members",
@@ -225,13 +226,13 @@ interface CachedItem<T> {
 
 function getCachedData<T>(key: string): T | null {
   try {
-    const cached = localStorage.getItem(key);
+    const cached = secureGetItem(key);
     if (!cached) return null;
     const parsed: CachedItem<T> = JSON.parse(cached);
     if (Date.now() - parsed.timestamp < ANNOUNCEMENTS_CACHE_TTL) {
       return parsed.data;
     }
-    localStorage.removeItem(key);
+    secureRemoveItem(key);
   } catch {
     /* ignore */
   }
@@ -241,7 +242,7 @@ function getCachedData<T>(key: string): T | null {
 function setCachedData<T>(key: string, data: T) {
   try {
     const item: CachedItem<T> = { data, timestamp: Date.now() };
-    localStorage.setItem(key, JSON.stringify(item));
+    secureSetItem(key, JSON.stringify(item));
   } catch {
     /* ignore - quota exceeded or disabled */
   }
@@ -557,7 +558,7 @@ export default function AnnouncementsPageEnhanced({
   const [filterShowRead, setFilterShowRead] = useState<"all" | "read" | "unread">("all");
   const [readAnnouncementIds] = useState<Set<string>>(() => {
     try {
-      const stored = localStorage.getItem("ysp_ann_read_ids");
+      const stored = secureGetItem("ysp_ann_read_ids");
       return stored ? new Set(JSON.parse(stored)) : new Set();
     } catch { return new Set(); }
   });
@@ -595,7 +596,7 @@ export default function AnnouncementsPageEnhanced({
   /* Track read announcements locally */
   const markLocalRead = useCallback((id: string) => {
     readAnnouncementIds.add(id);
-    try { localStorage.setItem("ysp_ann_read_ids", JSON.stringify([...readAnnouncementIds])); } catch { /* */ }
+    try { secureSetItem("ysp_ann_read_ids", JSON.stringify([...readAnnouncementIds])); } catch { /* */ }
   }, [readAnnouncementIds]);
 
   /* Main page: only Sent announcements the user is a recipient of, with filters */

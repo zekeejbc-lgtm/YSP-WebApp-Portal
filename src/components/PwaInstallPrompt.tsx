@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download } from "lucide-react";
 import Button from "./design-system/Button";
+import { secureGetItem, secureSetItem } from "../utils/secureStorage";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -43,11 +44,11 @@ export default function PwaInstallPrompt({
     setIsIos(isIosDevice());
 
     const onBeforeInstall = (event: Event) => {
-      const rawDismissed = localStorage.getItem(DISMISS_KEY);
+      const rawDismissed = secureGetItem(DISMISS_KEY, { persistent: true });
       const dismissedAtValue = rawDismissed ? Number(rawDismissed) : NaN;
       const dismissedRecently =
         !Number.isNaN(dismissedAtValue) && Date.now() - dismissedAtValue < DISMISS_DURATION_MS;
-      const seen = localStorage.getItem(SEEN_KEY) === "true";
+      const seen = secureGetItem(SEEN_KEY, { persistent: true }) === "true";
       const shouldIntercept = enabled && !isAppInstalled() && !dismissedRecently && !seen;
       if (!shouldIntercept) {
         return;
@@ -71,7 +72,7 @@ export default function PwaInstallPrompt({
   }, []);
 
   useEffect(() => {
-    const raw = localStorage.getItem(DISMISS_KEY);
+    const raw = secureGetItem(DISMISS_KEY, { persistent: true });
     if (!raw) return;
     const parsed = Number(raw);
     if (!Number.isNaN(parsed)) {
@@ -81,7 +82,7 @@ export default function PwaInstallPrompt({
   }, []);
 
   useEffect(() => {
-    const raw = localStorage.getItem(SEEN_KEY);
+    const raw = secureGetItem(SEEN_KEY, { persistent: true });
     if (raw === "true") {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasSeen(true);
@@ -96,7 +97,7 @@ export default function PwaInstallPrompt({
       return;
     }
     if (delayMs === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+      // eslint-disable-next-line react-hooks-set-state-in-effect
       setIsReady(true);
       return;
     }
@@ -119,7 +120,7 @@ export default function PwaInstallPrompt({
 
   useEffect(() => {
     if (!shouldRenderPrompt || hasRecordedSeen.current) return;
-    localStorage.setItem(SEEN_KEY, "true");
+    secureSetItem(SEEN_KEY, "true", { persistent: true });
     hasRecordedSeen.current = true;
   }, [shouldRenderPrompt]);
 
@@ -129,7 +130,7 @@ export default function PwaInstallPrompt({
     const { outcome } = await deferredPrompt.userChoice;
     if (outcome === "dismissed") {
       const now = Date.now();
-      localStorage.setItem(DISMISS_KEY, String(now));
+      secureSetItem(DISMISS_KEY, String(now), { persistent: true });
       setDismissedAt(now);
     }
     setDeferredPrompt(null);
@@ -137,7 +138,7 @@ export default function PwaInstallPrompt({
 
   const handleDismiss = () => {
     const now = Date.now();
-    localStorage.setItem(DISMISS_KEY, String(now));
+    secureSetItem(DISMISS_KEY, String(now), { persistent: true });
     setDismissedAt(now);
     setDeferredPrompt(null);
   };
