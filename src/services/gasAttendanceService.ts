@@ -172,6 +172,9 @@ const GAS_ATTENDANCE_CONFIG = {
   // The Attendance_Main.gs functions are routed through the main doGet/doPost
   API_URL: import.meta.env.VITE_GAS_EVENTS_API_URL || '',
   
+  // API Key for authentication (same as Events service)
+  API_KEY: import.meta.env.VITE_GAS_API_KEY || '',
+  
   // Timeout for API calls (in milliseconds)
   TIMEOUT: 15000,
   
@@ -230,6 +233,12 @@ function isApiConfigured(): boolean {
 function buildUrl(action: string, params?: Record<string, string | number | boolean>): string {
   const url = new URL(GAS_ATTENDANCE_CONFIG.API_URL);
   url.searchParams.append('action', action);
+  
+  // Add API key for authentication
+  if (GAS_ATTENDANCE_CONFIG.API_KEY) {
+    url.searchParams.append('key', GAS_ATTENDANCE_CONFIG.API_KEY);
+  }
+  
   const sessionToken = getSessionToken();
   if (sessionToken) {
     url.searchParams.append('sessionToken', sessionToken);
@@ -324,7 +333,7 @@ async function gasPost<T>(action: string, data: Record<string, unknown>): Promis
       headers: {
         'Content-Type': 'text/plain', // GAS requires text/plain for CORS
       },
-      body: JSON.stringify({ action, ...data, sessionToken: getSessionToken() }),
+      body: JSON.stringify({ action, ...data, key: GAS_ATTENDANCE_CONFIG.API_KEY, sessionToken: getSessionToken() }),
       signal: controller.signal,
     });
 
