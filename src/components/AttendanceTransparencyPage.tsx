@@ -15,9 +15,9 @@
  * =============================================================================
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import type { Map as LeafletMap, Marker as LeafletMarker, Circle as LeafletCircle } from "leaflet";
-import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle, ChevronDown, ChevronUp, MapPin, Loader2, Timer, CheckCircle2, Archive } from "lucide-react";
+import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle, ChevronDown, ChevronUp, MapPin, Loader2, Timer, CheckCircle2, Archive, ToggleLeft, ToggleRight } from "lucide-react";
 import { PageLayout, StatusChip, DESIGN_TOKENS, getGlassStyle, Button } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import { getMemberAttendanceHistory, type AttendanceRecord as BackendAttendanceRecord } from "../services/gasAttendanceService";
@@ -131,6 +131,63 @@ function hasNoLogout(timeIn: string, timeOut: string): boolean {
   const hasTimeIn = timeIn && timeIn !== 'N/A' && timeIn !== '-';
   const hasTimeOut = timeOut && timeOut !== 'N/A' && timeOut !== '-';
   return hasTimeIn && !hasTimeOut;
+}
+
+/**
+ * Calculate duration in minutes between two time strings
+ * Returns 0 if unable to parse
+ */
+function calculateDurationMinutes(timeIn: string, timeOut: string): number {
+  if (!timeIn || !timeOut || timeIn === 'N/A' || timeOut === 'N/A' || 
+      timeIn === '-' || timeOut === '-') {
+    return 0;
+  }
+  
+  const parseTime = (timeStr: string): Date | null => {
+    if (timeStr.includes('T')) {
+      const date = new Date(timeStr);
+      return isNaN(date.getTime()) ? null : date;
+    }
+    
+    const match = timeStr.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i);
+    if (match) {
+      let hours = parseInt(match[1]);
+      const minutes = parseInt(match[2]);
+      const period = match[3]?.toUpperCase();
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+      const date = new Date();
+      date.setHours(hours, minutes, 0, 0);
+      return date;
+    }
+    return null;
+  };
+  
+  const inTime = parseTime(timeIn);
+  const outTime = parseTime(timeOut);
+  
+  if (!inTime || !outTime) return 0;
+  
+  let diffMs = outTime.getTime() - inTime.getTime();
+  if (diffMs < 0) diffMs += 24 * 60 * 60 * 1000;
+  
+  return Math.floor(diffMs / (1000 * 60));
+}
+
+/**
+ * Format minutes into human-readable duration
+ */
+function formatMinutesToDuration(totalMinutes: number): string {
+  if (totalMinutes <= 0) return '0m';
+  
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  
+  return parts.join(' ') || '0m';
 }
 
 /**
@@ -1073,6 +1130,12 @@ export default function AttendanceTransparencyPage({
   const [selectedEvent, setSelectedEvent] = useState<EventData | null>(null);
   const [showEventModal, setShowEventModal] = useState(false);
 
+  // Events map for looking up event details (StartTime/EndTime for expected duration)
+  const [eventsMap, setEventsMap] = useState<Map<string, EventData>>(new Map());
+  
+  // Excluded events for volunteering time calculation (deselected by user)
+  const [excludedEventIds, setExcludedEventIds] = useState<Set<string>>(new Set());
+
   // =====================================================
   // DATA FETCHING
   // =====================================================
@@ -1116,6 +1179,9 @@ export default function AttendanceTransparencyPage({
       events.forEach((event: EventData) => {
         if (event.EventID) eventMap.set(event.EventID, event);
       });
+      
+      // Save events map to state for volunteering time calculations
+      setEventsMap(eventMap);
 
       // Transform backend records to frontend format
       const transformedRecords: AttendanceRecord[] = backendRecords.map((record: BackendAttendanceRecord) => {
@@ -1226,6 +1292,70 @@ export default function AttendanceTransparencyPage({
   const attendanceRate = totalEvents > 0 ? Math.round(
     ((statusCounts.present + statusCounts.late) / totalEvents) * 100
   ) : 0;
+
+  // =====================================================
+  // VOLUNTEERING TIME CALCULATIONS
+  // =====================================================
+
+  // Helper to toggle event inclusion
+  const toggleEventInclusion = useCallback((eventId: string) => {
+    setExcludedEventIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(eventId)) {
+        newSet.delete(eventId);
+      } else {
+        newSet.add(eventId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Calculate volunteering time stats (only for included events)
+  const volunteeringTimeStats = useMemo(() => {
+    let totalTimeSpentMinutes = 0;
+    let totalExpectedMinutes = 0;
+    let eventsWithTime = 0;
+    let eventsWithExpectedTime = 0;
+
+    filteredRecords.forEach((record) => {
+      // Skip excluded events
+      if (excludedEventIds.has(record.eventId)) return;
+      
+      // Skip absent records (no volunteering time)
+      if (record.status === 'absent') return;
+
+      // Calculate time spent (actual attendance duration)
+      const timeSpent = calculateDurationMinutes(record.timeIn, record.timeOut);
+      if (timeSpent > 0) {
+        totalTimeSpentMinutes += timeSpent;
+        eventsWithTime++;
+      }
+
+      // Calculate expected time from event StartTime to EndTime
+      const event = eventsMap.get(record.eventId);
+      if (event?.StartTime && event?.EndTime) {
+        const expectedTime = calculateDurationMinutes(event.StartTime, event.EndTime);
+        if (expectedTime > 0) {
+          totalExpectedMinutes += expectedTime;
+          eventsWithExpectedTime++;
+        }
+      }
+    });
+
+    const completionRate = totalExpectedMinutes > 0 
+      ? Math.round((totalTimeSpentMinutes / totalExpectedMinutes) * 100) 
+      : 0;
+
+    return {
+      timeSpent: totalTimeSpentMinutes,
+      timeSpentFormatted: formatMinutesToDuration(totalTimeSpentMinutes),
+      expectedTime: totalExpectedMinutes,
+      expectedTimeFormatted: formatMinutesToDuration(totalExpectedMinutes),
+      completionRate: Math.min(completionRate, 999), // Cap at 999%
+      eventsWithTime,
+      eventsWithExpectedTime,
+    };
+  }, [filteredRecords, excludedEventIds, eventsMap]);
 
   const viewToggleLabel = viewMode === "table" ? "Table View" : "Tile View";
   const glassStyle = getGlassStyle(isDark);
@@ -1747,6 +1877,156 @@ export default function AttendanceTransparencyPage({
         )}
       </div>
 
+      {/* =====================================================
+          VOLUNTEERING TIME SUMMARY BOX
+          ===================================================== */}
+      {!isLoading && !error && attendanceRecords.length > 0 && (
+        <div
+          className="border rounded-xl mb-6 overflow-hidden"
+          style={{
+            borderRadius: `${DESIGN_TOKENS.radius.card}px`,
+            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            ...glassStyle,
+          }}
+        >
+          {/* Header */}
+          <div 
+            className="px-5 py-4 border-b flex items-center gap-3"
+            style={{
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}10 0%, ${DESIGN_TOKENS.colors.brand.orange}10 100%)`,
+            }}
+          >
+            <Timer className="w-5 h-5" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+            <h3
+              style={{
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              }}
+            >
+              Volunteering Time Summary
+            </h3>
+            {excludedEventIds.size > 0 && (
+              <span className="ml-auto text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                {excludedEventIds.size} event{excludedEventIds.size > 1 ? 's' : ''} excluded
+              </span>
+            )}
+          </div>
+
+          {/* Content */}
+          <div className="p-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              {/* Time Spent */}
+              <div
+                className="rounded-xl p-4 text-center"
+                style={{
+                  background: 'rgba(16, 185, 129, 0.1)',
+                  border: '1px solid rgba(16, 185, 129, 0.25)',
+                }}
+              >
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Clock className="w-4 h-4" style={{ color: '#10b981' }} />
+                  <span className="text-xs text-muted-foreground font-medium">Time Volunteered</span>
+                </div>
+                <div
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
+                    color: '#10b981',
+                  }}
+                >
+                  {volunteeringTimeStats.timeSpentFormatted}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  from {volunteeringTimeStats.eventsWithTime} event{volunteeringTimeStats.eventsWithTime !== 1 ? 's' : ''}
+                </p>
+              </div>
+
+              {/* Expected Time */}
+              <div
+                className="rounded-xl p-4 text-center"
+                style={{
+                  background: 'rgba(59, 130, 246, 0.1)',
+                  border: '1px solid rgba(59, 130, 246, 0.25)',
+                }}
+              >
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Timer className="w-4 h-4" style={{ color: '#3b82f6' }} />
+                  <span className="text-xs text-muted-foreground font-medium">Expected Time</span>
+                </div>
+                <div
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
+                    color: '#3b82f6',
+                  }}
+                >
+                  {volunteeringTimeStats.expectedTimeFormatted}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  based on event schedules
+                </p>
+              </div>
+
+              {/* Completion Rate */}
+              <div
+                className="rounded-xl p-4 text-center"
+                style={{
+                  background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}15 0%, ${DESIGN_TOKENS.colors.brand.orange}15 100%)`,
+                  border: `1px solid ${DESIGN_TOKENS.colors.brand.orange}30`,
+                }}
+              >
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <CheckCircle2 className="w-4 h-4" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                  <span className="text-xs text-muted-foreground font-medium">Completion</span>
+                </div>
+                <div
+                  style={{
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h2}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,
+                    color: DESIGN_TOKENS.colors.brand.orange,
+                  }}
+                >
+                  {volunteeringTimeStats.completionRate}%
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  of expected hours
+                </p>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="relative h-3 rounded-full overflow-hidden" style={{ background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }}>
+              <div
+                className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
+                style={{
+                  width: `${Math.min(volunteeringTimeStats.completionRate, 100)}%`,
+                  background: `linear-gradient(90deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+                }}
+              />
+              {volunteeringTimeStats.completionRate > 100 && (
+                <div
+                  className="absolute inset-y-0 rounded-full"
+                  style={{
+                    left: '100%',
+                    width: `${Math.min(volunteeringTimeStats.completionRate - 100, 50)}%`,
+                    background: 'rgba(16, 185, 129, 0.6)',
+                    transform: 'translateX(-100%)',
+                  }}
+                />
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground text-center mt-2">
+              {volunteeringTimeStats.completionRate >= 100 
+                ? '🎉 Great job! You\'ve exceeded your expected volunteering hours!' 
+                : `${formatMinutesToDuration(volunteeringTimeStats.expectedTime - volunteeringTimeStats.timeSpent)} remaining to reach your goal`
+              }
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Error State */}
       {error && !isLoading && (
         <div className="flex flex-col items-center justify-center py-12 mb-6">
@@ -1932,19 +2212,23 @@ export default function AttendanceTransparencyPage({
       {/* Tile View - Data */}
       {!isLoading && !error && viewMode === "tile" && filteredRecords.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-          {paginatedRecords.map((record) => (
+          {paginatedRecords.map((record) => {
+            const eventData = eventsMap.get(record.eventId);
+            const timeSpentMins = calculateDurationMinutes(record.timeIn, record.timeOut);
+            const expectedMins = eventData?.StartTime && eventData?.EndTime 
+              ? calculateDurationMinutes(eventData.StartTime, eventData.EndTime) 
+              : 0;
+            const isExcluded = excludedEventIds.has(record.eventId);
+            
+            return (
             <div
               key={record.id}
-              onClick={() => {
-                setSelectedRecord(record);
-                setShowDetailModal(true);
-              }}
-              className="border-2 rounded-lg p-5 cursor-pointer hover:scale-[1.02] transition-transform"
+              className={`border-2 rounded-lg p-5 cursor-pointer hover:scale-[1.02] transition-all ${isExcluded ? 'opacity-60' : ''}`}
               style={{
                 borderRadius: `${DESIGN_TOKENS.radius.card}px`,
-                borderColor: isDark
-                  ? "rgba(255, 255, 255, 0.3)"
-                  : "rgba(0, 0, 0, 0.2)",
+                borderColor: isExcluded
+                  ? (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)')
+                  : (isDark ? "rgba(255, 255, 255, 0.3)" : "rgba(0, 0, 0, 0.2)"),
                 background: isDark
                   ? "rgba(255, 255, 255, 0.08)"
                   : "rgba(255, 255, 255, 0.9)",
@@ -1952,7 +2236,39 @@ export default function AttendanceTransparencyPage({
                   ? "0 4px 12px rgba(0, 0, 0, 0.3)"
                   : "0 2px 8px rgba(0, 0, 0, 0.1)",
               }}
+              onClick={() => {
+                setSelectedRecord(record);
+                setShowDetailModal(true);
+              }}
             >
+              {/* Include/Exclude Toggle */}
+              <div className="flex justify-end mb-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleEventInclusion(record.eventId);
+                  }}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium transition-all ${
+                    isExcluded 
+                      ? 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400' 
+                      : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                  }`}
+                  title={isExcluded ? 'Click to include in time totals' : 'Click to exclude from time totals'}
+                >
+                  {isExcluded ? (
+                    <>
+                      <ToggleLeft className="w-4 h-4" />
+                      Excluded
+                    </>
+                  ) : (
+                    <>
+                      <ToggleRight className="w-4 h-4" />
+                      Included
+                    </>
+                  )}
+                </button>
+              </div>
+
               {/* Event Name and Date */}
               <div className="mb-4">
                 <h3
@@ -2008,24 +2324,45 @@ export default function AttendanceTransparencyPage({
                     {hasNoLogout(record.timeIn, record.timeOut) ? 'No Logout ⚠️' : record.timeOut}
                   </span>
                 </div>
-                {/* Duration */}
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Clock className="w-4 h-4" />
-                    <span style={{ fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px` }}>
-                      Duration:
-                    </span>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
-                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
-                      color: DESIGN_TOKENS.colors.brand.orange,
-                    }}
-                  >
-                    {calculateDuration(record.timeIn, record.timeOut)}
+              </div>
+
+              {/* Time Spent vs Expected */}
+              <div 
+                className="rounded-lg p-3 mb-4"
+                style={{
+                  background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                  border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                }}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs text-muted-foreground">Time Spent:</span>
+                  <span className="text-sm font-semibold" style={{ color: '#10b981' }}>
+                    {timeSpentMins > 0 ? formatMinutesToDuration(timeSpentMins) : '-'}
                   </span>
                 </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">Expected:</span>
+                  <span className="text-sm font-semibold" style={{ color: '#3b82f6' }}>
+                    {expectedMins > 0 ? formatMinutesToDuration(expectedMins) : 'N/A'}
+                  </span>
+                </div>
+                {timeSpentMins > 0 && expectedMins > 0 && (
+                  <div className="mt-2 pt-2 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">Completion:</span>
+                      <span 
+                        className="text-sm font-bold"
+                        style={{ 
+                          color: timeSpentMins >= expectedMins 
+                            ? '#10b981' 
+                            : (timeSpentMins >= expectedMins * 0.8 ? '#f59e0b' : '#ef4444')
+                        }}
+                      >
+                        {Math.round((timeSpentMins / expectedMins) * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Status with External/Late indicators */}
@@ -2057,7 +2394,8 @@ export default function AttendanceTransparencyPage({
                 )}
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
 
@@ -2214,7 +2552,25 @@ export default function AttendanceTransparencyPage({
                       fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                     }}
                   >
+                    Expected
+                  </th>
+                  <th
+                    className="text-left px-6 py-4"
+                    style={{
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    }}
+                  >
                     Status
+                  </th>
+                  <th
+                    className="text-center px-4 py-4"
+                    style={{
+                      fontSize: `${DESIGN_TOKENS.typography.fontSize.caption}px`,
+                      fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                    }}
+                  >
+                    Include
                   </th>
                 </tr>
               </thead>
@@ -2222,6 +2578,11 @@ export default function AttendanceTransparencyPage({
                 {paginatedRecords.map((record) => {
                   const noLogout = hasNoLogout(record.timeIn, record.timeOut);
                   const duration = calculateDuration(record.timeIn, record.timeOut);
+                  const eventData = eventsMap.get(record.eventId);
+                  const expectedMins = eventData?.StartTime && eventData?.EndTime 
+                    ? calculateDurationMinutes(eventData.StartTime, eventData.EndTime) 
+                    : 0;
+                  const isExcluded = excludedEventIds.has(record.eventId);
                   return (
                   <tr
                     key={record.id}
@@ -2229,7 +2590,7 @@ export default function AttendanceTransparencyPage({
                       setSelectedRecord(record);
                       setShowDetailModal(true);
                     }}
-                    className="border-b hover:bg-white/30 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                    className={`border-b hover:bg-white/30 dark:hover:bg-white/5 transition-colors cursor-pointer ${isExcluded ? 'opacity-50' : ''}`}
                     style={{
                       borderColor: isDark
                         ? "rgba(255, 255, 255, 0.05)"
@@ -2318,6 +2679,16 @@ export default function AttendanceTransparencyPage({
                     >
                       {duration}
                     </td>
+                    <td
+                      className="px-6 py-4"
+                      style={{
+                        fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                        fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                        color: '#3b82f6',
+                      }}
+                    >
+                      {expectedMins > 0 ? formatMinutesToDuration(expectedMins) : 'N/A'}
+                    </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <StatusChip status={record.status} size="sm" />
@@ -2346,6 +2717,22 @@ export default function AttendanceTransparencyPage({
                           </span>
                         )}
                       </div>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleEventInclusion(record.eventId);
+                        }}
+                        className={`p-1.5 rounded-lg transition-all ${
+                          isExcluded 
+                            ? 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-600' 
+                            : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50'
+                        }`}
+                        title={isExcluded ? 'Click to include in time totals' : 'Click to exclude from time totals'}
+                      >
+                        {isExcluded ? <ToggleLeft className="w-5 h-5" /> : <ToggleRight className="w-5 h-5" />}
+                      </button>
                     </td>
                   </tr>
                   );

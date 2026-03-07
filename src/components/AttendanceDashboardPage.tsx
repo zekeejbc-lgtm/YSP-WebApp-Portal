@@ -19,9 +19,9 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown, ExternalLink, Smartphone } from "lucide-react";
+import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown, ExternalLink, Smartphone, Search, User, Calendar, Clock, MapPin, CheckCircle2, AlertCircle, X, ChevronUp, Timer, ToggleLeft, ToggleRight } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
-import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance } from "../services/gasAttendanceService";
+import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance, getMemberAttendanceHistory } from "../services/gasAttendanceService";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import ExcelJS from 'exceljs';
@@ -180,6 +180,63 @@ function calculateAttendanceDuration(timeIn: string | Date | null | undefined, t
   if (seconds > 0 && hours === 0) parts.push(`${seconds}s`); // Only show seconds if less than an hour
   
   return parts.length > 0 ? parts.join(' ') : '< 1m';
+}
+
+// Helper function to calculate duration in minutes between two time strings
+function calculateDurationMinutes(timeIn: string | Date | null | undefined, timeOut: string | Date | null | undefined): number {
+  if (!timeIn || !timeOut) return 0;
+  
+  const timeInStr = String(timeIn).trim();
+  const timeOutStr = String(timeOut).trim();
+  
+  if (!timeInStr || timeInStr === '-' || timeInStr === 'N/A' ||
+      !timeOutStr || timeOutStr === '-' || timeOutStr === 'N/A') {
+    return 0;
+  }
+  
+  const parseTime = (timeStr: string): Date | null => {
+    if (timeStr.includes('T')) {
+      const date = new Date(timeStr);
+      return isNaN(date.getTime()) ? null : date;
+    }
+    
+    const match = timeStr.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i);
+    if (match) {
+      let hours = parseInt(match[1]);
+      const minutes = parseInt(match[2]);
+      const period = match[3]?.toUpperCase();
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+      const date = new Date();
+      date.setHours(hours, minutes, 0, 0);
+      return date;
+    }
+    return null;
+  };
+  
+  const inTime = parseTime(timeInStr);
+  const outTime = parseTime(timeOutStr);
+  
+  if (!inTime || !outTime) return 0;
+  
+  let diffMs = outTime.getTime() - inTime.getTime();
+  if (diffMs < 0) diffMs += 24 * 60 * 60 * 1000;
+  
+  return Math.floor(diffMs / (1000 * 60));
+}
+
+// Helper function to format minutes into human-readable duration
+function formatMinutesToDuration(totalMinutes: number): string {
+  if (totalMinutes <= 0) return '0m';
+  
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  
+  return parts.join(' ') || '0m';
 }
 
 // Helper function to format date values from backend
@@ -415,12 +472,122 @@ export default function AttendanceDashboardPage({
   const [multiEventRecords, setMultiEventRecords] = useState<Map<string, AttendanceRecord[]>>(new Map());
   const [allMembers, setAllMembers] = useState<MemberForAttendance[]>([]);
 
+  // ============= PERSON SEARCH STATES =============
+  const [personSearchQuery, setPersonSearchQuery] = useState("");
+  const [showPersonDropdown, setShowPersonDropdown] = useState(false);
+  const [selectedPerson, setSelectedPerson] = useState<MemberForAttendance | null>(null);
+  const [personAttendanceRecords, setPersonAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [isLoadingPersonAttendance, setIsLoadingPersonAttendance] = useState(false);
+  const [showPersonAttendanceModal, setShowPersonAttendanceModal] = useState(false);
+  const [selectedPersonRecord, setSelectedPersonRecord] = useState<AttendanceRecord | null>(null);
+  const personSearchRef = useRef<HTMLDivElement>(null);
+  
+  // Excluded events for person volunteering time calculation
+  const [personExcludedEventIds, setPersonExcludedEventIds] = useState<Set<string>>(new Set());
+  
+  // Toggle event inclusion for person volunteering time
+  const togglePersonEventInclusion = useCallback((eventId: string) => {
+    setPersonExcludedEventIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(eventId)) {
+        newSet.delete(eventId);
+      } else {
+        newSet.add(eventId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Calculate person volunteering time stats
+  const personVolunteeringTimeStats = useMemo(() => {
+    let totalTimeSpentMinutes = 0;
+    let totalExpectedMinutes = 0;
+    let eventsWithTime = 0;
+    let eventsWithExpectedTime = 0;
+
+    personAttendanceRecords.forEach((record) => {
+      // Skip excluded events
+      if (personExcludedEventIds.has(record.eventId)) return;
+      
+      // Skip absent records
+      if (record.status === 'Absent') return;
+
+      // Calculate time spent
+      const timeSpent = calculateDurationMinutes(record.timeIn, record.timeOut);
+      if (timeSpent > 0) {
+        totalTimeSpentMinutes += timeSpent;
+        eventsWithTime++;
+      }
+
+      // Calculate expected time from event StartTime to EndTime
+      const eventData = events.find(e => e.EventID === record.eventId);
+      if (eventData?.StartTime && eventData?.EndTime) {
+        const expectedTime = calculateDurationMinutes(eventData.StartTime, eventData.EndTime);
+        if (expectedTime > 0) {
+          totalExpectedMinutes += expectedTime;
+          eventsWithExpectedTime++;
+        }
+      }
+    });
+
+    const completionRate = totalExpectedMinutes > 0 
+      ? Math.round((totalTimeSpentMinutes / totalExpectedMinutes) * 100) 
+      : 0;
+
+    return {
+      timeSpent: totalTimeSpentMinutes,
+      timeSpentFormatted: formatMinutesToDuration(totalTimeSpentMinutes),
+      expectedTime: totalExpectedMinutes,
+      expectedTimeFormatted: formatMinutesToDuration(totalExpectedMinutes),
+      completionRate: Math.min(completionRate, 999),
+      eventsWithTime,
+      eventsWithExpectedTime,
+    };
+  }, [personAttendanceRecords, personExcludedEventIds, events]);
+
   // ============= MODAL STATE TRACKING FOR CHATBOT VISIBILITY =============
   // Track when any modal is open and notify parent to hide chatbot
   useEffect(() => {
-    const isAnyModalOpen = showModal || showExportPreview;
+    const isAnyModalOpen = showModal || showExportPreview || showPersonAttendanceModal;
     onModalStateChange?.(isAnyModalOpen);
-  }, [showModal, showExportPreview, onModalStateChange]);
+  }, [showModal, showExportPreview, showPersonAttendanceModal, onModalStateChange]);
+
+  // Close person search dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (personSearchRef.current && !personSearchRef.current.contains(e.target as Node)) {
+        setShowPersonDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Fetch person attendance records when a person is selected
+  useEffect(() => {
+    const loadPersonAttendance = async () => {
+      if (!selectedPerson) {
+        setPersonAttendanceRecords([]);
+        setPersonExcludedEventIds(new Set()); // Clear excluded events when person changes
+        return;
+      }
+
+      setIsLoadingPersonAttendance(true);
+      setPersonExcludedEventIds(new Set()); // Clear excluded events for new person
+      try {
+        const records = await getMemberAttendanceHistory(selectedPerson.id, 100);
+        setPersonAttendanceRecords(records);
+      } catch (error) {
+        console.error('Error fetching person attendance:', error);
+        toast.error('Failed to load attendance records');
+        setPersonAttendanceRecords([]);
+      } finally {
+        setIsLoadingPersonAttendance(false);
+      }
+    };
+
+    loadPersonAttendance();
+  }, [selectedPerson]);
 
   // Fetch events on mount
   useEffect(() => {
@@ -584,6 +751,90 @@ export default function AttendanceDashboardPage({
     allMembers.forEach(member => map.set(member.id, member));
     return map;
   }, [allMembers]);
+
+  // ============= PERSON SEARCH HELPERS =============
+  // Filtered members for person search dropdown
+  const filteredMembersForSearch = useMemo(() => {
+    if (!personSearchQuery.trim()) return allMembers.slice(0, 8);
+    const query = personSearchQuery.toLowerCase().trim();
+    return allMembers.filter(m =>
+      m.name.toLowerCase().includes(query) ||
+      m.committee?.toLowerCase().includes(query) ||
+      m.position?.toLowerCase().includes(query)
+    ).slice(0, 10);
+  }, [personSearchQuery, allMembers]);
+
+  // Handle selecting a person from search
+  const handleSelectPerson = useCallback((member: MemberForAttendance) => {
+    setSelectedPerson(member);
+    setPersonSearchQuery(member.name);
+    setShowPersonDropdown(false);
+  }, []);
+
+  // Clear selected person
+  const handleClearPerson = useCallback(() => {
+    setSelectedPerson(null);
+    setPersonSearchQuery("");
+    setPersonAttendanceRecords([]);
+  }, []);
+
+  // Get initials for avatar
+  const getInitials = useCallback((name: string) => {
+    if (!name) return '?';
+    const words = name.split(' ').filter(p => p.length > 0);
+    if (words.length === 0) return '?';
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }, []);
+
+  // Get status color
+  const getStatusColor = useCallback((status: string) => {
+    const normalized = status?.toLowerCase() || 'absent';
+    switch (normalized) {
+      case 'present':
+      case 'checkedin':
+      case 'checkedout':
+        return '#10b981';
+      case 'late':
+        return '#f59e0b';
+      case 'excused':
+        return '#3b82f6';
+      case 'absent':
+      default:
+        return '#ef4444';
+    }
+  }, []);
+
+  // Get status label
+  const getStatusLabel = useCallback((status: string) => {
+    const normalized = status?.toLowerCase() || 'absent';
+    switch (normalized) {
+      case 'present':
+      case 'checkedin':
+      case 'checkedout':
+        return 'Present';
+      case 'late':
+        return 'Late';
+      case 'excused':
+        return 'Excused';
+      case 'absent':
+      default:
+        return 'Absent';
+    }
+  }, []);
+
+  // Calculate person attendance stats
+  const personAttendanceStats = useMemo(() => {
+    const present = personAttendanceRecords.filter(r => 
+      r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut'
+    ).length;
+    const late = personAttendanceRecords.filter(r => r.status === 'Late').length;
+    const excused = personAttendanceRecords.filter(r => r.status === 'Excused').length;
+    const absent = personAttendanceRecords.filter(r => r.status === 'Absent').length;
+    const total = personAttendanceRecords.length;
+    const attendanceRate = total > 0 ? Math.round(((present + late) / total) * 100) : 0;
+    return { present, late, excused, absent, total, attendanceRate };
+  }, [personAttendanceRecords]);
 
   // Helper to check if member matches committee filter - memoized for reuse
   const matchesCommitteeFilter = useCallback((member: MemberForAttendance | undefined): boolean => {
@@ -2511,6 +2762,7 @@ export default function AttendanceDashboardPage({
         {isLoadingEvents ? (
           <ControlsSkeleton isDark={isDark} />
         ) : (
+          <>
           <div className="grid md:grid-cols-2 gap-6" style={{ overflow: 'visible' }}>
             {/* Smart Event Search */}
             <div>
@@ -2557,8 +2809,446 @@ export default function AttendanceDashboardPage({
               />
             </div>
           </div>
+
+          {/* ============= PERSON SEARCH SECTION ============= */}
+          <div className="mt-6 pt-6 border-t" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
+            <label
+              className="block mb-3"
+              style={{
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                color: DESIGN_TOKENS.colors.brand.orange,
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4" />
+                Search Person's Attendance
+              </div>
+            </label>
+            
+            <div className="relative" ref={personSearchRef}>
+              <div
+                className="flex items-center gap-3 px-3 py-3 rounded-xl border-2 transition-all"
+                style={{
+                  background: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
+                  borderColor: selectedPerson
+                    ? DESIGN_TOKENS.colors.brand.orange
+                    : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'),
+                }}
+              >
+                <Search className="w-5 h-5 shrink-0 text-gray-400" />
+                <input
+                  type="text"
+                  value={personSearchQuery}
+                  onChange={(e) => {
+                    setPersonSearchQuery(e.target.value);
+                    setShowPersonDropdown(true);
+                    if (!e.target.value.trim()) {
+                      setSelectedPerson(null);
+                    }
+                  }}
+                  onFocus={() => setShowPersonDropdown(true)}
+                  placeholder="Search by name, committee, or position..."
+                  className="flex-1 min-w-0 bg-transparent border-none outline-none"
+                  style={{
+                    color: isDark ? '#fff' : '#000',
+                  }}
+                />
+                {(personSearchQuery || selectedPerson) && (
+                  <button
+                    onClick={handleClearPerson}
+                    className="shrink-0 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <X className="w-4 h-4 text-gray-400" />
+                  </button>
+                )}
+              </div>
+              
+              {/* Person Search Dropdown */}
+              {showPersonDropdown && !selectedPerson && (
+                <div
+                  className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl max-h-72 overflow-y-auto z-[200]"
+                  style={{
+                    background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+                    backdropFilter: 'blur(20px)',
+                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                  }}
+                >
+                  {isLoadingMembers ? (
+                    <div className="p-6 text-center">
+                      <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                      <p className="text-sm text-muted-foreground">Loading members...</p>
+                    </div>
+                  ) : filteredMembersForSearch.length === 0 ? (
+                    <div className="p-4 text-center text-muted-foreground text-sm">
+                      {personSearchQuery ? `No members found for "${personSearchQuery}"` : 'No members available'}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="px-3 py-2 text-xs font-semibold text-muted-foreground border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                        {personSearchQuery ? `Results (${filteredMembersForSearch.length})` : 'Recent Members'}
+                      </div>
+                      {filteredMembersForSearch.map((member) => (
+                        <button
+                          key={member.id}
+                          onClick={() => handleSelectPerson(member)}
+                          className="w-full p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
+                        >
+                          {member.profilePicture ? (
+                            <img
+                              src={member.profilePicture}
+                              alt={member.name}
+                              className="w-10 h-10 rounded-full object-cover shrink-0"
+                              style={{ border: `2px solid ${DESIGN_TOKENS.colors.brand.orange}40` }}
+                            />
+                          ) : (
+                            <div
+                              className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
+                              style={{ background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)` }}
+                            >
+                              {getInitials(member.name)}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">{member.name}</p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {member.committee || 'No committee'} {member.position && `• ${member.position}`}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          </>
         )}
       </div>
+
+      {/* ============= PERSON ATTENDANCE RECORDS SECTION ============= */}
+      {selectedPerson && (
+        <div
+          className="rounded-xl p-6 mb-6 border"
+          style={{
+            background: isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+            backdropFilter: 'blur(20px)',
+            borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+          }}
+        >
+          {/* Person Header */}
+          <div className="flex items-start gap-4 mb-6 pb-6 border-b" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
+            {selectedPerson.profilePicture ? (
+              <img
+                src={selectedPerson.profilePicture}
+                alt={selectedPerson.name}
+                className="w-16 h-16 rounded-full object-cover shrink-0"
+                style={{ border: `3px solid ${DESIGN_TOKENS.colors.brand.orange}` }}
+              />
+            ) : (
+              <div
+                className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shrink-0"
+                style={{ background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)` }}
+              >
+                {getInitials(selectedPerson.name)}
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <h3
+                className="truncate mb-1"
+                style={{
+                  fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                  fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                  fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  color: DESIGN_TOKENS.colors.brand.red,
+                }}
+              >
+                {selectedPerson.name}
+              </h3>
+              <p className="text-sm text-muted-foreground">{selectedPerson.committee || 'No committee'}</p>
+              {selectedPerson.position && (
+                <p className="text-sm" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>{selectedPerson.position}</p>
+              )}
+            </div>
+            <button
+              onClick={handleClearPerson}
+              className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0"
+              title="Clear selection"
+            >
+              <X className="w-5 h-5 text-muted-foreground" />
+            </button>
+          </div>
+
+          {/* Attendance Stats Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <div
+              className="rounded-lg p-3 text-center"
+              style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)' }}
+            >
+              <p className="text-xs text-muted-foreground mb-1">Present</p>
+              <p className="text-xl font-bold" style={{ color: '#10b981' }}>{personAttendanceStats.present}</p>
+            </div>
+            <div
+              className="rounded-lg p-3 text-center"
+              style={{ background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.3)' }}
+            >
+              <p className="text-xs text-muted-foreground mb-1">Late</p>
+              <p className="text-xl font-bold" style={{ color: '#f59e0b' }}>{personAttendanceStats.late}</p>
+            </div>
+            <div
+              className="rounded-lg p-3 text-center"
+              style={{ background: 'rgba(59, 130, 246, 0.15)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+            >
+              <p className="text-xs text-muted-foreground mb-1">Excused</p>
+              <p className="text-xl font-bold" style={{ color: '#3b82f6' }}>{personAttendanceStats.excused}</p>
+            </div>
+            <div
+              className="rounded-lg p-3 text-center"
+              style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)' }}
+            >
+              <p className="text-xs text-muted-foreground mb-1">Absent</p>
+              <p className="text-xl font-bold" style={{ color: '#ef4444' }}>{personAttendanceStats.absent}</p>
+            </div>
+            <div
+              className="rounded-lg p-3 text-center"
+              style={{ 
+                background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}15 0%, ${DESIGN_TOKENS.colors.brand.orange}15 100%)`,
+                border: `1px solid ${DESIGN_TOKENS.colors.brand.orange}30`,
+              }}
+            >
+              <p className="text-xs text-muted-foreground mb-1">Rate</p>
+              <p className="text-xl font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>{personAttendanceStats.attendanceRate}%</p>
+            </div>
+          </div>
+
+          {/* ============= PERSON VOLUNTEERING TIME SUMMARY ============= */}
+          {personAttendanceRecords.length > 0 && (
+            <div
+              className="rounded-xl p-4 mb-6 border"
+              style={{
+                background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}08 0%, ${DESIGN_TOKENS.colors.brand.orange}08 100%)`,
+                borderColor: `${DESIGN_TOKENS.colors.brand.orange}30`,
+              }}
+            >
+              <div className="flex items-center gap-2 mb-4">
+                <Timer className="w-5 h-5" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                <h4
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  }}
+                >
+                  Volunteering Time
+                </h4>
+                {personExcludedEventIds.size > 0 && (
+                  <span className="ml-auto text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                    {personExcludedEventIds.size} excluded
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Time Spent</p>
+                  <p className="text-lg font-bold" style={{ color: '#10b981' }}>
+                    {personVolunteeringTimeStats.timeSpentFormatted}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Expected</p>
+                  <p className="text-lg font-bold" style={{ color: '#3b82f6' }}>
+                    {personVolunteeringTimeStats.expectedTimeFormatted}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Completion</p>
+                  <p 
+                    className="text-lg font-bold"
+                    style={{ 
+                      color: personVolunteeringTimeStats.completionRate >= 100 
+                        ? '#10b981' 
+                        : (personVolunteeringTimeStats.completionRate >= 80 ? '#f59e0b' : '#ef4444')
+                    }}
+                  >
+                    {personVolunteeringTimeStats.completionRate}%
+                  </p>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="mt-3 relative h-2 rounded-full overflow-hidden" style={{ background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }}>
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
+                  style={{
+                    width: `${Math.min(personVolunteeringTimeStats.completionRate, 100)}%`,
+                    background: `linear-gradient(90deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Attendance Records Table */}
+          <div>
+            <h4
+              className="mb-4 flex items-center gap-2"
+              style={{
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              }}
+            >
+              <Calendar className="w-4 h-4" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              Attendance History ({personAttendanceStats.total} records)
+            </h4>
+
+            {isLoadingPersonAttendance ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              </div>
+            ) : personAttendanceRecords.length === 0 ? (
+              <div className="text-center py-12">
+                <AlertCircle className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+                <p className="text-muted-foreground">No attendance records found for this member</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                {personAttendanceRecords.map((record, index) => {
+                  const eventData = events.find(e => e.EventID === record.eventId);
+                  const statusColor = getStatusColor(record.status);
+                  const statusLabel = getStatusLabel(record.status);
+                  const hasNoLogoutFlag = hasNoLogout(record.timeIn, record.timeOut, record.status);
+                  const timeSpentMins = calculateDurationMinutes(record.timeIn, record.timeOut);
+                  const expectedMins = eventData?.StartTime && eventData?.EndTime 
+                    ? calculateDurationMinutes(eventData.StartTime, eventData.EndTime) 
+                    : 0;
+                  const isExcluded = personExcludedEventIds.has(record.eventId);
+                  
+                  return (
+                    <div
+                      key={record.attendanceId || index}
+                      className={`p-4 rounded-xl border transition-all hover:scale-[1.01] cursor-pointer ${isExcluded ? 'opacity-50' : ''}`}
+                      style={{
+                        background: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
+                        borderColor: isExcluded 
+                          ? (isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)')
+                          : (isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'),
+                      }}
+                      onClick={() => {
+                        setSelectedPersonRecord(record);
+                        setShowPersonAttendanceModal(true);
+                      }}
+                    >
+                      {/* Include/Exclude Toggle */}
+                      <div className="flex justify-end mb-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            togglePersonEventInclusion(record.eventId);
+                          }}
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium transition-all ${
+                            isExcluded 
+                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400' 
+                              : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                          }`}
+                          title={isExcluded ? 'Include in time totals' : 'Exclude from time totals'}
+                        >
+                          {isExcluded ? <ToggleLeft className="w-3.5 h-3.5" /> : <ToggleRight className="w-3.5 h-3.5" />}
+                          {isExcluded ? 'Excluded' : 'Included'}
+                        </button>
+                      </div>
+
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-semibold truncate">
+                              {eventData?.Title || `Event ${record.eventId}`}
+                            </p>
+                            {/* Status Badge */}
+                            <span
+                              className="px-2 py-0.5 rounded-full text-xs font-semibold shrink-0"
+                              style={{ background: `${statusColor}20`, color: statusColor }}
+                            >
+                              {statusLabel}
+                            </span>
+                            {hasNoLogoutFlag && (
+                              <span
+                                className="px-2 py-0.5 rounded-full text-xs font-semibold shrink-0"
+                                style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}
+                              >
+                                No Logout
+                              </span>
+                            )}
+                            {record.isExternal && (
+                              <span
+                                className="px-2 py-0.5 rounded-full text-xs font-semibold shrink-0"
+                                style={{ background: 'rgba(124, 58, 237, 0.15)', color: '#7c3aed' }}
+                              >
+                                External
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Calendar className="w-3.5 h-3.5" />
+                              {formatDateValue(record.date)}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3.5 h-3.5" />
+                              In: {formatTimeValue(record.timeIn)}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3.5 h-3.5" />
+                              Out: {hasNoLogoutFlag ? '-' : formatTimeValue(record.timeOut)}
+                            </span>
+                          </div>
+                          
+                          {/* Time Spent vs Expected */}
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm mt-2 pt-2 border-t" style={{ borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}>
+                            <span className="flex items-center gap-1">
+                              <Timer className="w-3.5 h-3.5" style={{ color: '#10b981' }} />
+                              <span className="text-muted-foreground">Spent:</span>
+                              <span className="font-semibold" style={{ color: '#10b981' }}>
+                                {timeSpentMins > 0 ? formatMinutesToDuration(timeSpentMins) : '-'}
+                              </span>
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Timer className="w-3.5 h-3.5" style={{ color: '#3b82f6' }} />
+                              <span className="text-muted-foreground">Expected:</span>
+                              <span className="font-semibold" style={{ color: '#3b82f6' }}>
+                                {expectedMins > 0 ? formatMinutesToDuration(expectedMins) : 'N/A'}
+                              </span>
+                            </span>
+                            {timeSpentMins > 0 && expectedMins > 0 && (
+                              <span 
+                                className="px-2 py-0.5 rounded-full text-xs font-bold"
+                                style={{ 
+                                  background: timeSpentMins >= expectedMins 
+                                    ? 'rgba(16, 185, 129, 0.15)' 
+                                    : (timeSpentMins >= expectedMins * 0.8 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)'),
+                                  color: timeSpentMins >= expectedMins 
+                                    ? '#10b981' 
+                                    : (timeSpentMins >= expectedMins * 0.8 ? '#f59e0b' : '#ef4444'),
+                                }}
+                              >
+                                {Math.round((timeSpentMins / expectedMins) * 100)}%
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <ChevronUp className="w-5 h-5 text-muted-foreground shrink-0 rotate-90" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       {effectiveEvents.length > 0 && (
@@ -3649,6 +4339,295 @@ export default function AttendanceDashboardPage({
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============= PERSON ATTENDANCE RECORD DETAIL MODAL ============= */}
+      {showPersonAttendanceModal && selectedPersonRecord && selectedPerson && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          style={{ zIndex: 9999 }}
+          onClick={() => {
+            setShowPersonAttendanceModal(false);
+            setSelectedPersonRecord(null);
+          }}
+        >
+          <div
+            className="rounded-2xl w-full border flex flex-col overflow-hidden shadow-2xl"
+            style={{
+              maxWidth: 500,
+              maxHeight: 'min(85vh, 700px)',
+              background: isDark 
+                ? 'linear-gradient(135deg, rgba(17, 24, 39, 0.98) 0%, rgba(31, 41, 55, 0.98) 100%)'
+                : 'linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(249, 250, 251, 0.98) 100%)',
+              backdropFilter: 'blur(20px)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+              boxShadow: isDark 
+                ? '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)' 
+                : '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header with Status Banner */}
+            <div
+              className="shrink-0"
+              style={{
+                background: `linear-gradient(135deg, ${getStatusColor(selectedPersonRecord.status)} 0%, ${getStatusColor(selectedPersonRecord.status)}cc 100%)`,
+              }}
+            >
+              <div className="px-5 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-full bg-white/20">
+                    {getStatusLabel(selectedPersonRecord.status) === 'Present' && <CheckCircle2 className="w-5 h-5 text-white" />}
+                    {getStatusLabel(selectedPersonRecord.status) === 'Late' && <Clock className="w-5 h-5 text-white" />}
+                    {getStatusLabel(selectedPersonRecord.status) === 'Excused' && <AlertCircle className="w-5 h-5 text-white" />}
+                    {getStatusLabel(selectedPersonRecord.status) === 'Absent' && <X className="w-5 h-5 text-white" />}
+                  </div>
+                  <div>
+                    <h3 className="text-white font-bold text-lg">{getStatusLabel(selectedPersonRecord.status)}</h3>
+                    <p className="text-white/80 text-sm">Attendance Record</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowPersonAttendanceModal(false);
+                    setSelectedPersonRecord(null);
+                  }}
+                  className="p-2 rounded-lg hover:bg-white/20 transition-colors text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {/* Member Info Card */}
+              <div
+                className="p-4 rounded-xl flex items-center gap-4"
+                style={{
+                  background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                  border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)'}`,
+                }}
+              >
+                {selectedPerson.profilePicture ? (
+                  <img
+                    src={selectedPerson.profilePicture}
+                    alt={selectedPerson.name}
+                    className="w-14 h-14 rounded-full object-cover shrink-0"
+                    style={{ border: `3px solid ${getStatusColor(selectedPersonRecord.status)}` }}
+                  />
+                ) : (
+                  <div
+                    className="w-14 h-14 rounded-full flex items-center justify-center text-white text-lg font-bold shrink-0"
+                    style={{ background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)` }}
+                  >
+                    {getInitials(selectedPerson.name)}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-lg truncate">{selectedPerson.name}</p>
+                  <p className="text-sm text-muted-foreground truncate">{selectedPerson.committee || 'No committee'}</p>
+                  {selectedPerson.position && (
+                    <p className="text-sm truncate" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>{selectedPerson.position}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Event Info */}
+              <div
+                className="p-4 rounded-xl space-y-3"
+                style={{
+                  background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                  border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)'}`,
+                }}
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                  <Calendar className="w-4 h-4" />
+                  Event Details
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-start gap-3">
+                    <span className="text-sm text-muted-foreground w-20 shrink-0">Event:</span>
+                    <span className="text-sm font-medium">
+                      {events.find(e => e.EventID === selectedPersonRecord.eventId)?.Title || selectedPersonRecord.eventId}
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <span className="text-sm text-muted-foreground w-20 shrink-0">Date:</span>
+                    <span className="text-sm font-medium">{formatDateValue(selectedPersonRecord.date)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Time Details */}
+              <div
+                className="p-4 rounded-xl space-y-3"
+                style={{
+                  background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                  border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)'}`,
+                }}
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                  <Clock className="w-4 h-4" />
+                  Time Details
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div
+                    className="p-3 rounded-lg text-center"
+                    style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)' }}
+                  >
+                    <p className="text-xs text-muted-foreground mb-1">Time In</p>
+                    <p className="text-lg font-bold" style={{ color: '#10b981' }}>
+                      {formatTimeValue(selectedPersonRecord.timeIn)}
+                    </p>
+                    {selectedPersonRecord.lateTimeIn && (
+                      <span className="text-xs px-1.5 py-0.5 rounded mt-1 inline-block" style={{ background: 'rgba(245, 158, 11, 0.2)', color: '#d97706' }}>
+                        Late
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className="p-3 rounded-lg text-center"
+                    style={{ 
+                      background: hasNoLogout(selectedPersonRecord.timeIn, selectedPersonRecord.timeOut, selectedPersonRecord.status) 
+                        ? 'rgba(239, 68, 68, 0.1)' 
+                        : 'rgba(239, 68, 68, 0.1)', 
+                      border: hasNoLogout(selectedPersonRecord.timeIn, selectedPersonRecord.timeOut, selectedPersonRecord.status)
+                        ? '1px solid rgba(239, 68, 68, 0.3)'
+                        : '1px solid rgba(239, 68, 68, 0.2)' 
+                    }}
+                  >
+                    <p className="text-xs text-muted-foreground mb-1">Time Out</p>
+                    <p className="text-lg font-bold" style={{ color: '#ef4444' }}>
+                      {hasNoLogout(selectedPersonRecord.timeIn, selectedPersonRecord.timeOut, selectedPersonRecord.status) 
+                        ? 'N/A' 
+                        : formatTimeValue(selectedPersonRecord.timeOut)}
+                    </p>
+                    {selectedPersonRecord.lateTimeOut && !hasNoLogout(selectedPersonRecord.timeIn, selectedPersonRecord.timeOut, selectedPersonRecord.status) && (
+                      <span className="text-xs px-1.5 py-0.5 rounded mt-1 inline-block" style={{ background: 'rgba(245, 158, 11, 0.2)', color: '#d97706' }}>
+                        Late
+                      </span>
+                    )}
+                    {hasNoLogout(selectedPersonRecord.timeIn, selectedPersonRecord.timeOut, selectedPersonRecord.status) && (
+                      <span className="text-xs px-1.5 py-0.5 rounded mt-1 inline-block" style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444' }}>
+                        No Logout
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {/* Duration */}
+                {!hasNoLogout(selectedPersonRecord.timeIn, selectedPersonRecord.timeOut, selectedPersonRecord.status) && selectedPersonRecord.timeIn && selectedPersonRecord.timeOut && (
+                  <div
+                    className="p-3 rounded-lg text-center"
+                    style={{ background: `${DESIGN_TOKENS.colors.brand.orange}10`, border: `1px solid ${DESIGN_TOKENS.colors.brand.orange}30` }}
+                  >
+                    <p className="text-xs text-muted-foreground mb-1">Duration</p>
+                    <p className="text-lg font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                      {calculateAttendanceDuration(selectedPersonRecord.timeIn, selectedPersonRecord.timeOut)}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Recorded By */}
+              {(selectedPersonRecord.recordedByTimeIn || selectedPersonRecord.recordedByTimeOut) && (
+                <div
+                  className="p-4 rounded-xl space-y-3"
+                  style={{
+                    background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                    border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)'}`,
+                  }}
+                >
+                  <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                    <User className="w-4 h-4" />
+                    Recorded By
+                  </div>
+                  <div className="space-y-2">
+                    {selectedPersonRecord.recordedByTimeIn && (
+                      <div className="flex items-start gap-3">
+                        <span className="text-sm text-muted-foreground w-20 shrink-0">Time In:</span>
+                        <span className="text-sm">{selectedPersonRecord.recordedByTimeIn}</span>
+                      </div>
+                    )}
+                    {selectedPersonRecord.recordedByTimeOut && (
+                      <div className="flex items-start gap-3">
+                        <span className="text-sm text-muted-foreground w-20 shrink-0">Time Out:</span>
+                        <span className="text-sm">{selectedPersonRecord.recordedByTimeOut}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Notes */}
+              {selectedPersonRecord.notes && (
+                <div
+                  className="p-4 rounded-xl space-y-2"
+                  style={{
+                    background: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                    border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)'}`,
+                  }}
+                >
+                  <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                    <FileText className="w-4 h-4" />
+                    Notes
+                  </div>
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{selectedPersonRecord.notes}</p>
+                </div>
+              )}
+
+              {/* Badges Row */}
+              {(selectedPersonRecord.isExternal || selectedPersonRecord.lateTimeIn || selectedPersonRecord.lateTimeOut) && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedPersonRecord.isExternal && (
+                    <span
+                      className="px-3 py-1.5 rounded-full text-sm font-semibold"
+                      style={{ background: 'rgba(124, 58, 237, 0.15)', color: '#7c3aed' }}
+                    >
+                      External Attendee
+                    </span>
+                  )}
+                  {selectedPersonRecord.lateTimeIn && (
+                    <span
+                      className="px-3 py-1.5 rounded-full text-sm font-semibold"
+                      style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#d97706' }}
+                    >
+                      Late Time In
+                    </span>
+                  )}
+                  {selectedPersonRecord.lateTimeOut && (
+                    <span
+                      className="px-3 py-1.5 rounded-full text-sm font-semibold"
+                      style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}
+                    >
+                      Late Time Out
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div
+              className="px-5 py-4 border-t shrink-0"
+              style={{
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                background: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowPersonAttendanceModal(false);
+                  setSelectedPersonRecord(null);
+                }}
+                className="w-full px-4 py-3 rounded-xl text-white transition-colors font-semibold"
+                style={{ background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)` }}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
