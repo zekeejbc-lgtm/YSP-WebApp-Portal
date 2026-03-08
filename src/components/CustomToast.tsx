@@ -86,7 +86,7 @@ export function CustomToast({
 
   return (
     <div
-      className={`fixed top-6 right-6 z-[9999] flex items-start gap-3 px-5 py-4 rounded-xl shadow-2xl backdrop-blur-md border-2 transition-all duration-300 ${
+      className={`fixed top-6 right-6 z-9999 flex items-start gap-3 px-5 py-4 rounded-xl shadow-2xl backdrop-blur-md border-2 transition-all duration-300 ${
         isExiting ? "opacity-0 translate-x-8" : "opacity-100 translate-x-0"
       }`}
       style={{

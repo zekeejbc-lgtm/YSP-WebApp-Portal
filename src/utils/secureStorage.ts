@@ -41,17 +41,20 @@ function deriveKey(seed: string): number[] {
   return key;
 }
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 /**
  * XOR-based encryption with key rotation
  */
 function xorEncrypt(data: string, key: number[]): number[] {
+  const bytes = textEncoder.encode(data);
   const encrypted: number[] = [];
-  for (let i = 0; i < data.length; i++) {
-    const charCode = data.charCodeAt(i);
+  for (let i = 0; i < bytes.length; i++) {
     const keyByte = key[i % key.length];
     // Add position-based scrambling for additional obfuscation
     const scramble = (i * 7 + 13) % 256;
-    encrypted.push(charCode ^ keyByte ^ scramble);
+    encrypted.push(bytes[i] ^ keyByte ^ scramble);
   }
   return encrypted;
 }
@@ -60,14 +63,13 @@ function xorEncrypt(data: string, key: number[]): number[] {
  * XOR-based decryption (reverse of encrypt)
  */
 function xorDecrypt(encrypted: number[], key: number[]): string {
-  let decrypted = '';
+  const decrypted = new Uint8Array(encrypted.length);
   for (let i = 0; i < encrypted.length; i++) {
     const keyByte = key[i % key.length];
     const scramble = (i * 7 + 13) % 256;
-    const charCode = encrypted[i] ^ keyByte ^ scramble;
-    decrypted += String.fromCharCode(charCode);
+    decrypted[i] = encrypted[i] ^ keyByte ^ scramble;
   }
-  return decrypted;
+  return textDecoder.decode(decrypted);
 }
 
 /**

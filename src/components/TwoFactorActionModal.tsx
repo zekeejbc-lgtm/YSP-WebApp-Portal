@@ -84,7 +84,7 @@ export default function TwoFactorActionModal({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[1000000] flex items-center justify-center p-4 sm:p-6"
+        className="fixed inset-0 z-1000000 flex items-center justify-center p-4 sm:p-6"
         style={{ backgroundColor: "rgba(0, 0, 0, 0.7)" }}
         onClick={handleClose}
       >

@@ -24,6 +24,7 @@ interface CustomDropdownOption {
 }
 
 interface CustomDropdownProps {
+  label?: string;
   value: string;
   onChange: (value: string) => void;
   options: CustomDropdownOption[] | string[];
@@ -35,9 +36,14 @@ interface CustomDropdownProps {
   variant?: "default" | "filled" | "outlined";
   forceDirection?: "up" | "down";
   maxHeight?: number;
+  dropdownMinWidth?: number;
+  allowOptionWrap?: boolean;
+  selectedValues?: string[];
+  multiSelect?: boolean;
 }
 
 export default function CustomDropdown({
+  label: _label,
   value,
   onChange,
   options,
@@ -49,6 +55,10 @@ export default function CustomDropdown({
   variant = "default",
   forceDirection,
   maxHeight,
+  dropdownMinWidth,
+  allowOptionWrap = false,
+  selectedValues = [],
+  multiSelect = false,
 }: CustomDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -58,6 +68,21 @@ export default function CustomDropdown({
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
 
   // Function to calculate position and open dropdown
+  const getDropdownMetrics = (rect: DOMRect, direction: 'down' | 'up') => {
+    const minWidth = dropdownMinWidth ?? rect.width;
+    const viewportPadding = 16;
+    const viewportWidth = window.innerWidth;
+    const width = Math.max(rect.width, minWidth);
+    const maxLeft = Math.max(viewportPadding, viewportWidth - width - viewportPadding);
+    const left = Math.min(Math.max(viewportPadding, rect.left), maxLeft);
+
+    return {
+      top: direction === 'down' ? rect.bottom + 8 : rect.top - 8,
+      left,
+      width,
+    };
+  };
+
   const calculateAndOpen = () => {
     if (!triggerRef.current) return;
 
@@ -88,11 +113,7 @@ export default function CustomDropdown({
     
     setOpenDirection(direction);
     setDropdownMaxHeight(calculatedMaxHeight);
-    setDropdownPosition({
-      top: direction === 'down' ? rect.bottom + 8 : rect.top - 8,
-      left: rect.left,
-      width: rect.width,
-    });
+    setDropdownPosition(getDropdownMetrics(rect, direction));
     setIsOpen(true);
   };
 
@@ -103,11 +124,7 @@ export default function CustomDropdown({
     const updatePosition = () => {
       if (!triggerRef.current) return;
       const rect = triggerRef.current.getBoundingClientRect();
-      setDropdownPosition({
-        top: openDirection === 'down' ? rect.bottom + 8 : rect.top - 8,
-        left: rect.left,
-        width: rect.width,
-      });
+      setDropdownPosition(getDropdownMetrics(rect, openDirection));
     };
     
     window.addEventListener('scroll', updatePosition, true);
@@ -117,15 +134,23 @@ export default function CustomDropdown({
       window.removeEventListener('scroll', updatePosition, true);
       window.removeEventListener('resize', updatePosition);
     };
-  }, [isOpen, openDirection]);
+  }, [dropdownMinWidth, isOpen, openDirection]);
 
   // Convert options to consistent format
   const normalizedOptions: CustomDropdownOption[] = options.map((opt) =>
     typeof opt === "string" ? { value: opt, label: opt } : opt
   );
 
-  // Find selected option
+  // Find selected option(s)
   const selectedOption = normalizedOptions.find((opt) => opt.value === value);
+  const isOptionSelected = (optionValue: string) =>
+    multiSelect ? selectedValues.includes(optionValue) : optionValue === value;
+  const multiSelectLabel = multiSelect
+    ? normalizedOptions
+        .filter((opt) => selectedValues.includes(opt.value))
+        .map((opt) => opt.label)
+        .join(", ")
+    : "";
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -254,7 +279,7 @@ export default function CustomDropdown({
       {/* Options List */}
       <div className="py-2">
         {normalizedOptions.map((option) => {
-          const isSelected = option.value === value;
+           const isSelected = isOptionSelected(option.value);
           return (
             <button
               key={option.value}
@@ -263,7 +288,9 @@ export default function CustomDropdown({
               disabled={option.disabled}
               className="w-full flex items-center justify-between px-4 transition-all"
               style={{
-                height: sizeStyles[size].height,
+                minHeight: sizeStyles[size].height,
+                paddingTop: allowOptionWrap ? "10px" : undefined,
+                paddingBottom: allowOptionWrap ? "10px" : undefined,
                 background: isSelected
                   ? isDark
                     ? "#1e293b"
@@ -285,6 +312,8 @@ export default function CustomDropdown({
                   ? DESIGN_TOKENS.typography.fontWeight.semibold
                   : DESIGN_TOKENS.typography.fontWeight.normal,
                 fontSize: sizeStyles[size].fontSize,
+                gap: "12px",
+                alignItems: allowOptionWrap ? "flex-start" : "center",
               }}
               onMouseEnter={(e) => {
                 if (!option.disabled && !isSelected) {
@@ -301,13 +330,28 @@ export default function CustomDropdown({
                 }
               }}
             >
-              <span>{option.label}</span>
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  whiteSpace: allowOptionWrap ? "normal" : "nowrap",
+                  overflow: "hidden",
+                  textOverflow: allowOptionWrap ? "clip" : "ellipsis",
+                  lineHeight: allowOptionWrap ? 1.35 : 1.2,
+                  textAlign: "left",
+                  wordBreak: allowOptionWrap ? "break-word" : "normal",
+                }}
+              >
+                {option.label}
+              </span>
               {isSelected && (
                 <Check
                   style={{
                     width: size === "sm" ? "16px" : size === "lg" ? "20px" : "18px",
                     height: size === "sm" ? "16px" : size === "lg" ? "20px" : "18px",
                     color: DESIGN_TOKENS.colors.brand.red,
+                    flexShrink: 0,
+                    marginTop: allowOptionWrap ? "2px" : 0,
                   }}
                 />
               )}
@@ -364,7 +408,9 @@ export default function CustomDropdown({
         }}
       >
         <span className={selectedOption ? "" : "opacity-50"}>
-          {selectedOption ? selectedOption.label : placeholder}
+          {multiSelect
+            ? (multiSelectLabel || placeholder)
+            : (selectedOption ? selectedOption.label : placeholder)}
         </span>
         <ChevronDown
           className={`transition-transform duration-200 ${

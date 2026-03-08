@@ -2046,7 +2046,7 @@ export default function SystemToolsPage({
 
       {showRoleModal && (
         <div
-          className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+          className="fixed inset-0 z-10000 flex items-center justify-center p-4"
           style={{
             background: isDark ? "rgba(0, 0, 0, 0.65)" : "rgba(17, 24, 39, 0.45)",
             backdropFilter: "blur(6px)",

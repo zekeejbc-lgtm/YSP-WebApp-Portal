@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
+import { PageLayout, DESIGN_TOKENS } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
 import SmartEventSearch from "./SmartEventSearch";
 import { useIsMobile } from "./ui/use-mobile";
@@ -19,11 +20,11 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown, ExternalLink, Smartphone, Search, User, Calendar, Clock, MapPin, CheckCircle2, AlertCircle, X, ChevronUp, Timer, ToggleLeft, ToggleRight } from "lucide-react";
+import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown, ExternalLink, Smartphone, Search, User, Calendar, Clock, CheckCircle2, AlertCircle, X, ChevronUp, Timer, ToggleLeft, ToggleRight, Trophy, Medal, Award, Sparkles } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance, getMemberAttendanceHistory } from "../services/gasAttendanceService";
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import autoTable, { CellHookData } from "jspdf-autotable";
 import ExcelJS from 'exceljs';
 import { YSP_COMMITTEE_NAMES } from "../constants/committees";
 
@@ -31,6 +32,7 @@ import { YSP_COMMITTEE_NAMES } from "../constants/committees";
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
 const ORG_NAME = "Youth Service Philippines";
 const ORG_CHAPTER = "Tagum Chapter";
+const ORG_MOTTO = "Shaping the Future to a Greater Society";
 
 // Extended member type that includes attendance flags for modal display
 interface ModalMemberData extends MemberForAttendance {
@@ -71,9 +73,9 @@ function formatTimeValue(timeValue: string | Date | null | undefined): string {
   }
   
   // Try parsing as a Date object (for Date objects from Google Sheets)
-  if (timeValue instanceof Date || (typeof timeValue === 'object' && timeValue?.getTime)) {
+  if (timeValue instanceof Date) {
     try {
-      const date = timeValue instanceof Date ? timeValue : new Date(timeValue);
+      const date = timeValue;
       if (!isNaN(date.getTime())) {
         return date.toLocaleTimeString('en-US', { 
           hour: 'numeric', 
@@ -99,8 +101,8 @@ function hasNoLogout(timeIn: string | Date | null | undefined, timeOut: string |
   const timeOutStr = String(timeOut || '').trim();
   
   // Has time in but no time out
-  const hasTimeIn = timeInStr && timeInStr !== '-' && timeInStr !== 'N/A' && timeInStr !== 'undefined' && timeInStr !== 'null';
-  const hasTimeOut = timeOutStr && timeOutStr !== '-' && timeOutStr !== 'N/A' && timeOutStr !== 'undefined' && timeOutStr !== 'null';
+  const hasTimeIn = Boolean(timeInStr && timeInStr !== '-' && timeInStr !== 'N/A' && timeInStr !== 'undefined' && timeInStr !== 'null');
+  const hasTimeOut = Boolean(timeOutStr && timeOutStr !== '-' && timeOutStr !== 'N/A' && timeOutStr !== 'undefined' && timeOutStr !== 'null');
   
   return hasTimeIn && !hasTimeOut;
 }
@@ -308,6 +310,13 @@ interface ExportOptions {
   selectedTables: ('present' | 'late' | 'excused' | 'absent' | 'notRecorded' | 'all')[];
 }
 
+type ExportTableKey = ExportOptions["selectedTables"][number];
+type ChartRelevance = "high" | "medium" | "low";
+
+type JsPdfWithAutoTable = jsPDF & {
+  lastAutoTable?: { finalY: number };
+};
+
 // Dashboard context for chatbot integration
 export interface AttendanceDashboardContext {
   mode: EventSelectionMode;
@@ -358,7 +367,7 @@ function Skeleton({ className = "", style = {} }: { className?: string; style?: 
 }
 
 // Chart skeleton for loading
-function ChartSkeleton({ isDark }: { isDark: boolean }) {
+function ChartSkeleton({ isDark: _isDark }: { isDark: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center h-[400px] w-full">
       <div className="relative">
@@ -389,7 +398,7 @@ function ChartSkeleton({ isDark }: { isDark: boolean }) {
 }
 
 // Controls skeleton
-function ControlsSkeleton({ isDark }: { isDark: boolean }) {
+function ControlsSkeleton({ isDark: _isDark }: { isDark: boolean }) {
   return (
     <div className="grid md:grid-cols-2 gap-6">
       <div>
@@ -446,6 +455,8 @@ export default function AttendanceDashboardPage({
   const [modalData, setModalData] = useState<{ status: string; members: ModalMemberData[] } | null>(null);
   const [exportType, setExportType] = useState("");
   const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const exportPdfHandlerRef = useRef<(() => Promise<void>) | null>(null);
+  const exportSpreadsheetHandlerRef = useRef<(() => Promise<void>) | null>(null);
 
   // Export Preview Modal
   const [showExportPreview, setShowExportPreview] = useState(false);
@@ -482,10 +493,20 @@ export default function AttendanceDashboardPage({
   const [selectedPersonRecord, setSelectedPersonRecord] = useState<AttendanceRecord | null>(null);
   const personSearchRef = useRef<HTMLDivElement>(null);
   
-  // Excluded events for person volunteering time calculation
+  // Excluded events for person participation time calculation
   const [personExcludedEventIds, setPersonExcludedEventIds] = useState<Set<string>>(new Set());
   
-  // Toggle event inclusion for person volunteering time
+  // Leaderboard/gamification state
+  const [showRankingsModal, setShowRankingsModal] = useState(false);
+  const [rankingsFilterType, setRankingsFilterType] = useState<'all' | 'events' | 'committee'>('all');
+  const [rankingsSelectedEventIds, setRankingsSelectedEventIds] = useState<string[]>([]);
+  const [rankingsSelectedCommittee, setRankingsSelectedCommittee] = useState('All');
+  const [rankingsAttendanceRecords, setRankingsAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [isLoadingRankingsData, setIsLoadingRankingsData] = useState(false);
+  const [rankingsPage, setRankingsPage] = useState(1);
+  const [rankingsVisibleRows, setRankingsVisibleRows] = useState(5);
+  
+  // Toggle event inclusion for person participation time
   const togglePersonEventInclusion = useCallback((eventId: string) => {
     setPersonExcludedEventIds(prev => {
       const newSet = new Set(prev);
@@ -531,7 +552,7 @@ export default function AttendanceDashboardPage({
     });
 
     const completionRate = totalExpectedMinutes > 0 
-      ? Math.round((totalTimeSpentMinutes / totalExpectedMinutes) * 100) 
+      ? (totalTimeSpentMinutes / totalExpectedMinutes) * 100 
       : 0;
 
     return {
@@ -547,10 +568,15 @@ export default function AttendanceDashboardPage({
 
   // ============= MODAL STATE TRACKING FOR CHATBOT VISIBILITY =============
   // Track when any modal is open and notify parent to hide chatbot
+  const isAnyDashboardModalOpen =
+    showModal ||
+    showExportPreview ||
+    showPersonAttendanceModal ||
+    showRankingsModal;
+
   useEffect(() => {
-    const isAnyModalOpen = showModal || showExportPreview || showPersonAttendanceModal;
-    onModalStateChange?.(isAnyModalOpen);
-  }, [showModal, showExportPreview, showPersonAttendanceModal, onModalStateChange]);
+    onModalStateChange?.(isAnyDashboardModalOpen);
+  }, [isAnyDashboardModalOpen, onModalStateChange]);
 
   // Close person search dropdown when clicking outside
   useEffect(() => {
@@ -678,6 +704,41 @@ export default function AttendanceDashboardPage({
     loadAttendance();
   }, [selectedEventIds]);
 
+  // Fetch attendance records for rankings modal (loads ALL events data)
+  useEffect(() => {
+    const loadRankingsAttendance = async () => {
+      if (!showRankingsModal || events.length === 0) return;
+      
+      // If we already have data for all events, skip
+      if (rankingsAttendanceRecords.length > 0) return;
+      
+      setIsLoadingRankingsData(true);
+      try {
+        // Load attendance for all events (limit to first 50 events for performance)
+        const eventsToLoad = events.slice(0, 50);
+        const recordsPromises = eventsToLoad.map(event => 
+          getEventAttendanceRecords(event.EventID)
+            .then(records => records)
+            .catch(() => [] as AttendanceRecord[])
+        );
+        
+        const allResults = await Promise.all(recordsPromises);
+        const allRecords: AttendanceRecord[] = [];
+        allResults.forEach(records => {
+          allRecords.push(...records);
+        });
+        
+        setRankingsAttendanceRecords(allRecords);
+      } catch (error) {
+        console.error('Error fetching rankings attendance records:', error);
+      } finally {
+        setIsLoadingRankingsData(false);
+      }
+    };
+
+    loadRankingsAttendance();
+  }, [showRankingsModal, events, rankingsAttendanceRecords.length]);
+
   // Determine recommended chart type based on selection
   const getRecommendedChartType = useCallback((): "pie" | "donut" | "bar" | "line" | "column" => {
     const effectiveEvents = getEffectiveSelectedEvents();
@@ -743,6 +804,7 @@ export default function AttendanceDashboardPage({
     }, 150); // 150ms debounce
 
     return () => clearTimeout(timeoutId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventIds, events, attendanceRecords, multiEventRecords, allMembers, onDashboardContextUpdate, getEffectiveSelectedEvents, getRecommendedChartType]);
 
   // Create a Map for O(1) member lookups instead of O(n) find() calls
@@ -832,7 +894,7 @@ export default function AttendanceDashboardPage({
     const excused = personAttendanceRecords.filter(r => r.status === 'Excused').length;
     const absent = personAttendanceRecords.filter(r => r.status === 'Absent').length;
     const total = personAttendanceRecords.length;
-    const attendanceRate = total > 0 ? Math.round(((present + late) / total) * 100) : 0;
+    const attendanceRate = total > 0 ? ((present + late) / total) * 100 : 0;
     return { present, late, excused, absent, total, attendanceRate };
   }, [personAttendanceRecords]);
 
@@ -850,6 +912,502 @@ export default function AttendanceDashboardPage({
 
     return normalizedMemberCommittee === normalizedSelectedCommittee;
   }, [selectedCommittee]);
+
+  // ============= PERCENTAGE-BASED RANKINGS FOR RANKINGS MODAL =============
+  interface PercentageRankedMember {
+    member: MemberForAttendance;
+    completionRate: number; // 0-100 (time-based completion rate)
+    eventsAttended: number;
+    totalEvents: number;
+    rank: number;
+    totalParticipationMinutes: number;
+    totalExpectedMinutes: number;
+    totalParticipationFormatted: string;
+  }
+
+  const percentageRankings = useMemo((): PercentageRankedMember[] => {
+    // Determine which events to consider based on filter type
+    let eventsToConsider: EventData[] = [];
+    
+    if (rankingsFilterType === 'all') {
+      eventsToConsider = events;
+    } else if (rankingsFilterType === 'events') {
+      eventsToConsider = events.filter(e => rankingsSelectedEventIds.includes(e.EventID));
+    } else {
+      eventsToConsider = events; // Will filter members by committee instead
+    }
+    
+    if (eventsToConsider.length === 0) return [];
+    
+    const eventIds = new Set(eventsToConsider.map(e => e.EventID));
+    
+    // Calculate expected duration for each event
+    const eventExpectedMinutesMap = new Map<string, number>();
+    eventsToConsider.forEach(event => {
+      if (event.StartTime && event.EndTime) {
+        const expectedMins = calculateDurationMinutes(event.StartTime, event.EndTime);
+        eventExpectedMinutesMap.set(event.EventID, expectedMins > 0 ? expectedMins : 0);
+      }
+    });
+    
+    // Calculate total expected minutes across all events
+    const totalExpectedMinutesAll = Array.from(eventExpectedMinutesMap.values()).reduce((sum, mins) => sum + mins, 0);
+    
+    // Build attendance records map filtered by selected events
+    const memberStatsMap = new Map<string, { 
+      attended: number; 
+      totalMinutes: number;
+      expectedMinutes: number;
+      member: MemberForAttendance;
+    }>();
+    
+    // Use rankings-specific attendance records if available, otherwise fall back to main attendance records
+    const sourceRecords = rankingsAttendanceRecords.length > 0 ? rankingsAttendanceRecords : attendanceRecords;
+    
+    // Filter attendance records by selected events
+    const relevantRecords = sourceRecords.filter(r => eventIds.has(r.eventId));
+    
+    relevantRecords.forEach(record => {
+      // Skip absent records for attendance count
+      const isAttended = record.status !== 'Absent';
+      const timeSpent = isAttended ? calculateDurationMinutes(record.timeIn, record.timeOut) : 0;
+      const eventExpected = eventExpectedMinutesMap.get(record.eventId) || 0;
+      
+      const member = memberLookupMap.get(record.memberId);
+      if (!member) return;
+      
+      // Apply committee filter if needed
+      if (rankingsFilterType === 'committee' && rankingsSelectedCommittee !== 'All') {
+        const memberCommittee = (member.committee || '').toLowerCase().trim();
+        const selectedComm = rankingsSelectedCommittee.toLowerCase().trim();
+        if (selectedComm === 'general members') {
+          if (memberCommittee && !memberCommittee.includes('general')) return;
+        } else if (memberCommittee !== selectedComm) {
+          return;
+        }
+      }
+      
+      const existing = memberStatsMap.get(record.memberId);
+      if (existing) {
+        if (isAttended) {
+          existing.attended += 1;
+          existing.totalMinutes += timeSpent > 0 ? timeSpent : 0;
+          existing.expectedMinutes += eventExpected;
+        }
+      } else {
+        memberStatsMap.set(record.memberId, {
+          attended: isAttended ? 1 : 0,
+          totalMinutes: timeSpent > 0 ? timeSpent : 0,
+          expectedMinutes: isAttended ? eventExpected : 0,
+          member,
+        });
+      }
+    });
+    
+    // Also include members with 0 attendance if showing all
+    if (rankingsFilterType === 'all' || rankingsFilterType === 'committee') {
+      allMembers.forEach(member => {
+        if (!memberStatsMap.has(member.id)) {
+          // Apply committee filter
+          if (rankingsFilterType === 'committee' && rankingsSelectedCommittee !== 'All') {
+            const memberCommittee = (member.committee || '').toLowerCase().trim();
+            const selectedComm = rankingsSelectedCommittee.toLowerCase().trim();
+            if (selectedComm === 'general members') {
+              if (memberCommittee && !memberCommittee.includes('general')) return;
+            } else if (memberCommittee !== selectedComm) {
+              return;
+            }
+          }
+          memberStatsMap.set(member.id, {
+            attended: 0,
+            totalMinutes: 0,
+            expectedMinutes: 0,
+            member,
+          });
+        }
+      });
+    }
+    
+    // Convert to rankings array
+    const totalEvents = eventsToConsider.length;
+    const rankings: PercentageRankedMember[] = [];
+    
+    memberStatsMap.forEach((data) => {
+      // Calculate completion rate based on time spent vs TOTAL expected time from ALL events
+      // This ensures members who attend more events rank higher (e.g., 4/4 events > 2/4 events)
+      const completionRate = totalExpectedMinutesAll > 0 
+        ? Math.min((data.totalMinutes / totalExpectedMinutesAll) * 100, 100) // Cap at 100%
+        : 0;
+      
+      rankings.push({
+        member: data.member,
+        completionRate: Math.round(completionRate * 100) / 100, // Round to 2 decimal places
+        eventsAttended: data.attended,
+        totalEvents,
+        rank: 0,
+        totalParticipationMinutes: data.totalMinutes,
+        totalExpectedMinutes: totalExpectedMinutesAll,
+        totalParticipationFormatted: formatMinutesToDuration(data.totalMinutes),
+      });
+    });
+    
+    // Sort by total participation time descending (this naturally ranks by actual contribution)
+    // Since completionRate is now based on totalExpectedMinutesAll, sorting by time is equivalent
+    rankings.sort((a, b) => {
+      // Primary: Sort by total participation time (more time = higher rank)
+      if (b.totalParticipationMinutes !== a.totalParticipationMinutes) {
+        return b.totalParticipationMinutes - a.totalParticipationMinutes;
+      }
+      // Secondary: By events attended as tiebreaker
+      return b.eventsAttended - a.eventsAttended;
+    });
+    
+    // Assign ranks (handle ties - same participation time = same rank)
+    let currentRank = 1;
+    rankings.forEach((item, index) => {
+      if (index > 0 && item.totalParticipationMinutes < rankings[index - 1].totalParticipationMinutes) {
+        currentRank = index + 1;
+      }
+      item.rank = currentRank;
+    });
+    
+    return rankings;
+  }, [rankingsFilterType, rankingsSelectedEventIds, rankingsSelectedCommittee, events, attendanceRecords, rankingsAttendanceRecords, memberLookupMap, allMembers]);
+
+  const RANKINGS_PAGE_SIZE = 10;
+  const rankingsTotalPages = Math.max(1, Math.ceil(percentageRankings.length / RANKINGS_PAGE_SIZE));
+  const paginatedRankings = useMemo(() => {
+    const startIndex = (rankingsPage - 1) * RANKINGS_PAGE_SIZE;
+    return percentageRankings.slice(startIndex, startIndex + rankingsVisibleRows);
+  }, [percentageRankings, rankingsPage, rankingsVisibleRows]);
+
+  useEffect(() => {
+    setRankingsPage(1);
+    setRankingsVisibleRows(Math.min(5, RANKINGS_PAGE_SIZE));
+  }, [showRankingsModal, rankingsFilterType, rankingsSelectedCommittee, rankingsSelectedEventIds, percentageRankings.length]);
+
+  useEffect(() => {
+    if (rankingsPage > rankingsTotalPages) {
+      setRankingsPage(rankingsTotalPages);
+    }
+  }, [rankingsPage, rankingsTotalPages]);
+
+  // Export rankings to PDF - Universal format with header and footer
+  const exportRankingsToPDF = useCallback(async () => {
+    if (percentageRankings.length === 0) {
+      toast.error('No rankings to export');
+      return;
+    }
+    
+    const doc = new jsPDF('portrait', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    const generatedTimestamp = new Date().toLocaleString();
+
+    // Helper function to draw page footer
+    const drawFooter = (pageNum: number, totalPages: number) => {
+      doc.setDrawColor(246, 66, 31);
+      doc.setLineWidth(0.5);
+      doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+      
+      doc.setFontSize(7);
+      doc.setTextColor(100, 100, 100);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${ORG_NAME} - ${ORG_CHAPTER}`, margin, pageHeight - 10);
+      doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
+      
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'italic');
+      doc.text(`"${ORG_MOTTO}"`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+    };
+
+    // Load logo and draw header
+    let logoLoaded = false;
+    try {
+      const logoImg = await loadImage(ORG_LOGO_URL);
+      // Orange header bar
+      doc.setFillColor(246, 66, 31);
+      doc.rect(0, 0, pageWidth, 45, 'F');
+      
+      // Logo with white circular background
+      const logoSize = 30;
+      const logoX = margin;
+      const logoY = 7.5;
+      doc.setFillColor(255, 255, 255);
+      doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 2, 'F');
+      doc.addImage(logoImg, 'PNG', logoX, logoY, logoSize, logoSize);
+      logoLoaded = true;
+    } catch {
+      // Draw header without logo
+      doc.setFillColor(246, 66, 31);
+      doc.rect(0, 0, pageWidth, 45, 'F');
+    }
+
+    // Organization name and title in header
+    doc.setTextColor(255, 255, 255);
+    const orgNameX = logoLoaded ? margin + 35 : margin;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text(ORG_NAME, orgNameX, 18);
+    doc.setFontSize(12);
+    doc.text(ORG_CHAPTER, orgNameX, 26);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('ATTENDANCE RANKINGS REPORT', orgNameX, 35);
+    doc.setFontSize(8);
+    doc.text(`Generated: ${generatedTimestamp}`, pageWidth - margin, 35, { align: 'right' });
+
+    let yPosition = 52;
+
+    // Divider line
+    doc.setDrawColor(246, 66, 31);
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPosition, pageWidth - margin, yPosition);
+    yPosition += 8;
+
+    // Filter information section
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 41, 59);
+    doc.text('FILTER DETAILS', margin, yPosition);
+    doc.setDrawColor(246, 66, 31);
+    doc.setLineWidth(0.3);
+    doc.line(margin, yPosition + 2, margin + 35, yPosition + 2);
+    yPosition += 10;
+
+    // Filter details card
+    doc.setDrawColor(230, 230, 230);
+    doc.setFillColor(252, 252, 252);
+    doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 22, 3, 3, 'FD');
+    
+    let filterDesc = '';
+    if (rankingsFilterType === 'all') {
+      filterDesc = `All Events (${events.length} total)`;
+    } else if (rankingsFilterType === 'events') {
+      filterDesc = `Selected Events (${rankingsSelectedEventIds.length} of ${events.length})`;
+    } else {
+      filterDesc = `Committee: ${rankingsSelectedCommittee}`;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 100);
+    doc.text('Filter Type:', margin + 8, yPosition + 8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(30, 41, 59);
+    doc.text(filterDesc, margin + 35, yPosition + 8);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(100, 100, 100);
+    doc.text('Total Ranked:', margin + 8, yPosition + 16);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(30, 41, 59);
+    doc.text(`${percentageRankings.length} members`, margin + 35, yPosition + 16);
+
+    yPosition += 30;
+
+    // ===== COMMITTEE RANKINGS SECTION =====
+    // Calculate committee statistics
+    const committeeStatsMap = new Map<string, { totalMinutes: number; memberCount: number }>();
+    percentageRankings.forEach((r) => {
+      const committee = r.member.committee || 'General';
+      const existing = committeeStatsMap.get(committee);
+      if (existing) {
+        existing.totalMinutes += r.totalParticipationMinutes;
+        existing.memberCount += 1;
+      } else {
+        committeeStatsMap.set(committee, { 
+          totalMinutes: r.totalParticipationMinutes, 
+          memberCount: 1 
+        });
+      }
+    });
+
+    // Calculate average completion rate per committee
+    interface CommitteeRanking {
+      name: string;
+      avgCompletionRate: number;
+      totalMinutes: number;
+      memberCount: number;
+      rank: number;
+    }
+
+    const totalExpectedAll = percentageRankings.length > 0 ? percentageRankings[0].totalExpectedMinutes : 0;
+    const committeeRankings: CommitteeRanking[] = [];
+    
+    committeeStatsMap.forEach((stats, committeeName) => {
+      // Average completion rate = (total minutes of all members / (expected * member count)) * 100
+      const avgCompletionRate = totalExpectedAll > 0 && stats.memberCount > 0
+        ? Math.min((stats.totalMinutes / (totalExpectedAll * stats.memberCount)) * 100, 100)
+        : 0;
+      
+      committeeRankings.push({
+        name: committeeName,
+        avgCompletionRate: Math.round(avgCompletionRate * 100) / 100,
+        totalMinutes: stats.totalMinutes,
+        memberCount: stats.memberCount,
+        rank: 0,
+      });
+    });
+
+    // Sort by average completion rate descending
+    committeeRankings.sort((a, b) => {
+      if (b.avgCompletionRate !== a.avgCompletionRate) {
+        return b.avgCompletionRate - a.avgCompletionRate;
+      }
+      return b.totalMinutes - a.totalMinutes;
+    });
+
+    // Assign ranks (handle ties - same rate = same rank)
+    let committeeRank = 1;
+    committeeRankings.forEach((item, index) => {
+      if (index > 0 && item.avgCompletionRate < committeeRankings[index - 1].avgCompletionRate) {
+        committeeRank = index + 1;
+      }
+      item.rank = committeeRank;
+    });
+
+    // Draw Committee Rankings Section
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 41, 59);
+    doc.text('COMMITTEE RANKINGS', margin, yPosition);
+    doc.setDrawColor(246, 66, 31);
+    doc.setLineWidth(0.3);
+    doc.line(margin, yPosition + 2, margin + 50, yPosition + 2);
+    yPosition += 8;
+
+    // Committee rankings table - use average time per member
+    const committeeTableData = committeeRankings.map(c => [
+      c.rank.toString(),
+      c.name,
+      `${c.avgCompletionRate.toFixed(2)}%`,
+      c.memberCount.toString(),
+      formatMinutesToDuration(Math.round(c.totalMinutes / c.memberCount)), // Average per member
+    ]);
+    
+    autoTable(doc, {
+      startY: yPosition,
+      head: [['Rank', 'Committee', 'Avg Completion', 'Members', 'Avg Time/Member']],
+      body: committeeTableData,
+      theme: 'striped',
+      margin: { left: margin, right: margin, bottom: 25 },
+      headStyles: {
+        fillColor: [59, 130, 246], // Blue for committees
+        textColor: 255,
+        fontStyle: 'bold',
+        fontSize: 9,
+      },
+      bodyStyles: {
+        fontSize: 8,
+      },
+      columnStyles: {
+        0: { cellWidth: 15, halign: 'center' },
+        1: { cellWidth: 55 },
+        2: { cellWidth: 30, halign: 'center' },
+        3: { cellWidth: 25, halign: 'center' },
+        4: { cellWidth: 30, halign: 'center' },
+      },
+      didParseCell: (data) => {
+        // Highlight top 3 committees
+        if (data.section === 'body' && data.row.index < committeeRankings.length) {
+          const rank = committeeRankings[data.row.index].rank;
+          if (rank === 1) {
+            data.cell.styles.fillColor = [255, 215, 0]; // Gold
+            data.cell.styles.textColor = [0, 0, 0];
+            data.cell.styles.fontStyle = 'bold';
+          } else if (rank === 2) {
+            data.cell.styles.fillColor = [192, 192, 192]; // Silver
+            data.cell.styles.textColor = [0, 0, 0];
+          } else if (rank === 3) {
+            data.cell.styles.fillColor = [205, 127, 50]; // Bronze
+            data.cell.styles.textColor = [255, 255, 255];
+          }
+        }
+      },
+    });
+
+    yPosition = (((doc as JsPdfWithAutoTable).lastAutoTable?.finalY) ?? yPosition) + 10;
+
+    // ===== NEW PAGE FOR MEMBER RANKINGS =====
+    doc.addPage();
+    yPosition = 20;
+
+    // Member Rankings Title
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 41, 59);
+    doc.text('MEMBER RANKINGS', margin, yPosition);
+    doc.setDrawColor(246, 66, 31);
+    doc.setLineWidth(0.3);
+    doc.line(margin, yPosition + 2, margin + 45, yPosition + 2);
+    yPosition += 8;
+
+    // Table data
+    const tableData = percentageRankings.map(r => [
+      r.rank.toString(),
+      r.member.name,
+      r.member.committee || 'General',
+      `${r.completionRate.toFixed(2)}%`,
+      `${r.eventsAttended} / ${r.totalEvents}`,
+      r.totalParticipationFormatted || '-',
+    ]);
+    
+    autoTable(doc, {
+      startY: yPosition,
+      head: [['Rank', 'Name', 'Committee', 'Completion', 'Attended', 'Time']],
+      body: tableData,
+      theme: 'striped',
+      margin: { left: margin, right: margin, bottom: 25 },
+      headStyles: {
+        fillColor: [246, 66, 31], // Brand orange
+        textColor: 255,
+        fontStyle: 'bold',
+        fontSize: 9,
+      },
+      bodyStyles: {
+        fontSize: 8,
+      },
+      columnStyles: {
+        0: { cellWidth: 15, halign: 'center' },
+        1: { cellWidth: 50 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 25, halign: 'center' },
+        4: { cellWidth: 25, halign: 'center' },
+        5: { cellWidth: 25, halign: 'center' },
+      },
+      didParseCell: (data) => {
+        // Highlight top 3
+        if (data.section === 'body' && data.row.index < 3) {
+          const rank = parseInt(tableData[data.row.index][0]);
+          if (rank === 1) {
+            data.cell.styles.fillColor = [255, 215, 0]; // Gold
+            data.cell.styles.textColor = [0, 0, 0];
+            data.cell.styles.fontStyle = 'bold';
+          } else if (rank === 2) {
+            data.cell.styles.fillColor = [192, 192, 192]; // Silver
+            data.cell.styles.textColor = [0, 0, 0];
+          } else if (rank === 3) {
+            data.cell.styles.fillColor = [205, 127, 50]; // Bronze
+            data.cell.styles.textColor = [255, 255, 255];
+          }
+        }
+      },
+    });
+
+    // Add footer to all pages
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      drawFooter(i, totalPages);
+    }
+    
+    // Save
+    const filename = `Attendance_Rankings_${new Date().toISOString().split('T')[0]}.pdf`;
+    doc.save(filename);
+    toast.success('Rankings exported to PDF');
+  }, [percentageRankings, rankingsFilterType, rankingsSelectedEventIds, rankingsSelectedCommittee, events]);
 
   // Get members who were not recorded in attendance
   const getNotRecordedMembers = useCallback((): MemberForAttendance[] => {
@@ -990,7 +1548,8 @@ export default function AttendanceDashboardPage({
 
   // Memoized chart click handler
   const handleChartClick = useCallback((data: { name?: string; status?: string }) => {
-    const status = data.name || data.status;
+    const status = data.name ?? data.status;
+    if (!status) return;
     const members = getMembersByStatus(status);
     setModalData({ status, members });
     setShowModal(true);
@@ -1233,7 +1792,7 @@ export default function AttendanceDashboardPage({
             const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
             
             // Build status with indicators
-            let statusDisplay = record.status;
+            let statusDisplay: string = record.status;
             const indicators: string[] = [];
             if (record.isExternal) indicators.push('EXT');
             if (record.lateTimeIn) indicators.push('LATE-IN');
@@ -1250,7 +1809,7 @@ export default function AttendanceDashboardPage({
                 member?.position || '-',
                 statusDisplay,
                 formatTimeValue(record.timeIn),
-                noLogout ? 'NO LOGOUT ⚠️' : formatTimeValue(record.timeOut),
+                noLogout ? 'NO LOGOUT' : formatTimeValue(record.timeOut),
                 duration,
               ],
               noLogout,
@@ -1265,13 +1824,15 @@ export default function AttendanceDashboardPage({
         const absentRecords = filteredRecords.filter(r => r.status === 'Absent');
         const notRecordedMembersList = getNotRecordedMembers();
 
-        const tableConfigs = [
+        const tableConfigs = ([
           { key: 'all', title: 'ALL ATTENDEES', records: filteredRecords, color: [246, 66, 31] as [number, number, number] },
           { key: 'present', title: 'PRESENT', records: presentRecords, color: [16, 185, 129] as [number, number, number] },
           { key: 'late', title: 'LATE', records: lateRecords, color: [245, 158, 11] as [number, number, number] },
           { key: 'excused', title: 'EXCUSED', records: excusedRecords, color: [59, 130, 246] as [number, number, number] },
           { key: 'absent', title: 'ABSENT', records: absentRecords, color: [239, 68, 68] as [number, number, number] },
-        ].filter(config => exportOptions.selectedTables.includes(config.key as any));
+        ] satisfies { key: ExportTableKey; title: string; records: AttendanceRecord[]; color: [number, number, number] }[]).filter((config) =>
+          exportOptions.selectedTables.includes(config.key)
+        );
 
         for (const config of tableConfigs) {
           if (config.records.length === 0 && config.key !== 'all') continue;
@@ -1312,7 +1873,7 @@ export default function AttendanceDashboardPage({
               7: { cellWidth: 16, halign: 'center' },
             },
             margin: { left: margin, right: margin },
-            didParseCell: (data: any) => {
+            didParseCell: (data: CellHookData) => {
               // Highlight rows with no logout in yellow/orange
               if (data.section === 'body' && noLogoutRows.has(data.row.index)) {
                 data.cell.styles.fillColor = [255, 243, 205]; // Light yellow/amber background
@@ -1332,7 +1893,7 @@ export default function AttendanceDashboardPage({
             },
           });
 
-          yPosition = (doc as any).lastAutoTable.finalY + 15;
+          yPosition = (((doc as JsPdfWithAutoTable).lastAutoTable?.finalY) ?? yPosition) + 15;
           
           if (yPosition > pageHeight - 40) {
             doc.addPage();
@@ -1527,7 +2088,7 @@ export default function AttendanceDashboardPage({
         // Add logo image
         doc.addImage(logoImg, 'PNG', logoX, logoY, logoSize, logoSize);
         logoLoaded = true;
-      } catch (error) {
+      } catch {
         console.warn('Could not load logo, continuing without it');
         // Draw orange header bar without logo
         doc.setFillColor(246, 66, 31);
@@ -1844,7 +2405,7 @@ export default function AttendanceDashboardPage({
           const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
           
           // Build status with indicators
-          let statusDisplay = record.status;
+          let statusDisplay: string = record.status;
           const indicators: string[] = [];
           if (record.isExternal) indicators.push('EXT');
           if (record.lateTimeIn) indicators.push('LATE-IN');
@@ -1861,7 +2422,7 @@ export default function AttendanceDashboardPage({
               member?.position || '-',
               statusDisplay,
               formatTimeValue(record.timeIn),
-              noLogout ? 'NO LOGOUT ⚠️' : formatTimeValue(record.timeOut),
+              noLogout ? 'NO LOGOUT' : formatTimeValue(record.timeOut),
               duration,
               record.recordedByTimeIn || '-',
               record.recordedByTimeOut || '-',
@@ -1996,7 +2557,7 @@ export default function AttendanceDashboardPage({
             lineWidth: 0.1,
           },
           margin: { left: margin, right: margin },
-          didParseCell: (data: any) => {
+          didParseCell: (data: CellHookData) => {
             // Highlight rows with no logout in yellow/orange
             if (data.section === 'body' && noLogoutRows.has(data.row.index)) {
               data.cell.styles.fillColor = [255, 243, 205]; // Light yellow/amber background
@@ -2017,7 +2578,7 @@ export default function AttendanceDashboardPage({
         });
 
         // Get the final Y position after the table
-        yPosition = (doc as any).lastAutoTable.finalY + 12;
+        yPosition = (((doc as JsPdfWithAutoTable).lastAutoTable?.finalY) ?? yPosition) + 12;
 
         // Check if we need a new page for the next table
         if (yPosition > pageHeight - 50 && configIndex < tableConfigs.length - 1) {
@@ -2099,7 +2660,7 @@ export default function AttendanceDashboardPage({
           margin: { left: margin, right: margin },
         });
 
-        yPosition = (doc as any).lastAutoTable.finalY + 12;
+        yPosition = (((doc as JsPdfWithAutoTable).lastAutoTable?.finalY) ?? yPosition) + 12;
       }
 
       // ============================================
@@ -2448,7 +3009,7 @@ export default function AttendanceDashboardPage({
         const duration = calculateAttendanceDuration(record.timeIn, record.timeOut);
         
         // Build status with indicators
-        let statusDisplay = record.status;
+        let statusDisplay: string = record.status;
         const indicators: string[] = [];
         if (record.isExternal) indicators.push('EXT');
         if (record.lateTimeIn) indicators.push('LATE-IN');
@@ -2466,7 +3027,7 @@ export default function AttendanceDashboardPage({
           formatTimeValue(record.timeIn),
           noLogout ? 'NO LOGOUT' : formatTimeValue(record.timeOut),
           duration,
-          noLogout ? 'YES ⚠️' : 'No',
+          noLogout ? 'YES' : 'No',
           record.recordedByTimeIn || '-',
           record.recordedByTimeOut || '-',
           record.notes || '-',
@@ -2557,9 +3118,16 @@ export default function AttendanceDashboardPage({
     }
   };
 
+  exportPdfHandlerRef.current = handleExportPDF;
+  exportSpreadsheetHandlerRef.current = handleExportSpreadsheet;
+
   useEffect(() => {
-    if (exportType === "pdf") handleExportPDF();
-    if (exportType === "spreadsheet") handleExportSpreadsheet();
+    if (exportType === "pdf") {
+      exportPdfHandlerRef.current?.();
+    }
+    if (exportType === "spreadsheet") {
+      exportSpreadsheetHandlerRef.current?.();
+    }
     setExportType("");
   }, [exportType]);
 
@@ -2681,7 +3249,7 @@ export default function AttendanceDashboardPage({
               />
               <Bar 
                 dataKey="count" 
-                onClick={(data: any) => handleChartClick({ name: data.status })}
+                onClick={(data: { status?: string }) => handleChartClick({ name: data.status })}
                 cursor="pointer"
                 isAnimationActive={false}
               >
@@ -2741,12 +3309,17 @@ export default function AttendanceDashboardPage({
       subtitle="Track and visualize attendance metrics across events and committees"
       onClose={onClose}
       isDark={isDark}
+      hideChrome={isAnyDashboardModalOpen}
       breadcrumbs={[
         { label: "Home", onClick: onClose },
         { label: "Dashboard & Directory", onClick: undefined },
         { label: "Attendance Dashboard", onClick: undefined },
       ]}
     >
+      <div
+        aria-hidden={isAnyDashboardModalOpen}
+        style={isAnyDashboardModalOpen ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
+      >
       {/* Controls Card */}
       <div
         className="rounded-xl p-6 mb-6 border"
@@ -2868,7 +3441,7 @@ export default function AttendanceDashboardPage({
               {/* Person Search Dropdown */}
               {showPersonDropdown && !selectedPerson && (
                 <div
-                  className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl max-h-72 overflow-y-auto z-[200]"
+                  className="absolute top-full left-0 right-0 mt-1 rounded-xl border shadow-xl max-h-72 overflow-y-auto z-200"
                   style={{
                     background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
                     backdropFilter: 'blur(20px)',
@@ -3019,11 +3592,11 @@ export default function AttendanceDashboardPage({
               }}
             >
               <p className="text-xs text-muted-foreground mb-1">Rate</p>
-              <p className="text-xl font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>{personAttendanceStats.attendanceRate}%</p>
+              <p className="text-xl font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>{personAttendanceStats.attendanceRate.toFixed(2)}%</p>
             </div>
           </div>
 
-          {/* ============= PERSON VOLUNTEERING TIME SUMMARY ============= */}
+          {/* ============= PERSON PARTICIPATION TIME SUMMARY ============= */}
           {personAttendanceRecords.length > 0 && (
             <div
               className="rounded-xl p-4 mb-6 border"
@@ -3041,7 +3614,7 @@ export default function AttendanceDashboardPage({
                     fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                   }}
                 >
-                  Volunteering Time
+                  Participation Time
                 </h4>
                 {personExcludedEventIds.size > 0 && (
                   <span className="ml-auto text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
@@ -3073,7 +3646,7 @@ export default function AttendanceDashboardPage({
                         : (personVolunteeringTimeStats.completionRate >= 80 ? '#f59e0b' : '#ef4444')
                     }}
                   >
-                    {personVolunteeringTimeStats.completionRate}%
+                    {personVolunteeringTimeStats.completionRate.toFixed(2)}%
                   </p>
                 </div>
               </div>
@@ -3234,7 +3807,7 @@ export default function AttendanceDashboardPage({
                                     : (timeSpentMins >= expectedMins * 0.8 ? '#f59e0b' : '#ef4444'),
                                 }}
                               >
-                                {Math.round((timeSpentMins / expectedMins) * 100)}%
+                                {((timeSpentMins / expectedMins) * 100).toFixed(2)}%
                               </span>
                             )}
                           </div>
@@ -3247,6 +3820,32 @@ export default function AttendanceDashboardPage({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ============= VIEW RANKINGS BUTTON ============= */}
+      {events.length > 0 && (
+        <div className="mb-6">
+          <button
+            onClick={() => setShowRankingsModal(true)}
+            className="w-full rounded-xl border p-4 flex items-center justify-center gap-3 transition-all hover:scale-[1.01] group"
+            style={{
+              background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}10 0%, ${DESIGN_TOKENS.colors.brand.orange}10 100%)`,
+              borderColor: DESIGN_TOKENS.colors.brand.orange + '40',
+            }}
+          >
+            <Trophy className="w-6 h-6 transition-transform group-hover:scale-110" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+            <span
+              style={{
+                fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                fontSize: `${DESIGN_TOKENS.typography.fontSize.h4}px`,
+                fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+              }}
+            >
+              View Attendance Rankings
+            </span>
+            <ChevronDown className="w-5 h-5 text-muted-foreground group-hover:translate-y-0.5 transition-transform" />
+          </button>
         </div>
       )}
 
@@ -3372,7 +3971,7 @@ export default function AttendanceDashboardPage({
                 color: '#10b981',
               }}
             >
-              <span className="text-base">✨</span>
+              <Sparkles className="w-4 h-4" />
               <span className="font-medium" style={{ textTransform: 'capitalize' }}>
                 {recommendedChart} recommended
               </span>
@@ -3382,7 +3981,7 @@ export default function AttendanceDashboardPage({
           {/* Chart Type Cards - Show contextually relevant options */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {/* Distribution Charts (always relevant) */}
-            {[
+            {([
               { 
                 type: 'pie' as const, 
                 label: 'Pie', 
@@ -3418,10 +4017,16 @@ export default function AttendanceDashboardPage({
                 desc: effectiveEvents.length > 1 ? 'Event trends' : 'Committee trends',
                 relevance: effectiveEvents.length > 3 ? 'high' : 'low',
               },
-            ]
+            ] as Array<{
+              type: "pie" | "donut" | "column" | "bar" | "line";
+              label: string;
+              icon: typeof PieChartIcon;
+              desc: string;
+              relevance: ChartRelevance;
+            }>)
               // Sort by relevance (high first) when multiple events selected
               .sort((a, b) => {
-                const order = { high: 0, medium: 1, low: 2 };
+                const order: Record<ChartRelevance, number> = { high: 0, medium: 1, low: 2 };
                 return order[a.relevance] - order[b.relevance];
               })
               .map((item) => {
@@ -3675,6 +4280,7 @@ export default function AttendanceDashboardPage({
           )}
         </div>
       )}
+      </div>
 
       {/* Export Preview Modal - Two Tab System */}
       {showExportPreview && (
@@ -3901,31 +4507,31 @@ export default function AttendanceDashboardPage({
                   <div>
                     <h4 className="font-semibold mb-3">Include Tables</h4>
                     <div className="space-y-2">
-                      {[
+                      {([
                         { key: 'all', label: 'All Attendees', desc: 'Complete list of all attendance records' },
                         { key: 'present', label: 'Present', desc: 'Members who attended on time', color: '#10b981' },
                         { key: 'late', label: 'Late', desc: 'Members who arrived late', color: '#f59e0b' },
                         { key: 'excused', label: 'Excused', desc: 'Members with excused absences', color: '#3b82f6' },
                         { key: 'absent', label: 'Absent', desc: 'Members who were absent', color: '#ef4444' },
                         { key: 'notRecorded', label: 'Not Recorded', desc: 'Members with no attendance record', color: '#6b7280' },
-                      ].map((table) => (
+                      ] as { key: ExportTableKey; label: string; desc: string; color?: string }[]).map((table) => (
                         <label
                           key={table.key}
                           className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                           style={{
-                            background: exportOptions.selectedTables.includes(table.key as any) 
+                            background: exportOptions.selectedTables.includes(table.key) 
                               ? (isDark ? 'rgba(246,66,31,0.1)' : 'rgba(246,66,31,0.05)')
                               : 'transparent',
                           }}
                         >
                           <input
                             type="checkbox"
-                            checked={exportOptions.selectedTables.includes(table.key as any)}
+                            checked={exportOptions.selectedTables.includes(table.key)}
                             onChange={(e) => {
                               if (e.target.checked) {
                                 setExportOptions({
                                   ...exportOptions,
-                                  selectedTables: [...exportOptions.selectedTables, table.key as any],
+                                  selectedTables: [...exportOptions.selectedTables, table.key],
                                 });
                               } else {
                                 setExportOptions({
@@ -4033,7 +4639,7 @@ export default function AttendanceDashboardPage({
             >
               <div className="text-sm text-muted-foreground">
                 {exportOptions.selectedTables.length === 0 ? (
-                  <span className="text-amber-500">⚠️ Select at least one table</span>
+                  <span className="text-amber-500 flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Select at least one table</span>
                 ) : (
                   <span>{exportOptions.selectedTables.length} table{exportOptions.selectedTables.length !== 1 ? 's' : ''} selected</span>
                 )}
@@ -4631,6 +5237,493 @@ export default function AttendanceDashboardPage({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ============= ATTENDANCE RANKINGS MODAL ============= */}
+      {showRankingsModal && createPortal(
+        <div
+          className="fixed inset-0 flex items-center justify-center p-4 backdrop-blur-md"
+          style={{ zIndex: 10001, background: 'rgba(15, 23, 42, 0.82)' }}
+          onClick={() => setShowRankingsModal(false)}
+        >
+          {/* Modal Content */}
+          <div 
+            className="relative w-full max-w-4xl max-h-[90vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden"
+            style={{
+              background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div 
+              className="px-6 py-4 border-b flex items-center justify-between shrink-0"
+              style={{
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}15 0%, ${DESIGN_TOKENS.colors.brand.orange}15 100%)`,
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <Trophy className="w-6 h-6" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                <h2
+                  style={{
+                    fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
+                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                    fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
+                  }}
+                >
+                  Attendance Rankings
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowRankingsModal(false)}
+                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Filters */}
+            <div className="px-6 py-4 border-b flex flex-wrap items-center gap-4 shrink-0" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
+              {/* Filter Type Tabs */}
+              <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)' }}>
+                {(['all', 'events', 'committee'] as const).map((filterType) => (
+                  <button
+                    key={filterType}
+                    onClick={() => setRankingsFilterType(filterType)}
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      rankingsFilterType === filterType
+                        ? 'text-white'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                    }`}
+                    style={{
+                      background: rankingsFilterType === filterType
+                        ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
+                        : undefined,
+                    }}
+                  >
+                    {filterType === 'all' ? 'All Events' : filterType === 'events' ? 'Select Events' : 'By Committee'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Events Multi-Select (shown when filter type is 'events') */}
+              {rankingsFilterType === 'events' && (
+                <div className="flex-1 min-w-[200px]">
+                  <CustomDropdown
+                    label=""
+                    value={rankingsSelectedEventIds.length > 0 ? `${rankingsSelectedEventIds.length} event(s) selected` : 'Select events...'}
+                    options={events.map(e => ({ value: e.EventID, label: e.Title }))}
+                    onChange={(val) => {
+                      const eventId = val;
+                      setRankingsSelectedEventIds(prev => 
+                        prev.includes(eventId) 
+                          ? prev.filter(id => id !== eventId)
+                          : [...prev, eventId]
+                      );
+                    }}
+                    isDark={isDark}
+                    selectedValues={rankingsSelectedEventIds}
+                    multiSelect
+                  />
+                </div>
+              )}
+
+              {/* Committee Dropdown (shown when filter type is 'committee') */}
+              {rankingsFilterType === 'committee' && (
+                <div className="min-w-[200px]">
+                  <CustomDropdown
+                    label=""
+                    value={rankingsSelectedCommittee}
+                    options={[
+                      { value: 'All', label: 'All Committees' },
+                      ...YSP_COMMITTEE_NAMES.map(c => ({ value: c, label: c })),
+                    ]}
+                    onChange={setRankingsSelectedCommittee}
+                    isDark={isDark}
+                    dropdownMinWidth={320}
+                    allowOptionWrap
+                  />
+                </div>
+              )}
+
+              {/* Export Button */}
+              <button
+                onClick={exportRankingsToPDF}
+                disabled={percentageRankings.length === 0}
+                className="ml-auto flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-white transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                style={{
+                  background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+                }}
+              >
+                <Download className="w-4 h-4" />
+                Export PDF
+              </button>
+            </div>
+
+            {/* Rankings Info Bar */}
+            <div className="px-6 py-2 border-b flex items-center gap-2 text-sm text-muted-foreground shrink-0" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }}>
+              <Users className="w-4 h-4" />
+              <span>{percentageRankings.length} members ranked</span>
+              <span className="mx-2">•</span>
+              <span>
+                {rankingsFilterType === 'all' 
+                  ? `${events.length} total events` 
+                  : rankingsFilterType === 'events' 
+                    ? `${rankingsSelectedEventIds.length} selected event(s)`
+                    : `Committee: ${rankingsSelectedCommittee}`
+                }
+              </span>
+            </div>
+
+            {/* Rankings List */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {isLoadingRankingsData ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <Loader2 className="w-10 h-10 animate-spin mb-3" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                  <p className="text-muted-foreground font-medium">Loading rankings data...</p>
+                  <p className="text-sm text-muted-foreground mt-1">Fetching attendance from all events</p>
+                </div>
+              ) : percentageRankings.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <AlertCircle className="w-12 h-12 text-muted-foreground mb-3" />
+                  <p className="text-muted-foreground font-medium">No rankings available</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {rankingsFilterType === 'events' && rankingsSelectedEventIds.length === 0
+                      ? 'Please select at least one event'
+                      : 'No attendance data found for the selected filter'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {/* Top 3 Podium Display */}
+                  {percentageRankings.length >= 3 && (() => {
+                    // Helper function to get colors based on actual rank
+                    const getRankColors = (rank: number) => {
+                      if (rank === 1) return {
+                        circleBg: 'linear-gradient(135deg, #ffd700 0%, #ffed4a 100%)',
+                        circleBorder: '#d4a500',
+                        boxShadow: '0 0 30px rgba(255, 215, 0, 0.5)',
+                        podiumBg: 'linear-gradient(180deg, #ffd700 0%, #d4a500 100%)',
+                        podiumText: '#92400e',
+                        percentColor: DESIGN_TOKENS.colors.brand.orange,
+                        iconColor: '#92400e',
+                      };
+                      if (rank === 2) return {
+                        circleBg: 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 100%)',
+                        circleBorder: '#a0a0a0',
+                        boxShadow: 'none',
+                        podiumBg: 'linear-gradient(180deg, #c0c0c0 0%, #a0a0a0 100%)',
+                        podiumText: '#3f3f46',
+                        percentColor: '#71717a',
+                        iconColor: '#3f3f46',
+                      };
+                      return {
+                        circleBg: 'linear-gradient(135deg, #cd7f32 0%, #e5a055 100%)',
+                        circleBorder: '#a66628',
+                        boxShadow: 'none',
+                        podiumBg: 'linear-gradient(180deg, #cd7f32 0%, #a66628 100%)',
+                        podiumText: '#fffbeb',
+                        percentColor: '#cd7f32',
+                        iconColor: '#78350f',
+                      };
+                    };
+                    
+                    const getRankSuffix = (r: number) => r === 1 ? 'st' : r === 2 ? 'nd' : r === 3 ? 'rd' : 'th';
+                    
+                    const rank0 = percentageRankings[0]?.rank || 1;
+                    const rank1 = percentageRankings[1]?.rank || 2;
+                    const rank2 = percentageRankings[2]?.rank || 3;
+                    
+                    const colors0 = getRankColors(rank0);
+                    const colors1 = getRankColors(rank1);
+                    const colors2 = getRankColors(rank2);
+                    
+                    return (
+                    <div className="flex items-end justify-center gap-2 sm:gap-4 mb-6 sm:mb-8 pt-4 px-2">
+                      {/* 2nd Place Position (LEFT) */}
+                      <div className="flex flex-col items-center flex-1 max-w-[120px]">
+                        <div 
+                          className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center mb-1 sm:mb-2 overflow-hidden border-2"
+                          style={{ 
+                            background: colors1.circleBg,
+                            borderColor: colors1.circleBorder,
+                            boxShadow: colors1.boxShadow,
+                          }}
+                        >
+                          {percentageRankings[1]?.member.profilePicture ? (
+                            <img 
+                              src={percentageRankings[1].member.profilePicture} 
+                              alt={percentageRankings[1].member.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }}
+                            />
+                          ) : null}
+                          {rank1 === 1 ? (
+                            <Trophy className={`w-6 h-6 sm:w-8 sm:h-8 ${percentageRankings[1]?.member.profilePicture ? 'hidden' : ''}`} style={{ color: colors1.iconColor }} />
+                          ) : (
+                            <Medal className={`w-6 h-6 sm:w-8 sm:h-8 ${percentageRankings[1]?.member.profilePicture ? 'hidden' : ''}`} style={{ color: colors1.iconColor }} />
+                          )}
+                        </div>
+                        <p className="font-semibold text-xs sm:text-sm text-center w-full truncate px-1">
+                          {percentageRankings[1]?.member.name}
+                        </p>
+                        <p className="text-sm sm:text-lg font-bold" style={{ color: colors1.percentColor }}>
+                          {percentageRankings[1]?.completionRate.toFixed(2)}%
+                        </p>
+                        <div 
+                          className="w-full max-w-[80px] h-14 sm:h-16 rounded-t-lg flex items-center justify-center text-xl sm:text-2xl font-bold mt-1"
+                          style={{ background: colors1.podiumBg, color: colors1.podiumText }}
+                        >
+                          {rank1}{getRankSuffix(rank1)}
+                        </div>
+                      </div>
+
+                      {/* 1st Place Position (CENTER) */}
+                      <div className="flex flex-col items-center flex-1 max-w-[140px] -mt-4">
+                        <div 
+                          className="w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center mb-1 sm:mb-2 shadow-lg overflow-hidden border-3"
+                          style={{ 
+                            background: colors0.circleBg,
+                            boxShadow: colors0.boxShadow,
+                            borderColor: colors0.circleBorder,
+                            borderWidth: '3px',
+                          }}
+                        >
+                          {percentageRankings[0]?.member.profilePicture ? (
+                            <img 
+                              src={percentageRankings[0].member.profilePicture} 
+                              alt={percentageRankings[0].member.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }}
+                            />
+                          ) : null}
+                          <Trophy className={`w-8 h-8 sm:w-10 sm:h-10 ${percentageRankings[0]?.member.profilePicture ? 'hidden' : ''}`} style={{ color: colors0.iconColor }} />
+                        </div>
+                        <p className="font-bold text-sm sm:text-base text-center w-full truncate px-1">
+                          {percentageRankings[0]?.member.name}
+                        </p>
+                        <p className="text-base sm:text-xl font-bold" style={{ color: colors0.percentColor }}>
+                          {percentageRankings[0]?.completionRate.toFixed(2)}%
+                        </p>
+                        <div 
+                          className="w-full max-w-[100px] h-20 sm:h-24 rounded-t-lg flex items-center justify-center text-2xl sm:text-3xl font-bold mt-1"
+                          style={{ background: colors0.podiumBg, color: colors0.podiumText }}
+                        >
+                          {rank0}{getRankSuffix(rank0)}
+                        </div>
+                      </div>
+
+                      {/* 3rd Place Position (RIGHT) */}
+                      <div className="flex flex-col items-center flex-1 max-w-[110px]">
+                        <div 
+                          className="w-10 h-10 sm:w-14 sm:h-14 rounded-full flex items-center justify-center mb-1 sm:mb-2 overflow-hidden border-2"
+                          style={{ 
+                            background: colors2.circleBg,
+                            borderColor: colors2.circleBorder,
+                            boxShadow: colors2.boxShadow,
+                          }}
+                        >
+                          {percentageRankings[2]?.member.profilePicture ? (
+                            <img 
+                              src={percentageRankings[2].member.profilePicture} 
+                              alt={percentageRankings[2].member.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }}
+                            />
+                          ) : null}
+                          {rank2 === 1 ? (
+                            <Trophy className={`w-5 h-5 sm:w-7 sm:h-7 ${percentageRankings[2]?.member.profilePicture ? 'hidden' : ''}`} style={{ color: colors2.iconColor }} />
+                          ) : rank2 === 2 ? (
+                            <Medal className={`w-5 h-5 sm:w-7 sm:h-7 ${percentageRankings[2]?.member.profilePicture ? 'hidden' : ''}`} style={{ color: colors2.iconColor }} />
+                          ) : (
+                            <Award className={`w-5 h-5 sm:w-7 sm:h-7 ${percentageRankings[2]?.member.profilePicture ? 'hidden' : ''}`} style={{ color: colors2.iconColor }} />
+                          )}
+                        </div>
+                        <p className="font-semibold text-xs sm:text-sm text-center w-full truncate px-1">
+                          {percentageRankings[2]?.member.name}
+                        </p>
+                        <p className="text-sm sm:text-lg font-bold" style={{ color: colors2.percentColor }}>
+                          {percentageRankings[2]?.completionRate.toFixed(2)}%
+                        </p>
+                        <div 
+                          className="w-full max-w-[70px] h-10 sm:h-12 rounded-t-lg flex items-center justify-center text-lg sm:text-xl font-bold mt-1"
+                          style={{ background: colors2.podiumBg, color: colors2.podiumText }}
+                        >
+                          {rank2}{getRankSuffix(rank2)}
+                        </div>
+                      </div>
+                    </div>
+                    );
+                  })()}
+
+                  {/* Full Rankings Table */}
+                  <div
+                    className="rounded-xl border overflow-hidden"
+                    style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
+                  >
+                    <div
+                      className="border-b px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                      style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }}
+                    >
+                      <div className="text-sm text-muted-foreground">
+                        Showing {percentageRankings.length === 0 ? 0 : ((rankingsPage - 1) * RANKINGS_PAGE_SIZE) + 1}
+                        {' '}-{' '}
+                        {Math.min(rankingsPage * RANKINGS_PAGE_SIZE, percentageRankings.length)} of {percentageRankings.length}
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-muted-foreground">Rows per page</span>
+                        <div
+                          className="px-3 py-1 rounded-md border font-semibold"
+                          style={{ borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)' }}
+                        >
+                          {RANKINGS_PAGE_SIZE}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      className="overflow-auto"
+                      style={{ maxHeight: '360px' }}
+                      onScroll={(event) => {
+                        const target = event.currentTarget;
+                        const reachedBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24;
+                        if (reachedBottom) {
+                          setRankingsVisibleRows((current) => Math.min(RANKINGS_PAGE_SIZE, current + 5));
+                        }
+                      }}
+                    >
+                      <table className="min-w-[760px] w-full table-fixed">
+                        <thead className="sticky top-0 z-10">
+                          <tr style={{ background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)' }}>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-20">Rank</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[220px]">Member</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[180px]">Committee</th>
+                            <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[140px]">Completion</th>
+                            <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[120px]">Attended</th>
+                            <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[140px]">Time</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }}>
+                          {paginatedRankings.map((ranked) => {
+                            const isTop3 = ranked.rank <= 3;
+                            let rowBg = '';
+                            let rowBorder = '';
+                            if (ranked.rank === 1) {
+                              rowBg = 'rgba(255, 215, 0, 0.15)';
+                              rowBorder = '#ffd700';
+                            } else if (ranked.rank === 2) {
+                              rowBg = 'rgba(192, 192, 192, 0.15)';
+                              rowBorder = '#c0c0c0';
+                            } else if (ranked.rank === 3) {
+                              rowBg = 'rgba(205, 127, 50, 0.15)';
+                              rowBorder = '#cd7f32';
+                            }
+
+                            return (
+                              <tr
+                                key={ranked.member.id}
+                                className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                                style={{
+                                  background: isTop3 ? rowBg : undefined,
+                                  borderLeft: isTop3 ? `4px solid ${rowBorder}` : undefined,
+                                }}
+                              >
+                                <td className="px-4 py-3 align-middle">
+                                  <div
+                                    className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm"
+                                    style={{
+                                      background: isTop3
+                                        ? (ranked.rank === 1 ? 'linear-gradient(135deg, #ffd700 0%, #ffed4a 100%)' : ranked.rank === 2 ? 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 100%)' : 'linear-gradient(135deg, #cd7f32 0%, #e5a055 100%)')
+                                        : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'),
+                                      color: isTop3
+                                        ? (ranked.rank === 1 ? '#92400e' : ranked.rank === 2 ? '#3f3f46' : '#78350f')
+                                        : undefined,
+                                    }}
+                                  >
+                                    {ranked.rank}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 align-middle">
+                                  <p className={isTop3 ? 'font-semibold truncate' : 'font-medium truncate'}>{ranked.member.name}</p>
+                                </td>
+                                <td className="px-4 py-3 text-sm text-muted-foreground align-middle truncate">
+                                  {ranked.member.committee || 'General'}
+                                </td>
+                                <td className="px-4 py-3 text-center align-middle">
+                                  <span
+                                    className={`font-bold ${isTop3 ? 'text-lg' : ''}`}
+                                    style={{ color: isTop3 ? DESIGN_TOKENS.colors.brand.orange : undefined }}
+                                  >
+                                    {ranked.completionRate.toFixed(2)}%
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-center text-sm text-muted-foreground align-middle">
+                                  {ranked.eventsAttended} / {ranked.totalEvents}
+                                </td>
+                                <td className="px-4 py-3 text-center text-sm text-muted-foreground align-middle">
+                                  {ranked.totalParticipationFormatted || '-'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div
+                      className="border-t px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                      style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }}
+                    >
+                      <div className="text-sm text-muted-foreground">
+                        Page {rankingsPage} of {rankingsTotalPages}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setRankingsPage((current) => Math.max(1, current - 1));
+                            setRankingsVisibleRows(Math.min(5, RANKINGS_PAGE_SIZE));
+                          }}
+                          disabled={rankingsPage === 1}
+                          className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)' }}
+                        >
+                          Previous
+                        </button>
+                        <button
+                          onClick={() => {
+                            setRankingsPage((current) => Math.min(rankingsTotalPages, current + 1));
+                            setRankingsVisibleRows(Math.min(5, RANKINGS_PAGE_SIZE));
+                          }}
+                          disabled={rankingsPage === rankingsTotalPages}
+                          className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)' }}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div 
+              className="px-6 py-4 border-t shrink-0"
+              style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
+            >
+              <button
+                onClick={() => setShowRankingsModal(false)}
+                className="w-full px-4 py-3 rounded-xl text-white transition-colors font-semibold hover:opacity-90"
+                style={{ background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)` }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </PageLayout>
   );

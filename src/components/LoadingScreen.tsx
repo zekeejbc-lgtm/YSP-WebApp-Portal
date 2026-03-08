@@ -100,7 +100,7 @@ export default function LoadingScreen({
 
   const overlay = (
     <div
-      className={`fixed inset-0 z-[2147483647] flex flex-col items-center justify-center overflow-hidden transition-opacity duration-500 ease-in-out ${
+      className={`fixed inset-0 z-2147483647 flex flex-col items-center justify-center overflow-hidden transition-opacity duration-500 ease-in-out ${
         fadeOut ? "opacity-0 pointer-events-none" : "opacity-100"
       }`}
       style={{

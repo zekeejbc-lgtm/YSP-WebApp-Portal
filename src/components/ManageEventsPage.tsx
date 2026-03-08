@@ -2005,7 +2005,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
       {/* Delete Confirmation Modal - Z-INDEX FIX APPLIED HERE */}
       {deleteConfirmModal.isOpen && deleteConfirmModal.event && (
         <div 
-          className="fixed inset-0 flex items-center justify-center z-[9999] p-4" 
+          className="fixed inset-0 flex items-center justify-center z-9999 p-4" 
           style={{ backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)' }}
         >
           <div 

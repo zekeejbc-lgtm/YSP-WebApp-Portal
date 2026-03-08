@@ -41,7 +41,7 @@
 - Touch-friendly buttons and inputs
 
 ### 3. **Z-Index and Modal Layering** ✅
-- Modal backdrop: `z-[100]`
+- Modal backdrop: `z-100`
 - CustomDropdown already has proper z-index handling
 - No dropdowns getting behind cards detected
 

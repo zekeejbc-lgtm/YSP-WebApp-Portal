@@ -306,7 +306,7 @@ export function DebugPill() {
         width: isExpanded ? 420 : 'auto'
       }}
       transition={{ type: 'spring', damping: 20, stiffness: 300 }}
-      className="fixed z-[2147483647] select-none"
+      className="fixed z-2147483647 select-none"
       style={{
         cursor: isDragging ? 'grabbing' : 'grab',
         touchAction: 'none',

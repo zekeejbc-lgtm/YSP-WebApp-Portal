@@ -122,7 +122,7 @@ export default function CreateOpportunityModalEnhanced({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+      className="fixed inset-0 z-10000 flex items-center justify-center p-4"
       style={{
         background: "rgba(0, 0, 0, 0.7)",
         backdropFilter: "blur(8px)",

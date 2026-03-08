@@ -87,7 +87,7 @@ export function ProjectFormModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[9997] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <div className="fixed inset-0 z-9997 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className={`w-full max-w-md rounded-2xl shadow-2xl overflow-hidden ${
         isDark ? 'bg-slate-900 text-white' : 'bg-white text-gray-900'
       }`}>

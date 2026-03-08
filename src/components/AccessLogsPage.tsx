@@ -34,7 +34,6 @@ import {
   Monitor,
   X,
   RefreshCw,
-  Calendar,
   CheckSquare,
   AlertTriangle,
   FileText,
@@ -47,7 +46,7 @@ import {
   Cloud,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS, getGlassStyle } from "./design-system";
+import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS } from "./design-system";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -187,6 +186,19 @@ interface AccessLog {
   status: string; // Can be: success, failed, warning
 }
 
+interface RawAccessLog {
+  id?: string | number | null;
+  user?: string | null;
+  fullName?: string | null;
+  profilePic?: string | null;
+  action?: string | null;
+  type?: string | null;
+  timestamp?: string | null;
+  ipAddress?: string | null;
+  device?: string | null;
+  status?: string | null;
+}
+
 interface AccessLogsPageProps {
   onClose: () => void;
   isDark: boolean;
@@ -314,7 +326,7 @@ export default function AccessLogsPage({
       }
 
       // Transform API response to component format
-      const formattedLogs = (data.data?.logs || []).map((log: any) => ({
+      const formattedLogs = ((data.data?.logs as RawAccessLog[] | undefined) || []).map((log) => ({
         id: String(log.id ?? ''),
         user: String(log.user ?? ''),
         fullName: String(log.fullName ?? log.user ?? ''),
@@ -458,7 +470,7 @@ export default function AccessLogsPage({
   /**
    * Generate PDF document (shared logic for preview and export)
    */
-  const generatePdfDocument = async (forPreview: boolean = false): Promise<jsPDF> => {
+  const generatePdfDocument = async (): Promise<jsPDF> => {
     const doc = new jsPDF('landscape', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -492,7 +504,7 @@ export default function AccessLogsPage({
     try {
       logoImg = await loadImage(ORG_LOGO_URL);
       logoLoaded = true;
-    } catch (e) {
+    } catch {
       // Logo failed to load
     }
 
@@ -952,7 +964,7 @@ export default function AccessLogsPage({
     }
 
     try {
-      const doc = await generatePdfDocument(true);
+      const doc = await generatePdfDocument();
       const pdfBlob = doc.output('blob');
       const url = URL.createObjectURL(pdfBlob);
       setPdfPreviewUrl(url);
@@ -1010,7 +1022,7 @@ export default function AccessLogsPage({
       if (cancelled) return;
 
       updateUploadToast(toastId, { message: 'Creating tables by log type...', progress: 50 });
-      const doc = await generatePdfDocument(false);
+      const doc = await generatePdfDocument();
       if (cancelled) return;
 
       updateUploadToast(toastId, { message: 'Adding statistics page...', progress: 80 });
@@ -1174,7 +1186,7 @@ export default function AccessLogsPage({
       updateUploadToast(toastId, { progress: 20, message: 'Generating styled PDF...' });
       
       // Generate the PDF using the same function as local export
-      const doc = await generatePdfDocument(false);
+      const doc = await generatePdfDocument();
       
       updateUploadToast(toastId, { progress: 50, message: 'Preparing upload...' });
       
@@ -2303,7 +2315,7 @@ export default function AccessLogsPage({
               </tr>
             </thead>
             <tbody>
-              {paginatedLogs.map((log, index) => (
+              {paginatedLogs.map((log) => (
                 <tr
                   key={log.id}
                   className="border-b transition-all hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer"
@@ -2694,7 +2706,7 @@ export default function AccessLogsPage({
       {/* Clear Logs Modal - Elegant Centered Design */}
       {showClearLogsModal && (
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          className="fixed inset-0 z-9999 flex items-center justify-center p-4"
           style={{ backgroundColor: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(8px)" }}
           onClick={() => !isClearing && setShowClearLogsModal(false)}
         >
@@ -3084,7 +3096,7 @@ export default function AccessLogsPage({
       {/* Confirmation Dialog - Elegant Centered Design */}
       {showConfirmClear && (
         <div
-          className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+          className="fixed inset-0 z-10000 flex items-center justify-center p-4"
           style={{ backgroundColor: "rgba(0, 0, 0, 0.75)", backdropFilter: "blur(8px)" }}
           onClick={() => !isClearing && setShowConfirmClear(false)}
         >

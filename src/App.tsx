@@ -3522,6 +3522,7 @@ export default function App() {
     const chatbotForceHidden =
       isEditingProfile ||
       isEditingHomepage ||
+      showAttendanceDashboard ||
       accessLogsModalOpen ||
       issuanceModalOpen ||
       attendanceDashboardModalOpen ||

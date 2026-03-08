@@ -17,11 +17,12 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import type { Map as LeafletMap, Marker as LeafletMarker, Circle as LeafletCircle } from "leaflet";
-import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle, ChevronDown, ChevronUp, MapPin, Loader2, Timer, CheckCircle2, Archive, ToggleLeft, ToggleRight } from "lucide-react";
+import { Calendar, Clock, Search, User, LayoutGrid, Table as TableIcon, X, RefreshCw, FileText, AlertCircle, ChevronDown, ChevronUp, MapPin, Loader2, Timer, CheckCircle2, Archive, ToggleLeft, ToggleRight, Trophy, Medal, Award, Star, Sparkles, AlertTriangle, TrendingUp } from "lucide-react";
 import { PageLayout, StatusChip, DESIGN_TOKENS, getGlassStyle, Button } from "./design-system";
 import CustomDropdown from "./CustomDropdown";
-import { getMemberAttendanceHistory, type AttendanceRecord as BackendAttendanceRecord } from "../services/gasAttendanceService";
-import { fetchEvents, fetchEventsForMember, type EventData, type MemberEventsResponse } from "../services/gasEventsService";
+import { getMemberAttendanceHistory, type AttendanceRecord as BackendAttendanceRecord, getMembersForAttendance, getEventAttendanceRecords, type MemberForAttendance } from "../services/gasAttendanceService";
+import { fetchEvents, fetchEventsForMember, parseEventRecipients, type EventData, type MemberEventsResponse, type EventRecipients } from "../services/gasEventsService";
+import { searchOfficers, type DirectoryOfficer } from "../services/gasDirectoryService";
 import { toast } from "sonner";
 
 const ITEMS_PER_PAGE = 10;
@@ -128,8 +129,8 @@ function formatTime(timeValue: unknown): string {
  * Check if someone has no logout time (present but didn't logout)
  */
 function hasNoLogout(timeIn: string, timeOut: string): boolean {
-  const hasTimeIn = timeIn && timeIn !== 'N/A' && timeIn !== '-';
-  const hasTimeOut = timeOut && timeOut !== 'N/A' && timeOut !== '-';
+  const hasTimeIn = Boolean(timeIn && timeIn !== 'N/A' && timeIn !== '-');
+  const hasTimeOut = Boolean(timeOut && timeOut !== 'N/A' && timeOut !== '-');
   return hasTimeIn && !hasTimeOut;
 }
 
@@ -368,6 +369,23 @@ function getEventStatusStyle(status: string): { bg: string; color: string; label
     default:
       return { bg: 'rgba(107, 114, 128, 0.15)', color: '#6b7280', label: status || 'Unknown' };
   }
+}
+
+function hasSpecificRecipients(recipients: EventRecipients | null): boolean {
+  if (!recipients || recipients.type === "All") return false;
+  if (recipients.type === "Person") {
+    return Array.isArray(recipients.ids) && recipients.ids.length > 0;
+  }
+  if (recipients.type === "Committee") {
+    return Array.isArray(recipients.committees) && recipients.committees.length > 0;
+  }
+  return false;
+}
+
+function isMemberIncludedInRecipients(recipients: EventRecipients | null, memberId: string): boolean {
+  if (!recipients || recipients.type === "All") return true;
+  if (Array.isArray(recipients.ids) && recipients.ids.includes(memberId)) return true;
+  return !hasSpecificRecipients(recipients);
 }
 
 function PaginationControls({
@@ -1137,6 +1155,191 @@ export default function AttendanceTransparencyPage({
   const [excludedEventIds, setExcludedEventIds] = useState<Set<string>>(new Set());
 
   // =====================================================
+  // RANKINGS/LEADERBOARD STATE
+  // =====================================================
+  
+  interface RankedMember {
+    memberId: string;
+    name: string;
+    profilePicture?: string;
+    committee?: string;
+    completionRate: number; // Time-based completion rate (0-100)
+    totalMinutes: number;
+    expectedMinutes: number;
+    eventsAttended: number;
+    totalEvents: number;
+    rank: number;
+  }
+
+  interface LeaderboardEventAttendance {
+    event: EventData;
+    records: BackendAttendanceRecord[];
+  }
+
+  interface LeaderboardSourceData {
+    members: MemberForAttendance[];
+    eventAttendance: LeaderboardEventAttendance[];
+    profilePictureMap: Map<string, string>;
+  }
+
+  const [leaderboardSourceData, setLeaderboardSourceData] = useState<LeaderboardSourceData | null>(null);
+  const [isLoadingRankings, setIsLoadingRankings] = useState(false);
+  const [hasLoadedRankings, setHasLoadedRankings] = useState(false);
+  const [showPodium, setShowPodium] = useState(true);
+
+  // Fetch rankings data
+  const fetchRankings = useCallback(async () => {
+    if (isLoadingRankings || hasLoadedRankings) return;
+    
+    setIsLoadingRankings(true);
+    try {
+      // Fetch all members and their attendance data
+      const [members, allEvents] = await Promise.all([
+        getMembersForAttendance('', 500),
+        fetchEvents(),
+      ]);
+
+      // Fetch attendance for all events (this is expensive but necessary for accurate rankings)
+      const eventsToProcess = allEvents.slice(0, 20);
+      const attendancePromises = eventsToProcess.map(event => 
+        getEventAttendanceRecords(event.EventID).catch(() => [])
+      );
+      const allAttendanceRecords = await Promise.all(attendancePromises);
+
+      // Get profile pictures from directory
+      const directoryMembers = await searchOfficers('').catch(() => ({ officers: [] as DirectoryOfficer[] }));
+      const profilePictureMap = new Map<string, string>();
+      (directoryMembers.officers || []).forEach(officer => {
+        // Only add non-empty profile pictures
+        if (officer.profilePicture && officer.profilePicture.trim() && officer.idCode) {
+          profilePictureMap.set(officer.idCode.toLowerCase(), officer.profilePicture);
+        }
+        // Also try matching by name
+        if (officer.profilePicture && officer.profilePicture.trim() && officer.fullName) {
+          profilePictureMap.set(officer.fullName.toLowerCase().trim(), officer.profilePicture);
+        }
+      });
+
+      setLeaderboardSourceData({
+        members,
+        eventAttendance: eventsToProcess.map((event, index) => ({
+          event,
+          records: allAttendanceRecords[index] || [],
+        })),
+        profilePictureMap,
+      });
+      setHasLoadedRankings(true);
+    } catch (err) {
+      console.error('Failed to fetch rankings:', err);
+      // Don't show error - rankings are optional
+    } finally {
+      setIsLoadingRankings(false);
+    }
+  }, [isLoadingRankings, hasLoadedRankings]);
+
+  const rankings = useMemo(() => {
+    if (!leaderboardSourceData) return [];
+
+    const includedEventAttendance = leaderboardSourceData.eventAttendance.filter(
+      ({ event }) => !excludedEventIds.has(event.EventID)
+    );
+
+    const eventExpectedMinutesMap = new Map<string, number>();
+    includedEventAttendance.forEach(({ event }) => {
+      if (event.StartTime && event.EndTime) {
+        const expectedMins = calculateDurationMinutes(event.StartTime, event.EndTime);
+        eventExpectedMinutesMap.set(event.EventID, expectedMins > 0 ? expectedMins : 0);
+      }
+    });
+
+    const memberStatsMap = new Map<string, {
+      totalMinutes: number;
+      expectedMinutes: number;
+      attended: number;
+    }>();
+
+    includedEventAttendance.forEach(({ event, records }) => {
+      const eventExpected = eventExpectedMinutesMap.get(event.EventID) || 0;
+
+      records.forEach(record => {
+        if (record.status === 'Absent') return;
+
+        const timeSpent = calculateDurationMinutes(record.timeIn, record.timeOut);
+        const existing = memberStatsMap.get(record.memberId);
+
+        if (existing) {
+          existing.totalMinutes += timeSpent > 0 ? timeSpent : 0;
+          existing.expectedMinutes += eventExpected;
+          existing.attended += 1;
+        } else {
+          memberStatsMap.set(record.memberId, {
+            totalMinutes: timeSpent > 0 ? timeSpent : 0,
+            expectedMinutes: eventExpected,
+            attended: 1,
+          });
+        }
+      });
+    });
+
+    const totalExpectedMinutesForAllEvents = Array.from(eventExpectedMinutesMap.values())
+      .reduce((sum, mins) => sum + mins, 0);
+
+    const totalEventsCount = includedEventAttendance.length;
+    const rankedMembers: RankedMember[] = leaderboardSourceData.members.map(member => {
+      const stats = memberStatsMap.get(member.id);
+      const totalMinutes = stats?.totalMinutes || 0;
+      const eventsAttended = stats?.attended || 0;
+
+      const completionRate = totalExpectedMinutesForAllEvents > 0
+        ? Math.min((totalMinutes / totalExpectedMinutesForAllEvents) * 100, 100)
+        : 0;
+
+      let profilePic = member.profilePicture && member.profilePicture.trim() ? member.profilePicture : undefined;
+      if (!profilePic) {
+        profilePic = leaderboardSourceData.profilePictureMap.get(member.id.toLowerCase());
+      }
+      if (!profilePic) {
+        profilePic = leaderboardSourceData.profilePictureMap.get(member.name.toLowerCase().trim());
+      }
+
+      return {
+        memberId: member.id,
+        name: member.name,
+        profilePicture: profilePic,
+        committee: member.committee,
+        completionRate: Math.round(completionRate * 100) / 100,
+        totalMinutes,
+        expectedMinutes: totalExpectedMinutesForAllEvents,
+        eventsAttended,
+        totalEvents: totalEventsCount,
+        rank: 0,
+      };
+    });
+
+    rankedMembers.sort((a, b) => {
+      if (b.totalMinutes !== a.totalMinutes) {
+        return b.totalMinutes - a.totalMinutes;
+      }
+      return b.eventsAttended - a.eventsAttended;
+    });
+
+    let currentRank = 1;
+    rankedMembers.forEach((member, index) => {
+      if (index > 0 && member.totalMinutes < rankedMembers[index - 1].totalMinutes) {
+        currentRank = index + 1;
+      }
+      member.rank = currentRank;
+    });
+
+    return rankedMembers;
+  }, [excludedEventIds, leaderboardSourceData]);
+
+  const userRank = useMemo(
+    () => rankings.find((member) => member.memberId === memberId) || null,
+    [memberId, rankings]
+  );
+
+  // =====================================================
   // DATA FETCHING
   // =====================================================
 
@@ -1289,7 +1492,7 @@ export default function AttendanceTransparencyPage({
   };
 
   const totalEvents = filteredRecords.length;
-  const attendanceRate = totalEvents > 0 ? Math.round(
+  const attendanceRate = totalEvents > 0 ? (
     ((statusCounts.present + statusCounts.late) / totalEvents) * 100
   ) : 0;
 
@@ -1343,7 +1546,7 @@ export default function AttendanceTransparencyPage({
     });
 
     const completionRate = totalExpectedMinutes > 0 
-      ? Math.round((totalTimeSpentMinutes / totalExpectedMinutes) * 100) 
+      ? (totalTimeSpentMinutes / totalExpectedMinutes) * 100 
       : 0;
 
     return {
@@ -1356,6 +1559,54 @@ export default function AttendanceTransparencyPage({
       eventsWithExpectedTime,
     };
   }, [filteredRecords, excludedEventIds, eventsMap]);
+
+  // =====================================================
+  // RECIPIENT STATUS ANALYSIS
+  // =====================================================
+  
+  // Check recipient status for each attended event
+  const recipientAnalysis = useMemo(() => {
+    // Events where user was a recipient but has no attendance record
+    const recipientNoRecord: EventData[] = [];
+    // Events where user attended but wasn't a recipient
+    const attendedNotRecipient: AttendanceRecord[] = [];
+    
+    // Check events the user is a recipient of
+    eventsMap.forEach((event) => {
+      if (!memberId) return;
+
+      const recipients = parseEventRecipients(event.Recipients);
+      const isRecipient = isMemberIncludedInRecipients(recipients, memberId);
+
+      if (isRecipient) {
+        // Check if user has an attendance record for this event
+        const hasRecord = attendanceRecords.some(r => r.eventId === event.EventID);
+        if (!hasRecord && (event.Status === 'Completed' || event.Status === 'Active')) {
+          recipientNoRecord.push(event);
+        }
+      }
+    });
+    
+    // Check events user attended but wasn't a recipient
+    attendanceRecords.forEach((record) => {
+      const event = eventsMap.get(record.eventId);
+      if (!event || !memberId) return;
+
+      const recipients = parseEventRecipients(event.Recipients);
+      if (!hasSpecificRecipients(recipients)) return;
+
+      const isRecipient = isMemberIncludedInRecipients(recipients, memberId);
+      if (!isRecipient && record.status !== 'absent') {
+        attendedNotRecipient.push(record);
+      }
+    });
+    
+    return {
+      recipientNoRecord,
+      attendedNotRecipient,
+      hasDiscrepancies: recipientNoRecord.length > 0 || attendedNotRecipient.length > 0,
+    };
+  }, [eventsMap, attendanceRecords, memberId]);
 
   const viewToggleLabel = viewMode === "table" ? "Table View" : "Tile View";
   const glassStyle = getGlassStyle(isDark);
@@ -1604,22 +1855,45 @@ export default function AttendanceTransparencyPage({
                 </button>
                 
                 {showArchive && (
-                  <div className="mt-3 grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div className="mt-3 grid md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-hidden">
                     {memberEvents.completed?.slice(0, 6).map((event) => {
                       const statusStyle = getEventStatusStyle('completed');
+                      
+                      // Smart truncation: extract important info from title
+                      const smartTruncate = (title: string, maxLength: number = 35) => {
+                        if (title.length <= maxLength) return title;
+                        // Try to find a natural break point
+                        const truncated = title.slice(0, maxLength);
+                        const lastSpace = truncated.lastIndexOf(' ');
+                        return lastSpace > maxLength * 0.6 
+                          ? truncated.slice(0, lastSpace) + '...' 
+                          : truncated + '...';
+                      };
                       
                       return (
                         <div
                           key={event.EventID}
-                          className="rounded-xl p-3 opacity-75 cursor-pointer transition-all hover:opacity-100 hover:shadow-md"
+                          className="rounded-xl p-3 opacity-75 cursor-pointer transition-all hover:opacity-100 hover:shadow-md overflow-hidden min-w-0"
                           onClick={() => { setSelectedEvent(event); setShowEventModal(true); }}
                           style={{
                             background: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
                             border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                            maxWidth: '100%',
                           }}
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <h4 className="text-sm font-medium truncate flex-1">{event.Title}</h4>
+                          <div className="flex items-start justify-between gap-2 min-w-0">
+                            <h4 
+                              className="text-sm font-medium flex-1 min-w-0"
+                              style={{
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                maxWidth: 'calc(100% - 50px)',
+                              }}
+                              title={event.Title}
+                            >
+                              {smartTruncate(event.Title)}
+                            </h4>
                             <div 
                               className="px-2 py-0.5 rounded-full text-xs shrink-0"
                               style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
@@ -1629,8 +1903,8 @@ export default function AttendanceTransparencyPage({
                             </div>
                           </div>
                           <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
-                            <Calendar className="w-3 h-3" />
-                            <span>{formatDisplayDate(event.StartDate)}</span>
+                            <Calendar className="w-3 h-3 shrink-0" />
+                            <span className="truncate">{formatDisplayDate(event.StartDate)}</span>
                           </div>
                         </div>
                       );
@@ -1862,7 +2136,7 @@ export default function AttendanceTransparencyPage({
                     : DESIGN_TOKENS.colors.status.absent,
               }}
             >
-              Overall Attendance Rate: {attendanceRate}%
+              Overall Attendance Rate: {attendanceRate.toFixed(2)}%
             </div>
             <p
               className="text-muted-foreground"
@@ -1878,7 +2152,7 @@ export default function AttendanceTransparencyPage({
       </div>
 
       {/* =====================================================
-          VOLUNTEERING TIME SUMMARY BOX
+          PARTICIPATION TIME SUMMARY BOX
           ===================================================== */}
       {!isLoading && !error && attendanceRecords.length > 0 && (
         <div
@@ -1905,7 +2179,7 @@ export default function AttendanceTransparencyPage({
                 fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
               }}
             >
-              Volunteering Time Summary
+              Participation Time Summary
             </h3>
             {excludedEventIds.size > 0 && (
               <span className="ml-auto text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
@@ -1927,7 +2201,7 @@ export default function AttendanceTransparencyPage({
               >
                 <div className="flex items-center justify-center gap-2 mb-2">
                   <Clock className="w-4 h-4" style={{ color: '#10b981' }} />
-                  <span className="text-xs text-muted-foreground font-medium">Time Volunteered</span>
+                  <span className="text-xs text-muted-foreground font-medium">Time Participated</span>
                 </div>
                 <div
                   style={{
@@ -1988,7 +2262,7 @@ export default function AttendanceTransparencyPage({
                     color: DESIGN_TOKENS.colors.brand.orange,
                   }}
                 >
-                  {volunteeringTimeStats.completionRate}%
+                  {volunteeringTimeStats.completionRate.toFixed(2)}%
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
                   of expected hours
@@ -2019,11 +2293,356 @@ export default function AttendanceTransparencyPage({
             </div>
             <p className="text-xs text-muted-foreground text-center mt-2">
               {volunteeringTimeStats.completionRate >= 100 
-                ? '🎉 Great job! You\'ve exceeded your expected volunteering hours!' 
+                ? 'Excellent! You have exceeded your expected participation hours.' 
                 : `${formatMinutesToDuration(volunteeringTimeStats.expectedTime - volunteeringTimeStats.timeSpent)} remaining to reach your goal`
               }
             </p>
+
+            {/* Gamification Tier Badge */}
+            <div className="mt-4 flex justify-center">
+              {(() => {
+                const rate = volunteeringTimeStats.completionRate;
+                let badge = { iconType: 'trending', label: 'Getting Started', bg: 'linear-gradient(135deg, #94a3b8 0%, #cbd5e1 100%)', shadow: 'rgba(148, 163, 184, 0.4)', text: '#475569' };
+                
+                if (rate >= 100) {
+                  badge = { iconType: 'trophy', label: 'Champion Participant', bg: 'linear-gradient(135deg, #ffd700 0%, #ffed4a 100%)', shadow: 'rgba(255, 215, 0, 0.4)', text: '#92400e' };
+                } else if (rate >= 75) {
+                  badge = { iconType: 'medal', label: 'Silver Tier', bg: 'linear-gradient(135deg, #9ca3af 0%, #d1d5db 100%)', shadow: 'rgba(156, 163, 175, 0.4)', text: '#374151' };
+                } else if (rate >= 50) {
+                  badge = { iconType: 'award', label: 'Bronze Tier', bg: 'linear-gradient(135deg, #b45309 0%, #d97706 100%)', shadow: 'rgba(180, 83, 9, 0.4)', text: '#fffbeb' };
+                } else if (rate >= 25) {
+                  badge = { iconType: 'star', label: 'Rising Participant', bg: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)', shadow: 'rgba(124, 58, 237, 0.4)', text: '#ffffff' };
+                }
+                
+                return (
+                  <div 
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-full"
+                    style={{
+                      background: badge.bg,
+                      boxShadow: `0 4px 15px ${badge.shadow}`,
+                    }}
+                  >
+                    {badge.iconType === 'trophy' && <Trophy className="w-5 h-5" style={{ color: badge.text }} />}
+                    {badge.iconType === 'medal' && <Medal className="w-5 h-5" style={{ color: badge.text }} />}
+                    {badge.iconType === 'award' && <Award className="w-5 h-5" style={{ color: badge.text }} />}
+                    {badge.iconType === 'star' && <Star className="w-5 h-5" style={{ color: badge.text }} />}
+                    {badge.iconType === 'trending' && <TrendingUp className="w-5 h-5" style={{ color: badge.text }} />}
+                    <span className="font-bold" style={{ color: badge.text }}>{badge.label}</span>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
+
+          {/* Attendance Leaderboard Podium */}
+          <div 
+            className="px-5 py-4 border-t"
+            style={{
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+            }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-4 h-4" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                <span className="text-sm font-semibold">Attendance Leaderboard</span>
+              </div>
+              <button
+                onClick={() => {
+                  setShowPodium(!showPodium);
+                  if (!hasLoadedRankings && !isLoadingRankings) {
+                    fetchRankings();
+                  }
+                }}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+              >
+                {showPodium ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                {showPodium ? 'Hide' : 'Show'}
+              </button>
+            </div>
+
+            {showPodium && (
+              <>
+                {isLoadingRankings ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                    <span className="ml-2 text-sm text-muted-foreground">Loading rankings...</span>
+                  </div>
+                ) : !hasLoadedRankings ? (
+                  <div className="text-center py-6">
+                    <button
+                      onClick={fetchRankings}
+                      className="px-4 py-2 rounded-lg text-sm font-medium transition-all hover:scale-105"
+                      style={{
+                        background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}20 0%, ${DESIGN_TOKENS.colors.brand.orange}20 100%)`,
+                        border: `1px solid ${DESIGN_TOKENS.colors.brand.orange}40`,
+                      }}
+                    >
+                      <Trophy className="w-4 h-4 inline-block mr-2" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                      Load Leaderboard
+                    </button>
+                  </div>
+                ) : rankings.length >= 3 ? (
+                  <>
+                    {/* Animated Podium */}
+                    <div className="flex items-end justify-center gap-1 sm:gap-3 mb-3 sm:mb-4 pt-2 px-1">
+                      {/* CSS Keyframe Animation Styles */}
+                      <style>{`
+                        @keyframes podiumSlideUp {
+                          from { transform: translateY(30px); opacity: 0; }
+                          to { transform: translateY(0); opacity: 1; }
+                        }
+                        @keyframes podiumGlow {
+                          0%, 100% { box-shadow: 0 0 15px rgba(255, 215, 0, 0.3); }
+                          50% { box-shadow: 0 0 25px rgba(255, 215, 0, 0.6); }
+                        }
+                        .podium-animate-1 { animation: podiumSlideUp 0.5s ease-out 0.3s both; }
+                        .podium-animate-2 { animation: podiumSlideUp 0.5s ease-out 0.1s both; }
+                        .podium-animate-3 { animation: podiumSlideUp 0.5s ease-out 0.5s both; }
+                        .podium-glow { animation: podiumGlow 2s ease-in-out infinite; }
+                      `}</style>
+
+                      {/* 2nd Place Position (LEFT) */}
+                      <div className="flex flex-col items-center podium-animate-2 flex-1 max-w-[100px]">
+                        <div 
+                          className="w-10 h-10 sm:w-14 sm:h-14 rounded-full flex items-center justify-center mb-1 sm:mb-1.5 overflow-hidden border-2"
+                          style={{ 
+                            background: 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 100%)',
+                            borderColor: '#a0a0a0',
+                          }}
+                        >
+                          {rankings[1]?.profilePicture ? (
+                            <img 
+                              src={rankings[1]?.profilePicture} 
+                              alt={rankings[1]?.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                target.parentElement?.classList.add('fallback-icon');
+                              }}
+                            />
+                          ) : (
+                            <Medal className="w-5 h-5 sm:w-7 sm:h-7" style={{ color: '#3f3f46' }} />
+                          )}
+                        </div>
+                        <p className="font-semibold text-[10px] sm:text-xs text-center w-full truncate px-1">
+                          {rankings[1]?.name}
+                        </p>
+                        <p className="text-xs sm:text-sm font-bold" style={{ color: '#71717a' }}>
+                          {rankings[1]?.completionRate.toFixed(0)}%
+                        </p>
+                        <div 
+                          className="w-full max-w-[60px] h-10 sm:h-12 rounded-t-lg flex items-center justify-center text-sm sm:text-lg font-bold mt-1"
+                          style={{ background: 'linear-gradient(180deg, #c0c0c0 0%, #a0a0a0 100%)', color: '#3f3f46' }}
+                        >
+                          2nd
+                        </div>
+                      </div>
+
+                      {/* 1st Place Position (CENTER) */}
+                      <div className="flex flex-col items-center podium-animate-1 -mt-2 sm:-mt-3 flex-1 max-w-[110px]">
+                        <div 
+                          className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center mb-1 sm:mb-1.5 overflow-hidden border-2 podium-glow"
+                          style={{ 
+                            background: 'linear-gradient(135deg, #ffd700 0%, #ffed4a 100%)',
+                            borderColor: '#d4a500',
+                          }}
+                        >
+                          {rankings[0]?.profilePicture ? (
+                            <img 
+                              src={rankings[0]?.profilePicture} 
+                              alt={rankings[0]?.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                target.parentElement?.classList.add('fallback-icon');
+                              }}
+                            />
+                          ) : (
+                            <Trophy className="w-6 h-6 sm:w-8 sm:h-8" style={{ color: '#92400e' }} />
+                          )}
+                        </div>
+                        <p className="font-bold text-xs sm:text-sm text-center w-full truncate px-1">
+                          {rankings[0]?.name}
+                        </p>
+                        <p className="text-sm sm:text-lg font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                          {rankings[0]?.completionRate.toFixed(0)}%
+                        </p>
+                        <div 
+                          className="w-full max-w-[70px] h-12 sm:h-16 rounded-t-lg flex items-center justify-center text-lg sm:text-2xl font-bold mt-1"
+                          style={{ background: 'linear-gradient(180deg, #ffd700 0%, #d4a500 100%)', color: '#92400e' }}
+                        >
+                          1st
+                        </div>
+                      </div>
+
+                      {/* 3rd Place Position (RIGHT) */}
+                      <div className="flex flex-col items-center podium-animate-3 flex-1 max-w-[90px]">
+                        <div 
+                          className="w-9 h-9 sm:w-12 sm:h-12 rounded-full flex items-center justify-center mb-1 sm:mb-1.5 overflow-hidden border-2"
+                          style={{ 
+                            background: 'linear-gradient(135deg, #cd7f32 0%, #e5a055 100%)',
+                            borderColor: '#a66628',
+                          }}
+                        >
+                          {rankings[2]?.profilePicture ? (
+                            <img 
+                              src={rankings[2]?.profilePicture} 
+                              alt={rankings[2]?.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                target.parentElement?.classList.add('fallback-icon');
+                              }}
+                            />
+                          ) : (
+                            <Award className="w-4 h-4 sm:w-6 sm:h-6" style={{ color: '#78350f' }} />
+                          )}
+                        </div>
+                        <p className="font-semibold text-[10px] sm:text-xs text-center w-full truncate px-1">
+                          {rankings[2]?.name}
+                        </p>
+                        <p className="text-xs sm:text-sm font-bold" style={{ color: '#cd7f32' }}>
+                          {rankings[2]?.completionRate.toFixed(0)}%
+                        </p>
+                        <div 
+                          className="w-full max-w-[55px] h-8 sm:h-10 rounded-t-lg flex items-center justify-center text-xs sm:text-base font-bold mt-1"
+                          style={{ background: 'linear-gradient(180deg, #cd7f32 0%, #a66628 100%)', color: '#fffbeb' }}
+                        >
+                          3rd
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* User's Standing */}
+                    {userRank && (
+                      <div 
+                        className="p-3 rounded-lg text-center"
+                        style={{
+                          background: userRank.rank <= 3 
+                            ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}15 0%, ${DESIGN_TOKENS.colors.brand.orange}15 100%)`
+                            : (isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)'),
+                          border: userRank.rank <= 3 
+                            ? `1px solid ${DESIGN_TOKENS.colors.brand.orange}40`
+                            : `1px solid ${isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+                        }}
+                      >
+                        <p className="text-xs text-muted-foreground mb-1">Your Standing</p>
+                        <div className="flex items-center justify-center gap-3">
+                          <div 
+                            className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm"
+                            style={{
+                              background: userRank.rank === 1 
+                                ? 'linear-gradient(135deg, #ffd700 0%, #ffed4a 100%)'
+                                : userRank.rank === 2 
+                                  ? 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 100%)'
+                                  : userRank.rank === 3 
+                                    ? 'linear-gradient(135deg, #cd7f32 0%, #e5a055 100%)'
+                                    : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'),
+                              color: userRank.rank === 1 ? '#92400e' : userRank.rank === 2 ? '#3f3f46' : userRank.rank === 3 ? '#78350f' : undefined,
+                            }}
+                          >
+                            {userRank.rank <= 3 ? (
+                              userRank.rank === 1 ? <Trophy className="w-4 h-4" /> :
+                              userRank.rank === 2 ? <Medal className="w-4 h-4" /> :
+                              <Award className="w-4 h-4" />
+                            ) : userRank.rank}
+                          </div>
+                          <div className="text-left">
+                            <p className="font-semibold text-sm">{userName}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Rank #{userRank.rank} of {rankings.length} • {userRank.completionRate.toFixed(2)}% completion
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-6 text-sm text-muted-foreground">
+                    <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    Not enough attendance data for rankings
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Recipient Status Alerts */}
+          {recipientAnalysis.hasDiscrepancies && (
+            <div 
+              className="px-5 py-4 border-t space-y-3"
+              style={{
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                background: isDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.01)',
+              }}
+            >
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <AlertCircle className="w-4 h-4" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                <span>Recipient Status Notes</span>
+              </div>
+              
+              {recipientAnalysis.recipientNoRecord.length > 0 && (
+                <div 
+                  className="p-3 rounded-lg"
+                  style={{
+                    background: 'rgba(245, 158, 11, 0.1)',
+                    border: '1px solid rgba(245, 158, 11, 0.25)',
+                  }}
+                >
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-1 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Events you were assigned to but have no attendance record:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {recipientAnalysis.recipientNoRecord.slice(0, 5).map((event) => (
+                      <span 
+                        key={event.EventID}
+                        className="px-2 py-0.5 rounded text-xs bg-amber-200 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300"
+                      >
+                        {event.Title.length > 25 ? event.Title.slice(0, 25) + '...' : event.Title}
+                      </span>
+                    ))}
+                    {recipientAnalysis.recipientNoRecord.length > 5 && (
+                      <span className="text-xs text-muted-foreground">
+                        +{recipientAnalysis.recipientNoRecord.length - 5} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {recipientAnalysis.attendedNotRecipient.length > 0 && (
+                <div 
+                  className="p-3 rounded-lg"
+                  style={{
+                    background: 'rgba(124, 58, 237, 0.1)',
+                    border: '1px solid rgba(124, 58, 237, 0.25)',
+                  }}
+                >
+                  <p className="text-xs font-medium text-purple-700 dark:text-purple-400 mb-1 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" /> Events you participated in (not originally assigned):
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {recipientAnalysis.attendedNotRecipient.slice(0, 5).map((record) => (
+                      <span 
+                        key={record.id}
+                        className="px-2 py-0.5 rounded text-xs bg-purple-200 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300"
+                      >
+                        {record.event.length > 25 ? record.event.slice(0, 25) + '...' : record.event}
+                      </span>
+                    ))}
+                    {recipientAnalysis.attendedNotRecipient.length > 5 && (
+                      <span className="text-xs text-muted-foreground">
+                        +{recipientAnalysis.attendedNotRecipient.length - 5} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -2320,8 +2939,9 @@ export default function AttendanceTransparencyPage({
                       fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                       color: hasNoLogout(record.timeIn, record.timeOut) ? '#f59e0b' : undefined,
                     }}
+                    className="inline-flex items-center gap-1"
                   >
-                    {hasNoLogout(record.timeIn, record.timeOut) ? 'No Logout ⚠️' : record.timeOut}
+                    {hasNoLogout(record.timeIn, record.timeOut) ? <><AlertTriangle className="w-3.5 h-3.5" />No Logout</> : record.timeOut}
                   </span>
                 </div>
               </div>
@@ -2358,7 +2978,7 @@ export default function AttendanceTransparencyPage({
                             : (timeSpentMins >= expectedMins * 0.8 ? '#f59e0b' : '#ef4444')
                         }}
                       >
-                        {Math.round((timeSpentMins / expectedMins) * 100)}%
+                        {((timeSpentMins / expectedMins) * 100).toFixed(2)}%
                       </span>
                     </div>
                   </div>
@@ -2655,7 +3275,7 @@ export default function AttendanceTransparencyPage({
                     >
                       <div className="flex items-center gap-2">
                         <Clock className="w-4 h-4" style={{ color: noLogout ? '#f59e0b' : undefined }} />
-                        {noLogout ? 'No Logout ⚠️' : record.timeOut}
+                        {noLogout ? <><AlertTriangle className="w-3.5 h-3.5" />No Logout</> : record.timeOut}
                       </div>
                     </td>
                     <td
@@ -2921,25 +3541,25 @@ export default function AttendanceTransparencyPage({
             {/* Time Out Section */}
             <div className="mb-6">
               <label
-                className="block mb-3"
+                className="mb-3 flex items-center gap-2"
                 style={{
                   fontSize: `${DESIGN_TOKENS.typography.fontSize.body}px`,
                   fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                   color: hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) ? '#f59e0b' : DESIGN_TOKENS.colors.brand.orange,
                 }}
               >
-                Time Out {hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) && '⚠️ NO LOGOUT'}
+                Time Out {hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) && <><AlertTriangle className="w-4 h-4" /> NO LOGOUT</>}
               </label>
               {hasNoLogout(selectedRecord.timeIn, selectedRecord.timeOut) && (
                 <div 
-                  className="mb-3 px-3 py-2 rounded-lg text-sm"
+                  className="mb-3 px-3 py-2 rounded-lg text-sm flex items-center gap-2"
                   style={{
                     background: 'rgba(245, 158, 11, 0.15)',
                     color: '#f59e0b',
                     border: '1px solid rgba(245, 158, 11, 0.3)',
                   }}
                 >
-                  ⚠️ This member did not log out from this event
+                  <AlertTriangle className="w-4 h-4 shrink-0" /> This member did not log out from this event
                 </div>
               )}
               <div className="flex flex-col sm:flex-row gap-4">
