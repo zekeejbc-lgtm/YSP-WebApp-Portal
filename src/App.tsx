@@ -130,6 +130,7 @@ import LoadingScreen, { type LoadingStep } from "./components/LoadingScreen";
   const MusicPlayer = lazy(() => import("./components/MusicPlayer"));
   const YSPChatBot = lazy(() => import("./components/YSPChatBot"));
   const MyQRIDPage = lazy(() => import("./components/MyQRIDPage"));
+  const AccessLogsPage = lazy(() => import("./components/AccessLogsPage"));
   import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
   import { FormattedText } from "./components/FormattedText";
   import { 
@@ -144,7 +145,6 @@ import LoadingScreen, { type LoadingStep } from "./components/LoadingScreen";
   import AnimatedHamburger from "./components/design-system/AnimatedHamburger";
   import GlowingCard from "./components/GlowingCard";
   import LazyProjectCard from "./components/LazyProjectCard";
-  import AccessLogsPage from "./components/AccessLogsPage";
   import MaintenanceScreen from "./components/MaintenanceScreen";
   import PwaInstallPrompt from "./components/PwaInstallPrompt";
   import {

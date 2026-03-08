@@ -48,11 +48,11 @@ import {
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { PageLayout, Button, SearchInput, StatusChip, DESIGN_TOKENS } from "./design-system";
 import { toast } from "sonner";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import type jsPDF from "jspdf";
 import CustomDropdown from "./CustomDropdown";
 import { logAccess, clearAllAccessLogs, clearAccessLogsByDateRange, clearSpecificAccessLogs, uploadAccessLogsPDF } from "../services/gasSystemToolsService";
 import { getSessionToken } from "../services/gasLoginService";
+import { loadPdfTools } from "../utils/exportLoaders";
 import {
   PieChart,
   Pie,
@@ -471,7 +471,8 @@ export default function AccessLogsPage({
    * Generate PDF document (shared logic for preview and export)
    */
   const generatePdfDocument = async (): Promise<jsPDF> => {
-    const doc = new jsPDF('landscape', 'mm', 'a4');
+    const { JsPDF, autoTable } = await loadPdfTools();
+    const doc = new JsPDF('landscape', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 20;

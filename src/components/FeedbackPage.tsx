@@ -8,9 +8,7 @@ import { DESIGN_TOKENS } from './design-system';
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 import { getFeedbacks, createFeedback, updateFeedback, deleteFeedback, uploadFeedbackImage, Feedback } from '../services/gasFeedbackService';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import ExcelJS from 'exceljs';
+import { loadExcelJS, loadPdfTools } from '../utils/exportLoaders';
 
 // Organization details for export
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
@@ -625,7 +623,8 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
 
   // Generate PDF Document
   const generatePDFDocument = async () => {
-    const doc = new jsPDF('portrait', 'mm', 'a4');
+    const { JsPDF, autoTable } = await loadPdfTools();
+    const doc = new JsPDF('portrait', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 15;
@@ -1194,6 +1193,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
         updateUploadToast(toastId, { message: 'Processing data...', progress: 40 });
       }
 
+      const ExcelJS = await loadExcelJS();
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Feedback Report');
 

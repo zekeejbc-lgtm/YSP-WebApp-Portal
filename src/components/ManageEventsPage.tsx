@@ -465,7 +465,6 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
   const loadEvents = useCallback(async () => {
     setIsLoading(true);
     try {
-      clearEventsCache();
       const backendEvents = await fetchEvents();
       const frontendEvents = backendEvents.map(convertToFrontendEvent);
       setEvents(frontendEvents);
@@ -743,11 +742,31 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
     toast.success("Events refreshed");
   };
 
-  const filteredEvents = events.filter(
-    (event) =>
-      event.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.id.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredEvents = useMemo(() => {
+    const normalizedQuery = searchQuery.toLowerCase();
+    return events.filter(
+      (event) =>
+        event.name.toLowerCase().includes(normalizedQuery) ||
+        event.id.toLowerCase().includes(normalizedQuery)
+    );
+  }, [events, searchQuery]);
+
+  const committeeMemberCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const member of allMembers) {
+      const normalizedCommittee = member.committee?.toLowerCase();
+      if (!normalizedCommittee) continue;
+
+      for (const committee of YSP_COMMITTEES) {
+        if (normalizedCommittee.includes(committee.name.toLowerCase())) {
+          counts.set(committee.id, (counts.get(committee.id) || 0) + 1);
+        }
+      }
+    }
+
+    return counts;
+  }, [allMembers]);
 
   const handleStatusChange = async (eventId: string, newStatus: Event['status']) => {
     const event = events.find(e => e.id === eventId);
@@ -1719,9 +1738,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                                 Committees - Click to add all members
                               </div>
                               {(universalSearchSuggestions as Committee[]).map((committee) => {
-                                const memberCount = allMembers.filter(m => 
-                                  m.committee?.toLowerCase().includes(committee.name.toLowerCase())
-                                ).length;
+                                const memberCount = committeeMemberCounts.get(committee.id) || 0;
                                 return (
                                   <button
                                     key={committee.id}

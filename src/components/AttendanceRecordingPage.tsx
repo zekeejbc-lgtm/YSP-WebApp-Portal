@@ -52,7 +52,7 @@
  * =============================================================================
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import type { Map as LeafletMap, Marker as LeafletMarker, Circle as LeafletCircle } from "leaflet";
@@ -1038,6 +1038,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
   const manuallyStoppedRef = useRef(false); // Track if scanner was manually stopped after successful scan
   const qrScanCooldownMs = 800;
   const hasPrefetchedMembersRef = useRef(false);
+  const memberRequestCacheRef = useRef<Map<string, Promise<MemberForAttendance[]>>>(new Map());
   const currentUser = getStoredUser();
   const isScannerPriorityUser = currentUser?.role === "head" || currentUser?.role === "admin" || currentUser?.role === "auditor";
   const MEMBERS_CACHE_KEY = "ysp_attendance_members_cache_v2";
@@ -1193,6 +1194,26 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     memberCacheRef.current.set(normalizedId, member);
   }, [normalizeMemberId]);
 
+  const buildMemberRequestKey = useCallback((search?: string, limit: number = 100) => {
+    const normalizedSearch = search?.trim().toLowerCase() || "";
+    return `${normalizedSearch}::${limit}`;
+  }, []);
+
+  const fetchMembersDeduped = useCallback(async (search?: string, limit: number = 100) => {
+    const requestKey = buildMemberRequestKey(search, limit);
+    const existingRequest = memberRequestCacheRef.current.get(requestKey);
+    if (existingRequest) {
+      return existingRequest;
+    }
+
+    const request = getMembersForAttendance(search, limit).finally(() => {
+      memberRequestCacheRef.current.delete(requestKey);
+    });
+
+    memberRequestCacheRef.current.set(requestKey, request);
+    return request;
+  }, [buildMemberRequestKey]);
+
   // Toast management functions
   const addUploadToast = (message: UploadToastMessage) => {
     setUploadToastMessages(prev => [...prev.filter(m => m.id !== message.id), message]);
@@ -1250,9 +1271,6 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       if (showToast) {
         updateUploadToast(toastId, { progress: 30, message: 'Connecting to server...' });
       }
-      
-      // Always clear in-memory cache to get fresh status calculation from backend
-      clearEventsCache();
       
       // Fetch events from backend - only active/scheduled events for recording
       const backendEvents = await fetchEvents(undefined, signal);
@@ -1688,7 +1706,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
           setMembers(cachedMembers);
           // If online, also fetch fresh data in background to update cache
           if (isOnline) {
-            getMembersForAttendance(search, limit).then(fetchedMembers => {
+            fetchMembersDeduped(search, limit).then(fetchedMembers => {
               fetchedMembers.forEach(cacheMember);
               saveMembersToCache(fetchedMembers);
             }).catch(() => {/* ignore background fetch errors */});
@@ -1696,7 +1714,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
           return;
         }
       }
-      const fetchedMembers = await getMembersForAttendance(search, limit);
+      const fetchedMembers = await fetchMembersDeduped(search, limit);
       fetchedMembers.forEach(cacheMember);
       setMembers(fetchedMembers);
       if (!search) {
@@ -1722,7 +1740,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         setIsLoadingMembers(false);
       }
     }
-  }, [cacheMember, isOnline, isReload, loadMembersFromCache, saveMembersToCache]);
+  }, [cacheMember, fetchMembersDeduped, isOnline, isReload, loadMembersFromCache, saveMembersToCache]);
 
   // Load recipients for the selected event when @recipients command is triggered
   const loadEventRecipients = useCallback(async () => {
@@ -1756,7 +1774,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         if (filteredRecipients.length < (recipients.ids?.length || 0) && isOnline) {
           try {
             // Fetch all members to ensure we have the complete list
-            const allMembers = await getMembersForAttendance(undefined, 1000);
+            const allMembers = await fetchMembersDeduped(undefined, 1000);
             allMembers.forEach(cacheMember);
             filteredRecipients = allMembers.filter(m => 
               recipientIds.has(m.id) || recipientNames.has(m.name.toLowerCase())
@@ -1784,7 +1802,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         // If we don't have many members, try to fetch more
         if (filteredRecipients.length < 5 && isOnline) {
           try {
-            const allMembers = await getMembersForAttendance(undefined, 1000);
+            const allMembers = await fetchMembersDeduped(undefined, 1000);
             allMembers.forEach(cacheMember);
             filteredRecipients = allMembers.filter(m => 
               recipientCommittees.has(m.committee?.toLowerCase() || '')
@@ -1809,7 +1827,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     } finally {
       setIsLoadingRecipients(false);
     }
-  }, [selectedEvent, members, isOnline, cacheMember]);
+  }, [selectedEvent, members, isOnline, cacheMember, fetchMembersDeduped]);
 
   // Handle smart search @ command selection
   const handleSelectSearchCommand = useCallback(async (command: AttendanceSearchCommand) => {
@@ -1832,7 +1850,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         try {
           let allMembers = members;
           if (members.length < 50 && isOnline) {
-            allMembers = await getMembersForAttendance(undefined, 1000);
+            allMembers = await fetchMembersDeduped(undefined, 1000);
             allMembers.forEach(cacheMember);
             setMembers(allMembers);
             saveMembersToCache(allMembers);
@@ -1861,7 +1879,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         setShowMemberDropdown(true);
         break;
     }
-  }, [loadEventRecipients, members, isOnline, cacheMember, saveMembersToCache, selectedMembers]);
+  }, [loadEventRecipients, members, isOnline, cacheMember, fetchMembersDeduped, saveMembersToCache, selectedMembers]);
   
   // Handle committee selection from @committee command
   const handleSelectCommittee = useCallback(async (committeeId: string, committeeName: string) => {
@@ -1869,7 +1887,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     try {
       let allMembers = members;
       if (members.length < 50 && isOnline) {
-        allMembers = await getMembersForAttendance(undefined, 1000);
+        allMembers = await fetchMembersDeduped(undefined, 1000);
         allMembers.forEach(cacheMember);
         setMembers(allMembers);
         saveMembersToCache(allMembers);
@@ -1900,7 +1918,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       setShowCommandSuggestions(false);
       setCommandSearchQuery('');
     }
-  }, [members, isOnline, cacheMember, saveMembersToCache, selectedMembers]);
+  }, [members, isOnline, cacheMember, fetchMembersDeduped, saveMembersToCache, selectedMembers]);
   
   // Handle batch comma/Enter input for multiple names
   const handleBatchNameInput = useCallback((input: string) => {
@@ -2062,7 +2080,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       
       // Then fetch from backend to get any new members (in background)
       if (isOnline) {
-        const fetchedMembers = await getMembersForAttendance(undefined, 1000); // Get all members
+        const fetchedMembers = await fetchMembersDeduped(undefined, 1000); // Get all members
         console.warn(`📦 Fetched ${fetchedMembers.length} members from backend`);
         
         // Cache each member in memory
@@ -2087,6 +2105,35 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       }
     }
   };
+
+  const selectedMemberIds = useMemo(
+    () => new Set(selectedMembers.map((member) => member.id)),
+    [selectedMembers]
+  );
+
+  const filteredMembers = useMemo(() => {
+    const query = memberSearchInput.toLowerCase();
+    return members.filter(member =>
+      member.name.toLowerCase().includes(query) ||
+      member.committee.toLowerCase().includes(query) ||
+      member.id.toLowerCase().includes(query)
+    );
+  }, [memberSearchInput, members]);
+
+  const availableFilteredMembers = useMemo(
+    () => filteredMembers.filter((member) => !selectedMemberIds.has(member.id)),
+    [filteredMembers, selectedMemberIds]
+  );
+
+  const activeEvents = useMemo(
+    () => events.filter((event) => event.status !== 'completed' && event.status !== 'cancelled'),
+    [events]
+  );
+
+  const archivedEvents = useMemo(
+    () => events.filter((event) => event.status === 'completed' || event.status === 'cancelled'),
+    [events]
+  );
 
   const handleModeSelect = (mode: Mode) => {
     setSelectedMode(mode);
@@ -2219,13 +2266,6 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     setIsLoadingMembers(false);
   };
 
-  // Filter members based on search input
-  const filteredMembers = members.filter(member => 
-    member.name.toLowerCase().includes(memberSearchInput.toLowerCase()) ||
-    member.committee.toLowerCase().includes(memberSearchInput.toLowerCase()) ||
-    member.id.toLowerCase().includes(memberSearchInput.toLowerCase())
-  );
-
   // Process QR code scan result - with offline support
   const processQRScan = async (scannedData: string) => {
     if (!selectedEvent) {
@@ -2272,7 +2312,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
       // Only fetch from backend if online and not found in cache
       if (!member && isOnline) {
         try {
-          const fetchedMembers = await getMembersForAttendance(memberId, 1);
+          const fetchedMembers = await fetchMembersDeduped(memberId, 1);
           if (fetchedMembers.length > 0) {
             member = fetchedMembers[0];
             cacheMember(member);
@@ -3266,9 +3306,6 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
             <>
               {/* Filter events into active and archived */}
               {(() => {
-                const activeEvents = events.filter(e => e.status !== 'completed' && e.status !== 'cancelled');
-                const archivedEvents = events.filter(e => e.status === 'completed' || e.status === 'cancelled');
-                
                 return (
                   <>
                     {/* Active Events Section */}
@@ -4093,7 +4130,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                           m.id.toLowerCase() === searchTerm.toLowerCase() ||
                           m.name.toLowerCase().includes(searchTerm.toLowerCase())
                         );
-                        if (foundMember && !selectedMembers.find(sm => sm.id === foundMember.id)) {
+                        if (foundMember && !selectedMemberIds.has(foundMember.id)) {
                           setSelectedMembers(prev => [...prev, foundMember]);
                           setMemberSearchInput('');
                           toast.success(`Added: ${foundMember.name}`, { duration: 1500 });
@@ -4155,7 +4192,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                         m.id.toLowerCase() === searchTerm.toLowerCase() ||
                         m.name.toLowerCase().includes(searchTerm.toLowerCase())
                       );
-                      if (foundMember && !selectedMembers.find(sm => sm.id === foundMember.id)) {
+                      if (foundMember && !selectedMemberIds.has(foundMember.id)) {
                         setSelectedMembers(prev => [...prev, foundMember]);
                         setMemberSearchInput('');
                         setShowMemberDropdown(false);
@@ -4545,8 +4582,8 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
                       <Loader2 className="w-4 h-4 animate-spin" />
                       Loading members...
                     </div>
-                  ) : filteredMembers.filter(m => !selectedMembers.find(sm => sm.id === m.id)).length > 0 ? (
-                    filteredMembers.filter(m => !selectedMembers.find(sm => sm.id === m.id)).slice(0, 10).map((member) => (
+                  ) : availableFilteredMembers.length > 0 ? (
+                    availableFilteredMembers.slice(0, 10).map((member) => (
                       <button
                         key={member.id}
                         onClick={() => {

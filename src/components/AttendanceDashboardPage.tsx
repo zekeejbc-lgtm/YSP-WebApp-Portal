@@ -23,16 +23,17 @@ import {
 import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown, ExternalLink, Smartphone, Search, User, Calendar, Clock, CheckCircle2, AlertCircle, X, ChevronUp, Timer, ToggleLeft, ToggleRight, Trophy, Medal, Award, Sparkles } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance, getMemberAttendanceHistory } from "../services/gasAttendanceService";
-import jsPDF from "jspdf";
-import autoTable, { CellHookData } from "jspdf-autotable";
-import ExcelJS from 'exceljs';
+import type jsPDF from "jspdf";
+import type { CellHookData } from "jspdf-autotable";
 import { YSP_COMMITTEE_NAMES } from "../constants/committees";
+import { loadExcelJS, loadPdfTools } from "../utils/exportLoaders";
 
 // Organization Logo URL
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
 const ORG_NAME = "Youth Service Philippines";
 const ORG_CHAPTER = "Tagum Chapter";
 const ORG_MOTTO = "Shaping the Future to a Greater Society";
+const PRESENT_STATUSES = new Set(['Present', 'CheckedIn', 'CheckedOut']);
 
 // Extended member type that includes attendance flags for modal display
 interface ModalMemberData extends MemberForAttendance {
@@ -505,6 +506,8 @@ export default function AttendanceDashboardPage({
   const [isLoadingRankingsData, setIsLoadingRankingsData] = useState(false);
   const [rankingsPage, setRankingsPage] = useState(1);
   const [rankingsVisibleRows, setRankingsVisibleRows] = useState(5);
+  const attendanceCacheRef = useRef<Map<string, AttendanceRecord[]>>(new Map());
+  const attendanceRequestCacheRef = useRef<Map<string, Promise<AttendanceRecord[]>>>(new Map());
   
   // Toggle event inclusion for person participation time
   const togglePersonEventInclusion = useCallback((eventId: string) => {
@@ -517,6 +520,48 @@ export default function AttendanceDashboardPage({
       }
       return newSet;
     });
+  }, []);
+
+  const fetchAttendanceRecordsDeduped = useCallback(async (eventId: string) => {
+    const cachedRecords = attendanceCacheRef.current.get(eventId);
+    if (cachedRecords) {
+      return cachedRecords;
+    }
+
+    const existingRequest = attendanceRequestCacheRef.current.get(eventId);
+    if (existingRequest) {
+      return existingRequest;
+    }
+
+    const request = getEventAttendanceRecords(eventId)
+      .then((records) => {
+        attendanceCacheRef.current.set(eventId, records);
+        return records;
+      })
+      .finally(() => {
+        attendanceRequestCacheRef.current.delete(eventId);
+      });
+
+    attendanceRequestCacheRef.current.set(eventId, request);
+    return request;
+  }, []);
+
+  const summarizeAttendanceRecords = useCallback((records: AttendanceRecord[]) => {
+    const summary = { present: 0, late: 0, excused: 0, absent: 0 };
+
+    for (const record of records) {
+      if (PRESENT_STATUSES.has(record.status)) {
+        summary.present++;
+      } else if (record.status === 'Late') {
+        summary.late++;
+      } else if (record.status === 'Excused') {
+        summary.excused++;
+      } else if (record.status === 'Absent') {
+        summary.absent++;
+      }
+    }
+
+    return summary;
   }, []);
 
   // Calculate person volunteering time stats
@@ -666,17 +711,17 @@ export default function AttendanceDashboardPage({
         return;
       }
 
-      setIsLoadingAttendance(true);
-      try {
-        if (effectiveEvents.length === 1) {
-          const records = await getEventAttendanceRecords(effectiveEvents[0]);
-          setAttendanceRecords(records);
-          setMultiEventRecords(new Map([[effectiveEvents[0], records]]));
-        } else {
-          // Load attendance for multiple events in PARALLEL for better performance
-          const recordsPromises = effectiveEvents.map(eventId => 
-            getEventAttendanceRecords(eventId).then(records => ({ eventId, records }))
-          );
+        setIsLoadingAttendance(true);
+        try {
+          if (effectiveEvents.length === 1) {
+          const records = await fetchAttendanceRecordsDeduped(effectiveEvents[0]);
+           setAttendanceRecords(records);
+           setMultiEventRecords(new Map([[effectiveEvents[0], records]]));
+         } else {
+           // Load attendance for multiple events in PARALLEL for better performance
+           const recordsPromises = effectiveEvents.map(eventId => 
+            fetchAttendanceRecordsDeduped(eventId).then(records => ({ eventId, records }))
+           );
           
           const results = await Promise.all(recordsPromises);
           
@@ -702,28 +747,25 @@ export default function AttendanceDashboardPage({
     };
 
     loadAttendance();
-  }, [selectedEventIds]);
+  }, [fetchAttendanceRecordsDeduped, selectedEventIds]);
 
   // Fetch attendance records for rankings modal (loads ALL events data)
   useEffect(() => {
     const loadRankingsAttendance = async () => {
       if (!showRankingsModal || events.length === 0) return;
       
-      // If we already have data for all events, skip
-      if (rankingsAttendanceRecords.length > 0) return;
-      
       setIsLoadingRankingsData(true);
       try {
         // Load attendance for all events (limit to first 50 events for performance)
         const eventsToLoad = events.slice(0, 50);
-        const recordsPromises = eventsToLoad.map(event => 
-          getEventAttendanceRecords(event.EventID)
-            .then(records => records)
-            .catch(() => [] as AttendanceRecord[])
+        const cachedRecords = eventsToLoad.flatMap((event) => attendanceCacheRef.current.get(event.EventID) || []);
+        const missingEvents = eventsToLoad.filter((event) => !attendanceCacheRef.current.has(event.EventID));
+        const recordsPromises = missingEvents.map((event) =>
+          fetchAttendanceRecordsDeduped(event.EventID).catch(() => [] as AttendanceRecord[])
         );
         
         const allResults = await Promise.all(recordsPromises);
-        const allRecords: AttendanceRecord[] = [];
+        const allRecords: AttendanceRecord[] = [...cachedRecords];
         allResults.forEach(records => {
           allRecords.push(...records);
         });
@@ -737,7 +779,7 @@ export default function AttendanceDashboardPage({
     };
 
     loadRankingsAttendance();
-  }, [showRankingsModal, events, rankingsAttendanceRecords.length]);
+  }, [events, fetchAttendanceRecordsDeduped, showRankingsModal]);
 
   // Determine recommended chart type based on selection
   const getRecommendedChartType = useCallback((): "pie" | "donut" | "bar" | "line" | "column" => {
@@ -763,10 +805,7 @@ export default function AttendanceDashboardPage({
 
       const filtered = getFilteredAttendance();
       const currentNotRecordedMembers = getNotRecordedMembers();
-      const present = filtered.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
-      const late = filtered.filter(r => r.status === 'Late').length;
-      const excused = filtered.filter(r => r.status === 'Excused').length;
-      const absent = filtered.filter(r => r.status === 'Absent').length;
+      const { present, late, excused, absent } = summarizeAttendanceRecords(filtered);
       const totalRecorded = present + late + excused + absent;
 
       const context: AttendanceDashboardContext = {
@@ -813,6 +852,12 @@ export default function AttendanceDashboardPage({
     allMembers.forEach(member => map.set(member.id, member));
     return map;
   }, [allMembers]);
+
+  const eventsLookupMap = useMemo(() => {
+    const map = new Map<string, EventData>();
+    events.forEach((event) => map.set(event.EventID, event));
+    return map;
+  }, [events]);
 
   // ============= PERSON SEARCH HELPERS =============
   // Filtered members for person search dropdown
@@ -1098,8 +1143,10 @@ export default function AttendanceDashboardPage({
       toast.error('No rankings to export');
       return;
     }
+
+    const { JsPDF, autoTable } = await loadPdfTools();
     
-    const doc = new jsPDF('portrait', 'mm', 'a4');
+    const doc = new JsPDF('portrait', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 15;
@@ -1410,7 +1457,7 @@ export default function AttendanceDashboardPage({
   }, [percentageRankings, rankingsFilterType, rankingsSelectedEventIds, rankingsSelectedCommittee, events]);
 
   // Get members who were not recorded in attendance
-  const getNotRecordedMembers = useCallback((): MemberForAttendance[] => {
+  const notRecordedMembersMemo = useMemo((): MemberForAttendance[] => {
     const recordedMemberIds = new Set(attendanceRecords.map(r => r.memberId));
     
     return allMembers.filter(member => 
@@ -1419,7 +1466,7 @@ export default function AttendanceDashboardPage({
   }, [attendanceRecords, allMembers, matchesCommitteeFilter]);
 
   // Filter attendance by committee - optimized with Map lookup
-  const getFilteredAttendance = useCallback(() => {
+  const filteredAttendanceMemo = useMemo(() => {
     if (selectedCommittee === "All") {
       return attendanceRecords;
     }
@@ -1430,21 +1477,54 @@ export default function AttendanceDashboardPage({
     });
   }, [attendanceRecords, memberLookupMap, selectedCommittee, matchesCommitteeFilter]);
 
-  // Calculate attendance data for charts
-  const getAttendanceData = useCallback(() => {
-    const filtered = getFilteredAttendance();
-    const present = filtered.filter((r) => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
-    const late = filtered.filter((r) => r.status === 'Late').length;
-    const excused = filtered.filter((r) => r.status === 'Excused').length;
-    const absent = filtered.filter((r) => r.status === 'Absent').length;
+  const filteredAttendanceSummary = useMemo(
+    () => summarizeAttendanceRecords(filteredAttendanceMemo),
+    [filteredAttendanceMemo, summarizeAttendanceRecords]
+  );
 
+  const attendanceDataMemo = useMemo(() => {
     return [
-      { name: "Present", value: present, color: "#10b981" },
-      { name: "Late", value: late, color: "#f59e0b" },
-      { name: "Excused", value: excused, color: "#3b82f6" },
-      { name: "Absent", value: absent, color: "#ef4444" },
-    ].filter((item) => item.value > 0); // Only show categories with values
-  }, [getFilteredAttendance]);
+      { name: "Present", value: filteredAttendanceSummary.present, color: "#10b981" },
+      { name: "Late", value: filteredAttendanceSummary.late, color: "#f59e0b" },
+      { name: "Excused", value: filteredAttendanceSummary.excused, color: "#3b82f6" },
+      { name: "Absent", value: filteredAttendanceSummary.absent, color: "#ef4444" },
+    ].filter((item) => item.value > 0);
+  }, [filteredAttendanceSummary]);
+
+  const multiEventChartDataMemo = useMemo(() => {
+    return selectedEventIds.map(eventId => {
+      const event = eventsLookupMap.get(eventId);
+      const eventRecords = multiEventRecords.get(eventId) || [];
+      const summary = summarizeAttendanceRecords(eventRecords);
+      
+      return {
+        event: event?.Title?.substring(0, 15) || 'Unknown',
+        fullTitle: event?.Title || 'Unknown',
+        date: event?.StartDate ? formatDateValue(event.StartDate) : '-',
+        Present: summary.present,
+        Late: summary.late,
+        Excused: summary.excused,
+        Absent: summary.absent,
+        Total: summary.present + summary.late + summary.excused + summary.absent,
+      };
+    });
+  }, [eventsLookupMap, multiEventRecords, selectedEventIds, summarizeAttendanceRecords]);
+
+  const columnChartDataMemo = useMemo(() => {
+    return [
+      { status: 'Present', count: filteredAttendanceSummary.present, color: '#10b981' },
+      { status: 'Late', count: filteredAttendanceSummary.late, color: '#f59e0b' },
+      { status: 'Excused', count: filteredAttendanceSummary.excused, color: '#3b82f6' },
+      { status: 'Absent', count: filteredAttendanceSummary.absent, color: '#ef4444' },
+    ];
+  }, [filteredAttendanceSummary]);
+
+  const getNotRecordedMembers = useCallback(() => notRecordedMembersMemo, [notRecordedMembersMemo]);
+
+  const getFilteredAttendance = useCallback(() => filteredAttendanceMemo, [filteredAttendanceMemo]);
+
+  // Calculate attendance data for charts
+  const getAttendanceData = useCallback(() => attendanceDataMemo, [attendanceDataMemo]);
 
   // Calculate bar chart data by committee - optimized with Map lookup
   const getBarChartData = useCallback(() => {
@@ -1479,46 +1559,10 @@ export default function AttendanceDashboardPage({
   }, [attendanceRecords, memberLookupMap]);
 
   // Calculate multi-event chart data (for line/bar across events)
-  const getMultiEventChartData = useCallback(() => {
-    const effectiveEvents = getEffectiveSelectedEvents();
-    
-    return effectiveEvents.map(eventId => {
-      const event = events.find(e => e.EventID === eventId);
-      const eventRecords = multiEventRecords.get(eventId) || [];
-      
-      const present = eventRecords.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
-      const late = eventRecords.filter(r => r.status === 'Late').length;
-      const excused = eventRecords.filter(r => r.status === 'Excused').length;
-      const absent = eventRecords.filter(r => r.status === 'Absent').length;
-      
-      return {
-        event: event?.Title?.substring(0, 15) || 'Unknown',
-        fullTitle: event?.Title || 'Unknown',
-        date: event?.StartDate ? formatDateValue(event.StartDate) : '-',
-        Present: present,
-        Late: late,
-        Excused: excused,
-        Absent: absent,
-        Total: present + late + excused + absent,
-      };
-    });
-  }, [getEffectiveSelectedEvents, events, multiEventRecords]);
+  const getMultiEventChartData = useCallback(() => multiEventChartDataMemo, [multiEventChartDataMemo]);
 
   // Get column chart data for single event (status distribution)
-  const getColumnChartData = useCallback(() => {
-    const filtered = getFilteredAttendance();
-    const present = filtered.filter(r => r.status === 'Present' || r.status === 'CheckedIn' || r.status === 'CheckedOut').length;
-    const late = filtered.filter(r => r.status === 'Late').length;
-    const excused = filtered.filter(r => r.status === 'Excused').length;
-    const absent = filtered.filter(r => r.status === 'Absent').length;
-    
-    return [
-      { status: 'Present', count: present, color: '#10b981' },
-      { status: 'Late', count: late, color: '#f59e0b' },
-      { status: 'Excused', count: excused, color: '#3b82f6' },
-      { status: 'Absent', count: absent, color: '#ef4444' },
-    ];
-  }, [getFilteredAttendance]);
+  const getColumnChartData = useCallback(() => columnChartDataMemo, [columnChartDataMemo]);
 
   // Get members by status for modal - optimized with Map lookup, includes external/late flags
   const getMembersByStatus = useCallback((status: string): ModalMemberData[] => {
@@ -1600,7 +1644,8 @@ export default function AttendanceDashboardPage({
     }
     
     try {
-      const doc = new jsPDF('portrait', 'mm', 'a4');
+      const { JsPDF, autoTable } = await loadPdfTools();
+      const doc = new JsPDF('portrait', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 15;
@@ -2037,7 +2082,8 @@ export default function AttendanceDashboardPage({
       await new Promise(resolve => setTimeout(resolve, 100));
       if (cancelled) return;
 
-      const doc = new jsPDF('portrait', 'mm', 'a4');
+      const { JsPDF, autoTable } = await loadPdfTools();
+      const doc = new JsPDF('portrait', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 15;
@@ -2959,6 +3005,7 @@ export default function AttendanceDashboardPage({
       if (cancelled) return;
 
       // Create workbook and worksheet
+      const ExcelJS = await loadExcelJS();
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Attendance Report');
 

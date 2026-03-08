@@ -14,14 +14,13 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Search, UserPlus, Eye, Edit, Mail, CheckCircle, Clock, X, LayoutGrid, Table as TableIcon, User, Phone, MapPin } from "lucide-react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
 import { PageLayout, Button, DESIGN_TOKENS } from "./design-system";
 import { AddMemberModal, EditMemberModal, ViewMemberModal, type Member } from "./ManageMembersModals";
 import AccountCreationModal from "./AccountCreationModal";
 import CustomDropdown from "./CustomDropdown";
 import { UploadToastContainer, type UploadToastMessage } from "./UploadToast";
+import { loadPdfTools } from "../utils/exportLoaders";
 import {
   getAllOfficers,
   searchOfficers,
@@ -1138,8 +1137,10 @@ export default function ManageMembersPage({
       return;
     }
 
+    const { JsPDF, autoTable } = await loadPdfTools();
+
     // Initialize in Landscape mode
-    const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
+    const doc = new JsPDF({ orientation: 'landscape', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth(); // ~297mm
     const pageHeight = doc.internal.pageSize.getHeight(); // ~210mm
     const margin = 14;
@@ -1431,8 +1432,9 @@ export default function ManageMembersPage({
   };
 
   const handleDownloadApplicationPDF = async (application: PendingApplication) => {
+    const { JsPDF, autoTable } = await loadPdfTools();
     const data = application.fullData;
-    const doc = new jsPDF({ orientation: "portrait", format: "a4" });
+    const doc = new JsPDF({ orientation: "portrait", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 20;
