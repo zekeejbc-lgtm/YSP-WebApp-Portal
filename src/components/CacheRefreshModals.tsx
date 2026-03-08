@@ -9,13 +9,13 @@
  * Components:
  * - CacheRefreshModal: Prompts user to hard refresh when cache version changes
  * - RoleChangeModal: Notifies user of role changes (promotion, demotion, suspension, etc.)
- * - determineRoleChangeType: Helper function to determine the type of role change
  * =============================================================================
  */
 
 import { X, RefreshCw, AlertTriangle, LogIn } from "lucide-react";
 import { DESIGN_TOKENS, Button } from "./design-system";
 import { MODAL_REGULATIONS, getHeaderGradient, getModalStyles } from "./modal-regulations";
+import { determineRoleChangeType, type RoleChangeType } from "../utils/roleChange";
 
 // =================== CACHE REFRESH MODAL ===================
 
@@ -253,14 +253,6 @@ export function SessionRecoveryModal({
 
 // =================== ROLE CHANGE MODAL ===================
 
-export type RoleChangeType = 
-  | 'promoted'      // User was promoted to a higher role
-  | 'demoted'       // User was demoted to a lower role
-  | 'suspended'     // User account was suspended
-  | 'banned'        // User account was banned
-  | 'reactivated'   // User account was reactivated from suspended/banned
-  | 'changed';      // General role change
-
 export interface RoleChangeModalProps {
   isOpen: boolean;
   isDark: boolean;
@@ -326,39 +318,6 @@ function getRoleChangeContent(changeType: RoleChangeType, oldRole: string, newRo
   };
   
   return contents[changeType];
-}
-
-/**
- * Determine the type of role change
- */
-export function determineRoleChangeType(oldRole: string, newRole: string): RoleChangeType {
-  const rolePriority: Record<string, number> = {
-    'banned': 0,
-    'suspended': 1,
-    'guest': 2,
-    'member': 3,
-    'head': 4,
-    'admin': 5,
-    'auditor': 6,
-  };
-  
-  const oldPriority = rolePriority[oldRole] ?? 3;
-  const newPriority = rolePriority[newRole] ?? 3;
-  
-  // Special cases for suspended/banned
-  if (newRole === 'banned') return 'banned';
-  if (newRole === 'suspended') return 'suspended';
-  
-  // Reactivated from banned/suspended
-  if ((oldRole === 'banned' || oldRole === 'suspended') && newRole !== 'banned' && newRole !== 'suspended') {
-    return 'reactivated';
-  }
-  
-  // Promoted or demoted
-  if (newPriority > oldPriority) return 'promoted';
-  if (newPriority < oldPriority) return 'demoted';
-  
-  return 'changed';
 }
 
 export function RoleChangeModal({ 
@@ -537,3 +496,6 @@ export function RoleChangeModal({
     </div>
   );
 }
+
+export { determineRoleChangeType };
+export type { RoleChangeType };

@@ -28,7 +28,7 @@ import {
 import { clearUserProfileCache } from '../services/localStorageCache';
 import { secureGetItem, secureSetItem, secureRemoveItem, clearSecureSessionStorage } from '../utils/secureStorage';
 import { toast } from 'sonner';
-import { determineRoleChangeType, type RoleChangeType } from '../components/CacheRefreshModals';
+import { determineRoleChangeType, type RoleChangeType } from '../utils/roleChange';
 
 function inferRoleLevel(roleValue: string): number {
   const role = String(roleValue || '').toLowerCase().trim();

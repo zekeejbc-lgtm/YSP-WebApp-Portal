@@ -155,6 +155,36 @@ export default defineConfig({
     build: {
         target: 'esnext',
         outDir: 'build',
+        sourcemap: 'hidden',
+        cssCodeSplit: true,
+        reportCompressedSize: true,
+        chunkSizeWarningLimit: 1200,
+        rollupOptions: {
+            output: {
+                manualChunks: (id) => {
+                    if (id.includes('node_modules')) {
+                        if (id.includes('react-dom') || id.includes('/react/')) {
+                            return 'vendor-react';
+                        }
+                        if (id.includes('@radix-ui')) {
+                            return 'vendor-radix';
+                        }
+                        if (id.includes('lucide-react')) {
+                            return 'vendor-icons';
+                        }
+                        if (id.includes('recharts') || id.includes('d3-')) {
+                            return 'vendor-charts';
+                        }
+                        if (id.includes('qr') || id.includes('jsqr') || id.includes('qrcode')) {
+                            return 'vendor-qr';
+                        }
+                        if (id.includes('exceljs')) {
+                            return 'vendor-exceljs';
+                        }
+                    }
+                },
+            },
+        },
     },
     server: {
         port: 3000,

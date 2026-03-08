@@ -94,15 +94,12 @@
   stopCacheVersionPolling,
 } from "./services/gasSystemToolsService";
   // 👈 ADD THIS IMPORT
-import { CacheRefreshModal, RoleChangeModal, SessionRecoveryModal, determineRoleChangeType, type RoleChangeType } from "./components/CacheRefreshModals";
+import { determineRoleChangeType, type RoleChangeType } from "./utils/roleChange";
   import { ImageWithFallback } from "./components/figma/ImageWithFallback";
   import { toast, Toaster } from "sonner";
   import { Helmet } from 'react-helmet-async';
-import MusicPlayer from "./components/MusicPlayer";
-import YSPChatBot from "./components/YSPChatBot"; // 👈 Add this import
 import type { AttendanceDashboardContext } from "./components/AttendanceDashboardPage";
 import LoadingScreen, { type LoadingStep } from "./components/LoadingScreen";
-import MyQRIDPage from "./components/MyQRIDPage";
   const LoginPanel = lazy(() => import("./components/LoginPanel"));
   const FeedbackPage = lazy(() => import("./components/FeedbackPage"));
   const OfficerDirectoryPage = lazy(() => import("./components/OfficerDirectoryPage"));
@@ -121,6 +118,18 @@ import MyQRIDPage from "./components/MyQRIDPage";
   const KaagapAIMeetPage = lazy(() => import("./components/KaagapAIMeetPage"));
   const FounderModal = lazy(() => import("./components/FounderModal"));
   const DeveloperModal = lazy(() => import("./components/DeveloperModal"));
+  const CacheRefreshModal = lazy(() =>
+    import("./components/CacheRefreshModals").then((module) => ({ default: module.CacheRefreshModal }))
+  );
+  const SessionRecoveryModal = lazy(() =>
+    import("./components/CacheRefreshModals").then((module) => ({ default: module.SessionRecoveryModal }))
+  );
+  const RoleChangeModal = lazy(() =>
+    import("./components/CacheRefreshModals").then((module) => ({ default: module.RoleChangeModal }))
+  );
+  const MusicPlayer = lazy(() => import("./components/MusicPlayer"));
+  const YSPChatBot = lazy(() => import("./components/YSPChatBot"));
+  const MyQRIDPage = lazy(() => import("./components/MyQRIDPage"));
   import { UploadToastContainer, type UploadToastMessage } from "./components/UploadToast";
   import { FormattedText } from "./components/FormattedText";
   import { 
@@ -3547,17 +3556,19 @@ export default function App() {
 
     const chatbot = (
       <>
-        <YSPChatBot
-          userRole={userRole}
-          orgChartUrl={orgChartUrl}
-          onOfficerDirectorySearch={handleOfficerDirectorySearch}
-          onRequestCacheClear={handleRequestCacheClear}
-          currentPage={activePage}
-          hidden={chatbotForceHidden}
-          onTriggerEditMode={handleTriggerProfileEditMode}
-          attendanceDashboardContext={attendanceDashboardContext}
-          isDark={isDark}
-        />
+        <Suspense fallback={null}>
+          <YSPChatBot
+            userRole={userRole}
+            orgChartUrl={orgChartUrl}
+            onOfficerDirectorySearch={handleOfficerDirectorySearch}
+            onRequestCacheClear={handleRequestCacheClear}
+            currentPage={activePage}
+            hidden={chatbotForceHidden}
+            onTriggerEditMode={handleTriggerProfileEditMode}
+            attendanceDashboardContext={attendanceDashboardContext}
+            isDark={isDark}
+          />
+        </Suspense>
         {showLoginPrepLoader && (
           <LoadingScreen
             isDark={false}
@@ -3925,13 +3936,15 @@ export default function App() {
       return (
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
-          <MyQRIDPage 
-            onClose={() => setShowMyQRID(false)} 
-            isDark={isDark}
-            addUploadToast={addUploadToast}
-            updateUploadToast={updateUploadToast}
-            removeUploadToast={removeUploadToast}
-          />
+          <Suspense fallback={getPageLoadingFallback("My QR ID")}>
+            <MyQRIDPage 
+              onClose={() => setShowMyQRID(false)} 
+              isDark={isDark}
+              addUploadToast={addUploadToast}
+              updateUploadToast={updateUploadToast}
+              removeUploadToast={removeUploadToast}
+            />
+          </Suspense>
           <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
           {chatbot}
         </>
@@ -4318,30 +4331,32 @@ export default function App() {
             />
           </Suspense>
           <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
-          <CacheRefreshModal
-            isOpen={showCacheRefreshModal}
-            isDark={isDark}
-            onConfirm={handleConfirmHardRefresh}
-            onClose={handleDismissHardRefresh}
-          />
-          <SessionRecoveryModal
-            isOpen={showSessionRecoveryModal}
-            isDark={isDark}
-            onRelogin={handleReloginFromSessionRecovery}
-            onHardRefresh={handleHardRefreshFromSessionRecovery}
-          />
-          {roleChangeInfo && (
-            <RoleChangeModal
-              isOpen={showRoleChangeModal}
+          <Suspense fallback={null}>
+            <CacheRefreshModal
+              isOpen={showCacheRefreshModal}
               isDark={isDark}
-              changeType={roleChangeInfo.changeType}
-              oldRole={roleChangeInfo.oldRole}
-              newRole={roleChangeInfo.newRole}
-              userName={userName}
-              onConfirm={handleConfirmRoleChange}
-              onClose={handleDismissRoleChange}
+              onConfirm={handleConfirmHardRefresh}
+              onClose={handleDismissHardRefresh}
             />
-          )}
+            <SessionRecoveryModal
+              isOpen={showSessionRecoveryModal}
+              isDark={isDark}
+              onRelogin={handleReloginFromSessionRecovery}
+              onHardRefresh={handleHardRefreshFromSessionRecovery}
+            />
+            {roleChangeInfo && (
+              <RoleChangeModal
+                isOpen={showRoleChangeModal}
+                isDark={isDark}
+                changeType={roleChangeInfo.changeType}
+                oldRole={roleChangeInfo.oldRole}
+                newRole={roleChangeInfo.newRole}
+                userName={userName}
+                onConfirm={handleConfirmRoleChange}
+                onClose={handleDismissRoleChange}
+              />
+            )}
+          </Suspense>
           {chatbot}
         </>
       );
@@ -4409,12 +4424,14 @@ export default function App() {
         <PwaInstallPrompt enabled={!isAdmin && activePage === "home"} delayMs={800} />
 
         {/* Music Player */}
-        <MusicPlayer
-          themeSongUrl={themeSongUrl}
-          themeSongTitle={themeSongTitle}
-          isVisible={Boolean(themeSongUrl) && !isAdmin}
-          isDark={isDark}
-        />
+        <Suspense fallback={null}>
+          <MusicPlayer
+            themeSongUrl={themeSongUrl}
+            themeSongTitle={themeSongTitle}
+            isVisible={Boolean(themeSongUrl) && !isAdmin}
+            isDark={isDark}
+          />
+        </Suspense>
 
         {/* Top Bar - Floating Header - Only on Homepage */}
         {!showOfficerDirectory && !showAttendanceDashboard && !showAttendanceRecording && 
@@ -6592,32 +6609,34 @@ export default function App() {
         )}
 
 {/* 👈 ADD THIS: Global Cache Refresh Modal */}
-        <CacheRefreshModal
-          isOpen={showCacheRefreshModal}
-          isDark={isDark}
-          onConfirm={handleConfirmHardRefresh}
-          onClose={handleDismissHardRefresh}
-        />
-        <SessionRecoveryModal
-          isOpen={showSessionRecoveryModal}
-          isDark={isDark}
-          onRelogin={handleReloginFromSessionRecovery}
-          onHardRefresh={handleHardRefreshFromSessionRecovery}
-        />
+        <Suspense fallback={null}>
+          <CacheRefreshModal
+            isOpen={showCacheRefreshModal}
+            isDark={isDark}
+            onConfirm={handleConfirmHardRefresh}
+            onClose={handleDismissHardRefresh}
+          />
+          <SessionRecoveryModal
+            isOpen={showSessionRecoveryModal}
+            isDark={isDark}
+            onRelogin={handleReloginFromSessionRecovery}
+            onHardRefresh={handleHardRefreshFromSessionRecovery}
+          />
 
 {/* 👈 Role Change Modal - Shown when user's role is changed by admin */}
-        {roleChangeInfo && (
-          <RoleChangeModal
-            isOpen={showRoleChangeModal}
-            isDark={isDark}
-            changeType={roleChangeInfo.changeType}
-            oldRole={roleChangeInfo.oldRole}
-            newRole={roleChangeInfo.newRole}
-            userName={userName}
-            onConfirm={handleConfirmRoleChange}
-            onClose={handleDismissRoleChange}
-          />
-        )}
+          {roleChangeInfo && (
+            <RoleChangeModal
+              isOpen={showRoleChangeModal}
+              isDark={isDark}
+              changeType={roleChangeInfo.changeType}
+              oldRole={roleChangeInfo.oldRole}
+              newRole={roleChangeInfo.newRole}
+              userName={userName}
+              onConfirm={handleConfirmRoleChange}
+              onClose={handleDismissRoleChange}
+            />
+          )}
+        </Suspense>
 
 {/* YSP AI Chatbot */}
         {chatbot}
