@@ -642,6 +642,7 @@ export default function EmailSystemPage({
       data.Venue = recipient.Venue || '';
       data.Amount = recipient.Amount || '';
       data.Link = recipient.Link || '';
+      data.RegistrationLink = recipient.RegistrationLink || '';
       data.Attachments = recipient.Attachments || '';
     }
     
@@ -1028,6 +1029,7 @@ export default function EmailSystemPage({
             Venue: '',
             Amount: '',
             Link: '',
+            RegistrationLink: '',
             Attachments: '',
           });
           successCount++;
@@ -1080,6 +1082,7 @@ export default function EmailSystemPage({
         Amount: formData.Amount,
         OldPosition: formData.OldPosition,
         Link: formData.Link,
+        RegistrationLink: formData.RegistrationLink,
         Attachments: formData.Attachments,
       });
 
@@ -1139,6 +1142,7 @@ export default function EmailSystemPage({
         Amount: formData.Amount,
         OldPosition: formData.OldPosition,
         Link: formData.Link,
+        RegistrationLink: formData.RegistrationLink,
         Attachments: formData.Attachments,
       });
 
@@ -3203,6 +3207,23 @@ export default function EmailSystemPage({
                   }}
                 />
               </div>
+
+              {selectedTemplate === 'Event_Invites' && (
+                <div>
+                  <label className="block text-sm font-medium mb-1.5">Registration Link</label>
+                  <input
+                    type="url"
+                    value={formData.RegistrationLink || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, RegistrationLink: e.target.value }))}
+                    placeholder="https://..."
+                    className="w-full px-4 py-2.5 rounded-xl border transition-colors focus:outline-none focus:ring-2"
+                    style={{
+                      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                      background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.8)',
+                    }}
+                  />
+                </div>
+              )}
 
               {/* Attachments */}
               <div>

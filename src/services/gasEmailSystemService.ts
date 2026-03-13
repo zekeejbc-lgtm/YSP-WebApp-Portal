@@ -51,6 +51,7 @@ export interface EmailRecipient {
   Amount?: string;
   OldPosition?: string;  // For Appointments template (position transitions)
   Link?: string;
+  RegistrationLink?: string;
   Attachments?: string;
   Status: string;
   Response?: string;
@@ -124,7 +125,7 @@ export const EMAIL_TEMPLATES: Record<EmailTemplateType, EmailTemplate> = {
   'Event_Invites': {
     code: 'EI',
     name: 'Event Invites',
-    headers: ['Recipient Name', 'Email', 'Event Name', 'Message', 'Date', 'Time', 'Venue', 'RSVP Link', 'Attachments'],
+    headers: ['Recipient Name', 'Email', 'Event Name', 'Message', 'Date', 'Time', 'Venue', 'RSVP Link', 'Registration Link', 'Attachments'],
     buttonText: 'Confirm Attendance',
     type: 'event',
     description: 'Send event invitations with RSVP options'

@@ -27,8 +27,8 @@ const FOOTER_WEBSITE = "https://www.youthservicephilippinestagum.me/Home";
 
 const SHEET_LAYOUTS = {
   "Event_Invites": {
-    headers: ["Recipient Name", "Email", "Event Name", "Message", "Date", "Time", "Venue", "RSVP Link", "Attachments"],
-    map: { name:0, email:1, headline:2, msg:3, date:4, time:5, venue:6, link:7, attach:8 },
+    headers: ["Recipient Name", "Email", "Event Name", "Message", "Date", "Time", "Venue", "RSVP Link", "Registration Link", "Attachments"],
+    map: { name:0, email:1, headline:2, msg:3, date:4, time:5, venue:6, link:7, registrationLink:8, attach:9 },
     btn: "Confirm Attendance",
     type: "event",
     code: "EI" // Event Invites
@@ -119,6 +119,7 @@ function onOpen() {
     // Section 2: Migration Tools
     .addSubMenu(ui.createMenu('Migration Tools')
         .addItem('Preview Migration (Dry Run)', 'previewMigration')
+        .addItem('Event Invites: Insert Registration Link', 'migrateEventInvitesRegistrationLinkOnly')
         .addItem('Run Migration', 'migrateEmailSystemSchema'))
     .addSeparator()
     
@@ -231,6 +232,7 @@ function sendSingleRow(sheet, rowIndex, config, statusColIndex) {
     venue:       (map.venue !== undefined) ? data[map.venue] : "",
     amount:      (map.amount !== undefined) ? data[map.amount] : "",
     link:        (map.link !== undefined) ? data[map.link] : "",
+    registrationLink: (map.registrationLink !== undefined) ? data[map.registrationLink] : "",
     attach:      (map.attach !== undefined) ? data[map.attach] : "",
     oldPosition: (map.oldPosition !== undefined) ? data[map.oldPosition] : "",
     btnText:     config.btn,
@@ -489,6 +491,26 @@ function generateDualButtons(linkPrimary, textPrimary, linkSecondary, textSecond
     </table>`;
 }
 
+function generateTripleButtons(linkPrimary, textPrimary, linkSecondary, textSecondary, linkTertiary, textTertiary) {
+  const tertiaryLink = formatActionLink(linkTertiary) || "#";
+  return `
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
+      <tr>
+        <td align="center">
+          <a href="${linkPrimary}" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
+            ${textPrimary}
+          </a>
+          <a href="${linkSecondary}" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+            ${textSecondary}
+          </a>
+          <a href="${tertiaryLink}" target="_blank" style="background-color:#fff7ed; color:#c2410c; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 1px solid #fdba74; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+            ${textTertiary}
+          </a>
+        </td>
+      </tr>
+    </table>`;
+}
+
 /**
  * Helper: Auto-detect link type and format accordingly
  * - Email addresses -> mailto:email
@@ -606,7 +628,11 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
     const bodyNo = encodeURIComponent(`Dear ${SENDER_DISPLAY_NAME},\n\nThank you for the invitation to "${data.headline}".\n\nRegrettably, I will not be able to attend.\n\nReason: [PLEASE TYPE YOUR REASON HERE]\n\nThank you for understanding.\n\nSincerely,\n${data.name}`);
     const linkNo = `mailto:${trackingEmail}?subject=${subNo}&body=${bodyNo}`;
 
-    buttonsHtml = generateDualMailtoButtons(linkYes, "Confirm Attendance", linkNo, "Decline");
+    if (data.registrationLink) {
+      buttonsHtml = generateTripleButtons(linkYes, "Confirm Attendance", linkNo, "Decline", data.registrationLink, "Register Now");
+    } else {
+      buttonsHtml = generateDualMailtoButtons(linkYes, "Confirm Attendance", linkNo, "Decline");
+    }
     
   } else if (data.sheetName === "Appointments" || data.type === "appointment") {
     // Appointments: Accept Designation / Decline Appointment
@@ -904,6 +930,63 @@ function setupEmailSystem() {
 }
 
 /**
+ * SAFE TARGETED MIGRATION:
+ * Inserts the new "Registration Link" column into Event_Invites
+ * between "RSVP Link" and "Attachments" without rewriting existing row data.
+ *
+ * This is safer than full-schema reorder for this specific change because
+ * the Event_Invites sheet commonly has data validation on the response/status area.
+ */
+function migrateEventInvitesRegistrationLinkOnly() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sheet = ss.getSheetByName("Event_Invites");
+
+  if (!sheet) {
+    ui.alert("Event_Invites sheet not found.");
+    return;
+  }
+
+  const lastCol = sheet.getLastColumn();
+  if (lastCol === 0) {
+    ui.alert("Event_Invites is empty. Run setupEmailSystem() instead.");
+    return;
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  const registrationIdx = headers.indexOf("Registration Link");
+  const attachmentsIdx = headers.indexOf("Attachments");
+  const rsvpIdx = headers.indexOf("RSVP Link");
+
+  if (registrationIdx !== -1) {
+    ui.alert('"Registration Link" already exists in Event_Invites.');
+    return;
+  }
+
+  if (rsvpIdx === -1 || attachmentsIdx === -1) {
+    ui.alert('Expected headers not found. "RSVP Link" and/or "Attachments" is missing.');
+    return;
+  }
+
+  if (attachmentsIdx !== rsvpIdx + 1) {
+    ui.alert('Event_Invites header order is not in the expected old format.\n\nUse Preview Migration first, then inspect the sheet before running a full migration.');
+    return;
+  }
+
+  const insertAt = attachmentsIdx + 1; // 1-based position of current "Attachments" column
+  sheet.insertColumnBefore(insertAt);
+  sheet.getRange(1, insertAt).setValue("Registration Link");
+
+  // Match the standard header styling for the inserted header cell.
+  sheet.getRange(1, insertAt)
+    .setFontWeight("bold")
+    .setBackground("#F26522")
+    .setFontColor("white");
+
+  ui.alert('Event_Invites updated successfully.\n\nInserted "Registration Link" before "Attachments" and shifted existing data safely to the right.');
+}
+
+/**
  * MIGRATION FUNCTION: Safely migrate sheet headers and reorder columns to match SHEET_LAYOUTS
  * - Checks current headers vs expected headers
  * - Adds missing columns in correct positions
@@ -1034,7 +1117,8 @@ function migrateEmailSystemSchema() {
         return newRow;
       });
       
-      // Clear and write reordered data
+      // Clear content and data validation so reordered writes do not fail on old dropdown rules.
+      sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).clearDataValidations();
       sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).clearContent();
       sheet.getRange(1, 1, reorderedData.length, expectedHeaders.length).setValues(reorderedData);
       
@@ -1218,7 +1302,7 @@ function populateTestData() {
   const testEmail = "ezequieljohncrisostomo20@gmail.com";
   const testUrl = "https://drive.google.com/file/d/1GpWii7lwZ5D0QHl0QU1PmrmG7MJIdnty/view?usp=sharing";
   const s = SpreadsheetApp.getActive().getSheetByName("Event_Invites");
-  if(s) s.getRange(2,1,1,9).setValues([["Test User", testEmail, "General Assembly", "Testing the new mailto button logic.", "Jan 30", "1 PM", "Tagum Hall", "https://google.com", testUrl]]);
+  if(s) s.getRange(2,1,1,10).setValues([["Test User", testEmail, "General Assembly", "Testing the new mailto button logic.", "Jan 30", "1 PM", "Tagum Hall", "https://google.com", "https://forms.gle/example", testUrl]]);
 }
 
 // Wrapper Batch Functions
@@ -1638,6 +1722,7 @@ function handleGetEmails_(params) {
     email.Venue = map.venue !== undefined ? (row[map.venue] || '') : '';
     email.Amount = map.amount !== undefined ? (row[map.amount] || '') : '';
     email.Link = map.link !== undefined ? (row[map.link] || '') : '';
+    email.RegistrationLink = map.registrationLink !== undefined ? (row[map.registrationLink] || '') : '';
     email.Attachments = map.attach !== undefined ? (row[map.attach] || '') : '';
     email.Status = row[headers.length] || '';
     email.Response = row[headers.length + 1] || '';
@@ -1740,6 +1825,7 @@ function handleAddEmailRecipient_(body) {
       else if (map.amount === i) value = body.Amount || '';
       else if (map.oldPosition === i) value = body.OldPosition || '';
       else if (map.link === i) value = body.Link || '';
+      else if (map.registrationLink === i) value = body.RegistrationLink || '';
       else if (map.attach === i) value = body.Attachments || '';
       else value = '';
     }
@@ -1798,6 +1884,7 @@ function handleUpdateEmailRecipient_(body) {
       (map.amount === i && body.hasOwnProperty('Amount')) ||
       (map.oldPosition === i && body.hasOwnProperty('OldPosition')) ||
       (map.link === i && body.hasOwnProperty('Link')) ||
+      (map.registrationLink === i && body.hasOwnProperty('RegistrationLink')) ||
       (map.attach === i && body.hasOwnProperty('Attachments'));
 
     if (body.hasOwnProperty(header) && header !== 'RowIndex') {
@@ -1813,6 +1900,7 @@ function handleUpdateEmailRecipient_(body) {
       else if (map.amount === i) currentValues[i] = body.Amount;
       else if (map.oldPosition === i) currentValues[i] = body.OldPosition;
       else if (map.link === i) currentValues[i] = body.Link;
+      else if (map.registrationLink === i) currentValues[i] = body.RegistrationLink;
       else if (map.attach === i) currentValues[i] = body.Attachments;
     }
   }
