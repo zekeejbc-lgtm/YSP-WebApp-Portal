@@ -1281,7 +1281,7 @@ export default function KaagapAIMeetPage({
           <div style={floatingOverlayStyle} onClick={() => setIsCreateOpen(false)}>
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-full rounded-2xl border overflow-visible"
+              className="w-full rounded-2xl border overflow-hidden flex flex-col"
               style={{
                 maxWidth: "min(640px, calc(100vw - clamp(48px, 10vw, 128px)))",
                 maxHeight: "min(85vh, calc(100vh - clamp(48px, 10vh, 96px)))",
@@ -1303,7 +1303,8 @@ export default function KaagapAIMeetPage({
                 </button>
               </div>
 
-              <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex-1 overflow-y-auto px-5 py-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input
                   value={form.title}
                   onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
@@ -1366,36 +1367,43 @@ export default function KaagapAIMeetPage({
                   <label className="block text-sm font-semibold mb-2 text-[#f6421f]">Add Recipients</label>
 
                   {selectedRecipients.length > 0 && (
-                    <div className="mb-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs opacity-75">
-                          {selectedRecipients.length} recipient{selectedRecipients.length !== 1 ? "s" : ""} selected
-                        </span>
-                        <div className="flex items-center gap-2">
-                          {selectedRecipients.length > 8 && (
-                            <button
-                              onClick={() => setShowAllRecipients(!showAllRecipients)}
-                              className="text-xs text-blue-500 hover:text-blue-600 font-medium"
-                            >
-                              {showAllRecipients ? "Show less" : `Show all ${selectedRecipients.length}`}
-                            </button>
-                          )}
-                          <button
-                            onClick={() => {
-                              setSelectedRecipients([]);
-                              setShowAllRecipients(false);
-                            }}
-                            className="text-xs text-red-500 hover:text-red-600"
-                          >
-                            Clear all
-                          </button>
-                        </div>
+                    <div
+                      className="mb-3 rounded-xl border p-3"
+                      style={{ borderColor: isDark ? "rgba(148,163,184,0.18)" : "rgba(15,23,42,0.08)" }}
+                    >
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowAllRecipients((prev) => !prev)}
+                          className="inline-flex items-center gap-2 text-left"
+                        >
+                          <ChevronDown
+                            className={`w-4 h-4 transition-transform ${showAllRecipients ? "rotate-180" : ""}`}
+                            style={{ color: "#f6421f" }}
+                          />
+                          <span className="text-xs font-semibold">
+                            {selectedRecipients.length} recipient{selectedRecipients.length !== 1 ? "s" : ""} selected
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedRecipients([]);
+                            setShowAllRecipients(false);
+                          }}
+                          className="text-xs text-red-500 hover:text-red-600"
+                        >
+                          Clear all
+                        </button>
                       </div>
                       <div
-                        className={`flex flex-wrap gap-2 p-2 rounded-lg overflow-hidden transition-all ${showAllRecipients ? "max-h-48 overflow-y-auto" : "max-h-16"}`}
-                        style={{ background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.02)" }}
+                        className={`flex flex-wrap gap-2 p-2 rounded-lg ${showAllRecipients ? "overflow-y-auto" : "overflow-hidden"}`}
+                        style={{
+                          background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.02)",
+                          maxHeight: showAllRecipients ? "160px" : "52px",
+                        }}
                       >
-                        {(showAllRecipients ? selectedRecipients : selectedRecipients.slice(0, 8)).map((recipient) => {
+                        {(showAllRecipients ? selectedRecipients : selectedRecipients.slice(0, 3)).map((recipient) => {
                           const hasEmail = recipient.hasEmail !== false && !!recipient.email;
                           const recipientKey = getRecipientKey(recipient);
                           return (
@@ -1425,14 +1433,15 @@ export default function KaagapAIMeetPage({
                             </div>
                           );
                         })}
-                        {!showAllRecipients && selectedRecipients.length > 8 && (
-                          <div
+                        {!showAllRecipients && selectedRecipients.length > 3 && (
+                          <button
+                            type="button"
                             className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer hover:opacity-80"
                             style={{ background: isDark ? "rgba(100,100,100,0.3)" : "rgba(0,0,0,0.1)" }}
                             onClick={() => setShowAllRecipients(true)}
                           >
-                            +{selectedRecipients.length - 8} more
-                          </div>
+                            +{selectedRecipients.length - 3} more
+                          </button>
                         )}
                       </div>
                     </div>
@@ -1656,6 +1665,7 @@ export default function KaagapAIMeetPage({
                       )}
                     </div>
                   </div>
+                </div>
                 </div>
               </div>
 
