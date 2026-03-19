@@ -319,9 +319,9 @@
       
       var payload = JSON.stringify({
         action: 'checkMeetingExists',
-        extSecret: CONFIG.sharedSecret,
+        extensionSecret: CONFIG.sharedSecret,
         source: CONFIG.source,
-        meetingId: meetingId,
+        meetCode: meetingId,
         meetUrl: 'https://meet.google.com/' + meetingId
       });
       
@@ -337,8 +337,11 @@
         meetingVerificationPending = false;
         try {
           var parsed = JSON.parse(text || '{}');
-          if (parsed.success && parsed.data) {
-            resolve(parsed.data.exists === true);
+          if (parsed && parsed.success) {
+            var exists =
+              parsed.exists === true ||
+              !!(parsed.data && parsed.data.exists === true);
+            resolve(exists);
           } else {
             meetingVerificationError = parsed.error || 'Unknown verification error';
             resolve(false);

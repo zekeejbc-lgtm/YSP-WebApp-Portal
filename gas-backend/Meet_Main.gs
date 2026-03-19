@@ -447,7 +447,7 @@ function handleCreateMeetSession(requestData) {
 function handleRegisterAdHocMeeting(requestData) {
   try {
     // Validate extension secret
-    const secret = String(requestData.extensionSecret || '').trim();
+    const secret = String(requestData.extensionSecret || requestData.extSecret || '').trim();
     const expected = String(MEET_ATTENDANCE_CONFIG.EXTENSION_SECRET || '').trim();
     if (!expected) {
       return createErrorResponse('Server misconfigured: MEET_EXTENSION_SHARED_SECRET missing', 503);
@@ -540,7 +540,7 @@ function handleRegisterAdHocMeeting(requestData) {
 function handleCheckMeetingExists(requestData) {
   try {
     // Validate extension secret
-    const secret = String(requestData.extensionSecret || '').trim();
+    const secret = String(requestData.extensionSecret || requestData.extSecret || '').trim();
     const expected = String(MEET_ATTENDANCE_CONFIG.EXTENSION_SECRET || '').trim();
     if (!expected) {
       return createErrorResponse('Server misconfigured: MEET_EXTENSION_SHARED_SECRET missing', 503);
@@ -549,7 +549,7 @@ function handleCheckMeetingExists(requestData) {
       return createErrorResponse('Unauthorized extension request', 401);
     }
 
-    const meetCode = sanitizeMeetText_(requestData.meetCode);
+    const meetCode = sanitizeMeetText_(requestData.meetCode || requestData.meetingId);
     const meetUrl = sanitizeMeetText_(requestData.meetUrl) || ('https://meet.google.com/' + meetCode);
 
     if (!meetCode || !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(meetCode)) {
@@ -845,7 +845,7 @@ function handleGetMeetDashboard(requestData) {
 
 function handleSyncMeetAttendance(requestData) {
   try {
-    const secret = String(requestData.extensionSecret || '').trim();
+    const secret = String(requestData.extensionSecret || requestData.extSecret || '').trim();
     const expected = String(MEET_ATTENDANCE_CONFIG.EXTENSION_SECRET || '').trim();
     if (!expected) {
       return createErrorResponse('Server misconfigured: MEET_EXTENSION_SHARED_SECRET missing', 503);

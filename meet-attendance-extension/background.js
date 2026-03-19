@@ -76,7 +76,11 @@ async function drainPendingQueue_() {
     const result = await postWithRetry_(entry.url, entry.payload, 2);
     if (result.ok) {
       appendSyncLog_({
+        ts: new Date().toISOString(),
         time: new Date().toISOString(),
+        ok: true,
+        reason: 'queued_retry',
+        err: '',
         payloadId: entry.payload.payloadId || '?',
         result: 'ok (queued retry)',
         latencyMs: 0,
@@ -87,7 +91,11 @@ async function drainPendingQueue_() {
         remaining.push(entry);
       } else {
         appendSyncLog_({
+          ts: new Date().toISOString(),
           time: new Date().toISOString(),
+          ok: false,
+          reason: 'queued_retry_drop',
+          err: result.error || '',
           payloadId: entry.payload.payloadId || '?',
           result: 'failed (dropped after 5 attempts): ' + (result.error || ''),
           latencyMs: 0,
@@ -204,7 +212,11 @@ async function handleSyncRequest_(payload) {
 
   // Log
   appendSyncLog_({
+    ts: nowIso,
     time: nowIso,
+    ok: !!result.ok,
+    reason: 'sync',
+    err: result.ok ? '' : String(result.error || 'Sync failed'),
     payloadId: payload.payloadId || '?',
     result: result.ok ? 'ok' : 'failed: ' + (result.error || ''),
     latencyMs: latencyMs,
