@@ -424,7 +424,7 @@ function doGet(e) {
     const tokenUser = verifyHmacToken_(sessionToken);
     const sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
 
-    if (action === "initiate" || action === "migrateUrls" || action === "getFeedbacks") {
+    if (action === "initiate" || action === "migrateUrls") {
       if (!sessionSecret) {
         return ContentService.createTextOutput(JSON.stringify({
           success: false, status: "error", message: "Server auth misconfigured: SESSION_SECRET_KEY is missing", code: 503
@@ -445,7 +445,7 @@ function doGet(e) {
       }
       return initiateFeedbackSheets();
     } else if (action === "getFeedbacks") {
-      return getFeedbacks();
+      return getFeedbacks(tokenUser);
     } else if (action === "migrateUrls") {
        var migrateUser = String(tokenUser.username || '').trim();
        var migrateAuth = requireFeedbackPermission_(migrateUser, 'migrate image URLs', 'canAccessSystemTools');
@@ -488,6 +488,7 @@ function doPost(e) {
     
     const data = JSON.parse(e.postData.contents);
     const action = String(data.action || '').trim();
+    const isPublicAction = action === "createFeedback" || action === "uploadImage";
 
     // ---- API key validation ----
     if (!validateApiKey_(data.key)) {
@@ -497,28 +498,35 @@ function doPost(e) {
     }
 
     // ---- Session token verification (HMAC) ----
-    var tokenUser = verifyHmacToken_(data.sessionToken);
     var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
-    if (!sessionSecret) {
+    var tokenUser = null;
+
+    if (sessionSecret && data.sessionToken) {
+      tokenUser = verifyHmacToken_(data.sessionToken);
+    }
+
+    if (!isPublicAction && !sessionSecret) {
       return ContentService.createTextOutput(JSON.stringify({
         success: false, status: "error", message: "Server auth misconfigured: SESSION_SECRET_KEY is missing", code: 503
       })).setMimeType(ContentService.MimeType.JSON);
     }
-    if (!tokenUser) {
+    if (!isPublicAction && !tokenUser) {
       return ContentService.createTextOutput(JSON.stringify({
         success: false, status: "error", message: "Invalid or expired session token", code: 401
       })).setMimeType(ContentService.MimeType.JSON);
     }
-    data.username = tokenUser.username;
+    data.username = tokenUser ? tokenUser.username : '';
 
-    var account = getUserRoleAndStatus_(data.username);
-    if (isRestrictedRoleStatus_(account.role, account.status)) {
-      return ContentService.createTextOutput(JSON.stringify({
-        success: false, status: "error", message: "Account is restricted", code: 403
-      })).setMimeType(ContentService.MimeType.JSON);
+    if (!isPublicAction) {
+      var account = getUserRoleAndStatus_(data.username);
+      if (isRestrictedRoleStatus_(account.role, account.status)) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false, status: "error", message: "Account is restricted", code: 403
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
     }
 
-    // ---- Role checks: update/delete require content-management permission; create/upload require authenticated non-restricted users ----
+    // ---- Role checks: update/delete remain protected; create/upload are intentionally public ----
     if (action === "updateFeedback" || action === "deleteFeedback") {
       const authError = requireFeedbackPermission_(data.username, action, 'canEditContent');
       if (authError) {
@@ -684,7 +692,7 @@ function initiateFeedbackSheets() {
   })).setMimeType(ContentService.MimeType.JSON);
 }
 
-function getFeedbacks() {
+function getFeedbacks(tokenUser) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_NAME);
   
@@ -699,6 +707,13 @@ function getFeedbacks() {
   const headers = data[0];
   const rows = data.slice(1);
 
+  const viewerUsername = tokenUser && tokenUser.username ? String(tokenUser.username).trim() : '';
+  const viewerAccount = viewerUsername ? getUserRoleAndStatus_(viewerUsername) : { role: '', status: '' };
+  const canViewAll =
+    viewerUsername &&
+    !isRestrictedRoleStatus_(viewerAccount.role, viewerAccount.status) &&
+    hasFeedbackPermission_(viewerAccount.role, 'canEditContent');
+
   const feedbacks = rows.map(row => {
     const feedback = {};
     headers.forEach((header, index) => {
@@ -709,6 +724,27 @@ function getFeedbacks() {
          feedback[header] = row[index];
       }
     });
+    return feedback;
+  }).filter(function(feedback) {
+    if (canViewAll) return true;
+
+    var visibility = String(feedback.visibility || '').toLowerCase().trim();
+    var authorId = String(feedback.authorId || '').trim();
+    return visibility === 'public' || (viewerUsername && authorId === viewerUsername);
+  }).map(function(feedback) {
+    if (canViewAll) return feedback;
+
+    var isOwner = viewerUsername && String(feedback.authorId || '').trim() === viewerUsername;
+    if (isOwner) {
+      feedback.notes = '';
+      feedback.replierId = '';
+      return feedback;
+    }
+
+    feedback.notes = '';
+    feedback.replierId = '';
+    feedback.email = '';
+    feedback.authorId = feedback.anonymous ? 'Anonymous' : '';
     return feedback;
   });
 

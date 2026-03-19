@@ -6,7 +6,7 @@ import CustomDropdown from './CustomDropdown';
 import Breadcrumb from './design-system/Breadcrumb';
 import { DESIGN_TOKENS } from './design-system';
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
-import { getFeedbacks, createFeedback, updateFeedback, deleteFeedback, uploadFeedbackImage, Feedback } from '../services/gasFeedbackService';
+import { getFeedbacks, createFeedback, updateFeedback, deleteFeedback, uploadFeedbackImage, Feedback, FeedbackAPIError, FeedbackErrorCodes } from '../services/gasFeedbackService';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { loadExcelJS, loadPdfTools } from '../utils/exportLoaders';
 
@@ -126,9 +126,17 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       setFeedbacks(sortedData);
     } catch (error) {
       console.error("Failed to fetch feedbacks:", error);
-      toast.error("Failed to load feedbacks", {
-        description: "Please check your internet connection and try again."
-      });
+      const isUnauthorized =
+        error instanceof FeedbackAPIError && error.code === FeedbackErrorCodes.UNAUTHORIZED;
+
+      toast.error(
+        isUnauthorized ? "Session expired" : "Failed to load feedbacks",
+        {
+          description: isUnauthorized
+            ? "Please sign in again to continue."
+            : "Please check your internet connection and try again."
+        }
+      );
     } finally {
       setIsLoading(false);
     }

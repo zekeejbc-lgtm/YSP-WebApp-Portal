@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { getSessionToken } from './gasLoginService';
+import { getSessionToken, refreshSessionToken } from './gasLoginService';
 
 export interface Feedback {
   id: string; // Feedback ID (unique)
@@ -27,33 +27,53 @@ export interface FeedbackResponse<T> {
   data?: T;
   message?: string;
   id?: string;
+  code?: number;
 }
 
 const GAS_FEEDBACK_API_URL = import.meta.env.VITE_GAS_FEEDBACK_API_URL || '';
+const GAS_API_KEY = import.meta.env.VITE_GAS_API_KEY || '';
+
+export const FeedbackErrorCodes = {
+  NETWORK_ERROR: 1001,
+  API_ERROR: 1002,
+  NOT_CONFIGURED: 1003,
+  UNAUTHORIZED: 1005,
+} as const;
 
 export class FeedbackAPIError extends Error {
-  constructor(message: string, public originalError?: unknown) {
+  constructor(
+    message: string,
+    public code: number = FeedbackErrorCodes.API_ERROR,
+    public originalError?: unknown
+  ) {
     super(message);
     this.name = 'FeedbackAPIError';
   }
 }
 
+function normalizeFeedbackErrorCode(code?: number): number {
+  if (code === 401) return FeedbackErrorCodes.UNAUTHORIZED;
+  return code || FeedbackErrorCodes.API_ERROR;
+}
+
 async function callFeedbackAPI<T>(
   action: string,
   data: Record<string, unknown> = {},
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  allowRefreshRetry = true
 ): Promise<FeedbackResponse<T>> {
   if (!GAS_FEEDBACK_API_URL) {
-    throw new FeedbackAPIError('Feedback API URL not configured');
+    throw new FeedbackAPIError(
+      'Feedback API URL not configured',
+      FeedbackErrorCodes.NOT_CONFIGURED
+    );
   }
 
   try {
-    // For GET requests like 'getFeedbacks' and 'initiate', we use POST with action in body
-    // because GAS often handles everything in doPost easier for JSON payloads, 
-    // OR we can use URL parameters for GET.
-    // The backend I wrote handles 'doGet' for 'getFeedbacks' and 'initiate', 
-    // and 'doPost' for 'createFeedback' and 'updateFeedback'.
-    
+    if (allowRefreshRetry) {
+      await refreshSessionToken(false);
+    }
+
     let response: Response;
     
     if (action === 'getFeedbacks' || action === 'initiate') {
@@ -63,7 +83,7 @@ async function callFeedbackAPI<T>(
       if (sessionToken) {
         url.searchParams.append('sessionToken', sessionToken);
       }
-      
+
       response = await fetch(url.toString(), {
         method: 'GET',
         signal,
@@ -73,21 +93,45 @@ async function callFeedbackAPI<T>(
       response = await fetch(GAS_FEEDBACK_API_URL, {
         method: 'POST',
         headers: {
-          'Content-Type': 'text/plain;charset=utf-8', // GAS requires text/plain to avoid CORS preflight issues sometimes, or handle OPTIONS.
+          'Content-Type': 'text/plain;charset=utf-8',
         },
-        body: JSON.stringify({ action, ...data, sessionToken: getSessionToken() }),
+        body: JSON.stringify({
+          action,
+          ...data,
+          key: GAS_API_KEY,
+          sessionToken: getSessionToken(),
+        }),
         signal,
       });
     }
 
     if (!response.ok) {
-      throw new FeedbackAPIError(`HTTP error: ${response.status}`);
+      if (allowRefreshRetry && response.status === 401) {
+        const nextToken = await refreshSessionToken(true);
+        if (nextToken) {
+          return callFeedbackAPI(action, data, signal, false);
+        }
+      }
+      throw new FeedbackAPIError(
+        `HTTP error: ${response.status}`,
+        normalizeFeedbackErrorCode(response.status)
+      );
     }
 
     const result: FeedbackResponse<T> = await response.json();
     
     if (result.status === 'error') {
-      throw new FeedbackAPIError(result.message || 'Unknown API error');
+      const errorCode = normalizeFeedbackErrorCode(result.code);
+      if (allowRefreshRetry && errorCode === FeedbackErrorCodes.UNAUTHORIZED) {
+        const nextToken = await refreshSessionToken(true);
+        if (nextToken) {
+          return callFeedbackAPI(action, data, signal, false);
+        }
+      }
+      throw new FeedbackAPIError(
+        result.message || 'Unknown API error',
+        errorCode
+      );
     }
 
     return result;
@@ -98,6 +142,7 @@ async function callFeedbackAPI<T>(
     }
     throw new FeedbackAPIError(
       error instanceof Error ? error.message : 'Network error',
+      FeedbackErrorCodes.NETWORK_ERROR,
       error
     );
   }
@@ -157,9 +202,14 @@ export async function initiateFeedbackSheets(): Promise<{ message: string }> {
  */
 export async function uploadFeedbackImage(
   file: File,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  allowRefreshRetry = true
 ): Promise<{ success: boolean; imageUrl?: string; error?: string }> {
   try {
+    if (allowRefreshRetry) {
+      await refreshSessionToken(false);
+    }
+
     if (signal?.aborted) {
       return { success: false, error: 'Operation cancelled' };
     }
@@ -196,12 +246,33 @@ export async function uploadFeedbackImage(
         action: 'uploadImage',
         fileName: file.name,
         fileData: base64Data,
+        key: GAS_API_KEY,
         sessionToken: getSessionToken()
       }),
       signal,
     });
 
+    if (!response.ok) {
+      if (allowRefreshRetry && response.status === 401) {
+        const nextToken = await refreshSessionToken(true);
+        if (nextToken) {
+          return uploadFeedbackImage(file, signal, false);
+        }
+      }
+      return {
+        success: false,
+        error: response.status === 401 ? 'Invalid or expired session token' : `Upload failed (${response.status})`
+      };
+    }
+
     const data = await response.json();
+
+    if (allowRefreshRetry && data?.code === 401) {
+      const nextToken = await refreshSessionToken(true);
+      if (nextToken) {
+        return uploadFeedbackImage(file, signal, false);
+      }
+    }
 
     if (data.status === 'success') {
       return {
