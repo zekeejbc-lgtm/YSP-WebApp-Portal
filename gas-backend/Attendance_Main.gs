@@ -161,9 +161,11 @@ function recordTimeIn(params) {
     
     // Check if time is late based on event time windows
     let isLateTimeIn = false;
+    let timeInWindowEnd = '';
     try {
       const timeWindows = getEventTimeWindows(eventId);
       if (timeWindows.success && timeWindows.timeWindows.timeInEnd) {
+        timeInWindowEnd = String(timeWindows.timeWindows.timeInEnd || '');
         isLateTimeIn = isTimeLate(timeString, timeWindows.timeWindows.timeInEnd);
       }
     } catch (e) {
@@ -217,7 +219,12 @@ function recordTimeIn(params) {
       geofenceValid: geofenceValid,
       geofenceMessage: geofenceMessage,
       isExternal: externalFlag,
-      isLate: isLateTimeIn
+      isLate: isLateTimeIn,
+      debugLateCheck: {
+        currentTime: timeString,
+        timeWindowEnd: timeInWindowEnd,
+        computedIsLate: isLateTimeIn
+      }
     };
   } catch (error) {
     return { success: false, error: error.toString() };
@@ -250,9 +257,11 @@ function recordTimeOut(params) {
     
     // Check if time is late for Time Out based on event time windows
     let isLateTimeOut = false;
+    let timeOutWindowEnd = '';
     try {
       const timeWindows = getEventTimeWindows(eventId);
       if (timeWindows.success && timeWindows.timeWindows.timeOutEnd) {
+        timeOutWindowEnd = String(timeWindows.timeWindows.timeOutEnd || '');
         isLateTimeOut = isTimeLate(timeString, timeWindows.timeWindows.timeOutEnd);
       }
     } catch (e) {
@@ -312,7 +321,12 @@ function recordTimeOut(params) {
             timeIn: data[i][headers.indexOf('TimeIn')],
             timeOut: timeString,
             date: dateString,
-            isLateTimeOut: isLateTimeOut
+            isLateTimeOut: isLateTimeOut,
+            debugLateCheck: {
+              currentTime: timeString,
+              timeWindowEnd: timeOutWindowEnd,
+              computedIsLate: isLateTimeOut
+            }
           };
         }
       }

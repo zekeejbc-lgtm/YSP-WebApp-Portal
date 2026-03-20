@@ -333,6 +333,13 @@ function doGet(e) {
         result = migrateEventsSchema();
         break;
       }
+      case 'migrateAttendanceWindowTimes': {
+        var migrateWindowUser = sanitizeEventsParam_(params.username, 100);
+        var migrateWindowAuth = requireAdminOrAuditor_(migrateWindowUser, 'migrate attendance window times');
+        if (migrateWindowAuth) { result = migrateWindowAuth; break; }
+        result = migrateAttendanceWindowTimes();
+        break;
+      }
       case 'migrateAttendanceMemberIdsToHarmonizedCodes': {
         var migrateAttendanceUser = sanitizeEventsParam_(params.username, 100);
         var migrateAttendanceAuth = requireAdminOrAuditor_(migrateAttendanceUser, 'migrate attendance member ids');
@@ -608,8 +615,17 @@ function createEventsSheet(ss) {
     // Freeze header row
     sheet.setFrozenRows(1);
   }
+
+  applyAttendanceWindowColumnFormat_(sheet);
   
   return sheet;
+}
+
+function applyAttendanceWindowColumnFormat_(sheet) {
+  if (!sheet || sheet.getLastColumn() < 23) return;
+  const lastRow = Math.max(sheet.getMaxRows(), sheet.getLastRow());
+  if (lastRow < 2) return;
+  sheet.getRange(2, 20, lastRow - 1, 4).setNumberFormat('h:mm AM/PM');
 }
 
 /**
@@ -1161,13 +1177,14 @@ function createEvent(eventData) {
       eventData.notes || '',
       // New fields for recipient targeting and time windows
       eventData.recipients || '',           // Recipients (JSON string)
-      eventData.timeInStart || '',          // TimeInStart
-      eventData.timeInEnd || '',            // TimeInEnd
-      eventData.timeOutStart || '',         // TimeOutStart
-      eventData.timeOutEnd || ''            // TimeOutEnd
+      parseTime(eventData.timeInStart) || '',   // TimeInStart
+      parseTime(eventData.timeInEnd) || '',     // TimeInEnd
+      parseTime(eventData.timeOutStart) || '',  // TimeOutStart
+      parseTime(eventData.timeOutEnd) || ''     // TimeOutEnd
     ];
     
     sheet.appendRow(newRow);
+    applyAttendanceWindowColumnFormat_(sheet);
     
     return {
       success: true,
@@ -1272,6 +1289,7 @@ function updateEvent(eventId, eventData) {
         
         // Always update UpdatedAt (column 17)
         sheet.getRange(rowIndex, 17).setValue(now);
+        applyAttendanceWindowColumnFormat_(sheet);
         
         return { success: true, message: 'Event updated successfully', eventId: eventId };
       }
@@ -2191,6 +2209,75 @@ function migrateEventsSchema() {
   };
 }
 
+/**
+ * Normalize attendance window columns in Events sheet.
+ * Converts legacy/raw values into consistent h:mm AM/PM strings.
+ * Safe to run multiple times.
+ */
+function migrateAttendanceWindowTimes() {
+  try {
+    const ss = SpreadsheetApp.openById(getEventsSpreadsheetId());
+    const sheet = ss.getSheetByName('Events');
+
+    if (!sheet || sheet.getLastRow() < 2) {
+      return { success: false, error: 'No events found' };
+    }
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const timeColumns = [
+      { name: 'TimeInStart', index: headers.indexOf('TimeInStart') },
+      { name: 'TimeInEnd', index: headers.indexOf('TimeInEnd') },
+      { name: 'TimeOutStart', index: headers.indexOf('TimeOutStart') },
+      { name: 'TimeOutEnd', index: headers.indexOf('TimeOutEnd') }
+    ].filter(function(column) {
+      return column.index >= 0;
+    });
+
+    if (timeColumns.length === 0) {
+      return { success: false, error: 'Attendance window columns not found' };
+    }
+
+    let updatedRows = 0;
+    let updatedCells = 0;
+
+    applyAttendanceWindowColumnFormat_(sheet);
+
+    for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
+      let rowChanged = false;
+
+      for (let i = 0; i < timeColumns.length; i++) {
+        const column = timeColumns[i];
+        const rawValue = data[rowIndex][column.index];
+        if (rawValue === '' || rawValue === null || rawValue === undefined) continue;
+
+        const normalizedValue = parseTime(formatCellValue(column.name, rawValue));
+        if (!normalizedValue) continue;
+
+        const currentDisplayValue = formatCellValue(column.name, rawValue);
+        if (String(currentDisplayValue) === String(normalizedValue)) continue;
+
+        sheet.getRange(rowIndex + 1, column.index + 1).setValue(normalizedValue);
+        rowChanged = true;
+        updatedCells++;
+      }
+
+      if (rowChanged) {
+        updatedRows++;
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Attendance window migration completed',
+      updatedRows: updatedRows,
+      updatedCells: updatedCells
+    };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
 // =====================================================
 // COMPREHENSIVE SCHEMA MIGRATION FUNCTIONS
 // =====================================================
@@ -2779,10 +2866,10 @@ function getEventTimeWindows(eventId) {
         return {
           success: true,
           timeWindows: {
-            timeInStart: getColValue('TimeInStart') || getColValue('StartTime'),
-            timeInEnd: getColValue('TimeInEnd'),
-            timeOutStart: getColValue('TimeOutStart'),
-            timeOutEnd: getColValue('TimeOutEnd') || getColValue('EndTime')
+            timeInStart: formatCellValue('TimeInStart', getColValue('TimeInStart')) || formatCellValue('StartTime', getColValue('StartTime')),
+            timeInEnd: formatCellValue('TimeInEnd', getColValue('TimeInEnd')),
+            timeOutStart: formatCellValue('TimeOutStart', getColValue('TimeOutStart')),
+            timeOutEnd: formatCellValue('TimeOutEnd', getColValue('TimeOutEnd')) || formatCellValue('EndTime', getColValue('EndTime'))
           }
         };
       }
@@ -2901,10 +2988,10 @@ function getEventsForMember(memberId, includeArchived) {
       if (!isRecipient) continue;
       
       // Add time window info to event
-      event.TimeInStart = row[headers.indexOf('TimeInStart')] || '';
-      event.TimeInEnd = row[headers.indexOf('TimeInEnd')] || '';
-      event.TimeOutStart = row[headers.indexOf('TimeOutStart')] || '';
-      event.TimeOutEnd = row[headers.indexOf('TimeOutEnd')] || '';
+      event.TimeInStart = formatCellValue('TimeInStart', row[headers.indexOf('TimeInStart')]) || '';
+      event.TimeInEnd = formatCellValue('TimeInEnd', row[headers.indexOf('TimeInEnd')]) || '';
+      event.TimeOutStart = formatCellValue('TimeOutStart', row[headers.indexOf('TimeOutStart')]) || '';
+      event.TimeOutEnd = formatCellValue('TimeOutEnd', row[headers.indexOf('TimeOutEnd')]) || '';
       
       // Categorize by status
       if (event.Status === 'Active') {
