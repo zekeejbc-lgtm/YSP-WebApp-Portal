@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { X, Wrench, Calendar, Clock } from "lucide-react";
 import { DESIGN_TOKENS, Button } from "./design-system";
 import { MODAL_REGULATIONS, getModalStyles, getHeaderGradient } from "./modal-regulations";
@@ -62,13 +63,13 @@ export default function MaintenanceModeModal({
 
   const modalStyles = getModalStyles(isDark, "medium");
 
-  return (
+  const modal = (
     <div
       className="fixed inset-0 flex items-center justify-center p-4 md:p-8"
       style={{
         background: modalStyles.overlay.background,
         backdropFilter: modalStyles.overlay.backdropFilter,
-        zIndex: 9999, // Must be above PageLayout header (z-200)
+        zIndex: 2147483647,
       }}
       onClick={onClose}
     >
@@ -312,4 +313,6 @@ export default function MaintenanceModeModal({
       </div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(modal, document.body) : modal;
 }

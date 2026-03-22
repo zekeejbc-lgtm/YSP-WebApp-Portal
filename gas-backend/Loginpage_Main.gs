@@ -10,6 +10,74 @@ const PROFILE_PICTURES_FOLDER_ID = PropertiesService.getScriptProperties().getPr
 const LOGO_URL = "https://i.imgur.com/J4wddTW.png";
 const WEB_APP_URL = "https://www.youthservicephilippinestagum.me/";
 const FB_PAGE_URL = "https://www.facebook.com/YSPTagumChapter";
+const MANILA_TIMEZONE = 'Asia/Manila';
+
+function getManilaDateParts_(dateValue) {
+  const formatted = Utilities.formatDate(dateValue || new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd');
+  const parts = formatted.split('-');
+  return {
+    year: parseInt(parts[0], 10),
+    month: parseInt(parts[1], 10),
+    day: parseInt(parts[2], 10)
+  };
+}
+
+function normalizeDateValueToManilaYmd_(dateValue) {
+  if (!dateValue) return '';
+
+  if (typeof dateValue === 'string') {
+    const trimmed = dateValue.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+  }
+
+  try {
+    const parsed = new Date(dateValue);
+    if (isNaN(parsed.getTime())) {
+      return String(dateValue);
+    }
+    return Utilities.formatDate(parsed, MANILA_TIMEZONE, 'yyyy-MM-dd');
+  } catch (e) {
+    return String(dateValue);
+  }
+}
+
+function calculateAgeFromBirthdayManila_(birthdayValue) {
+  const normalizedBirthday = normalizeDateValueToManilaYmd_(birthdayValue);
+  const exactYmd = normalizedBirthday.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!exactYmd) return 0;
+
+  const birthYear = parseInt(exactYmd[1], 10);
+  const birthMonth = parseInt(exactYmd[2], 10);
+  const birthDay = parseInt(exactYmd[3], 10);
+  const today = getManilaDateParts_(new Date());
+
+  let age = today.year - birthYear;
+  if (today.month < birthMonth || (today.month === birthMonth && today.day < birthDay)) {
+    age--;
+  }
+
+  return age > 0 ? age : 0;
+}
+
+function syncProfileAgeValue_(sheet, rowIndex, idx, birthdayValue, storedAgeValue) {
+  const ageColIdx = idx['Age'];
+  const computedAge = calculateAgeFromBirthdayManila_(birthdayValue);
+  const storedAgeText = storedAgeValue === null || storedAgeValue === undefined ? '' : String(storedAgeValue).trim();
+  const storedAge = storedAgeText === '' ? NaN : parseInt(storedAgeText, 10);
+  const needsSync = ageColIdx !== undefined && ageColIdx !== -1 && (isNaN(storedAge) || storedAge !== computedAge);
+
+  if (needsSync) {
+    sheet.getRange(rowIndex, ageColIdx + 1).setValue(computedAge);
+  }
+
+  return {
+    computedAge: computedAge,
+    corrected: needsSync,
+    verifiedAtManila: Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd hh:mm a')
+  };
+}
 
 // =================== EMAIL FUNCTION FOR PROFILE UPDATES ===================
 
@@ -1259,35 +1327,18 @@ function handleGetProfile(username) {
       return (rawValue || '').toString();
     };
 
-    // Helper function to format date
+    // Helper function to format date using Manila local date boundaries
     const formatDate = (dateValue) => {
       if (!dateValue) return '';
       try {
-        const date = new Date(dateValue);
-        if (isNaN(date.getTime())) return dateValue.toString();
-        return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+        return normalizeDateValueToManilaYmd_(dateValue);
       } catch (e) {
         return dateValue.toString();
       }
     };
 
-    // Calculate age from birthday
-    const calculateAge = (birthday) => {
-      if (!birthday) return 0;
-      try {
-        const birthDate = new Date(birthday);
-        if (isNaN(birthDate.getTime())) return 0;
-        const today = new Date();
-        let age = today.getFullYear() - birthDate.getFullYear();
-        const monthDiff = today.getMonth() - birthDate.getMonth();
-        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-          age--;
-        }
-        return age;
-      } catch (e) {
-        return 0;
-      }
-    };
+    const birthdayValue = getValue('Date of Birth');
+    const ageSync = syncProfileAgeValue_(sheet, rowIndex + 1, idx, birthdayValue, getValue('Age'));
 
     // Build profile object matching the frontend structure
     const profile = {
@@ -1297,8 +1348,8 @@ function handleGetProfile(username) {
       email: getValue('Email Address'),
       personalEmail: getValue('Personal Email Address'),
       contactNumber: getValue('Contact Number'),
-      birthday: formatDate(getValue('Date of Birth')),
-      age: parseInt(getValue('Age')) || calculateAge(getValue('Date of Birth')),
+      birthday: formatDate(birthdayValue),
+      age: ageSync.computedAge,
       gender: getValue('Sex/Gender'),
       pronouns: getValue('Pronouns'),
       
@@ -1340,12 +1391,213 @@ function handleGetProfile(username) {
 
     return createSuccessResponse({
       success: true,
-      profile: profile
+      profile: profile,
+      ageVerification: {
+        timezone: MANILA_TIMEZONE,
+        corrected: ageSync.corrected,
+        verifiedAt: ageSync.verifiedAtManila
+      }
     });
 
   } catch (error) {
     Logger.log('handleGetProfile Error: ' + error.toString());
     return createErrorResponse('Failed to fetch profile: ' + error.message, 500);
+  }
+}
+
+/**
+ * Test helper for profile age verification and auto-correction.
+ *
+ * Run manually in Apps Script:
+ * testProfileAgeSync('sampleusername')
+ *
+ * @param {string} username - Username from the User Profiles sheet
+ * @returns {Object} Diagnostic result
+ */
+function testProfileAgeSync(username) {
+  if (!username) {
+    return {
+      success: false,
+      error: 'Username is required',
+      example: "testProfileAgeSync('sampleusername')"
+    };
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) {
+      return { success: false, error: 'User database not found' };
+    }
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const idx = {};
+    headers.forEach(function (header, i) {
+      idx[header] = i;
+    });
+
+    const usernameColIdx = idx['Username'];
+    const birthdayColIdx = idx['Date of Birth'];
+    const ageColIdx = idx['Age'];
+    const fullNameColIdx = idx['Full name'];
+
+    if (usernameColIdx === undefined || birthdayColIdx === undefined || ageColIdx === undefined) {
+      return {
+        success: false,
+        error: 'Required columns are missing',
+        requiredColumns: ['Username', 'Date of Birth', 'Age']
+      };
+    }
+
+    const normalizedUsername = String(username).trim().toLowerCase();
+    let rowIndex = -1;
+    let row = null;
+
+    for (var i = 1; i < data.length; i++) {
+      const rowUsername = String(data[i][usernameColIdx] || '').trim().toLowerCase();
+      if (rowUsername === normalizedUsername) {
+        rowIndex = i + 1;
+        row = data[i];
+        break;
+      }
+    }
+
+    if (!row) {
+      return {
+        success: false,
+        error: 'User not found',
+        username: username
+      };
+    }
+
+    const storedBirthdayRaw = row[birthdayColIdx];
+    const storedAgeRaw = row[ageColIdx];
+    const normalizedBirthday = normalizeDateValueToManilaYmd_(storedBirthdayRaw);
+    const storedAgeText = storedAgeRaw === null || storedAgeRaw === undefined ? '' : String(storedAgeRaw).trim();
+    const storedAgeNumber = storedAgeText === '' ? null : parseInt(storedAgeText, 10);
+    const syncResult = syncProfileAgeValue_(sheet, rowIndex, idx, storedBirthdayRaw, storedAgeRaw);
+    const nameValue = fullNameColIdx !== undefined ? String(row[fullNameColIdx] || '') : '';
+
+    const result = {
+      success: true,
+      username: username,
+      fullName: nameValue,
+      birthday: normalizedBirthday,
+      storedAgeBefore: storedAgeNumber,
+      computedAge: syncResult.computedAge,
+      ageWasCorrect: storedAgeNumber === syncResult.computedAge,
+      ageCorrectedInSheet: syncResult.corrected,
+      verifiedAt: syncResult.verifiedAtManila,
+      timezone: MANILA_TIMEZONE
+    };
+
+    Logger.log('testProfileAgeSync result: ' + JSON.stringify(result));
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      error: error.toString(),
+      username: username
+    };
+  }
+}
+
+/**
+ * Bulk-fix all stored Age values in User Profiles using Manila local date rules.
+ *
+ * Run manually in Apps Script:
+ * fixAllProfileAges()
+ *
+ * @returns {Object} Summary of scanned and corrected rows
+ */
+function fixAllProfileAges() {
+  try {
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) {
+      return { success: false, error: 'User database not found' };
+    }
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0] || [];
+    const idx = {};
+    headers.forEach(function(header, i) {
+      idx[header] = i;
+    });
+
+    const usernameColIdx = idx['Username'];
+    const fullNameColIdx = idx['Full name'];
+    const birthdayColIdx = idx['Date of Birth'];
+    const ageColIdx = idx['Age'];
+
+    if (
+      usernameColIdx === undefined ||
+      birthdayColIdx === undefined ||
+      ageColIdx === undefined ||
+      usernameColIdx === -1 ||
+      birthdayColIdx === -1 ||
+      ageColIdx === -1
+    ) {
+      return {
+        success: false,
+        error: 'Required columns are missing',
+        requiredColumns: ['Username', 'Date of Birth', 'Age']
+      };
+    }
+
+    let scannedRows = 0;
+    let correctedRows = 0;
+    let skippedRows = 0;
+    const corrections = [];
+
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const username = String(row[usernameColIdx] || '').trim();
+      const birthdayValue = row[birthdayColIdx];
+
+      if (!username || !birthdayValue) {
+        skippedRows++;
+        continue;
+      }
+
+      scannedRows++;
+
+      const storedAgeRaw = row[ageColIdx];
+      const storedAgeText = storedAgeRaw === null || storedAgeRaw === undefined ? '' : String(storedAgeRaw).trim();
+      const storedAgeNumber = storedAgeText === '' ? null : parseInt(storedAgeText, 10);
+      const syncResult = syncProfileAgeValue_(sheet, i + 1, idx, birthdayValue, storedAgeRaw);
+
+      if (syncResult.corrected) {
+        correctedRows++;
+        corrections.push({
+          row: i + 1,
+          username: username,
+          fullName: fullNameColIdx !== undefined && fullNameColIdx !== -1 ? String(row[fullNameColIdx] || '') : '',
+          birthday: normalizeDateValueToManilaYmd_(birthdayValue),
+          oldAge: storedAgeNumber,
+          newAge: syncResult.computedAge
+        });
+      }
+    }
+
+    const result = {
+      success: true,
+      scannedRows: scannedRows,
+      correctedRows: correctedRows,
+      skippedRows: skippedRows,
+      verifiedAt: Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd hh:mm a'),
+      timezone: MANILA_TIMEZONE,
+      corrections: corrections
+    };
+
+    Logger.log('fixAllProfileAges result: ' + JSON.stringify(result));
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      error: error.toString()
+    };
   }
 }
 
@@ -1481,7 +1733,8 @@ function handleUpdateProfile(username, profileData, requesterUsername) {
 
     const currentRowData = data[rowIndex - 1];
     let updatedCount = 0;
-    let changedFields = []; 
+    let changedFields = [];
+    let ageCorrectionApplied = false;
     
     // === 6. EXECUTE UPDATE ===
     for (const [frontendField, value] of Object.entries(profileData)) {
@@ -1503,21 +1756,33 @@ function handleUpdateProfile(username, profileData, requesterUsername) {
       if (oldValue !== newValue) {
         sheet.getRange(rowIndex, colIdx + 1).setValue(value);
         updatedCount++;
-        
+
         changedFields.push({
           field: columnName,
           oldVal: oldValue || '(Empty)',
           newVal: newValue || '(Empty)'
         });
-      }
 
-      // Auto-calculate age logic
-      if (frontendField === 'birthday' && value && oldValue !== newValue) {
-        const ageColIdx = idx['Age'];
-        if (ageColIdx !== undefined) {
-           // (Age calculation logic)
-           // ...
-        }
+        currentRowData[colIdx] = value;
+      }
+    }
+
+    const birthdayColIdx = idx['Date of Birth'];
+    const ageColIdx = idx['Age'];
+    if (birthdayColIdx !== undefined && birthdayColIdx !== -1 && ageColIdx !== undefined && ageColIdx !== -1) {
+      const effectiveBirthdayValue = currentRowData[birthdayColIdx];
+      const effectiveStoredAge = currentRowData[ageColIdx];
+      const ageSync = syncProfileAgeValue_(sheet, rowIndex, idx, effectiveBirthdayValue, effectiveStoredAge);
+
+      if (ageSync.corrected) {
+        currentRowData[ageColIdx] = ageSync.computedAge;
+        updatedCount++;
+        ageCorrectionApplied = true;
+        changedFields.push({
+          field: 'Age',
+          oldVal: String(effectiveStoredAge || '(Empty)'),
+          newVal: String(ageSync.computedAge)
+        });
       }
     }
 
@@ -1544,8 +1809,10 @@ function handleUpdateProfile(username, profileData, requesterUsername) {
 
     return createSuccessResponse({
       success: true,
-      message: `Profile updated successfully. ${updatedCount} fields modified.`,
-      updatedCount: updatedCount
+      message: `Profile updated successfully. ${updatedCount} fields modified.${ageCorrectionApplied ? ' Age was also revalidated using Manila local date.' : ''}`,
+      updatedCount: updatedCount,
+      ageCorrectionApplied: ageCorrectionApplied,
+      ageVerifiedAt: Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd hh:mm a')
     });
 
   } catch (error) {

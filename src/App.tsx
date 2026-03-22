@@ -33,7 +33,8 @@
   import { openEmailApp, openPhoneApp } from "./utils/externalLinks";
   import { suggestLinkTextFromUrl, normalizeThemeSongUrl } from "./utils/appHelpers";
   import { detectSocialPlatform, SocialIcon } from "./components/SocialMediaIcon";
-  import type { PendingApplication, NavGroup } from "./types/app";
+  import type { PendingApplication, NavGroup, PermissionSet } from "./types/app";
+  import { DEFAULT_PERMISSIONS } from "./types/app";
   import {
     fetchHomepageContent,
     updateHomepageContent,
@@ -92,6 +93,7 @@
   forceClearAllCaches, // 👈 ADD THIS HERE
   startCacheVersionPolling,
   stopCacheVersionPolling,
+  getSystemRoles,
 } from "./services/gasSystemToolsService";
   // 👈 ADD THIS IMPORT
 import { determineRoleChangeType, type RoleChangeType } from "./utils/roleChange";
@@ -319,6 +321,7 @@ export default function App() {
     const [userUsername, setUserUsername] = useState<string>(""); // Actual username for API calls (e.g., "JohnDoe123")
     const [userEmail, setUserEmail] = useState<string>("");
     const [userIdCode, setUserIdCode] = useState<string>("");
+    const [userPermissions, setUserPermissions] = useState<PermissionSet>({ ...DEFAULT_PERMISSIONS });
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_userPosition, setUserPosition] = useState<string>("");
     const [userProfilePicture, setUserProfilePicture] = useState<string>("");
@@ -334,6 +337,7 @@ export default function App() {
       trigger: number;
     } | null>(null);
     const [showAttendanceDashboard, setShowAttendanceDashboard] = useState(false);
+    const [showAttendanceRankings, setShowAttendanceRankings] = useState(false);
     const [attendanceDashboardContext, setAttendanceDashboardContext] = useState<AttendanceDashboardContext | null>(null);
     const [showAttendanceRecording, setShowAttendanceRecording] = useState(false);
     const [showManageEvents, setShowManageEvents] = useState(false);
@@ -377,7 +381,7 @@ export default function App() {
 
   // URL Sync - Bridges boolean navigation states with URL routing
   // Provides deepLinkParams for item-specific navigation (feedback ID, event ID, etc.)
-  const { deepLinkParams, buildShareableUrl, currentPage } = useUrlSync({
+  const { deepLinkParams, buildShareableUrl, currentPage, closePage } = useUrlSync({
     pageStates: {
       showFeedbackPage,
       showMembershipApplications,
@@ -390,6 +394,7 @@ export default function App() {
       showMyProfile,
       showAnnouncements,
       showIssuanceCenter,
+      showEmailSystem,
       showAccessLogs,
       showSystemTools,
       showManageMembers,
@@ -470,6 +475,7 @@ export default function App() {
     setUserUsername("");
     setUserEmail("");
     setUserIdCode("");
+    setUserPermissions({ ...DEFAULT_PERMISSIONS });
     setUserPosition("");
     setUserProfilePicture("");
     setActivePage("home");
@@ -498,6 +504,47 @@ export default function App() {
     setShowSessionRecoveryModal(false);
     await forceClearAllCaches({ preserveSession: false });
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCurrentRolePermissions = async () => {
+      if (!sessionChecked || !userRole || userRole === "guest") {
+        if (!cancelled) {
+          setUserPermissions({ ...DEFAULT_PERMISSIONS });
+        }
+        return;
+      }
+
+      try {
+        const roles = await getSystemRoles();
+        const matchedRole = roles.find(
+          (roleItem) => String(roleItem.name || "").toLowerCase().trim() === userRole.toLowerCase().trim()
+        );
+
+        if (!cancelled) {
+          setUserPermissions({
+            ...DEFAULT_PERMISSIONS,
+            ...(matchedRole?.permissions || {}),
+          });
+        }
+      } catch (error) {
+        console.error("[RolePermissions] Failed to load current role permissions:", error);
+        if (!cancelled) {
+          setUserPermissions({ ...DEFAULT_PERMISSIONS });
+        }
+      }
+    };
+
+    void loadCurrentRolePermissions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionChecked, userRole]);
+
+  const canEditFounderInfo = !!userPermissions.fn_manage_founder_info;
+  const canEditDeveloperProfile = !!userPermissions.fn_manage_dev_profile;
 
   // Role Change Handlers
   const handleDismissRoleChange = () => {
@@ -1090,6 +1137,7 @@ export default function App() {
       closeIfBlocked(showMembershipApplicationsPage, "membership-editor", () => setShowMembershipApplicationsPage(false));
       closeIfBlocked(showOfficerDirectory, "officer-directory", () => setShowOfficerDirectory(false));
       closeIfBlocked(showAttendanceDashboard, "attendance-dashboard", () => setShowAttendanceDashboard(false));
+      closeIfBlocked(showAttendanceRankings, "attendance-dashboard", () => setShowAttendanceRankings(false));
       closeIfBlocked(showAttendanceRecording, "attendance-recording", () => setShowAttendanceRecording(false));
       closeIfBlocked(showManageEvents, "manage-events", () => setShowManageEvents(false));
       closeIfBlocked(showMyQRID, "my-qr-id", () => setShowMyQRID(false));
@@ -3143,6 +3191,7 @@ export default function App() {
       if (showMembershipApplicationsPage && isPageAllowed("membership-editor")) return "membership-editor";
       if (showMembershipApplications) return "membership-applications";
       if (showOfficerDirectory && isPageAllowed("officer-directory")) return "officer-directory";
+      if (showAttendanceRankings && isPageAllowed("attendance-dashboard")) return "attendance-rankings";
       if (showAttendanceDashboard && isPageAllowed("attendance-dashboard")) return "attendance-dashboard";
       if (showAttendanceRecording && isPageAllowed("attendance-recording")) return "attendance-recording";
       if (showManageEvents && isPageAllowed("manage-events")) return "manage-events";
@@ -3161,6 +3210,7 @@ export default function App() {
       isPageAllowed,
       showAccessLogs,
       showAnnouncements,
+      showAttendanceRankings,
       showAttendanceDashboard,
       showAttendanceRecording,
       showAttendanceTransparency,
@@ -3614,7 +3664,7 @@ export default function App() {
               isOpen={showDeveloperModal}
               onClose={() => setShowDeveloperModal(false)}
               isDark={isDark}
-              isAdmin={isAdmin}
+              canEdit={canEditDeveloperProfile}
             />
           </Suspense>
           {chatbot}
@@ -3632,7 +3682,7 @@ export default function App() {
               isDark={isDark}
               message={config.message}
               estimatedTime={config.estimatedTime}
-              onBack={() => setShowFeedbackPage(false)}
+              onBack={closePage}
               pageName="Feedback"
               onContactDeveloper={() => setShowDeveloperModal(true)}
             />
@@ -3641,7 +3691,7 @@ export default function App() {
                 isOpen={showDeveloperModal}
                 onClose={() => setShowDeveloperModal(false)}
                 isDark={isDark}
-                isAdmin={isAdmin}
+                canEdit={canEditDeveloperProfile}
               />
             </Suspense>
             {chatbot}
@@ -3663,7 +3713,7 @@ export default function App() {
           />
           <Suspense fallback={getPageLoadingFallback("Feedback")}>
             <FeedbackPage
-              onClose={() => setShowFeedbackPage(false)}
+              onClose={closePage}
               isAdmin={userRole === 'admin' || userRole === 'auditor'}
               isDark={isDark}
               userRole={userRole}
@@ -3691,7 +3741,7 @@ export default function App() {
               message={config.message}
               estimatedTime={config.estimatedTime}
               pageName="Membership Application Form Editor"
-              onBack={() => setShowMembershipApplicationsPage(false)}
+              onBack={closePage}
               onContactDeveloper={() => setShowDeveloperModal(true)}
             />
             <Suspense fallback={null}>
@@ -3699,7 +3749,7 @@ export default function App() {
                 isOpen={showDeveloperModal}
                 onClose={() => setShowDeveloperModal(false)}
                 isDark={isDark}
-                isAdmin={isAdmin}
+                canEdit={canEditDeveloperProfile}
               />
             </Suspense>
             {chatbot}
@@ -3721,7 +3771,7 @@ export default function App() {
           />
           <Suspense fallback={getPageLoadingFallback("Applications")}>
             <MembershipApplicationsPage
-              onClose={() => setShowMembershipApplicationsPage(false)}
+              onClose={closePage}
               isDark={isDark}
               userRole={userRole}
               isLoggedIn={isAdmin || userRole !== 'guest'}
@@ -3751,7 +3801,7 @@ export default function App() {
               message={config.message}
               estimatedTime={config.estimatedTime}
               pageName="Officer Directory"
-              onBack={() => setShowOfficerDirectory(false)}
+              onBack={closePage}
               onContactDeveloper={() => setShowDeveloperModal(true)}
             />
             <Suspense fallback={null}>
@@ -3759,7 +3809,7 @@ export default function App() {
                 isOpen={showDeveloperModal}
                 onClose={() => setShowDeveloperModal(false)}
                 isDark={isDark}
-                isAdmin={isAdmin}
+                canEdit={canEditDeveloperProfile}
               />
             </Suspense>
             {chatbot}
@@ -3781,7 +3831,7 @@ export default function App() {
           />
           <Suspense fallback={getPageLoadingFallback("Officer Directory")}>
             <OfficerDirectoryPage
-              onClose={() => setShowOfficerDirectory(false)}
+              onClose={closePage}
               isDark={isDark}
               searchRequest={directorySearchRequest}
             />
@@ -3802,7 +3852,7 @@ export default function App() {
               message={config.message}
               estimatedTime={config.estimatedTime}
               pageName="Attendance Dashboard"
-              onBack={() => setShowAttendanceDashboard(false)}
+              onBack={closePage}
               onContactDeveloper={() => setShowDeveloperModal(true)}
             />
             <Suspense fallback={null}>
@@ -3810,7 +3860,7 @@ export default function App() {
                 isOpen={showDeveloperModal}
                 onClose={() => setShowDeveloperModal(false)}
                 isDark={isDark}
-                isAdmin={isAdmin}
+                canEdit={canEditDeveloperProfile}
               />
             </Suspense>
             {chatbot}
@@ -3832,16 +3882,57 @@ export default function App() {
           />
           <Suspense fallback={getPageLoadingFallback("Attendance Dashboard")}>
             <AttendanceDashboardPage
-              onClose={() => setShowAttendanceDashboard(false)}
+              onClose={closePage}
               isDark={isDark}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
               removeUploadToast={removeUploadToast}
               onDashboardContextUpdate={setAttendanceDashboardContext}
               onModalStateChange={setAttendanceDashboardModalOpen}
+              onOpenRankingsPage={() => {
+                setShowAttendanceDashboard(false);
+                setShowAttendanceRankings(true);
+              }}
             />
           </Suspense>
           {/* Upload Toast Container for export progress */}
+          <UploadToastContainer
+            messages={uploadToastMessages}
+            onDismiss={removeUploadToast}
+            isDark={isDark}
+          />
+          {chatbot}
+        </>
+      );
+    }
+
+    if (showAttendanceRankings && isPageAllowed("attendance-dashboard")) {
+      return (
+        <>
+          <Toaster
+            position="top-center"
+            richColors
+            closeButton
+            theme={isDark ? "dark" : "light"}
+            toastOptions={{
+              style: {
+                fontFamily: "var(--font-sans)",
+              },
+            }}
+          />
+          <Suspense fallback={getPageLoadingFallback("Attendance Rankings")}>
+            <AttendanceDashboardPage
+              onClose={() => {
+                setShowAttendanceRankings(false);
+                setShowAttendanceDashboard(true);
+              }}
+              isDark={isDark}
+              addUploadToast={addUploadToast}
+              updateUploadToast={updateUploadToast}
+              removeUploadToast={removeUploadToast}
+              rankingsOnlyMode
+            />
+          </Suspense>
           <UploadToastContainer
             messages={uploadToastMessages}
             onDismiss={removeUploadToast}
@@ -3859,9 +3950,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("attendance-recording");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Attendance Recording" onBack={() => setShowAttendanceRecording(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Attendance Recording" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -3872,7 +3963,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Attendance Recording")}>
             <AttendanceRecordingPage 
-              onClose={() => setShowAttendanceRecording(false)} 
+              onClose={closePage} 
               isDark={isDark}
               initialEventId={deepLinkParams.eventId}
               initialMode={deepLinkParams.mode}
@@ -3891,9 +3982,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("manage-events");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Manage Events" onBack={() => setShowManageEvents(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Manage Events" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -3904,7 +3995,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Manage Events")}>
             <ManageEventsPage 
-              onClose={() => setShowManageEvents(false)} 
+              onClose={closePage} 
               isDark={isDark} 
               username={userUsername || 'admin'} 
               onModalStateChange={setManageEventsModalOpen}
@@ -3925,9 +4016,9 @@ export default function App() {
           : getPageMaintenanceConfig("my-qrid");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="My QR ID" onBack={() => setShowMyQRID(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="My QR ID" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -3938,7 +4029,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("My QR ID")}>
             <MyQRIDPage 
-              onClose={() => setShowMyQRID(false)} 
+              onClose={closePage} 
               isDark={isDark}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
@@ -3957,9 +4048,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("attendance-transparency");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Attendance Transparency" onBack={() => setShowAttendanceTransparency(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Attendance Transparency" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -3969,7 +4060,7 @@ export default function App() {
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Attendance Transparency")}>
-            <AttendanceTransparencyPage onClose={() => setShowAttendanceTransparency(false)} isDark={isDark} userName={userName} memberId={userIdCode} />
+            <AttendanceTransparencyPage onClose={closePage} isDark={isDark} userName={userName} memberId={userIdCode} />
           </Suspense>
           {chatbot}
         </>
@@ -3982,9 +4073,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("my-profile");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="My Profile" onBack={() => setShowMyProfile(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="My Profile" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4033,9 +4124,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("announcements");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Announcements" onBack={() => setShowAnnouncements(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Announcements" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4046,7 +4137,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Announcements")}>
             <AnnouncementsPage 
-              onClose={() => setShowAnnouncements(false)} 
+              onClose={closePage} 
               isDark={isDark} 
               userRole={userRole} 
               username={userUsername || 'admin'}
@@ -4069,9 +4160,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("issuance");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Issuance Center" onBack={() => setShowIssuanceCenter(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Issuance Center" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4082,7 +4173,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Issuance Center")}>
             <IssuanceCenterPage 
-              onClose={() => setShowIssuanceCenter(false)} 
+              onClose={closePage} 
               isDark={isDark} 
               userRole={userRole} 
               username={userUsername || 'admin'} 
@@ -4104,9 +4195,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("email-system");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Email System" onBack={() => setShowEmailSystem(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Email System" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4117,7 +4208,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Email System")}>
             <EmailSystemPage 
-              onClose={() => setShowEmailSystem(false)} 
+              onClose={closePage} 
               isDark={isDark} 
               userRole={userRole} 
               username={userUsername || 'admin'} 
@@ -4137,9 +4228,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("access-logs");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Access Logs" onBack={() => setShowAccessLogs(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Access Logs" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4150,7 +4241,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Access Logs")}>
             <AccessLogsPage 
-              onClose={() => setShowAccessLogs(false)} 
+              onClose={closePage} 
               isDark={isDark} 
               username={userUsername || 'admin'} 
               addUploadToast={addUploadToast} 
@@ -4171,9 +4262,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("system-tools");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="System Tools" onBack={() => setShowSystemTools(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="System Tools" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4184,7 +4275,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("System Tools")}>
             <SystemToolsPage 
-              onClose={() => setShowSystemTools(false)} 
+              onClose={closePage} 
               isDark={isDark} 
               username={userUsername || 'admin'}
               addUploadToast={addUploadToast}
@@ -4204,9 +4295,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("manage-members");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Manage Members" onBack={() => setShowManageMembers(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Manage Members" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4216,7 +4307,7 @@ export default function App() {
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Manage Members")}>
-            <ManageMembersPage onClose={() => setShowManageMembers(false)} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userUsername || userName} onModalStateChange={setManageMembersModalOpen} />
+            <ManageMembersPage onClose={closePage} isDark={isDark} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} currentUserName={userUsername || userName} onModalStateChange={setManageMembersModalOpen} />
           </Suspense>
           {chatbot}
         </>
@@ -4229,9 +4320,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("kaagapai-meet");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="KaagapAI Meet" onBack={() => setShowKaagapAIMeet(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="KaagapAI Meet" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4242,7 +4333,7 @@ export default function App() {
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("KaagapAI Meet")}>
             <KaagapAIMeetPage
-              onClose={() => setShowKaagapAIMeet(false)}
+              onClose={closePage}
               isDark={isDark}
               addUploadToast={addUploadToast}
               updateUploadToast={updateUploadToast}
@@ -4260,9 +4351,9 @@ export default function App() {
         const config = getPageMaintenanceConfig("membership-applications");
         return (
           <>
-            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Membership Applications" onBack={() => setShowMembershipApplications(false)} onContactDeveloper={() => setShowDeveloperModal(true)} />
+            <MaintenanceScreen isDark={isDark} message={config.message} estimatedTime={config.estimatedTime} pageName="Membership Applications" onBack={closePage} onContactDeveloper={() => setShowDeveloperModal(true)} />
             <Suspense fallback={null}>
-              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} isAdmin={isAdmin} />
+              <DeveloperModal isOpen={showDeveloperModal} onClose={() => setShowDeveloperModal(false)} isDark={isDark} canEdit={canEditDeveloperProfile} />
             </Suspense>
             {chatbot}
           </>
@@ -4272,7 +4363,7 @@ export default function App() {
         <>
           <Toaster position="top-center" richColors closeButton theme={isDark ? "dark" : "light"} toastOptions={{style: {fontFamily: "var(--font-sans)"}}}/>
           <Suspense fallback={getPageLoadingFallback("Membership Applications")}>
-            <MembershipApplicationsPage onClose={() => setShowMembershipApplications(false)} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin || userRole !== 'guest'} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userUsername || 'admin'} onModalStateChange={setMembershipAppsModalOpen} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
+            <MembershipApplicationsPage onClose={closePage} isDark={isDark} userRole={userRole} isLoggedIn={isAdmin || userRole !== 'guest'} pendingApplications={pendingApplications} setPendingApplications={setPendingApplications} username={userUsername || 'admin'} onModalStateChange={setMembershipAppsModalOpen} addUploadToast={addUploadToast} updateUploadToast={updateUploadToast} removeUploadToast={removeUploadToast} />
           </Suspense>
           <UploadToastContainer messages={uploadToastMessages} onDismiss={removeUploadToast} isDark={isDark} />
           {chatbot}
@@ -4291,7 +4382,7 @@ export default function App() {
               message={config.message}
               estimatedTime={config.estimatedTime}
               pageName="Settings"
-              onBack={() => setShowSettings(false)}
+              onBack={closePage}
               onContactDeveloper={() => setShowDeveloperModal(true)}
             />
             <Suspense fallback={null}>
@@ -4299,7 +4390,7 @@ export default function App() {
                 isOpen={showDeveloperModal}
                 onClose={() => setShowDeveloperModal(false)}
                 isDark={isDark}
-                isAdmin={isAdmin}
+                canEdit={canEditDeveloperProfile}
               />
             </Suspense>
             {chatbot}
@@ -4321,7 +4412,7 @@ export default function App() {
           />
           <Suspense fallback={getPageLoadingFallback("Settings")}>
             <SettingsPage
-              onClose={() => setShowSettings(false)}
+              onClose={closePage}
               isDark={isDark}
               onToggleDark={toggleDark}
               onRequestCacheClear={handleRequestCacheClear}
@@ -4434,7 +4525,7 @@ export default function App() {
         </Suspense>
 
         {/* Top Bar - Floating Header - Only on Homepage */}
-        {!showOfficerDirectory && !showAttendanceDashboard && !showAttendanceRecording && 
+        {!showOfficerDirectory && !showAttendanceDashboard && !showAttendanceRankings && !showAttendanceRecording && 
         !showManageEvents && !showMyQRID && 
         !showAttendanceTransparency && !showAnnouncements && !showIssuanceCenter && !showEmailSystem && !showAccessLogs && 
         !showSystemTools && !showManageMembers && !showFeedbackPage && 
@@ -6562,7 +6653,7 @@ export default function App() {
             isOpen={showFounderModal}
             onClose={() => setShowFounderModal(false)}
             isDark={isDark}
-            isAdmin={isAdmin}
+            canEdit={canEditFounderInfo}
             addUploadToast={addUploadToast}
             updateUploadToast={updateUploadToast}
             removeUploadToast={removeUploadToast}
@@ -6575,7 +6666,7 @@ export default function App() {
             isOpen={showDeveloperModal}
             onClose={() => setShowDeveloperModal(false)}
             isDark={isDark}
-            isAdmin={isAdmin}
+            canEdit={canEditDeveloperProfile}
             addUploadToast={addUploadToast}
             updateUploadToast={updateUploadToast}
             removeUploadToast={removeUploadToast}

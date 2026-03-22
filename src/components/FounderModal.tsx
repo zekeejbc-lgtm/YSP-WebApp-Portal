@@ -14,7 +14,7 @@ interface FounderModalProps {
   isOpen: boolean;
   onClose: () => void;
   isDark: boolean;
-  isAdmin: boolean;
+  canEdit: boolean;
   // Upload Toast functions for consistent progress bar at bottom-right (optional with fallback)
   addUploadToast?: (message: UploadToastMessage) => void;
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
@@ -25,6 +25,9 @@ interface FounderModalProps {
 const defaultAddToast = (_message: UploadToastMessage) => {};
 const defaultUpdateToast = (_id: string, _updates: Partial<UploadToastMessage>) => {};
 const defaultRemoveToast = (_id: string) => {};
+
+const FOUNDER_INFO_FETCH_TOAST_ID = 'founderinfo-fetch';
+let founderInfoFetchPromise: Promise<FounderInfoContent> | null = null;
 
 // Social platform detection helper - detects platform from URL
 const detectSocialPlatform = (url: string): { name: string; color: string; bgClass: string; textClass: string; icon: string } => {
@@ -365,7 +368,7 @@ export default function FounderModal({
   isOpen, 
   onClose, 
   isDark, 
-  isAdmin, 
+  canEdit, 
   addUploadToast = defaultAddToast, 
   updateUploadToast = defaultUpdateToast, 
   removeUploadToast = defaultRemoveToast 
@@ -414,22 +417,31 @@ export default function FounderModal({
     // Prevent multiple fetches
     if (hasFetchedRef.current) return;
     hasFetchedRef.current = true;
-    
-    const toastId = `founderinfo-fetch-${Date.now()}`;
+
+    const startedNewFetch = !founderInfoFetchPromise;
+    if (!founderInfoFetchPromise) {
+      founderInfoFetchPromise = fetchFounderInfoContent();
+    }
+
+    const toastId = FOUNDER_INFO_FETCH_TOAST_ID;
     setIsLoading(true);
-    
-    addToastRef.current({
-      id: toastId,
-      title: 'Loading Founder Profile',
-      message: 'Connecting to backend...',
-      status: 'loading',
-      progress: 0,
-    });
-    
+
+    if (startedNewFetch) {
+      addToastRef.current({
+        id: toastId,
+        title: 'Loading Founder Profile',
+        message: 'Connecting to backend...',
+        status: 'loading',
+        progress: 0,
+      });
+    }
+
     try {
-      updateToastRef.current(toastId, { progress: 30, message: 'Fetching from Google Sheets...' });
-      const data = await fetchFounderInfoContent();
-      
+      if (startedNewFetch) {
+        updateToastRef.current(toastId, { progress: 30, message: 'Fetching from Google Sheets...' });
+      }
+      const data = await founderInfoFetchPromise;
+
       updateToastRef.current(toastId, { progress: 70, message: 'Processing data...' });
       
       // Transform backend data to component format
@@ -470,6 +482,7 @@ export default function FounderModal({
         message: error instanceof Error ? error.message : 'Failed to load founder info',
       });
     } finally {
+      founderInfoFetchPromise = null;
       setIsLoading(false);
     }
   }, []); // No dependencies - uses refs
@@ -759,7 +772,7 @@ export default function FounderModal({
             Founder Profile
           </h2>
           <div className="flex items-center gap-2">
-            {isAdmin && isEditing && (
+            {canEdit && isEditing && (
               <button
                 onClick={handleCancelEdit}
                 disabled={isSaving}
@@ -768,7 +781,7 @@ export default function FounderModal({
                 Cancel
               </button>
             )}
-            {isAdmin && (
+            {canEdit && (
               <button
                 onClick={() => isEditing ? handleSave() : setIsEditing(true)}
                 disabled={isSaving || isLoading}
@@ -843,7 +856,18 @@ export default function FounderModal({
                       className="hidden"
                     />
                   </label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
+                  <p
+                    className="mt-1 w-32 text-center text-xs leading-4 text-gray-500 dark:text-gray-400 md:w-40"
+                    style={{
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}
+                    title={pendingImageFile ? pendingImageFile.name : 'Max 10MB'}
+                  >
                     {pendingImageFile ? `Selected: ${pendingImageFile.name}` : 'Max 10MB'}
                   </p>
                 </div>

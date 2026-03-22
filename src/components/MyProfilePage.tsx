@@ -104,6 +104,54 @@ export default function MyProfilePage({
   const [isCheckingVerification, setIsCheckingVerification] = useState(false);
   const hasLoadedRef = useRef(false);
 
+  const getManilaDateParts = () => {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const parts = formatter.formatToParts(new Date());
+    const lookup = (type: string) => parts.find((part) => part.type === type)?.value || '0';
+    return {
+      year: Number(lookup('year')),
+      month: Number(lookup('month')),
+      day: Number(lookup('day')),
+    };
+  };
+
+  const getBirthdayParts = (birthday: string) => {
+    if (!birthday) return null;
+
+    const exactDateMatch = birthday.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (exactDateMatch) {
+      return {
+        year: Number(exactDateMatch[1]),
+        month: Number(exactDateMatch[2]),
+        day: Number(exactDateMatch[3]),
+      };
+    }
+
+    const parsed = new Date(birthday);
+    if (isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const parts = formatter.formatToParts(parsed);
+    const lookup = (type: string) => parts.find((part) => part.type === type)?.value || '0';
+    return {
+      year: Number(lookup('year')),
+      month: Number(lookup('month')),
+      day: Number(lookup('day')),
+    };
+  };
+
   const [profile, setProfile] = useState({
     // Personal Info
     fullName: "",
@@ -194,6 +242,7 @@ export default function MyProfilePage({
         // Apply cached data immediately
         const cachedProfile = {
           ...cached.profile,
+          age: calculateAge(cached.profile.birthday || ''),
           password: '••••••••',
         };
         setProfile(cachedProfile);
@@ -271,7 +320,7 @@ export default function MyProfilePage({
             personalEmail: p.personalEmail || '',
             contactNumber: p.contactNumber || '',
             birthday: p.birthday || '',
-            age: p.age || 0,
+            age: calculateAge(p.birthday || ''),
             gender: p.gender || '',
             pronouns: p.pronouns || '',
             idCode: p.idCode || '',
@@ -344,7 +393,7 @@ export default function MyProfilePage({
               personalEmail: p.personalEmail || '',
               contactNumber: p.contactNumber || '',
               birthday: p.birthday || '',
-              age: p.age || 0,
+              age: calculateAge(p.birthday || ''),
               gender: p.gender || '',
               pronouns: p.pronouns || '',
               idCode: p.idCode || '',
@@ -517,12 +566,11 @@ export default function MyProfilePage({
   const calculateAge = (birthday: string): number => {
     if (!birthday) return 0;
     try {
-      const birthDate = new Date(birthday);
-      if (isNaN(birthDate.getTime())) return 0;
-      const today = new Date();
-      let age = today.getFullYear() - birthDate.getFullYear();
-      const monthDiff = today.getMonth() - birthDate.getMonth();
-      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      const birthDate = getBirthdayParts(birthday);
+      if (!birthDate) return 0;
+      const today = getManilaDateParts();
+      let age = today.year - birthDate.year;
+      if (today.month < birthDate.month || (today.month === birthDate.month && today.day < birthDate.day)) {
         age--;
       }
       return age > 0 ? age : 0;
@@ -736,7 +784,7 @@ export default function MyProfilePage({
             personalEmail: profile.personalEmail || '',
             contactNumber: profile.contactNumber || '',
             birthday: profile.birthday || '',
-            age: profile.age || 0,
+            age: calculateAge(profile.birthday || ''),
             gender: profile.gender || '',
             pronouns: profile.pronouns || '',
             idCode: profile.idCode || '',

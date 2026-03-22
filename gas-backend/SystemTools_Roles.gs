@@ -42,6 +42,8 @@ const SYSTEM_PERMISSION_KEYS = [
   'fn_backup_database',
   'fn_export_all_data',
   'fn_manage_homepage_content',
+  'fn_manage_founder_info',
+  'fn_manage_dev_profile',
   'fn_manage_notifications',
   'fn_manage_issuance',
   'fn_manage_attendance_events',
@@ -85,6 +87,8 @@ function getDefaultPermissionsForLevel_(powerLevel) {
     fn_backup_database: level >= 8,
     fn_export_all_data: level >= 8,
     fn_manage_homepage_content: level >= 8,
+    fn_manage_founder_info: false,
+    fn_manage_dev_profile: false,
     fn_manage_notifications: level >= 8,
     fn_manage_issuance: level >= 8,
     fn_manage_attendance_events: level >= 5,
@@ -120,12 +124,23 @@ function getDefaultSystemRoles_() {
   ];
 
   return defaults.map(function (role) {
+    const roleName = String(role[0] || '');
+    const powerLevel = Number(role[1]) || 0;
+    const permissions = getDefaultPermissionsForLevel_(powerLevel);
+
+    if (roleName === 'Auditor') {
+      permissions.fn_manage_founder_info = true;
+      permissions.fn_manage_dev_profile = true;
+    } else if (roleName === 'Admin') {
+      permissions.fn_manage_founder_info = true;
+    }
+
     return [
-      role[0],
-      role[1],
+      roleName,
+      powerLevel,
       role[2],
       role[3],
-      JSON.stringify(getDefaultPermissionsForLevel_(role[1])),
+      JSON.stringify(permissions),
     ];
   });
 }

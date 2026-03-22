@@ -247,6 +247,10 @@ export function useUrlSync({
   const skipStateSyncRef = useRef(false);
   const processingUrlRef = useRef(false);
 
+  const replaceCurrentUrl = useCallback((to: string) => {
+    navigate(to, { replace: true });
+  }, [navigate]);
+
   // Check if user has access to a page
   const hasPageAccess = useCallback((pageName: string): boolean => {
     if (PUBLIC_PAGES.has(pageName)) return true;
@@ -345,10 +349,10 @@ export function useUrlSync({
   const closePage = useCallback(() => {
     skipStateSyncRef.current = true;
     closeAllPages();
-    navigate(buildUrl(null));
+    replaceCurrentUrl(buildUrl(null));
     lastSyncedPage.current = null;
     setTimeout(() => { skipStateSyncRef.current = false; }, 50);
-  }, [closeAllPages, navigate, buildUrl]);
+  }, [closeAllPages, buildUrl, replaceCurrentUrl]);
 
   // Navigate to a page by updating both URL and state, with optional deep link params
   const navigateToPage = useCallback((pageName: string, params?: DeepLinkParams) => {
@@ -364,7 +368,7 @@ export function useUrlSync({
       skipStateSyncRef.current = true;
       closeAllPages();
       pageSetters.setShowLoginPanel(true);
-      navigate(buildUrl('Login'), { replace: true });
+      replaceCurrentUrl(buildUrl('Login'));
       lastSyncedPage.current = 'Login';
       setTimeout(() => { skipStateSyncRef.current = false; }, 50);
       return;
@@ -376,7 +380,7 @@ export function useUrlSync({
     lastSyncedPage.current = normalizedPageName;
     
     setTimeout(() => { skipStateSyncRef.current = false; }, 50);
-  }, [hasPageAccess, setIntendedDestination, closeAllPages, pageSetters, navigate, openPageDirect, buildUrl, closePage]);
+  }, [hasPageAccess, setIntendedDestination, closeAllPages, pageSetters, navigate, openPageDirect, buildUrl, closePage, replaceCurrentUrl]);
 
   // Update URL when role changes (to keep role segment in sync)
   useEffect(() => {
@@ -391,9 +395,9 @@ export function useUrlSync({
     if (location.pathname !== expectedPath) {
       const roleSegment = getRolePathSegment(userRole, isLoggedIn);
       const newUrl = currentPage ? `/${roleSegment}?page=${currentPage}` : expectedPath;
-      navigate(newUrl, { replace: true });
+      replaceCurrentUrl(newUrl);
     }
-  }, [userRole, isLoggedIn, sessionChecked, navigate, searchParams, location.pathname]);
+  }, [userRole, isLoggedIn, sessionChecked, replaceCurrentUrl, searchParams, location.pathname]);
 
   // Handle initial URL and URL changes (browser back/forward, direct URL access)
   useEffect(() => {
@@ -406,7 +410,7 @@ export function useUrlSync({
     if (rawPage && currentPage && rawPage !== currentPage) {
       const normalizedParams = new URLSearchParams(searchParams.toString());
       normalizedParams.set('page', currentPage);
-      navigate(`${location.pathname}?${normalizedParams.toString()}`, { replace: true });
+      replaceCurrentUrl(`${location.pathname}?${normalizedParams.toString()}`);
       return;
     }
     
@@ -431,7 +435,7 @@ export function useUrlSync({
     // Check if the page exists
     if (!PAGE_TO_STATE[currentPage]) {
       // Unknown page - redirect to home
-      navigate(buildUrl(null), { replace: true });
+      replaceCurrentUrl(buildUrl(null));
       lastSyncedPage.current = null;
       isInitialLoad.current = false;
       processingUrlRef.current = false;
@@ -448,7 +452,7 @@ export function useUrlSync({
         pageSetters.setShowLoginPanel(true);
       }
       
-      navigate(buildUrl(null), { replace: true });
+      replaceCurrentUrl(buildUrl(null));
       lastSyncedPage.current = null;
       isInitialLoad.current = false;
       processingUrlRef.current = false;
@@ -471,9 +475,10 @@ export function useUrlSync({
     openPageDirect, 
     setIntendedDestination, 
     pageSetters, 
-    navigate,
     isLoggedIn,
     buildUrl,
+    replaceCurrentUrl,
+    location.pathname,
   ]);
 
   // Handle post-login redirect
@@ -500,14 +505,14 @@ export function useUrlSync({
       // Update URL if it doesn't match the open page
       if (expectedPage && lastSyncedPage.current !== expectedPage) {
         lastSyncedPage.current = expectedPage;
-        navigate(buildUrl(expectedPage), { replace: true });
+        navigate(buildUrl(expectedPage));
       }
     } else if (lastSyncedPage.current !== null) {
       // No page is open - sync to home
       lastSyncedPage.current = null;
-      navigate(buildUrl(null), { replace: true });
+      replaceCurrentUrl(buildUrl(null));
     }
-  }, [pageStates, navigate, sessionChecked, buildUrl]);
+  }, [pageStates, navigate, sessionChecked, buildUrl, replaceCurrentUrl]);
 
   // Get current deep link parameters from URL
   const getDeepLinkParams = useCallback((): DeepLinkParams => {

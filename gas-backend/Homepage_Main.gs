@@ -288,6 +288,103 @@
     return null;
   }
 
+  function hasExplicitPermission_(roleRecord, permissionKey) {
+    return !!(
+      roleRecord &&
+      roleRecord.permissions &&
+      Object.prototype.hasOwnProperty.call(roleRecord.permissions, permissionKey)
+    );
+  }
+
+  function hasHomepageActionAccess_(roleName, roleRecord, action) {
+    var role = normalizeRoleValue_(roleName);
+    var permissionKey = '';
+
+    if (
+      action === 'updateDevInfo' ||
+      action === 'uploadDevProfile' ||
+      action === 'addDevAffiliation' ||
+      action === 'removeDevAffiliation' ||
+      action === 'updateDevAffiliation' ||
+      action === 'addDevSocialLink' ||
+      action === 'removeDevSocialLink' ||
+      action === 'updateDevSocialLink'
+    ) {
+      permissionKey = 'fn_manage_dev_profile';
+      if (hasExplicitPermission_(roleRecord, permissionKey)) {
+        return roleRecord.permissions[permissionKey] === true;
+      }
+      return role === 'auditor';
+    }
+
+    if (
+      action === 'updateFounderInfo' ||
+      action === 'uploadFounderProfile' ||
+      action === 'addFounderAchievement' ||
+      action === 'removeFounderAchievement' ||
+      action === 'updateFounderAchievement' ||
+      action === 'addFounderSocialLink' ||
+      action === 'removeFounderSocialLink' ||
+      action === 'updateFounderSocialLink'
+    ) {
+      permissionKey = 'fn_manage_founder_info';
+      if (hasExplicitPermission_(roleRecord, permissionKey)) {
+        return roleRecord.permissions[permissionKey] === true;
+      }
+      return role === 'auditor' || role === 'admin';
+    }
+
+    return false;
+  }
+
+  function requireHomepageActionAccess_(username, action) {
+    if (!username) {
+      return { success: false, error: 'Username is required for authorization', code: 400 };
+    }
+
+    var role = normalizeRoleValue_(getUserRole_(username));
+    if (!role) {
+      return { success: false, error: 'User role not found', code: 404 };
+    }
+    if (role === 'banned' || role === 'suspended') {
+      return { success: false, error: 'Account is restricted', code: 403 };
+    }
+
+    var roleRecord = getSystemRoleRecordByName_(role);
+    var isDeveloperProfileAction =
+      action === 'updateDevInfo' ||
+      action === 'uploadDevProfile' ||
+      action === 'addDevAffiliation' ||
+      action === 'removeDevAffiliation' ||
+      action === 'updateDevAffiliation' ||
+      action === 'addDevSocialLink' ||
+      action === 'removeDevSocialLink' ||
+      action === 'updateDevSocialLink';
+    var isFounderInfoAction =
+      action === 'updateFounderInfo' ||
+      action === 'uploadFounderProfile' ||
+      action === 'addFounderAchievement' ||
+      action === 'removeFounderAchievement' ||
+      action === 'updateFounderAchievement' ||
+      action === 'addFounderSocialLink' ||
+      action === 'removeFounderSocialLink' ||
+      action === 'updateFounderSocialLink';
+
+    if (hasHomepageActionAccess_(role, roleRecord, action)) {
+      return null;
+    }
+
+    if (isDeveloperProfileAction) {
+      return { success: false, error: 'Permission denied: cannot modify developer profile', code: 403 };
+    }
+
+    if (isFounderInfoAction) {
+      return { success: false, error: 'Permission denied: cannot modify founder info', code: 403 };
+    }
+
+    return requireAdminOrAuditor_(username, action || 'modify homepage content');
+  }
+
   /**
    * Validate the request API key.
    * Set SECRET_API_KEY in Script Properties for each deployment.
@@ -454,8 +551,8 @@
       }
       payload.username = tokenUser.username;
 
-      // ---- Role check: all write operations require admin or auditor ----
-      const authError = requireAdminOrAuditor_(payload.username, payload.action || 'modify homepage content');
+      // ---- Role check: action-specific permissions are enforced here ----
+      const authError = requireHomepageActionAccess_(payload.username, payload.action || 'modify homepage content');
       if (authError) return createJsonResponse(authError);
       
       // Homepage update

@@ -2044,10 +2044,11 @@ export default function SystemToolsPage({
         </div>
       ), document.body)}
 
-      {showRoleModal && (
+      {typeof document !== "undefined" && showRoleModal && createPortal((
         <div
-          className="fixed inset-0 z-10000 flex items-center justify-center p-4"
+          className="fixed inset-0 flex items-center justify-center p-4"
           style={{
+            zIndex: 2147483647,
             background: isDark ? "rgba(0, 0, 0, 0.65)" : "rgba(17, 24, 39, 0.45)",
             backdropFilter: "blur(6px)",
           }}
@@ -2092,170 +2093,170 @@ export default function SystemToolsPage({
             </div>
 
             <div className="overflow-y-auto px-6 py-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm mb-2">Role Name</label>
-                <input
-                  type="text"
-                  value={roleForm.name}
-                  onChange={(event) => setRoleForm({ ...roleForm, name: event.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-2">Power Level</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={10}
-                  value={roleForm.powerLevel}
-                  onChange={(event) =>
-                    setRoleForm({ ...roleForm, powerLevel: Number(event.target.value || 0) })
-                  }
-                  className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-2">Color</label>
-                <input
-                  type="color"
-                  value={roleForm.color}
-                  onChange={(event) => setRoleForm({ ...roleForm, color: event.target.value })}
-                  className="w-full h-10 rounded-lg border bg-white dark:bg-gray-800"
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-2">Description</label>
-                <input
-                  type="text"
-                  value={roleForm.description || ""}
-                  onChange={(event) => setRoleForm({ ...roleForm, description: event.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
-                />
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <h4 className="text-sm font-semibold mb-3">Core Permissions</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                {corePermissions.map((permission) => (
-                  <label
-                    key={permission.key}
-                    className="flex items-center justify-between p-3 rounded-lg border"
-                    style={{
-                      borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-                      background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
-                    }}
-                  >
-                    <span className="text-sm">{permission.label}</span>
-                    <input
-                      type="checkbox"
-                      checked={!!roleForm.permissions[permission.key]}
-                      onChange={(event) =>
-                        setRoleForm({
-                          ...roleForm,
-                          permissions: {
-                            ...roleForm.permissions,
-                            [permission.key]: event.target.checked,
-                          },
-                        })
-                      }
-                    />
-                  </label>
-                ))}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm mb-2">Role Name</label>
+                  <input
+                    type="text"
+                    value={roleForm.name}
+                    onChange={(event) => setRoleForm({ ...roleForm, name: event.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm mb-2">Power Level</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={roleForm.powerLevel}
+                    onChange={(event) =>
+                      setRoleForm({ ...roleForm, powerLevel: Number(event.target.value || 0) })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm mb-2">Color</label>
+                  <input
+                    type="color"
+                    value={roleForm.color}
+                    onChange={(event) => setRoleForm({ ...roleForm, color: event.target.value })}
+                    className="w-full h-10 rounded-lg border bg-white dark:bg-gray-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm mb-2">Description</label>
+                  <input
+                    type="text"
+                    value={roleForm.description || ""}
+                    onChange={(event) => setRoleForm({ ...roleForm, description: event.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800"
+                  />
+                </div>
               </div>
 
-              <h4 className="text-sm font-semibold mb-3">Page Access (including sub-pages)</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                {pagePermissions.map((permission) => (
-                  <label
-                    key={permission.key}
-                    className="flex items-center justify-between p-3 rounded-lg border"
-                    style={{
-                      borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-                      background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
-                    }}
-                  >
-                    <span className="text-sm">{permission.label}</span>
-                    <input
-                      type="checkbox"
-                      checked={!!roleForm.permissions[permission.key]}
-                      onChange={(event) =>
-                        setRoleForm({
-                          ...roleForm,
-                          permissions: {
-                            ...roleForm.permissions,
-                            [permission.key]: event.target.checked,
-                          },
-                        })
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
+              <div className="mb-6">
+                <h4 className="text-sm font-semibold mb-3">Core Permissions</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  {corePermissions.map((permission) => (
+                    <label
+                      key={permission.key}
+                      className="flex items-center justify-between p-3 rounded-lg border"
+                      style={{
+                        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                        background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
+                      }}
+                    >
+                      <span className="text-sm">{permission.label}</span>
+                      <input
+                        type="checkbox"
+                        checked={!!roleForm.permissions[permission.key]}
+                        onChange={(event) =>
+                          setRoleForm({
+                            ...roleForm,
+                            permissions: {
+                              ...roleForm.permissions,
+                              [permission.key]: event.target.checked,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
 
-              <h4 className="text-sm font-semibold mb-3">Function Access</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {functionPermissions.map((permission) => (
-                  <label
-                    key={permission.key}
-                    className="flex items-center justify-between p-3 rounded-lg border"
-                    style={{
-                      borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-                      background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
-                    }}
-                  >
-                    <span className="text-sm">{permission.label}</span>
-                    <input
-                      type="checkbox"
-                      checked={!!roleForm.permissions[permission.key]}
-                      onChange={(event) =>
-                        setRoleForm({
-                          ...roleForm,
-                          permissions: {
-                            ...roleForm.permissions,
-                            [permission.key]: event.target.checked,
-                          },
-                        })
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
+                <h4 className="text-sm font-semibold mb-3">Page Access (including sub-pages)</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  {pagePermissions.map((permission) => (
+                    <label
+                      key={permission.key}
+                      className="flex items-center justify-between p-3 rounded-lg border"
+                      style={{
+                        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                        background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
+                      }}
+                    >
+                      <span className="text-sm">{permission.label}</span>
+                      <input
+                        type="checkbox"
+                        checked={!!roleForm.permissions[permission.key]}
+                        onChange={(event) =>
+                          setRoleForm({
+                            ...roleForm,
+                            permissions: {
+                              ...roleForm.permissions,
+                              [permission.key]: event.target.checked,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
 
-              {customPermissionKeys.length > 0 ? (
-                <>
-                  <h4 className="text-sm font-semibold mt-4 mb-3">Custom Permissions</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {customPermissionKeys.map((key) => (
-                      <label
-                        key={key}
-                        className="flex items-center justify-between p-3 rounded-lg border"
-                        style={{
-                          borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-                          background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
-                        }}
-                      >
-                        <span className="text-sm">{key}</span>
-                        <input
-                          type="checkbox"
-                          checked={!!roleForm.permissions[key]}
-                          onChange={(event) =>
-                            setRoleForm({
-                              ...roleForm,
-                              permissions: {
-                                ...roleForm.permissions,
-                                [key]: event.target.checked,
-                              },
-                            })
-                          }
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-            </div>
+                <h4 className="text-sm font-semibold mb-3">Function Access</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {functionPermissions.map((permission) => (
+                    <label
+                      key={permission.key}
+                      className="flex items-center justify-between p-3 rounded-lg border"
+                      style={{
+                        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                        background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
+                      }}
+                    >
+                      <span className="text-sm">{permission.label}</span>
+                      <input
+                        type="checkbox"
+                        checked={!!roleForm.permissions[permission.key]}
+                        onChange={(event) =>
+                          setRoleForm({
+                            ...roleForm,
+                            permissions: {
+                              ...roleForm.permissions,
+                              [permission.key]: event.target.checked,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                {customPermissionKeys.length > 0 ? (
+                  <>
+                    <h4 className="text-sm font-semibold mt-4 mb-3">Custom Permissions</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {customPermissionKeys.map((key) => (
+                        <label
+                          key={key}
+                          className="flex items-center justify-between p-3 rounded-lg border"
+                          style={{
+                            borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                            background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.8)",
+                          }}
+                        >
+                          <span className="text-sm">{key}</span>
+                          <input
+                            type="checkbox"
+                            checked={!!roleForm.permissions[key]}
+                            onChange={(event) =>
+                              setRoleForm({
+                                ...roleForm,
+                                permissions: {
+                                  ...roleForm.permissions,
+                                  [key]: event.target.checked,
+                                },
+                              })
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </div>
             </div>
 
             <div
@@ -2274,7 +2275,7 @@ export default function SystemToolsPage({
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
 
       {/* Maintenance Mode Configuration Modal */}
       <MaintenanceModeModal

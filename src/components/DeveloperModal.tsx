@@ -14,7 +14,7 @@ interface DeveloperModalProps {
   isOpen: boolean;
   onClose: () => void;
   isDark: boolean;
-  isAdmin: boolean;
+  canEdit: boolean;
   // Upload Toast functions for consistent progress bar at bottom-right (optional with fallback)
   addUploadToast?: (message: UploadToastMessage) => void;
   updateUploadToast?: (id: string, updates: Partial<UploadToastMessage>) => void;
@@ -25,6 +25,9 @@ interface DeveloperModalProps {
 const defaultAddToast = (_message: UploadToastMessage) => {};
 const defaultUpdateToast = (_id: string, _updates: Partial<UploadToastMessage>) => {};
 const defaultRemoveToast = (_id: string) => {};
+
+const DEV_INFO_FETCH_TOAST_ID = 'devinfo-fetch';
+let devInfoFetchPromise: Promise<DevInfoContent> | null = null;
 
 // Social platform detection helper - detects platform from URL
 const detectSocialPlatform = (url: string): { name: string; color: string; bgClass: string; textClass: string; icon: string } => {
@@ -396,7 +399,7 @@ export default function DeveloperModal({
   isOpen, 
   onClose, 
   isDark, 
-  isAdmin, 
+  canEdit, 
   addUploadToast = defaultAddToast, 
   updateUploadToast = defaultUpdateToast, 
   removeUploadToast = defaultRemoveToast 
@@ -445,22 +448,31 @@ export default function DeveloperModal({
     // Prevent multiple fetches
     if (hasFetchedRef.current) return;
     hasFetchedRef.current = true;
-    
-    const toastId = `devinfo-fetch-${Date.now()}`;
+
+    const startedNewFetch = !devInfoFetchPromise;
+    if (!devInfoFetchPromise) {
+      devInfoFetchPromise = fetchDevInfoContent();
+    }
+
+    const toastId = DEV_INFO_FETCH_TOAST_ID;
     setIsLoading(true);
-    
-    addToastRef.current({
-      id: toastId,
-      title: 'Loading Developer Profile',
-      message: 'Connecting to backend...',
-      status: 'loading',
-      progress: 0,
-    });
-    
+
+    if (startedNewFetch) {
+      addToastRef.current({
+        id: toastId,
+        title: 'Loading Developer Profile',
+        message: 'Connecting to backend...',
+        status: 'loading',
+        progress: 0,
+      });
+    }
+
     try {
-      updateToastRef.current(toastId, { progress: 30, message: 'Fetching from Google Sheets...' });
-      const data = await fetchDevInfoContent();
-      
+      if (startedNewFetch) {
+        updateToastRef.current(toastId, { progress: 30, message: 'Fetching from Google Sheets...' });
+      }
+      const data = await devInfoFetchPromise;
+
       updateToastRef.current(toastId, { progress: 70, message: 'Processing data...' });
       
       // Transform backend data to component format
@@ -504,6 +516,7 @@ export default function DeveloperModal({
         message: error instanceof Error ? error.message : 'Failed to load developer info',
       });
     } finally {
+      devInfoFetchPromise = null;
       setIsLoading(false);
     }
   }, []); // No dependencies - uses refs
@@ -789,7 +802,7 @@ export default function DeveloperModal({
             Developer Profile
           </h2>
           <div className="flex items-center gap-2 shrink-0">
-            {isAdmin && isEditing && (
+            {canEdit && isEditing && (
               <button
                 onClick={handleCancelEdit}
                 className="px-4 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium text-gray-600 dark:text-gray-400"
@@ -797,7 +810,7 @@ export default function DeveloperModal({
                 Cancel
               </button>
             )}
-            {isAdmin && (
+            {canEdit && (
               <button
                 onClick={() => isEditing ? handleSave() : setIsEditing(true)}
                 disabled={isSaving}
@@ -875,7 +888,18 @@ export default function DeveloperModal({
                       className="hidden"
                     />
                   </label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
+                  <p
+                    className="mt-1 w-32 text-center text-xs leading-4 text-gray-500 dark:text-gray-400 md:w-40"
+                    style={{
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}
+                    title={pendingImageFile ? pendingImageFile.name : 'Max 10MB'}
+                  >
                     {pendingImageFile ? `Selected: ${pendingImageFile.name}` : 'Max 10MB'}
                   </p>
                 </div>

@@ -13,6 +13,7 @@
  */
 
 import { X, RefreshCw, AlertTriangle, LogIn } from "lucide-react";
+import { createPortal } from "react-dom";
 import { DESIGN_TOKENS, Button } from "./design-system";
 import { MODAL_REGULATIONS, getHeaderGradient, getModalStyles } from "./modal-regulations";
 import { determineRoleChangeType, type RoleChangeType } from "../utils/roleChange";
@@ -31,7 +32,7 @@ export function CacheRefreshModal({ isOpen, isDark, onConfirm, onClose }: CacheR
 
   const modalStyles = getModalStyles(isDark, "small");
 
-  return (
+  const modal = (
     <div
       className="fixed inset-0 flex items-center justify-center p-4 md:p-8"
       style={{
@@ -144,6 +145,8 @@ export function CacheRefreshModal({ isOpen, isDark, onConfirm, onClose }: CacheR
       </div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(modal, document.body) : modal;
 }
 
 // =================== SESSION RECOVERY MODAL ===================

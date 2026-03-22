@@ -401,9 +401,7 @@ function getDirectoryValue(row, colIdx) {
 function formatDirectoryDate(dateValue) {
   if (!dateValue) return '';
   try {
-    const date = new Date(dateValue);
-    if (isNaN(date.getTime())) return dateValue.toString();
-    return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    return normalizeDateValueToManilaYmd_(dateValue);
   } catch (e) {
     return dateValue.toString();
   }
@@ -413,20 +411,7 @@ function formatDirectoryDate(dateValue) {
  * Calculate age from birthday (Directory version)
  */
 function calculateDirectoryAge(birthday) {
-  if (!birthday) return 0;
-  try {
-    const birthDate = new Date(birthday);
-    if (isNaN(birthDate.getTime())) return 0;
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--;
-    }
-    return age;
-  } catch (e) {
-    return 0;
-  }
+  return calculateAgeFromBirthdayManila_(birthday);
 }
 
 /**
@@ -437,8 +422,7 @@ function calculateDirectoryAge(birthday) {
 function buildOfficerObject(row, idx) {
   const birthdayRaw = idx.birthday !== undefined ? row[idx.birthday] : '';
   const birthdayFormatted = formatDirectoryDate(birthdayRaw);
-  const ageValue = idx.age !== undefined ? parseInt(getDirectoryValue(row, idx.age)) : 0;
-  const calculatedAge = ageValue || calculateDirectoryAge(birthdayRaw);
+  const calculatedAge = calculateDirectoryAge(birthdayRaw);
   const emailVerifiedRaw = idx.emailVerified !== undefined ? row[idx.emailVerified] : '';
   const emailVerified =
     emailVerifiedRaw === true ||

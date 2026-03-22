@@ -1061,6 +1061,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     fullDate: string;
     location?: { lat: number; lng: number };
     recordedBy: string;
+    submissionMode: 'standard' | 'manual';
     createdAt: number;
     synced: boolean;
     syncError?: string;
@@ -1640,14 +1641,27 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     for (const record of queue) {
       try {
         if (record.timeType === 'in') {
-          await recordTimeIn({
-            eventId: record.eventId,
-            memberId: record.memberId,
-            memberName: record.memberName,
-            status: record.status as 'Present' | 'Late',
-            location: record.location,
-            recordedBy: record.recordedBy,
-          });
+          if (record.submissionMode === 'manual') {
+            await recordManualAttendance({
+              eventId: record.eventId,
+              memberId: record.memberId,
+              memberName: record.memberName,
+              status: record.status,
+              timeType: 'in',
+              notes: `Offline sync: Manually marked as ${record.status}`,
+              recordedBy: record.recordedBy,
+              overwrite: false,
+            });
+          } else {
+            await recordTimeIn({
+              eventId: record.eventId,
+              memberId: record.memberId,
+              memberName: record.memberName,
+              status: record.status as 'Present' | 'Late',
+              location: record.location,
+              recordedBy: record.recordedBy,
+            });
+          }
         } else {
           await recordTimeOut({
             eventId: record.eventId,
@@ -2436,6 +2450,7 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         fullDate: fullDate,
         location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
         recordedBy: getCurrentUserName(),
+        submissionMode: 'standard',
       });
       
       // Update pending record to show it's queued
@@ -2879,10 +2894,27 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
         return;
       }
 
+      // Manual mode can queue records offline; skip online-only precheck when disconnected.
+      if (!isOnline) {
+        await submitAttendanceRecord(member, timestamp, fullDate, false, false);
+        return;
+      }
+
       // First check if there's an existing record
       const existingCheck = await checkExistingAttendance(selectedEvent.id, member.id);
       
-      if (existingCheck.exists && existingCheck.record) {
+      const hasExistingTimeIn = Boolean(existingCheck.record?.timeIn);
+      const hasExistingTimeOut = Boolean(existingCheck.record?.timeOut);
+      const shouldPromptOverwrite =
+        existingCheck.exists &&
+        !!existingCheck.record &&
+        (
+          timeType === "in" ||
+          (timeType === "out" && hasExistingTimeOut) ||
+          (timeType === "out" && !hasExistingTimeIn)
+        );
+
+      if (shouldPromptOverwrite && existingCheck.record) {
         // Show overwrite modal - format the timestamp properly
         const rawTime = existingCheck.record.timeIn || existingCheck.record.timeOut;
         setPreviousRecord({
@@ -2930,6 +2962,50 @@ export default function AttendanceRecordingPage({ onClose, isDark, initialEventI
     if (!selectedEvent) return;
 
     try {
+      if (!isOnline) {
+        const submissionMode =
+          timeType === "in" && (status === "Absent" || status === "Excused")
+            ? "manual"
+            : "standard";
+
+        addToPendingQueue({
+          eventId: selectedEvent.id,
+          eventName: selectedEvent.name,
+          memberId: member.id,
+          memberName: member.name,
+          memberData: member,
+          status: status as 'Present' | 'Late' | 'Excused' | 'Absent',
+          timeType: timeType,
+          timestamp: timestamp,
+          fullDate: fullDate,
+          location: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : undefined,
+          recordedBy: getCurrentUserName(),
+          submissionMode,
+        });
+
+        setPendingRecord({
+          memberData: member,
+          member: member.name,
+          event: selectedEvent.name,
+          timeType: timeType === "in"
+            ? (submissionMode === "manual" ? "Manual Entry" : "Time In")
+            : "Time Out",
+          status: status,
+          timestamp: timestamp,
+          date: fullDate,
+          isExternal: isExternal,
+          isOffline: true,
+        });
+        setShowVerificationModal(true);
+        
+        skipNextMemberReloadRef.current = true;
+        setSelectedMember("");
+        setMemberSearchInput("");
+        setShowMemberDropdown(false);
+        setStatus("Present");
+        return;
+      }
+
       if (timeType === "in") {
         if (status === "Absent" || status === "Excused") {
           // Use manual attendance for Absent/Excused

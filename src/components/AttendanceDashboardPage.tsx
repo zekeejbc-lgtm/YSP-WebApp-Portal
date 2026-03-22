@@ -297,6 +297,8 @@ interface AttendanceDashboardPageProps {
   removeUploadToast?: (id: string) => void;
   onDashboardContextUpdate?: (context: AttendanceDashboardContext | null) => void;
   onModalStateChange?: (isOpen: boolean) => void; // Callback when any modal opens/closes (to hide chatbot)
+  rankingsOnlyMode?: boolean;
+  onOpenRankingsPage?: () => void;
 }
 
 // Event selection mode types
@@ -443,6 +445,8 @@ export default function AttendanceDashboardPage({
   removeUploadToast,
   onDashboardContextUpdate,
   onModalStateChange,
+  rankingsOnlyMode = false,
+  onOpenRankingsPage,
 }: AttendanceDashboardPageProps) {
   // Mobile detection for PDF preview fallback
   const isMobile = useIsMobile();
@@ -499,15 +503,17 @@ export default function AttendanceDashboardPage({
   
   // Leaderboard/gamification state
   const [showRankingsModal, setShowRankingsModal] = useState(false);
-  const [rankingsFilterType, setRankingsFilterType] = useState<'all' | 'events' | 'committee'>('all');
+  const [rankingsViewTab, setRankingsViewTab] = useState<'members' | 'committees'>('members');
   const [rankingsSelectedEventIds, setRankingsSelectedEventIds] = useState<string[]>([]);
   const [rankingsSelectedCommittee, setRankingsSelectedCommittee] = useState('All');
   const [rankingsAttendanceRecords, setRankingsAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [isLoadingRankingsData, setIsLoadingRankingsData] = useState(false);
   const [rankingsPage, setRankingsPage] = useState(1);
   const [rankingsVisibleRows, setRankingsVisibleRows] = useState(5);
+  const rankingsSectionHostRef = useRef<HTMLDivElement | null>(null);
   const attendanceCacheRef = useRef<Map<string, AttendanceRecord[]>>(new Map());
   const attendanceRequestCacheRef = useRef<Map<string, Promise<AttendanceRecord[]>>>(new Map());
+  const isRankingsSectionVisible = rankingsOnlyMode || showRankingsModal;
   
   // Toggle event inclusion for person participation time
   const togglePersonEventInclusion = useCallback((eventId: string) => {
@@ -752,7 +758,7 @@ export default function AttendanceDashboardPage({
   // Fetch attendance records for rankings modal (loads ALL events data)
   useEffect(() => {
     const loadRankingsAttendance = async () => {
-      if (!showRankingsModal || events.length === 0) return;
+      if (!isRankingsSectionVisible || events.length === 0) return;
       
       setIsLoadingRankingsData(true);
       try {
@@ -779,7 +785,7 @@ export default function AttendanceDashboardPage({
     };
 
     loadRankingsAttendance();
-  }, [events, fetchAttendanceRecordsDeduped, showRankingsModal]);
+  }, [events, fetchAttendanceRecordsDeduped, isRankingsSectionVisible]);
 
   // Determine recommended chart type based on selection
   const getRecommendedChartType = useCallback((): "pie" | "donut" | "bar" | "line" | "column" => {
@@ -970,17 +976,23 @@ export default function AttendanceDashboardPage({
     totalParticipationFormatted: string;
   }
 
+  interface CommitteeRankedGroup {
+    name: string;
+    rank: number;
+    totalParticipationMinutes: number;
+    averageParticipationMinutes: number;
+    averageParticipationFormatted: string;
+    averageCompletionRate: number;
+    memberCount: number;
+  }
+
+  const areAllRankingEventsSelected = events.length > 0 && rankingsSelectedEventIds.length === events.length;
+
   const percentageRankings = useMemo((): PercentageRankedMember[] => {
-    // Determine which events to consider based on filter type
-    let eventsToConsider: EventData[] = [];
-    
-    if (rankingsFilterType === 'all') {
-      eventsToConsider = events;
-    } else if (rankingsFilterType === 'events') {
-      eventsToConsider = events.filter(e => rankingsSelectedEventIds.includes(e.EventID));
-    } else {
-      eventsToConsider = events; // Will filter members by committee instead
-    }
+    const hasExplicitEventFilter = rankingsSelectedEventIds.length > 0 && !areAllRankingEventsSelected;
+    const eventsToConsider = hasExplicitEventFilter
+      ? events.filter(e => rankingsSelectedEventIds.includes(e.EventID))
+      : events;
     
     if (eventsToConsider.length === 0) return [];
     
@@ -1011,6 +1023,7 @@ export default function AttendanceDashboardPage({
     
     // Filter attendance records by selected events
     const relevantRecords = sourceRecords.filter(r => eventIds.has(r.eventId));
+    const shouldFilterByCommittee = rankingsSelectedCommittee !== 'All';
     
     relevantRecords.forEach(record => {
       // Skip absent records for attendance count
@@ -1022,7 +1035,7 @@ export default function AttendanceDashboardPage({
       if (!member) return;
       
       // Apply committee filter if needed
-      if (rankingsFilterType === 'committee' && rankingsSelectedCommittee !== 'All') {
+      if (shouldFilterByCommittee) {
         const memberCommittee = (member.committee || '').toLowerCase().trim();
         const selectedComm = rankingsSelectedCommittee.toLowerCase().trim();
         if (selectedComm === 'general members') {
@@ -1050,28 +1063,25 @@ export default function AttendanceDashboardPage({
     });
     
     // Also include members with 0 attendance if showing all
-    if (rankingsFilterType === 'all' || rankingsFilterType === 'committee') {
-      allMembers.forEach(member => {
-        if (!memberStatsMap.has(member.id)) {
-          // Apply committee filter
-          if (rankingsFilterType === 'committee' && rankingsSelectedCommittee !== 'All') {
-            const memberCommittee = (member.committee || '').toLowerCase().trim();
-            const selectedComm = rankingsSelectedCommittee.toLowerCase().trim();
-            if (selectedComm === 'general members') {
-              if (memberCommittee && !memberCommittee.includes('general')) return;
-            } else if (memberCommittee !== selectedComm) {
-              return;
-            }
+    allMembers.forEach(member => {
+      if (!memberStatsMap.has(member.id)) {
+        if (shouldFilterByCommittee) {
+          const memberCommittee = (member.committee || '').toLowerCase().trim();
+          const selectedComm = rankingsSelectedCommittee.toLowerCase().trim();
+          if (selectedComm === 'general members') {
+            if (memberCommittee && !memberCommittee.includes('general')) return;
+          } else if (memberCommittee !== selectedComm) {
+            return;
           }
-          memberStatsMap.set(member.id, {
-            attended: 0,
-            totalMinutes: 0,
-            expectedMinutes: 0,
-            member,
-          });
         }
-      });
-    }
+        memberStatsMap.set(member.id, {
+          attended: 0,
+          totalMinutes: 0,
+          expectedMinutes: 0,
+          member,
+        });
+      }
+    });
     
     // Convert to rankings array
     const totalEvents = eventsToConsider.length;
@@ -1117,7 +1127,60 @@ export default function AttendanceDashboardPage({
     });
     
     return rankings;
-  }, [rankingsFilterType, rankingsSelectedEventIds, rankingsSelectedCommittee, events, attendanceRecords, rankingsAttendanceRecords, memberLookupMap, allMembers]);
+  }, [rankingsSelectedEventIds, rankingsSelectedCommittee, areAllRankingEventsSelected, events, attendanceRecords, rankingsAttendanceRecords, memberLookupMap, allMembers]);
+
+  const committeeRankings = useMemo((): CommitteeRankedGroup[] => {
+    if (percentageRankings.length === 0) return [];
+
+    const committeeStatsMap = new Map<string, { totalMinutes: number; totalCompletionRate: number; memberCount: number }>();
+
+    percentageRankings.forEach((rankedMember) => {
+      const committeeName = (rankedMember.member.committee || 'General Members').trim() || 'General Members';
+      const existing = committeeStatsMap.get(committeeName);
+
+      if (existing) {
+        existing.totalMinutes += rankedMember.totalParticipationMinutes;
+        existing.totalCompletionRate += rankedMember.completionRate;
+        existing.memberCount += 1;
+      } else {
+        committeeStatsMap.set(committeeName, {
+          totalMinutes: rankedMember.totalParticipationMinutes,
+          totalCompletionRate: rankedMember.completionRate,
+          memberCount: 1,
+        });
+      }
+    });
+
+    const rankedCommittees = Array.from(committeeStatsMap.entries()).map(([name, stats]) => ({
+      name,
+      rank: 0,
+      totalParticipationMinutes: stats.totalMinutes,
+      averageParticipationMinutes: stats.memberCount > 0 ? stats.totalMinutes / stats.memberCount : 0,
+      averageParticipationFormatted: formatMinutesToDuration(stats.memberCount > 0 ? Math.round(stats.totalMinutes / stats.memberCount) : 0),
+      averageCompletionRate: stats.memberCount > 0 ? Math.round((stats.totalCompletionRate / stats.memberCount) * 100) / 100 : 0,
+      memberCount: stats.memberCount,
+    }));
+
+    rankedCommittees.sort((a, b) => {
+      if (b.averageParticipationMinutes !== a.averageParticipationMinutes) {
+        return b.averageParticipationMinutes - a.averageParticipationMinutes;
+      }
+      if (b.averageCompletionRate !== a.averageCompletionRate) {
+        return b.averageCompletionRate - a.averageCompletionRate;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    let currentRank = 1;
+    rankedCommittees.forEach((item, index) => {
+      if (index > 0 && item.averageParticipationMinutes < rankedCommittees[index - 1].averageParticipationMinutes) {
+        currentRank = index + 1;
+      }
+      item.rank = currentRank;
+    });
+
+    return rankedCommittees;
+  }, [percentageRankings]);
 
   const RANKINGS_PAGE_SIZE = 10;
   const rankingsTotalPages = Math.max(1, Math.ceil(percentageRankings.length / RANKINGS_PAGE_SIZE));
@@ -1129,7 +1192,7 @@ export default function AttendanceDashboardPage({
   useEffect(() => {
     setRankingsPage(1);
     setRankingsVisibleRows(Math.min(5, RANKINGS_PAGE_SIZE));
-  }, [showRankingsModal, rankingsFilterType, rankingsSelectedCommittee, rankingsSelectedEventIds, percentageRankings.length]);
+  }, [isRankingsSectionVisible, rankingsViewTab, rankingsSelectedCommittee, rankingsSelectedEventIds, percentageRankings.length]);
 
   useEffect(() => {
     if (rankingsPage > rankingsTotalPages) {
@@ -1223,19 +1286,24 @@ export default function AttendanceDashboardPage({
     doc.line(margin, yPosition + 2, margin + 35, yPosition + 2);
     yPosition += 10;
 
+    const exportEvents = rankingsSelectedEventIds.length === 0 || areAllRankingEventsSelected
+      ? events
+      : events.filter(event => rankingsSelectedEventIds.includes(event.EventID));
+    const selectedEventsLabel = rankingsSelectedEventIds.length === 0 || areAllRankingEventsSelected
+      ? `All Events (${events.length} total)`
+      : `Selected Events (${rankingsSelectedEventIds.length} of ${events.length})`;
+    const selectedEventNames = exportEvents.map(event => event.Title).filter(Boolean);
+    const selectedEventSummary = selectedEventNames.length === 0
+      ? 'No event names available'
+      : selectedEventNames.join(', ');
+    const wrappedEventSummary = doc.splitTextToSize(selectedEventSummary, pageWidth - margin * 2 - 43);
+    const filterCardHeight = Math.max(26, 16 + wrappedEventSummary.length * 4);
+    const filterDesc = `${selectedEventsLabel} | Committee: ${rankingsSelectedCommittee}`;
+
     // Filter details card
     doc.setDrawColor(230, 230, 230);
     doc.setFillColor(252, 252, 252);
-    doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, 22, 3, 3, 'FD');
-    
-    let filterDesc = '';
-    if (rankingsFilterType === 'all') {
-      filterDesc = `All Events (${events.length} total)`;
-    } else if (rankingsFilterType === 'events') {
-      filterDesc = `Selected Events (${rankingsSelectedEventIds.length} of ${events.length})`;
-    } else {
-      filterDesc = `Committee: ${rankingsSelectedCommittee}`;
-    }
+    doc.roundedRect(margin, yPosition, pageWidth - 2 * margin, filterCardHeight, 3, 3, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
@@ -1247,12 +1315,19 @@ export default function AttendanceDashboardPage({
 
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(100, 100, 100);
-    doc.text('Total Ranked:', margin + 8, yPosition + 16);
+    doc.text('Events:', margin + 8, yPosition + 16);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(30, 41, 59);
-    doc.text(`${percentageRankings.length} members`, margin + 35, yPosition + 16);
+    doc.text(wrappedEventSummary, margin + 35, yPosition + 16);
 
-    yPosition += 30;
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(100, 100, 100);
+    doc.text('Total Ranked:', margin + 8, yPosition + filterCardHeight - 6);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(30, 41, 59);
+    doc.text(`${percentageRankings.length} members`, margin + 35, yPosition + filterCardHeight - 6);
+
+    yPosition += filterCardHeight + 8;
 
     // ===== COMMITTEE RANKINGS SECTION =====
     // Calculate committee statistics
@@ -1276,6 +1351,7 @@ export default function AttendanceDashboardPage({
       name: string;
       avgCompletionRate: number;
       totalMinutes: number;
+      averageMinutesPerMember: number;
       memberCount: number;
       rank: number;
     }
@@ -1293,23 +1369,27 @@ export default function AttendanceDashboardPage({
         name: committeeName,
         avgCompletionRate: Math.round(avgCompletionRate * 100) / 100,
         totalMinutes: stats.totalMinutes,
+        averageMinutesPerMember: stats.memberCount > 0 ? stats.totalMinutes / stats.memberCount : 0,
         memberCount: stats.memberCount,
         rank: 0,
       });
     });
 
-    // Sort by average completion rate descending
+    // Sort by normalized time per member so larger committees are not unfairly boosted.
     committeeRankings.sort((a, b) => {
+      if (b.averageMinutesPerMember !== a.averageMinutesPerMember) {
+        return b.averageMinutesPerMember - a.averageMinutesPerMember;
+      }
       if (b.avgCompletionRate !== a.avgCompletionRate) {
         return b.avgCompletionRate - a.avgCompletionRate;
       }
       return b.totalMinutes - a.totalMinutes;
     });
 
-    // Assign ranks (handle ties - same rate = same rank)
+    // Assign ranks (handle ties - same normalized time = same rank)
     let committeeRank = 1;
     committeeRankings.forEach((item, index) => {
-      if (index > 0 && item.avgCompletionRate < committeeRankings[index - 1].avgCompletionRate) {
+      if (index > 0 && item.averageMinutesPerMember < committeeRankings[index - 1].averageMinutesPerMember) {
         committeeRank = index + 1;
       }
       item.rank = committeeRank;
@@ -1331,7 +1411,7 @@ export default function AttendanceDashboardPage({
       c.name,
       `${c.avgCompletionRate.toFixed(2)}%`,
       c.memberCount.toString(),
-      formatMinutesToDuration(Math.round(c.totalMinutes / c.memberCount)), // Average per member
+      formatMinutesToDuration(Math.round(c.averageMinutesPerMember)),
     ]);
     
     autoTable(doc, {
@@ -1451,10 +1531,16 @@ export default function AttendanceDashboardPage({
     }
     
     // Save
-    const filename = `Attendance_Rankings_${new Date().toISOString().split('T')[0]}.pdf`;
+    const filenameCommitteePart = String(rankingsSelectedCommittee || 'All')
+      .replace(/[^a-z0-9]+/gi, '-')
+      .replace(/^-+|-+$/g, '') || 'all-committees';
+    const filenameEventPart = rankingsSelectedEventIds.length === 0 || areAllRankingEventsSelected
+      ? 'all-events'
+      : `${rankingsSelectedEventIds.length}-events`;
+    const filename = `Attendance_Rankings_${filenameEventPart}_${filenameCommitteePart}_${new Date().toISOString().split('T')[0]}.pdf`;
     doc.save(filename);
     toast.success('Rankings exported to PDF');
-  }, [percentageRankings, rankingsFilterType, rankingsSelectedEventIds, rankingsSelectedCommittee, events]);
+  }, [percentageRankings, rankingsSelectedEventIds, rankingsSelectedCommittee, areAllRankingEventsSelected, events]);
 
   // Get members who were not recorded in attendance
   const notRecordedMembersMemo = useMemo((): MemberForAttendance[] => {
@@ -3352,20 +3438,25 @@ export default function AttendanceDashboardPage({
 
   return (
     <PageLayout
-      title="Attendance Dashboard"
-      subtitle="Track and visualize attendance metrics across events and committees"
+      title={rankingsOnlyMode ? "Attendance Rankings" : "Attendance Dashboard"}
+      subtitle={rankingsOnlyMode ? "View member and committee attendance rankings across events" : "Track and visualize attendance metrics across events and committees"}
       onClose={onClose}
       isDark={isDark}
-      hideChrome={isAnyDashboardModalOpen}
-      breadcrumbs={[
+      hideChrome={rankingsOnlyMode ? false : isAnyDashboardModalOpen}
+      breadcrumbs={rankingsOnlyMode ? [
+        { label: "Home", onClick: onClose },
+        { label: "Attendance Dashboard", onClick: onClose },
+        { label: "Attendance Rankings", onClick: undefined },
+      ] : [
         { label: "Home", onClick: onClose },
         { label: "Dashboard & Directory", onClick: undefined },
         { label: "Attendance Dashboard", onClick: undefined },
       ]}
     >
+      {rankingsOnlyMode && <div ref={rankingsSectionHostRef} className="mb-6" />}
       <div
         aria-hidden={isAnyDashboardModalOpen}
-        style={isAnyDashboardModalOpen ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
+        style={rankingsOnlyMode ? { display: 'none' } : (isAnyDashboardModalOpen ? { pointerEvents: 'none', userSelect: 'none' } : undefined)}
       >
       {/* Controls Card */}
       <div
@@ -3874,7 +3965,15 @@ export default function AttendanceDashboardPage({
       {events.length > 0 && (
         <div className="mb-6">
           <button
-            onClick={() => setShowRankingsModal(true)}
+            type="button"
+            aria-expanded={showRankingsModal}
+            onClick={() => {
+              if (onOpenRankingsPage) {
+                onOpenRankingsPage();
+                return;
+              }
+              setShowRankingsModal((current) => !current);
+            }}
             className="w-full rounded-xl border p-4 flex items-center justify-center gap-3 transition-all hover:scale-[1.01] group"
             style={{
               background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}10 0%, ${DESIGN_TOKENS.colors.brand.orange}10 100%)`,
@@ -3889,10 +3988,15 @@ export default function AttendanceDashboardPage({
                 fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
               }}
             >
-              View Attendance Rankings
+              {onOpenRankingsPage ? 'Open Attendance Rankings Page' : (showRankingsModal ? 'Hide Attendance Rankings' : 'View Attendance Rankings')}
             </span>
-            <ChevronDown className="w-5 h-5 text-muted-foreground group-hover:translate-y-0.5 transition-transform" />
+            {!onOpenRankingsPage && showRankingsModal ? (
+              <ChevronUp className="w-5 h-5 text-muted-foreground transition-transform" />
+            ) : (
+              <ChevronDown className="w-5 h-5 text-muted-foreground transition-transform group-hover:translate-y-0.5" />
+            )}
           </button>
+          <div ref={rankingsSectionHostRef} />
         </div>
       )}
 
@@ -5286,165 +5390,280 @@ export default function AttendanceDashboardPage({
         </div>
       )}
 
-      {/* ============= ATTENDANCE RANKINGS MODAL ============= */}
-      {showRankingsModal && createPortal(
-        <div
-          className="fixed inset-0 flex items-center justify-center p-4 backdrop-blur-md"
-          style={{ zIndex: 10001, background: 'rgba(15, 23, 42, 0.82)' }}
-          onClick={() => setShowRankingsModal(false)}
-        >
-          {/* Modal Content */}
+      {/* ============= ATTENDANCE RANKINGS SECTION ============= */}
+      {isRankingsSectionVisible && rankingsSectionHostRef.current && createPortal(
+        <div id="attendance-rankings-section" className="mb-6 scroll-mt-24">
           <div 
-            className="relative w-full max-w-4xl max-h-[90vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden"
+            className="relative w-full rounded-2xl sm:rounded-3xl border shadow-xl flex flex-col overflow-hidden"
             style={{
               background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+              backdropFilter: 'blur(20px)',
               borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
             }}
-            onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div 
-              className="px-6 py-4 border-b flex items-center justify-between shrink-0"
+              className="px-4 py-4 sm:px-6 border-b flex items-center justify-between gap-3 shrink-0"
               style={{
                 borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
                 background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red}15 0%, ${DESIGN_TOKENS.colors.brand.orange}15 100%)`,
               }}
             >
-              <div className="flex items-center gap-3">
-                <Trophy className="w-6 h-6" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+              <div className="flex items-center gap-3 min-w-0">
+                <Trophy className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
                 <h2
+                  className="truncate"
                   style={{
                     fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
-                    fontSize: `${DESIGN_TOKENS.typography.fontSize.h3}px`,
+                    fontSize: `${isMobile ? 18 : DESIGN_TOKENS.typography.fontSize.h3}px`,
                     fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold,
                   }}
                 >
                   Attendance Rankings
                 </h2>
               </div>
-              <button
-                onClick={() => setShowRankingsModal(false)}
-                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                Inline Panel
+              </div>
             </div>
 
             {/* Filters */}
-            <div className="px-6 py-4 border-b flex flex-wrap items-center gap-4 shrink-0" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
-              {/* Filter Type Tabs */}
-              <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)' }}>
-                {(['all', 'events', 'committee'] as const).map((filterType) => (
+            <div className="border-b shrink-0" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}>
+              <div className="px-4 py-4 sm:px-6">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <div
+                    className="rounded-xl border px-4 py-3 min-h-[78px] flex items-center"
+                    style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }}
+                  >
+                    <div className="grid gap-3 w-full md:grid-cols-[minmax(0,1.4fr)_minmax(240px,0.8fr)]">
+                      <div className="w-full">
+                        <CustomDropdown
+                          label=""
+                          value={
+                            rankingsSelectedEventIds.length === 0 || areAllRankingEventsSelected
+                              ? 'All events'
+                              : `${rankingsSelectedEventIds.length} event(s) selected`
+                          }
+                          options={[
+                            { value: '__ALL_EVENTS__', label: 'All Events' },
+                            ...events.map(e => ({ value: e.EventID, label: e.Title })),
+                          ]}
+                          onChange={(val) => {
+                            if (val === '__ALL_EVENTS__') {
+                              setRankingsSelectedEventIds([]);
+                              return;
+                            }
+
+                            const eventId = val;
+                            setRankingsSelectedEventIds(prev => {
+                              const base = prev.length === 0 || prev.length === events.length ? [] : prev;
+                              return base.includes(eventId)
+                                ? base.filter(id => id !== eventId)
+                                : [...base, eventId];
+                            });
+                          }}
+                          isDark={isDark}
+                          selectedValues={
+                            rankingsSelectedEventIds.length === 0 || areAllRankingEventsSelected
+                              ? ['__ALL_EVENTS__']
+                              : rankingsSelectedEventIds
+                          }
+                          multiSelect
+                        />
+                      </div>
+
+                      <div className="w-full">
+                        <CustomDropdown
+                          label=""
+                          value={rankingsSelectedCommittee}
+                          options={[
+                            { value: 'All', label: 'All Committees' },
+                            ...YSP_COMMITTEE_NAMES.map(c => ({ value: c, label: c })),
+                          ]}
+                          onChange={setRankingsSelectedCommittee}
+                          isDark={isDark}
+                          dropdownMinWidth={320}
+                          allowOptionWrap
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <button
-                    key={filterType}
-                    onClick={() => setRankingsFilterType(filterType)}
-                    className={`px-4 py-2 text-sm font-medium transition-colors ${
-                      rankingsFilterType === filterType
+                    onClick={exportRankingsToPDF}
+                    disabled={percentageRankings.length === 0}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-medium text-white transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                    style={{
+                      background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
+                    }}
+                  >
+                    <Download className="w-4 h-4" />
+                    Export PDF
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Rankings View Tabs */}
+            <div
+              className="px-4 py-3 sm:px-6 border-b shrink-0"
+              style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }}
+            >
+              <div
+                className="grid w-full grid-cols-2 overflow-hidden rounded-xl border"
+                style={{ borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)' }}
+              >
+                {([
+                  { key: 'members', label: 'Member Rankings' },
+                  { key: 'committees', label: 'Committee Rankings' },
+                ] as const).map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setRankingsViewTab(tab.key)}
+                    className={`px-4 py-2.5 text-sm font-medium transition-colors ${
+                      rankingsViewTab === tab.key
                         ? 'text-white'
                         : 'hover:bg-gray-100 dark:hover:bg-gray-700'
                     }`}
                     style={{
-                      background: rankingsFilterType === filterType
+                      background: rankingsViewTab === tab.key
                         ? `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`
                         : undefined,
                     }}
                   >
-                    {filterType === 'all' ? 'All Events' : filterType === 'events' ? 'Select Events' : 'By Committee'}
+                    {tab.label}
                   </button>
                 ))}
               </div>
-
-              {/* Events Multi-Select (shown when filter type is 'events') */}
-              {rankingsFilterType === 'events' && (
-                <div className="flex-1 min-w-[200px]">
-                  <CustomDropdown
-                    label=""
-                    value={rankingsSelectedEventIds.length > 0 ? `${rankingsSelectedEventIds.length} event(s) selected` : 'Select events...'}
-                    options={events.map(e => ({ value: e.EventID, label: e.Title }))}
-                    onChange={(val) => {
-                      const eventId = val;
-                      setRankingsSelectedEventIds(prev => 
-                        prev.includes(eventId) 
-                          ? prev.filter(id => id !== eventId)
-                          : [...prev, eventId]
-                      );
-                    }}
-                    isDark={isDark}
-                    selectedValues={rankingsSelectedEventIds}
-                    multiSelect
-                  />
-                </div>
-              )}
-
-              {/* Committee Dropdown (shown when filter type is 'committee') */}
-              {rankingsFilterType === 'committee' && (
-                <div className="min-w-[200px]">
-                  <CustomDropdown
-                    label=""
-                    value={rankingsSelectedCommittee}
-                    options={[
-                      { value: 'All', label: 'All Committees' },
-                      ...YSP_COMMITTEE_NAMES.map(c => ({ value: c, label: c })),
-                    ]}
-                    onChange={setRankingsSelectedCommittee}
-                    isDark={isDark}
-                    dropdownMinWidth={320}
-                    allowOptionWrap
-                  />
-                </div>
-              )}
-
-              {/* Export Button */}
-              <button
-                onClick={exportRankingsToPDF}
-                disabled={percentageRankings.length === 0}
-                className="ml-auto flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-white transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                style={{
-                  background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)`,
-                }}
-              >
-                <Download className="w-4 h-4" />
-                Export PDF
-              </button>
             </div>
 
             {/* Rankings Info Bar */}
-            <div className="px-6 py-2 border-b flex items-center gap-2 text-sm text-muted-foreground shrink-0" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }}>
+            <div className="px-4 py-3 sm:px-6 border-b flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground shrink-0" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }}>
               <Users className="w-4 h-4" />
-              <span>{percentageRankings.length} members ranked</span>
+              <span>{rankingsViewTab === 'members' ? `${percentageRankings.length} members ranked` : `${committeeRankings.length} committees ranked`}</span>
               <span className="mx-2">•</span>
               <span>
-                {rankingsFilterType === 'all' 
-                  ? `${events.length} total events` 
-                  : rankingsFilterType === 'events' 
-                    ? `${rankingsSelectedEventIds.length} selected event(s)`
-                    : `Committee: ${rankingsSelectedCommittee}`
+                {(rankingsSelectedEventIds.length === 0 || areAllRankingEventsSelected)
+                  ? `${events.length} total events | committee: ${rankingsSelectedCommittee}`
+                  : `${rankingsSelectedEventIds.length} selected event(s) | committee: ${rankingsSelectedCommittee}`
                 }
               </span>
             </div>
 
             {/* Rankings List */}
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4 lg:px-6">
               {isLoadingRankingsData ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <Loader2 className="w-10 h-10 animate-spin mb-3" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
                   <p className="text-muted-foreground font-medium">Loading rankings data...</p>
                   <p className="text-sm text-muted-foreground mt-1">Fetching attendance from all events</p>
                 </div>
+              ) : rankingsViewTab === 'committees' ? (
+                committeeRankings.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <AlertCircle className="w-12 h-12 text-muted-foreground mb-3" />
+                    <p className="text-muted-foreground font-medium">No committee rankings available</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {'No committee volunteer data found for the selected filter'}
+                    </p>
+                  </div>
+                ) : (
+                  <div
+                    className="mx-auto w-full max-w-[920px] rounded-xl border overflow-hidden"
+                    style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
+                  >
+                    <div
+                      className="border-b px-4 py-3 flex items-center justify-between gap-3"
+                      style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }}
+                    >
+                      <div>
+                        <p className="text-sm font-semibold">Committee Volunteer Ranking</p>
+                        <p className="text-xs text-muted-foreground">Ranked by average volunteered time per member from the current filter</p>
+                      </div>
+                      <Sparkles className="w-4 h-4 shrink-0" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
+                    </div>
+
+                    {isMobile ? (
+                      <div className="p-3 space-y-2">
+                        {committeeRankings.map((committee) => (
+                          <div
+                            key={committee.name}
+                            className="rounded-xl border p-3"
+                            style={{
+                              borderColor: committee.rank === 1
+                                ? 'rgba(255, 215, 0, 0.45)'
+                                : committee.rank === 2
+                                  ? 'rgba(192, 192, 192, 0.45)'
+                                  : committee.rank === 3
+                                    ? 'rgba(205, 127, 50, 0.45)'
+                                    : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'),
+                              background: committee.rank === 1
+                                ? 'rgba(255, 215, 0, 0.10)'
+                                : committee.rank === 2
+                                  ? 'rgba(192, 192, 192, 0.10)'
+                                  : committee.rank === 3
+                                    ? 'rgba(205, 127, 50, 0.10)'
+                                    : undefined,
+                            }}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">#{committee.rank}</p>
+                                <p className="font-semibold break-words">{committee.name}</p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-sm font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                                  {committee.averageParticipationFormatted}
+                                </p>
+                                <p className="text-xs text-muted-foreground">{committee.memberCount} member{committee.memberCount !== 1 ? 's' : ''}</p>
+                              </div>
+                            </div>
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              Avg completion: {committee.averageCompletionRate.toFixed(2)}%
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="overflow-auto">
+                        <table className="w-full table-fixed min-w-[620px]">
+                          <thead>
+                            <tr style={{ background: isDark ? 'rgba(17, 24, 39, 0.75)' : 'rgba(248, 250, 252, 0.95)' }}>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-20">Rank</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Committee</th>
+                              <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-36">Avg Time / Member</th>
+                              <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-24">Members</th>
+                              <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-36">Avg Completion</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y" style={{ borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+                            {committeeRankings.map((committee) => (
+                              <tr key={committee.name}>
+                                <td className="px-4 py-3 font-semibold">{committee.rank}</td>
+                                <td className="px-4 py-3">{committee.name}</td>
+                                <td className="px-4 py-3 text-center">{committee.averageParticipationFormatted}</td>
+                                <td className="px-4 py-3 text-center">{committee.memberCount}</td>
+                                <td className="px-4 py-3 text-center">{committee.averageCompletionRate.toFixed(2)}%</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )
               ) : percentageRankings.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <AlertCircle className="w-12 h-12 text-muted-foreground mb-3" />
                   <p className="text-muted-foreground font-medium">No rankings available</p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    {rankingsFilterType === 'events' && rankingsSelectedEventIds.length === 0
-                      ? 'Please select at least one event'
-                      : 'No attendance data found for the selected filter'}
+                    {'No attendance data found for the selected filter'}
                   </p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="mx-auto w-full max-w-[920px] space-y-3">
                   {/* Top 3 Podium Display */}
-                  {percentageRankings.length >= 3 && (() => {
+                  {!isMobile && percentageRankings.length >= 3 && (() => {
                     // Helper function to get colors based on actual rank
                     const getRankColors = (rank: number) => {
                       if (rank === 1) return {
@@ -5604,6 +5823,68 @@ export default function AttendanceDashboardPage({
                     );
                   })()}
 
+                  {isMobile && percentageRankings.length > 0 && (
+                    <div className="grid grid-cols-1 gap-3">
+                      {percentageRankings.slice(0, 3).map((ranked) => (
+                        <div
+                          key={ranked.member.id}
+                          className="rounded-xl border p-3"
+                          style={{
+                            borderColor: ranked.rank === 1
+                              ? 'rgba(255, 215, 0, 0.45)'
+                              : ranked.rank === 2
+                                ? 'rgba(192, 192, 192, 0.45)'
+                                : ranked.rank === 3
+                                  ? 'rgba(205, 127, 50, 0.45)'
+                                  : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'),
+                            background: ranked.rank === 1
+                              ? 'rgba(255, 215, 0, 0.10)'
+                              : ranked.rank === 2
+                                ? 'rgba(192, 192, 192, 0.10)'
+                                : ranked.rank === 3
+                                  ? 'rgba(205, 127, 50, 0.10)'
+                                  : undefined,
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-12 h-12 rounded-full overflow-hidden border-2 flex items-center justify-center shrink-0"
+                              style={{
+                                borderColor: ranked.rank === 1 ? '#d4a500' : ranked.rank === 2 ? '#a0a0a0' : '#a66628',
+                                background: ranked.rank === 1
+                                  ? 'linear-gradient(135deg, #ffd700 0%, #ffed4a 100%)'
+                                  : ranked.rank === 2
+                                    ? 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 100%)'
+                                    : 'linear-gradient(135deg, #cd7f32 0%, #e5a055 100%)',
+                              }}
+                            >
+                              {ranked.member.profilePicture ? (
+                                <img src={ranked.member.profilePicture} alt={ranked.member.name} className="w-full h-full object-cover" />
+                              ) : ranked.rank === 1 ? (
+                                <Trophy className="w-6 h-6" style={{ color: '#92400e' }} />
+                              ) : ranked.rank === 2 ? (
+                                <Medal className="w-6 h-6" style={{ color: '#3f3f46' }} />
+                              ) : (
+                                <Award className="w-6 h-6" style={{ color: '#78350f' }} />
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Rank #{ranked.rank}</p>
+                              <p className="font-semibold break-words">{ranked.member.name}</p>
+                              <p className="text-xs text-muted-foreground break-words">{ranked.member.committee || 'General Members'}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-base font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
+                                {ranked.completionRate.toFixed(2)}%
+                              </p>
+                              <p className="text-xs text-muted-foreground">{ranked.totalParticipationFormatted}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Full Rankings Table */}
                   <div
                     className="rounded-xl border overflow-hidden"
@@ -5629,94 +5910,149 @@ export default function AttendanceDashboardPage({
                       </div>
                     </div>
 
-                    <div
-                      className="overflow-auto"
-                      style={{ maxHeight: '360px' }}
-                      onScroll={(event) => {
-                        const target = event.currentTarget;
-                        const reachedBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24;
-                        if (reachedBottom) {
-                          setRankingsVisibleRows((current) => Math.min(RANKINGS_PAGE_SIZE, current + 5));
-                        }
-                      }}
-                    >
-                      <table className="min-w-[760px] w-full table-fixed">
-                        <thead className="sticky top-0 z-10">
-                          <tr style={{ background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)' }}>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-20">Rank</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[220px]">Member</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[180px]">Committee</th>
-                            <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[140px]">Completion</th>
-                            <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[120px]">Attended</th>
-                            <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[140px]">Time</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }}>
-                          {paginatedRankings.map((ranked) => {
-                            const isTop3 = ranked.rank <= 3;
-                            let rowBg = '';
-                            let rowBorder = '';
-                            if (ranked.rank === 1) {
-                              rowBg = 'rgba(255, 215, 0, 0.15)';
-                              rowBorder = '#ffd700';
-                            } else if (ranked.rank === 2) {
-                              rowBg = 'rgba(192, 192, 192, 0.15)';
-                              rowBorder = '#c0c0c0';
-                            } else if (ranked.rank === 3) {
-                              rowBg = 'rgba(205, 127, 50, 0.15)';
-                              rowBorder = '#cd7f32';
-                            }
+                    {isMobile ? (
+                      <div
+                        className="max-h-[360px] overflow-y-auto p-3 space-y-2"
+                        onScroll={(event) => {
+                          const target = event.currentTarget;
+                          const reachedBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24;
+                          if (reachedBottom) {
+                            setRankingsVisibleRows((current) => Math.min(RANKINGS_PAGE_SIZE, current + 5));
+                          }
+                        }}
+                      >
+                        {paginatedRankings.map((ranked) => {
+                          const isTop3 = ranked.rank <= 3;
+                          const accentColor = ranked.rank === 1 ? '#ffd700' : ranked.rank === 2 ? '#c0c0c0' : ranked.rank === 3 ? '#cd7f32' : '';
 
-                            return (
-                              <tr
-                                key={ranked.member.id}
-                                className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                                style={{
-                                  background: isTop3 ? rowBg : undefined,
-                                  borderLeft: isTop3 ? `4px solid ${rowBorder}` : undefined,
-                                }}
-                              >
-                                <td className="px-4 py-3 align-middle">
-                                  <div
-                                    className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm"
-                                    style={{
-                                      background: isTop3
-                                        ? (ranked.rank === 1 ? 'linear-gradient(135deg, #ffd700 0%, #ffed4a 100%)' : ranked.rank === 2 ? 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 100%)' : 'linear-gradient(135deg, #cd7f32 0%, #e5a055 100%)')
-                                        : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'),
-                                      color: isTop3
-                                        ? (ranked.rank === 1 ? '#92400e' : ranked.rank === 2 ? '#3f3f46' : '#78350f')
-                                        : undefined,
-                                    }}
-                                  >
-                                    {ranked.rank}
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 align-middle">
-                                  <p className={isTop3 ? 'font-semibold truncate' : 'font-medium truncate'}>{ranked.member.name}</p>
-                                </td>
-                                <td className="px-4 py-3 text-sm text-muted-foreground align-middle truncate">
-                                  {ranked.member.committee || 'General'}
-                                </td>
-                                <td className="px-4 py-3 text-center align-middle">
-                                  <span
-                                    className={`font-bold ${isTop3 ? 'text-lg' : ''}`}
-                                    style={{ color: isTop3 ? DESIGN_TOKENS.colors.brand.orange : undefined }}
-                                  >
+                          return (
+                            <div
+                              key={ranked.member.id}
+                              className="rounded-xl border p-3"
+                              style={{
+                                borderColor: isTop3 ? accentColor : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'),
+                                background: isTop3
+                                  ? (ranked.rank === 1 ? 'rgba(255, 215, 0, 0.10)' : ranked.rank === 2 ? 'rgba(192, 192, 192, 0.10)' : 'rgba(205, 127, 50, 0.10)')
+                                  : undefined,
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Rank #{ranked.rank}</p>
+                                  <p className={`${isTop3 ? 'font-semibold' : 'font-medium'} break-words`}>{ranked.member.name}</p>
+                                  <p className="text-xs text-muted-foreground break-words">{ranked.member.committee || 'General Members'}</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="text-base font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
                                     {ranked.completionRate.toFixed(2)}%
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3 text-center text-sm text-muted-foreground align-middle">
-                                  {ranked.eventsAttended} / {ranked.totalEvents}
-                                </td>
-                                <td className="px-4 py-3 text-center text-sm text-muted-foreground align-middle">
-                                  {ranked.totalParticipationFormatted || '-'}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">{ranked.totalParticipationFormatted || '-'}</p>
+                                </div>
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                <div className="rounded-lg px-3 py-2" style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+                                  <p className="text-muted-foreground">Attended</p>
+                                  <p className="font-semibold">{ranked.eventsAttended} / {ranked.totalEvents}</p>
+                                </div>
+                                <div className="rounded-lg px-3 py-2" style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+                                  <p className="text-muted-foreground">Volunteer Time</p>
+                                  <p className="font-semibold">{ranked.totalParticipationFormatted || '-'}</p>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div
+                        className="overflow-auto"
+                        style={{ maxHeight: '360px' }}
+                        onScroll={(event) => {
+                          const target = event.currentTarget;
+                          const reachedBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24;
+                          if (reachedBottom) {
+                            setRankingsVisibleRows((current) => Math.min(RANKINGS_PAGE_SIZE, current + 5));
+                          }
+                        }}
+                      >
+                        <table className="min-w-[760px] w-full table-fixed">
+                          <thead className="sticky top-0 z-10">
+                            <tr style={{ background: isDark ? 'rgba(17, 24, 39, 0.98)' : 'rgba(255, 255, 255, 0.98)' }}>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-20">Rank</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[220px]">Member</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[180px]">Committee</th>
+                              <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[140px]">Completion</th>
+                              <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[120px]">Attended</th>
+                              <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider w-[140px]">Time</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y" style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }}>
+                            {paginatedRankings.map((ranked) => {
+                              const isTop3 = ranked.rank <= 3;
+                              let rowBg = '';
+                              let rowBorder = '';
+                              if (ranked.rank === 1) {
+                                rowBg = 'rgba(255, 215, 0, 0.15)';
+                                rowBorder = '#ffd700';
+                              } else if (ranked.rank === 2) {
+                                rowBg = 'rgba(192, 192, 192, 0.15)';
+                                rowBorder = '#c0c0c0';
+                              } else if (ranked.rank === 3) {
+                                rowBg = 'rgba(205, 127, 50, 0.15)';
+                                rowBorder = '#cd7f32';
+                              }
+
+                              return (
+                                <tr
+                                  key={ranked.member.id}
+                                  className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                                  style={{
+                                    background: isTop3 ? rowBg : undefined,
+                                    borderLeft: isTop3 ? `4px solid ${rowBorder}` : undefined,
+                                  }}
+                                >
+                                  <td className="px-4 py-3 align-middle">
+                                    <div
+                                      className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm"
+                                      style={{
+                                        background: isTop3
+                                          ? (ranked.rank === 1 ? 'linear-gradient(135deg, #ffd700 0%, #ffed4a 100%)' : ranked.rank === 2 ? 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 100%)' : 'linear-gradient(135deg, #cd7f32 0%, #e5a055 100%)')
+                                          : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'),
+                                        color: isTop3
+                                          ? (ranked.rank === 1 ? '#92400e' : ranked.rank === 2 ? '#3f3f46' : '#78350f')
+                                          : undefined,
+                                      }}
+                                    >
+                                      {ranked.rank}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 align-middle">
+                                    <p className={isTop3 ? 'font-semibold truncate' : 'font-medium truncate'}>{ranked.member.name}</p>
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-muted-foreground align-middle truncate">
+                                    {ranked.member.committee || 'General'}
+                                  </td>
+                                  <td className="px-4 py-3 text-center align-middle">
+                                    <span
+                                      className={`font-bold ${isTop3 ? 'text-lg' : ''}`}
+                                      style={{ color: isTop3 ? DESIGN_TOKENS.colors.brand.orange : undefined }}
+                                    >
+                                      {ranked.completionRate.toFixed(2)}%
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-center text-sm text-muted-foreground align-middle">
+                                    {ranked.eventsAttended} / {ranked.totalEvents}
+                                  </td>
+                                  <td className="px-4 py-3 text-center text-sm text-muted-foreground align-middle">
+                                    {ranked.totalParticipationFormatted || '-'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
 
                     <div
                       className="border-t px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
@@ -5755,22 +6091,9 @@ export default function AttendanceDashboardPage({
               )}
             </div>
 
-            {/* Footer */}
-            <div 
-              className="px-6 py-4 border-t shrink-0"
-              style={{ borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }}
-            >
-              <button
-                onClick={() => setShowRankingsModal(false)}
-                className="w-full px-4 py-3 rounded-xl text-white transition-colors font-semibold hover:opacity-90"
-                style={{ background: `linear-gradient(135deg, ${DESIGN_TOKENS.colors.brand.red} 0%, ${DESIGN_TOKENS.colors.brand.orange} 100%)` }}
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>,
-        document.body
+        rankingsSectionHostRef.current
       )}
     </PageLayout>
   );

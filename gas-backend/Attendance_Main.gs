@@ -79,6 +79,10 @@ function isValidNumeric_(value) {
   return /^-?\d{1,10}(\.\d{1,10})?$/.test(String(value));
 }
 
+function hasAttendanceValue_(value) {
+  return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
 // =====================================================
 // NOTE: doGet/doPost entry points and role-check helpers
 // (getUserRole_, requireAdminOrAuditor_, requireHeadOrAbove_,
@@ -365,6 +369,10 @@ function recordManualAttendance(params) {
     const nowISO = now.toISOString();
     const timeString = Utilities.formatDate(now, 'Asia/Manila', 'hh:mm a');
     const dateString = Utilities.formatDate(now, 'Asia/Manila', 'yyyy-MM-dd');
+
+    if ((status === 'Absent' || status === 'Excused') && timeType === 'out') {
+      return { success: false, error: 'INVALID_TIME_OUT_STATUS', message: 'Cannot record Time Out for Absent or Excused status' };
+    }
     
     // Check for existing record
     const data = sheet.getDataRange().getValues();
@@ -379,6 +387,44 @@ function recordManualAttendance(params) {
         const existingDate = rowDate ? Utilities.formatDate(new Date(rowDate), 'Asia/Manila', 'yyyy-MM-dd') : '';
         
         if (existingDate === dateString) {
+          const existingTimeIn = data[i][headers.indexOf('TimeIn')];
+          const existingTimeOut = data[i][headers.indexOf('TimeOut')];
+          const hasExistingTimeIn = hasAttendanceValue_(existingTimeIn);
+          const hasExistingTimeOut = hasAttendanceValue_(existingTimeOut);
+
+          if (timeType === 'out' && !hasExistingTimeIn) {
+            return {
+              success: false,
+              error: 'NO_TIME_IN',
+              message: 'No Time In record found for this member today. Please record Time In first.'
+            };
+          }
+
+          if (timeType === 'out' && hasExistingTimeIn && !hasExistingTimeOut) {
+            const rowIndexAutoUpdate = i + 1;
+            sheet.getRange(rowIndexAutoUpdate, headers.indexOf('Status') + 1).setValue(status);
+            sheet.getRange(rowIndexAutoUpdate, headers.indexOf('TimeOut') + 1).setValue(timeString);
+
+            if (notes) {
+              const existingNotesAuto = data[i][headers.indexOf('Notes')] || '';
+              const mergedNotesAuto = existingNotesAuto ? `${existingNotesAuto} | ${notes}` : notes;
+              sheet.getRange(rowIndexAutoUpdate, headers.indexOf('Notes') + 1).setValue(mergedNotesAuto);
+            }
+
+            if (recordedBy) {
+              sheet.getRange(rowIndexAutoUpdate, headers.indexOf('RecordedByTimeOut') + 1).setValue(recordedBy);
+            }
+            sheet.getRange(rowIndexAutoUpdate, headers.indexOf('RecordedAt') + 1).setValue(nowISO);
+
+            return {
+              success: true,
+              message: 'Attendance Time Out recorded successfully',
+              attendanceId: data[i][headers.indexOf('AttendanceID')],
+              updated: true,
+              autoCompletedTimeOut: true
+            };
+          }
+
           if (!overwrite) {
             // Return existing record for confirmation
             return {
@@ -386,10 +432,12 @@ function recordManualAttendance(params) {
               error: 'EXISTING_RECORD',
               existingRecord: {
                 attendanceId: data[i][headers.indexOf('AttendanceID')],
-                timeIn: data[i][headers.indexOf('TimeIn')],
-                timeOut: data[i][headers.indexOf('TimeOut')],
+                timeIn: existingTimeIn,
+                timeOut: existingTimeOut,
                 status: data[i][headers.indexOf('Status')],
-                date: existingDate
+                date: existingDate,
+                hasTimeIn: hasExistingTimeIn,
+                hasTimeOut: hasExistingTimeOut
               },
               message: 'Member already has an attendance record for this event today. Set overwrite=true to update.'
             };
@@ -426,6 +474,14 @@ function recordManualAttendance(params) {
           };
         }
       }
+    }
+
+    if (timeType === 'out') {
+      return {
+        success: false,
+        error: 'NO_TIME_IN',
+        message: 'No Time In record found for this member today. Please record Time In first.'
+      };
     }
     
     // Create new record
@@ -599,13 +655,17 @@ function checkExistingAttendance(eventId, memberId) {
         const recordDate = rowDate ? Utilities.formatDate(new Date(rowDate), 'Asia/Manila', 'yyyy-MM-dd') : '';
         
         if (recordDate === today) {
+          const rawTimeIn = data[i][headers.indexOf('TimeIn')];
+          const rawTimeOut = data[i][headers.indexOf('TimeOut')];
           return {
             success: true,
             exists: true,
+            hasTimeIn: hasAttendanceValue_(rawTimeIn),
+            hasTimeOut: hasAttendanceValue_(rawTimeOut),
             record: {
               attendanceId: data[i][headers.indexOf('AttendanceID')],
-              timeIn: formatTimeValue(data[i][headers.indexOf('TimeIn')]),
-              timeOut: formatTimeValue(data[i][headers.indexOf('TimeOut')]),
+              timeIn: formatTimeValue(rawTimeIn),
+              timeOut: formatTimeValue(rawTimeOut),
               status: data[i][headers.indexOf('Status')],
               date: recordDate
             }
