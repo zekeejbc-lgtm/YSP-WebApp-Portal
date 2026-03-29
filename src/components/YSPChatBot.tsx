@@ -7,6 +7,7 @@ import { fetchEvents, formatEventDate } from "../services/gasEventsService";
 import { fetchAllProjects, type Project } from "../services/projectsService";
 import { getStoredUser, getSessionToken, fetchUserProfile, type UserProfile } from "../services/gasLoginService";
 import type { AttendanceDashboardContext } from "./AttendanceDashboardPage";
+import { orgConfig } from "../config/org.config";
 
 // API URL loaded from environment variable
 const API_URL = import.meta.env.VITE_GAS_CHATBOT_API_URL || '';
@@ -64,6 +65,8 @@ const BASE_SUGGESTIONS = [
   "@system clear cache",
   "@system hard refresh",
 ];
+
+const ORG_LABEL = orgConfig.shortName;
 
 // 📋 PROFILE KNOWLEDGE BASE: Answers for @profile command
 const PROFILE_KNOWLEDGE_BASE = [
@@ -255,11 +258,11 @@ const LOCAL_KNOWLEDGE_BASE = [
   // --- LEADERSHIP & ABOUT ---
   {
     keywords: ["founder", "who created", "wacky", "father of ysp", "head"],
-    answer: "The founder of YSP Tagum Chapter is Juanquine Carlo R. Castro, also known as 'Wacky Racho'."
+    answer: `The founder of ${ORG_LABEL} is Juanquine Carlo R. Castro, also known as 'Wacky Racho'.`
   },
   {
     keywords: ["chairman", "chapter president", "current leader"],
-    answer: "The current Chapter President of YSP Tagum is Mr. Jhonas Untalan.",
+    answer: `The current Chapter President of ${ORG_LABEL} is Mr. Jhonas Untalan.`,
     lookup: "Jhonas Untalan"
   },
   {
@@ -276,7 +279,7 @@ const LOCAL_KNOWLEDGE_BASE = [
   },
   {
     keywords: ["developer", "ezequiel", "dev"],
-    answer: "The developer of this Portal is Mr. Ezequiel John B. Crisostomo, the current Membership and Internal Affairs of YSP Tagum Chapter. You may contact him via facebook: https://www.facebook.com/ezequieljohn.bengilcrisostomo",
+    answer: `The developer of this Portal is Mr. Ezequiel John B. Crisostomo, the current Membership and Internal Affairs of ${ORG_LABEL}. You may contact him via facebook: https://www.facebook.com/ezequieljohn.bengilcrisostomo`,
     lookup: "Crisostomo, Ezequiel John B."
   },
   {
@@ -307,7 +310,7 @@ const LOCAL_KNOWLEDGE_BASE = [
   // --- CURRENT OFFICERS (2025-2026) ---
   {
     keywords: ["officers", "leaders", "team", "board", "council"],
-    answer: "Current YSP Tagum Officers:\n• Chapter President: Jhonas Untalan\n• Membership and Internal Affairs Officer: Ezequiel John B. Crisostomo\n• External Relations Officer: Ian Ghabriel L. Navarro\n• Secretary and Documentation Officer: Yhana Bea Baliwan\n• Finance and Treasury Officer: Crystal Nice P. Tano\n• Communications and Marketing Officer: Russel T. Obreque\n• Program Development Officer: Valerie B. Cabualan"
+    answer: `Current ${ORG_LABEL} Officers:\n• Chapter President: Jhonas Untalan\n• Membership and Internal Affairs Officer: Ezequiel John B. Crisostomo\n• External Relations Officer: Ian Ghabriel L. Navarro\n• Secretary and Documentation Officer: Yhana Bea Baliwan\n• Finance and Treasury Officer: Crystal Nice P. Tano\n• Communications and Marketing Officer: Russel T. Obreque\n• Program Development Officer: Valerie B. Cabualan`
   },
   {
     keywords: ["president", "chairman", "head of ysp"],

@@ -1,7 +1,7 @@
 {
-  "name": "Youth Service Philippines - Tagum Chapter",
-  "short_name": "YSP Tagum",
-  "description": "Shaping the Future to a Greater Society",
+  "name": "Youth Service Philippines Portal",
+  "short_name": "YSP",
+  "description": "Youth Service Philippines community service portal",
   "theme_color": "#f6421f",
   "background_color": "#ffffff",
   "display": "standalone",

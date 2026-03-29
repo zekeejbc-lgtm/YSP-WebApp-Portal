@@ -20,6 +20,7 @@ import { X, XCircle, Mail, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button, DESIGN_TOKENS } from "./design-system";
 import { MODAL_REGULATIONS, getModalStyles } from "./modal-regulations";
+import { orgConfig } from "../config/org.config";
 
 interface RejectionModalProps {
   isOpen: boolean;
@@ -82,15 +83,15 @@ export default function RejectionModal({
     
     // Auto-generate message template based on reason
     const templates: Record<string, string> = {
-      "Incomplete application form": `Dear ${applicantData.fullName},\n\nThank you for your interest in joining Youth Service Philippines - Tagum Chapter. Unfortunately, we cannot process your application at this time as the submitted form is incomplete.\n\nWe encourage you to resubmit your application with all required information.\n\nBest regards,\nYSP Tagum Chapter`,
-      "Did not meet minimum age requirement": `Dear ${applicantData.fullName},\n\nThank you for your interest in joining YSP Tagum Chapter. Unfortunately, applicants must meet our minimum age requirement to participate in our programs.\n\nWe appreciate your enthusiasm and encourage you to apply again when you meet the eligibility criteria.\n\nBest regards,\nYSP Tagum Chapter`,
-      "Committee already at full capacity": `Dear ${applicantData.fullName},\n\nThank you for your application to YSP Tagum Chapter. We appreciate your interest in joining our team. Unfortunately, the committee you selected is currently at full capacity.\n\nWe encourage you to reapply for a different committee or check back with us in the future.\n\nBest regards,\nYSP Tagum Chapter`,
+      "Incomplete application form": `Dear ${applicantData.fullName},\n\nThank you for your interest in joining ${orgConfig.fullName}. Unfortunately, we cannot process your application at this time as the submitted form is incomplete.\n\nWe encourage you to resubmit your application with all required information.\n\nBest regards,\n${orgConfig.shortName}`,
+      "Did not meet minimum age requirement": `Dear ${applicantData.fullName},\n\nThank you for your interest in joining ${orgConfig.shortName}. Unfortunately, applicants must meet our minimum age requirement to participate in our programs.\n\nWe appreciate your enthusiasm and encourage you to apply again when you meet the eligibility criteria.\n\nBest regards,\n${orgConfig.shortName}`,
+      "Committee already at full capacity": `Dear ${applicantData.fullName},\n\nThank you for your application to ${orgConfig.shortName}. We appreciate your interest in joining our team. Unfortunately, the committee you selected is currently at full capacity.\n\nWe encourage you to reapply for a different committee or check back with us in the future.\n\nBest regards,\n${orgConfig.shortName}`,
     };
 
     if (templates[reason]) {
       setCustomMessage(templates[reason]);
     } else {
-      setCustomMessage(`Dear ${applicantData.fullName},\n\nThank you for your interest in joining Youth Service Philippines - Tagum Chapter.\n\n[Please provide specific details about the rejection]\n\nBest regards,\nYSP Tagum Chapter`);
+      setCustomMessage(`Dear ${applicantData.fullName},\n\nThank you for your interest in joining ${orgConfig.fullName}.\n\n[Please provide specific details about the rejection]\n\nBest regards,\n${orgConfig.shortName}`);
     }
   };
 
@@ -178,7 +179,7 @@ export default function RejectionModal({
 
           {/* Rejection Reason */}
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 inline-flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <XCircle className="w-4 h-4 text-[#ef4444]" />
               Rejection Reason *
             </label>
@@ -202,7 +203,7 @@ export default function RejectionModal({
 
           {/* Custom Message */}
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 inline-flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Mail className="w-4 h-4 text-[#3b82f6]" />
               Message to Applicant *
             </label>
@@ -253,7 +254,7 @@ export default function RejectionModal({
             </div>
             <div className="text-sm space-y-2 text-muted-foreground">
               <p><strong>To:</strong> {applicantData.email}</p>
-              <p><strong>Subject:</strong> YSP Tagum Chapter - Application Update</p>
+              <p><strong>Subject:</strong> {orgConfig.shortName} - Application Update</p>
               <div className="mt-3 p-3 rounded bg-white dark:bg-gray-800 border" style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}>
                 <p className="text-xs whitespace-pre-wrap">{customMessage || "[Your message will appear here]"}</p>
               </div>

@@ -27,6 +27,7 @@ import { getStoredUser, fetchUserProfile, checkEmailVerified } from "../services
 import { loadUserProfileFromCache } from "../services/localStorageCache";
 import { secureGetItem, secureSetItem, secureRemoveItem } from "../utils/secureStorage";
 import type { UploadToastMessage } from "./UploadToast";
+import { orgConfig } from "../config/org.config";
 
 interface MyQRIDPageProps {
   onClose: () => void;
@@ -99,10 +100,10 @@ const logMyQRDebug = (...args: unknown[]) => {
 };
 
 // YSP Organization constants
-const YSP_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
-const YSP_ORG_NAME = "Youth Service Philippines";
-const YSP_CHAPTER = "Tagum Chapter";
-const YSP_TAGLINE = "Shaping the Future to a Greater Society";
+const YSP_LOGO_URL = orgConfig.logoUrl || "https://i.imgur.com/J4wddTW.png";
+const YSP_ORG_NAME = orgConfig.orgName;
+const YSP_CHAPTER = orgConfig.chapterName;
+const YSP_TAGLINE = orgConfig.motto;
 
 // Standard ID Card size (CR80) in PORTRAIT orientation: 53.98mm x 85.6mm
 // Portrait means width < height

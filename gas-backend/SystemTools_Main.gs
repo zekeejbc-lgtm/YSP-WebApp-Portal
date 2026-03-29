@@ -22,7 +22,8 @@ function doPost(e) {
   try {
     const requestData = JSON.parse(e.postData.contents);
     const action = requestData.action;
-    const PUBLIC_ACTIONS = ['getMaintenanceMode', 'getCacheVersion'];
+    const PUBLIC_ACTIONS = ['getMaintenanceMode', 'getCacheVersion', 'getOrgBranding'];
+    const isPublicAction = PUBLIC_ACTIONS.indexOf(action) !== -1;
 
     // Dedicated cross-project Gemini key count endpoint (shared-secret only).
     // This is intended for server-to-server audit aggregation.
@@ -34,13 +35,14 @@ function doPost(e) {
     }
     
     // ---- API key validation ----
-    if (!validateApiKey_(requestData.key)) {
+    // Public read-only actions can be called without API key to support cross-project branding sync.
+    if (!isPublicAction && !validateApiKey_(requestData.key)) {
       return createErrorResponse('Invalid or missing API key', 401);
     }
     
     // ---- Session token verification (HMAC) ----
     // Public read-only actions can be accessed without a session token.
-    if (PUBLIC_ACTIONS.indexOf(action) === -1) {
+    if (!isPublicAction) {
       var tokenUser = verifyHmacToken_(requestData.sessionToken);
       var sessionSecret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET_KEY');
       if (!sessionSecret) {
@@ -85,6 +87,8 @@ function doPost(e) {
       // Cache Management
       case 'getCacheVersion':
         return handleGetCacheVersion();
+      case 'getOrgBranding':
+        return handleGetOrgBranding();
       case 'bumpCacheVersion':
         return handleBumpCacheVersion(requestData.username);
       
@@ -443,6 +447,77 @@ const FEATURE_SCRIPT_PROPERTIES = [
   'MEET_EXTENSION_SHARED_SECRET'
 ];
 
+const ORG_BRANDING_DEFAULTS = {
+  orgName: 'Youth Service Philippines',
+  chapterName: 'Tagum Chapter',
+  shortName: 'YSP Tagum',
+  motto: 'Shaping the Future to a Greater Society',
+  chapterCode: 'TC',
+  location: 'Tagum City, Davao del Norte, Philippines',
+  contactEmail: 'ysptagumchapter@gmail.com',
+  logoUrl: 'https://i.imgur.com/J4wddTW.png',
+  themeColor: '#f6421f',
+};
+
+const ORG_BRANDING_SHEET_NAME = 'Organization Branding';
+const ORG_BRANDING_HEADERS = ['ConfigKey', 'Value', 'PropertyKey', 'Description', 'LastUpdated', 'UpdatedBy'];
+const ORG_BRANDING_FIELDS = [
+  {
+    configKey: 'orgName',
+    propertyKey: 'ORG_NAME',
+    defaultValue: ORG_BRANDING_DEFAULTS.orgName,
+    description: 'Primary organization display name'
+  },
+  {
+    configKey: 'chapterName',
+    propertyKey: 'ORG_CHAPTER_NAME',
+    defaultValue: ORG_BRANDING_DEFAULTS.chapterName,
+    description: 'Chapter or local branch name'
+  },
+  {
+    configKey: 'shortName',
+    propertyKey: 'ORG_SHORT_NAME',
+    defaultValue: ORG_BRANDING_DEFAULTS.shortName,
+    description: 'Short label used for compact UI and reports'
+  },
+  {
+    configKey: 'motto',
+    propertyKey: 'ORG_MOTTO',
+    defaultValue: ORG_BRANDING_DEFAULTS.motto,
+    description: 'Organization motto'
+  },
+  {
+    configKey: 'chapterCode',
+    propertyKey: 'ORG_CHAPTER_CODE',
+    defaultValue: ORG_BRANDING_DEFAULTS.chapterCode,
+    description: 'Chapter code used for IDs and references'
+  },
+  {
+    configKey: 'location',
+    propertyKey: 'ORG_LOCATION',
+    defaultValue: ORG_BRANDING_DEFAULTS.location,
+    description: 'Official office or chapter location text'
+  },
+  {
+    configKey: 'contactEmail',
+    propertyKey: 'ORG_CONTACT_EMAIL',
+    defaultValue: ORG_BRANDING_DEFAULTS.contactEmail,
+    description: 'Public contact email address'
+  },
+  {
+    configKey: 'logoUrl',
+    propertyKey: 'ORG_LOGO_URL',
+    defaultValue: ORG_BRANDING_DEFAULTS.logoUrl,
+    description: 'URL of organization logo image'
+  },
+  {
+    configKey: 'themeColor',
+    propertyKey: 'ORG_THEME_COLOR',
+    defaultValue: ORG_BRANDING_DEFAULTS.themeColor,
+    description: 'Primary brand color hex code'
+  }
+];
+
 // =================== INITIALIZATION ===================
 
 /**
@@ -510,6 +585,163 @@ function initializeMaintenanceSheet() {
   } catch (error) {
     Logger.log('Error initializing Maintenance sheet: ' + error.toString());
     throw error;
+  }
+}
+
+/**
+ * Ensure Organization Branding sheet exists and includes all expected rows.
+ * This sheet is the single editable source for org branding values.
+ */
+function initializeOrgBrandingSheet() {
+  try {
+    if (!SYSTEM_SETTINGS_SPREADSHEET_ID) {
+      throw new Error('SYSTEM_SETTINGS_SPREADSHEET_ID is not configured');
+    }
+
+    const ss = SpreadsheetApp.openById(SYSTEM_SETTINGS_SPREADSHEET_ID);
+    let brandingSheet = ss.getSheetByName(ORG_BRANDING_SHEET_NAME);
+
+    if (!brandingSheet) {
+      brandingSheet = ss.insertSheet(ORG_BRANDING_SHEET_NAME);
+      brandingSheet.getRange(1, 1, 1, ORG_BRANDING_HEADERS.length).setValues([ORG_BRANDING_HEADERS]);
+      brandingSheet.getRange(1, 1, 1, ORG_BRANDING_HEADERS.length).setFontWeight('bold');
+      brandingSheet.setFrozenRows(1);
+      brandingSheet.setColumnWidth(1, 170);
+      brandingSheet.setColumnWidth(2, 380);
+      brandingSheet.setColumnWidth(3, 220);
+      brandingSheet.setColumnWidth(4, 340);
+      brandingSheet.setColumnWidth(5, 190);
+      brandingSheet.setColumnWidth(6, 140);
+    }
+
+    upsertOrgBrandingRows_(brandingSheet, 'system-bootstrap', false);
+    return brandingSheet;
+  } catch (error) {
+    Logger.log('Error initializing Organization Branding sheet: ' + error.toString());
+    throw error;
+  }
+}
+
+function upsertOrgBrandingRows_(sheet, updatedBy, overwriteExistingValues) {
+  const actor = updatedBy || 'system';
+  const nowIso = new Date().toISOString();
+  const overwriteValues = overwriteExistingValues === true;
+
+  const lastRow = sheet.getLastRow();
+  const rowMap = {};
+
+  if (lastRow > 1) {
+    const existingRows = sheet.getRange(2, 1, lastRow - 1, ORG_BRANDING_HEADERS.length).getValues();
+    for (let i = 0; i < existingRows.length; i++) {
+      const existingKey = toSafePropValue_(existingRows[i][0]);
+      if (existingKey) {
+        rowMap[existingKey] = i + 2;
+      }
+    }
+  }
+
+  let insertedCount = 0;
+  let updatedCount = 0;
+
+  for (let j = 0; j < ORG_BRANDING_FIELDS.length; j++) {
+    const field = ORG_BRANDING_FIELDS[j];
+    const propertyValue = toSafePropValue_(props_.getProperty(field.propertyKey));
+    const seedValue = propertyValue || toSafePropValue_(field.defaultValue);
+    const rowIndex = rowMap[field.configKey];
+
+    if (!rowIndex) {
+      sheet.appendRow([
+        field.configKey,
+        seedValue,
+        field.propertyKey,
+        field.description,
+        nowIso,
+        actor
+      ]);
+      insertedCount++;
+      continue;
+    }
+
+    const rowValues = sheet.getRange(rowIndex, 1, 1, ORG_BRANDING_HEADERS.length).getValues()[0];
+    const currentValue = toSafePropValue_(rowValues[1]);
+    const nextValue = overwriteValues || !currentValue ? seedValue : currentValue;
+
+    const shouldWrite =
+      toSafePropValue_(rowValues[0]) !== field.configKey ||
+      currentValue !== nextValue ||
+      toSafePropValue_(rowValues[2]) !== field.propertyKey ||
+      toSafePropValue_(rowValues[3]) !== field.description ||
+      (overwriteValues && toSafePropValue_(rowValues[5]) !== actor);
+
+    if (shouldWrite) {
+      sheet.getRange(rowIndex, 1, 1, ORG_BRANDING_HEADERS.length).setValues([[
+        field.configKey,
+        nextValue,
+        field.propertyKey,
+        field.description,
+        nowIso,
+        actor
+      ]]);
+      updatedCount++;
+    }
+  }
+
+  return {
+    insertedCount: insertedCount,
+    updatedCount: updatedCount
+  };
+}
+
+function getOrgBrandingSheetValues_(sheet) {
+  const result = {};
+  const targetSheet = sheet || initializeOrgBrandingSheet();
+  const lastRow = targetSheet.getLastRow();
+  if (lastRow <= 1) return result;
+
+  const rows = targetSheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  for (let i = 0; i < rows.length; i++) {
+    const key = toSafePropValue_(rows[i][0]);
+    if (!key) continue;
+    result[key] = toSafePropValue_(rows[i][1]);
+  }
+
+  return result;
+}
+
+/**
+ * Run this manually once to create and seed Organization Branding sheet.
+ * Optional parameter: pass true to overwrite current sheet values from Script Properties.
+ */
+function setupOrgBrandingSheet(forceFromScriptProperties) {
+  try {
+    const sheet = initializeOrgBrandingSheet();
+    const overwrite = forceFromScriptProperties === true || forceFromScriptProperties === 'true';
+    const writeStats = overwrite
+      ? upsertOrgBrandingRows_(sheet, 'manual-setup', true)
+      : { insertedCount: 0, updatedCount: 0 };
+
+    const preview = getOrgBrandingConfig_();
+    const payload = {
+      success: true,
+      sheetName: ORG_BRANDING_SHEET_NAME,
+      spreadsheetId: SYSTEM_SETTINGS_SPREADSHEET_ID,
+      insertedRows: writeStats.insertedCount,
+      updatedRows: writeStats.updatedCount,
+      overwrittenFromScriptProperties: overwrite,
+      branding: preview,
+      timestamp: new Date().toISOString(),
+      message: 'Organization Branding sheet is ready.'
+    };
+
+    Logger.log(JSON.stringify(payload));
+    return payload;
+  } catch (error) {
+    Logger.log('setupOrgBrandingSheet error: ' + error.toString());
+    return {
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    };
   }
 }
 
@@ -1723,6 +1955,58 @@ function toSafePropValue_(value) {
   return String(value || '').trim();
 }
 
+function getScriptPropertyOrFallback_(key, fallbackValue) {
+  var value = toSafePropValue_(PropertiesService.getScriptProperties().getProperty(key));
+  return value || String(fallbackValue || '').trim();
+}
+
+function resolveOrgBrandingValue_(sheetValues, configKey, propertyKey, fallbackValue) {
+  var fromSheet = toSafePropValue_(sheetValues[configKey]);
+  if (fromSheet) return fromSheet;
+  return getScriptPropertyOrFallback_(propertyKey, fallbackValue);
+}
+
+function getOrgBrandingConfig_() {
+  var sheetValues = {};
+  try {
+    var brandingSheet = initializeOrgBrandingSheet();
+    sheetValues = getOrgBrandingSheetValues_(brandingSheet);
+  } catch (sheetError) {
+    Logger.log('Org branding sheet unavailable. Falling back to Script Properties: ' + sheetError.toString());
+  }
+
+  var orgName = resolveOrgBrandingValue_(sheetValues, 'orgName', 'ORG_NAME', ORG_BRANDING_DEFAULTS.orgName);
+  var chapterName = resolveOrgBrandingValue_(sheetValues, 'chapterName', 'ORG_CHAPTER_NAME', ORG_BRANDING_DEFAULTS.chapterName);
+  var shortName = resolveOrgBrandingValue_(sheetValues, 'shortName', 'ORG_SHORT_NAME', ORG_BRANDING_DEFAULTS.shortName);
+  var motto = resolveOrgBrandingValue_(sheetValues, 'motto', 'ORG_MOTTO', ORG_BRANDING_DEFAULTS.motto);
+  var chapterCode = resolveOrgBrandingValue_(sheetValues, 'chapterCode', 'ORG_CHAPTER_CODE', ORG_BRANDING_DEFAULTS.chapterCode);
+  var location = resolveOrgBrandingValue_(sheetValues, 'location', 'ORG_LOCATION', ORG_BRANDING_DEFAULTS.location);
+  var contactEmail = resolveOrgBrandingValue_(sheetValues, 'contactEmail', 'ORG_CONTACT_EMAIL', ORG_BRANDING_DEFAULTS.contactEmail);
+  var logoUrl = resolveOrgBrandingValue_(sheetValues, 'logoUrl', 'ORG_LOGO_URL', ORG_BRANDING_DEFAULTS.logoUrl);
+  var themeColor = resolveOrgBrandingValue_(sheetValues, 'themeColor', 'ORG_THEME_COLOR', ORG_BRANDING_DEFAULTS.themeColor);
+
+  return {
+    orgName: orgName,
+    chapterName: chapterName,
+    shortName: shortName,
+    fullName: orgName + ' - ' + chapterName,
+    motto: motto,
+    chapterCode: chapterCode,
+    location: location,
+    contactEmail: contactEmail,
+    logoUrl: logoUrl,
+    themeColor: themeColor,
+  };
+}
+
+function handleGetOrgBranding() {
+  try {
+    return createSuccessResponse(getOrgBrandingConfig_());
+  } catch (error) {
+    return createErrorResponse('Failed to get org branding: ' + error.message, 500);
+  }
+}
+
 // =================== MAINTENANCE MODE ===================
 
 /**
@@ -2179,6 +2463,7 @@ function handleGetAccessLogsStats() {
  * @returns {Spreadsheet} - The styled spreadsheet ready for PDF conversion
  */
 function createStyledAccessLogsPDF(logsData, reportType, metadata) {
+  const orgBranding = getOrgBrandingConfig_();
   const now = new Date();
   const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
   
@@ -2200,13 +2485,13 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
   
   // Organization Header
   summarySheet.getRange(row, 1, 1, 5).merge();
-  summarySheet.getRange(row, 1).setValue('Youth Service Philippines - Tagum Chapter');
+  summarySheet.getRange(row, 1).setValue(orgBranding.fullName);
   summarySheet.getRange(row, 1).setFontSize(16).setFontWeight('bold').setHorizontalAlignment('center');
   row++;
   
   // Motto
   summarySheet.getRange(row, 1, 1, 5).merge();
-  summarySheet.getRange(row, 1).setValue('Shaping the Future to a Greater Society');
+  summarySheet.getRange(row, 1).setValue(orgBranding.motto);
   summarySheet.getRange(row, 1).setFontSize(10).setFontStyle('italic').setHorizontalAlignment('center').setFontColor('#666666');
   row += 2;
   
@@ -2309,7 +2594,7 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
   
   // Footer
   summarySheet.getRange(row, 1, 1, 5).merge();
-  summarySheet.getRange(row, 1).setValue('Youth Service Philippines - Tagum Chapter | Shaping the Future to a Greater Society');
+  summarySheet.getRange(row, 1).setValue(orgBranding.fullName + ' | ' + orgBranding.motto);
   summarySheet.getRange(row, 1).setFontSize(8).setHorizontalAlignment('center').setFontColor('#888888');
   
   // ===== ALL LOGS PAGE (Chronological) =====

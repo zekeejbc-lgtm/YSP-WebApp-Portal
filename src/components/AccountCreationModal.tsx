@@ -14,6 +14,7 @@ import { Button, DESIGN_TOKENS } from "./design-system";
 import { getModalStyles } from "./modal-regulations";
 import type { SystemRole } from "../types/app";
 import { YSP_COMMITTEE_NAMES } from "../constants/committees";
+import { orgConfig } from "../config/org.config";
 
 interface AccountCreationModalProps {
   isOpen: boolean;
@@ -128,7 +129,7 @@ const FALLBACK_ROLES: SystemRole[] = [
     },
   },
   {
-    name: "Tagum Chapter President",
+    name: `${orgConfig.chapterName} President`,
     powerLevel: 5,
     color: "#059669",
     permissions: {
@@ -278,13 +279,9 @@ export default function AccountCreationModal({
     if (!generatedDefaults) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setUsername(generatedDefaults.username);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPassword(generatedDefaults.password);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCommittee(generatedDefaults.committee);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRole(generatedDefaults.role);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPosition(generatedDefaults.position);
   }, [generatedDefaults]);
 
@@ -379,7 +376,7 @@ export default function AccountCreationModal({
 
         <div className="p-4 md:p-6 overflow-y-auto flex-1 space-y-6" style={{ minHeight: 0 }}>
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 inline-flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <User className="w-4 h-4 text-[#f6421f]" />
               Username *
             </label>
@@ -404,7 +401,7 @@ export default function AccountCreationModal({
           </div>
 
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 inline-flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Lock className="w-4 h-4 text-[#ee8724]" />
               Password *
             </label>
@@ -426,7 +423,7 @@ export default function AccountCreationModal({
                 </button>
               </div>
               <button
-                onClick={() => setPassword(generatePassword())}
+                onClick={() => setPassword(generatePasswordValue())}
                 className="px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all"
                 title="Generate password"
               >
@@ -437,7 +434,7 @@ export default function AccountCreationModal({
           </div>
 
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 inline-flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Briefcase className="w-4 h-4 text-[#fbcb29]" />
               Committee Designation *
             </label>
@@ -458,7 +455,7 @@ export default function AccountCreationModal({
           </div>
 
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 inline-flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Shield className="w-4 h-4 text-[#f6421f]" />
               System Role *
             </label>
@@ -478,7 +475,7 @@ export default function AccountCreationModal({
           </div>
 
           <div>
-            <label className="block text-sm mb-2 flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
+            <label className="text-sm mb-2 inline-flex items-center gap-2" style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>
               <Briefcase className="w-4 h-4 text-[#10b981]" />
               Position *
             </label>
@@ -490,7 +487,7 @@ export default function AccountCreationModal({
             >
               <option value="">Select Position</option>
               <optgroup label="Executive Council">
-                <option value="Tagum Chapter President">Tagum Chapter President</option>
+                <option value={`${orgConfig.chapterName} President`}>{orgConfig.chapterName} President</option>
                 <option value="Membership and Internal Affairs Officer">Membership and Internal Affairs Officer</option>
                 <option value="External Relations Officer">External Relations Officer</option>
                 <option value="Secretary and Documentation Officer">Secretary and Documentation Officer</option>
@@ -557,7 +554,7 @@ export default function AccountCreationModal({
             </div>
             <div className="text-sm space-y-2 text-muted-foreground">
               <p><strong>To:</strong> {applicantData.email}</p>
-              <p><strong>Subject:</strong> Welcome to YSP Tagum Chapter - Your Application Has Been Approved!</p>
+              <p><strong>Subject:</strong> Welcome to {orgConfig.shortName} - Your Application Has Been Approved!</p>
               <div className="mt-3 p-3 rounded bg-white dark:bg-gray-800 border" style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}>
                 <p className="mb-2">Dear {applicantData.fullName},</p>
                 <p className="mb-3">Congratulations! Your membership application has been approved.</p>
@@ -569,7 +566,7 @@ export default function AccountCreationModal({
                   <p className="text-xs">Position: <strong>{position || "[position]"}</strong></p>
                   <p className="text-xs">Role: <strong>{role}</strong></p>
                 </div>
-                <p className="text-xs mt-3">Welcome to YSP Tagum Chapter!</p>
+                <p className="text-xs mt-3">Welcome to {orgConfig.shortName}!</p>
               </div>
             </div>
           </div>

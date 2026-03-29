@@ -7,7 +7,130 @@ const LOGIN_SHEET_NAME = 'User Profiles';
 const PROFILE_PICTURES_FOLDER_ID = PropertiesService.getScriptProperties().getProperty('PROFILE_PICTURES_FOLDER_ID') || '';
 
 // Email configuration
-const LOGO_URL = "https://i.imgur.com/J4wddTW.png";
+const LOGIN_MAIN_BRANDING_CACHE_KEY = 'login_main_org_branding_v1';
+const LOGIN_MAIN_BRANDING_CACHE_TTL_SECONDS = 1800;
+const LOGIN_MAIN_BRANDING_SHEET_NAME = 'Organization Branding';
+const LOGIN_MAIN_BRANDING_DEFAULTS = {
+  orgName: 'Youth Service Philippines',
+  chapterName: 'Tagum Chapter',
+  shortName: 'YSP Tagum',
+  motto: 'Shaping the Future to a Greater Society',
+  chapterCode: 'TC',
+  location: 'Tagum City, Davao del Norte, Philippines',
+  contactEmail: 'ysptagumchapter@gmail.com',
+  logoUrl: 'https://i.imgur.com/J4wddTW.png',
+  themeColor: '#f6421f'
+};
+
+function normalizeLoginMainBranding_(raw) {
+  var merged = Object.assign({}, LOGIN_MAIN_BRANDING_DEFAULTS, raw || {});
+  merged.orgName = String(merged.orgName || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.orgName;
+  merged.chapterName = String(merged.chapterName || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.chapterName;
+  merged.shortName = String(merged.shortName || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.shortName;
+  merged.motto = String(merged.motto || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.motto;
+  merged.chapterCode = String(merged.chapterCode || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.chapterCode;
+  merged.location = String(merged.location || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.location;
+  merged.contactEmail = String(merged.contactEmail || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.contactEmail;
+  merged.logoUrl = String(merged.logoUrl || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.logoUrl;
+  merged.themeColor = String(merged.themeColor || '').trim() || LOGIN_MAIN_BRANDING_DEFAULTS.themeColor;
+  merged.fullName = merged.orgName + ' - ' + merged.chapterName;
+  return merged;
+}
+
+function getLoginMainBrandingFromSheet_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var settingsId = String(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '').trim();
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName(LOGIN_MAIN_BRANDING_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var keyIdx = headers.indexOf('ConfigKey');
+    var valueIdx = headers.indexOf('Value');
+    if (keyIdx === -1 || valueIdx === -1) return null;
+
+    var rowMap = {};
+    for (var i = 1; i < values.length; i++) {
+      var key = String(values[i][keyIdx] || '').trim();
+      if (!key) continue;
+      rowMap[key] = String(values[i][valueIdx] || '').trim();
+    }
+
+    return {
+      orgName: rowMap.orgName || '',
+      chapterName: rowMap.chapterName || '',
+      shortName: rowMap.shortName || '',
+      motto: rowMap.motto || '',
+      chapterCode: rowMap.chapterCode || '',
+      location: rowMap.location || '',
+      contactEmail: rowMap.contactEmail || '',
+      logoUrl: rowMap.logoUrl || '',
+      themeColor: rowMap.themeColor || ''
+    };
+  } catch (sheetReadError) {
+    Logger.log('Login main branding sheet fallback read error: ' + sheetReadError);
+    return null;
+  }
+}
+
+function getLoginMainOrgBranding_() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var cachedRaw = cache.get(LOGIN_MAIN_BRANDING_CACHE_KEY);
+    if (cachedRaw) {
+      return normalizeLoginMainBranding_(JSON.parse(cachedRaw));
+    }
+  } catch (cacheReadError) {
+    Logger.log('Login main branding cache read error: ' + cacheReadError);
+  }
+
+  var branding = normalizeLoginMainBranding_({});
+  var resolvedFromEndpoint = false;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var endpoint = String(props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL') || '').trim();
+    if (endpoint) {
+      var response = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'getOrgBranding' }),
+        muteHttpExceptions: true
+      });
+      var code = response.getResponseCode();
+      if (code >= 200 && code < 300) {
+        var parsed = JSON.parse(response.getContentText() || '{}');
+        if (parsed && parsed.success === true && parsed.data) {
+          branding = normalizeLoginMainBranding_(parsed.data);
+          resolvedFromEndpoint = true;
+        }
+      }
+    }
+  } catch (fetchError) {
+    Logger.log('Login main branding fetch error: ' + fetchError);
+  }
+
+  if (!resolvedFromEndpoint) {
+    var sheetBranding = getLoginMainBrandingFromSheet_();
+    if (sheetBranding) {
+      branding = normalizeLoginMainBranding_(sheetBranding);
+    }
+  }
+
+  try {
+    cache.put(LOGIN_MAIN_BRANDING_CACHE_KEY, JSON.stringify(branding), LOGIN_MAIN_BRANDING_CACHE_TTL_SECONDS);
+  } catch (cacheWriteError) {
+    Logger.log('Login main branding cache write error: ' + cacheWriteError);
+  }
+
+  return branding;
+}
+
+const ORG_BRANDING_CONFIG = getLoginMainOrgBranding_();
+const LOGO_URL = ORG_BRANDING_CONFIG.logoUrl || "https://i.imgur.com/J4wddTW.png";
 const WEB_APP_URL = "https://www.youthservicephilippinestagum.me/";
 const FB_PAGE_URL = "https://www.facebook.com/YSPTagumChapter";
 const MANILA_TIMEZONE = 'Asia/Manila';
@@ -179,8 +302,8 @@ function sendProfileUpdateEmail(email, name, changes, username) {
             <tr>
               <td bgcolor="#FF8800" align="center" style="padding: 35px 20px;">
                 <img src="${LOGO_URL}" alt="YSP Logo" width="70" style="display: block; width: 70px; height: auto; border-radius: 50%; background: #fff; padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); margin-bottom: 16px;">
-                <div class="font-header" style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; margin: 0;">Youth Service Philippines</div>
-                <div class="font-body" style="color: rgba(255,255,255,0.9); font-size: 14px; margin-top: 6px; font-weight: 500;">Tagum Chapter</div>
+                <div class="font-header" style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; margin: 0;">${ORG_BRANDING_CONFIG.orgName}</div>
+                <div class="font-body" style="color: rgba(255,255,255,0.9); font-size: 14px; margin-top: 6px; font-weight: 500;">${ORG_BRANDING_CONFIG.chapterName}</div>
               </td>
             </tr>
             <tr>
@@ -212,7 +335,7 @@ function sendProfileUpdateEmail(email, name, changes, username) {
             <tr>
               <td bgcolor="#f8f9fa" align="center" style="padding: 24px; border-top: 1px solid #eeeeee;">
                 <div class="font-body" style="color: #a0aec0; font-size: 11px; line-height: 1.5;">
-                  &copy; 2026 Youth Service Philippines - Tagum Chapter.<br>
+                  &copy; 2026 ${ORG_BRANDING_CONFIG.fullName}.<br>
                   Automated System Notification. Please do not reply.
                 </div>
               </td>
@@ -292,8 +415,8 @@ function sendPasswordChangeEmail(email, name, username) {
             <tr>
               <td bgcolor="#FF8800" align="center" style="padding: 35px 20px;">
                 <img src="${LOGO_URL}" alt="YSP Logo" width="70" style="display: block; width: 70px; height: auto; border-radius: 50%; background: #fff; padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); margin-bottom: 16px;">
-                <div class="font-header" style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; margin: 0;">Youth Service Philippines</div>
-                <div class="font-body" style="color: rgba(255,255,255,0.9); font-size: 14px; margin-top: 6px; font-weight: 500;">Tagum Chapter</div>
+                <div class="font-header" style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; margin: 0;">${ORG_BRANDING_CONFIG.orgName}</div>
+                <div class="font-body" style="color: rgba(255,255,255,0.9); font-size: 14px; margin-top: 6px; font-weight: 500;">${ORG_BRANDING_CONFIG.chapterName}</div>
               </td>
             </tr>
             <tr>
@@ -325,7 +448,7 @@ function sendPasswordChangeEmail(email, name, username) {
             <tr>
               <td bgcolor="#f8f9fa" align="center" style="padding: 24px; border-top: 1px solid #eeeeee;">
                 <div class="font-body" style="color: #a0aec0; font-size: 11px; line-height: 1.5;">
-                  &copy; 2026 Youth Service Philippines - Tagum Chapter.<br>
+                  &copy; 2026 ${ORG_BRANDING_CONFIG.fullName}.<br>
                   Automated System Notification. Please do not reply.
                 </div>
               </td>
@@ -1842,7 +1965,7 @@ function handleCreateUserAccount(data, requesterUsername) {
     const role = String(data.role || 'Member').trim();
     const position = String(data.position || 'Member').trim();
     const committee = String(data.committee || '').trim();
-    const chapter = String(data.chapter || 'Tagum Chapter').trim();
+    const chapter = String(data.chapter || ORG_BRANDING_CONFIG.chapterName).trim();
     const membershipType = String(data.membershipType || 'Regular').trim();
     const contactNumber = String(data.contactNumber || '').trim();
 
@@ -3410,7 +3533,7 @@ function sendOTPVerificationEmail(email, name, otp) {
   const dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MMMM dd, yyyy");
   const timeStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "hh:mm a");
   
-  const subjectLine = "Email Verification Code - YSP Tagum";
+  const subjectLine = "Email Verification Code - " + ORG_BRANDING_CONFIG.shortName;
   
   const mainContent = `
     <p style="margin-bottom: 24px;">You requested to verify your account on <strong>${dateStr}</strong> at ${timeStr}.</p>
@@ -3465,8 +3588,8 @@ function sendOTPVerificationEmail(email, name, otp) {
             <tr>
               <td bgcolor="#FF8800" align="center" style="padding: 35px 20px;">
                 <img src="${LOGO_URL}" alt="YSP Logo" width="70" style="display: block; width: 70px; height: auto; border-radius: 50%; background: #fff; padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); margin-bottom: 16px;">
-                <div class="font-header" style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; margin: 0;">Youth Service Philippines</div>
-                <div class="font-body" style="color: rgba(255,255,255,0.9); font-size: 14px; margin-top: 6px; font-weight: 500;">Tagum Chapter</div>
+                <div class="font-header" style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; margin: 0;">${ORG_BRANDING_CONFIG.orgName}</div>
+                <div class="font-body" style="color: rgba(255,255,255,0.9); font-size: 14px; margin-top: 6px; font-weight: 500;">${ORG_BRANDING_CONFIG.chapterName}</div>
               </td>
             </tr>
             <tr>
@@ -3498,7 +3621,7 @@ function sendOTPVerificationEmail(email, name, otp) {
             <tr>
               <td bgcolor="#f8f9fa" align="center" style="padding: 24px; border-top: 1px solid #eeeeee;">
                 <div class="font-body" style="color: #a0aec0; font-size: 11px; line-height: 1.5;">
-                  &copy; 2026 Youth Service Philippines - Tagum Chapter.<br>
+                  &copy; 2026 ${ORG_BRANDING_CONFIG.fullName}.<br>
                   Automated System Notification. Please do not reply.
                 </div>
               </td>

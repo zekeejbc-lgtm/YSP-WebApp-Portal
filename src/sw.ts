@@ -188,7 +188,7 @@ const initFirebaseMessaging = async () => {
 
   onBackgroundMessage(messaging, async (payload) => {
     const notification = payload.notification || {};
-    const title = notification.title || 'YSP Tagum';
+    const title = notification.title || import.meta.env.VITE_SHORT_NAME || 'YSP';
     const url = notification.click_action || (payload.data && (payload.data.url || payload.data.link)) || '/';
 
     self.registration.showNotification(title, {

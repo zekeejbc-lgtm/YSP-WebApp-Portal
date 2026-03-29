@@ -19,6 +19,7 @@ import {
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 import { getMembersForAttendance, type MemberForAttendance } from "../services/gasAttendanceService";
 import { YSP_COMMITTEES as SHARED_COMMITTEES } from "../constants/committees";
+import { orgConfig } from "../config/org.config";
 
 // --- COMPONENTS ---
 
@@ -1831,7 +1832,7 @@ export default function ManageEventsPage({ onClose, isDark, username = 'admin', 
                       <Users className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
                       <div className="text-xs text-muted-foreground">
                         <p className="font-semibold text-blue-600 dark:text-blue-400 mb-0.5">Default: All Members</p>
-                        <p>If no specific attendees are selected, this event will be open to all YSP Tagum members.</p>
+                        <p>If no specific attendees are selected, this event will be open to all {orgConfig.shortName} members.</p>
                       </div>
                     </div>
                   )}

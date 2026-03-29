@@ -51,6 +51,7 @@ import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService
 import { YSP_COMMITTEES as SHARED_COMMITTEES, type CommitteeItem } from "../constants/committees";
 import { fetchEvents, type EventData } from "../services/gasEventsService";
 import { getEventAttendees } from "../services/gasIssuanceService";
+import { orgConfig } from "../config/org.config";
 
 // =====================================================
 // TYPES & INTERFACES
@@ -3359,7 +3360,7 @@ export default function EmailSystemPage({
               >
                 <div className="flex items-center gap-3 mb-3">
                   <Mail className="w-5 h-5" style={{ color: DESIGN_TOKENS.colors.brand.orange }} />
-                  <span className="text-sm font-medium">Youth Service Philippines Tagum Chapter</span>
+                  <span className="text-sm font-medium">{orgConfig.fullName}</span>
                 </div>
                 <div className="space-y-1 text-sm">
                   <p><span className="opacity-60">To:</span> {previewingRecipient.Email}</p>

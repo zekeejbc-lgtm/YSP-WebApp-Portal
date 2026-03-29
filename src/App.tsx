@@ -1,5 +1,6 @@
   import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
   import { useLocation, useNavigate } from "react-router-dom";
+  import { orgConfig } from "./config/org.config";
   import { useUrlSync } from "./hooks/useUrlSync";
   import {
     Moon,
@@ -200,7 +201,7 @@ import LoadingScreen, { type LoadingStep } from "./components/LoadingScreen";
   const SIDEBAR_DEBUG_TOAST_ID = "sidebar-pages-debug";
   const PROJECT_ID_QUERY_PARAM = "projectId";
   const SITE_ORIGIN = "https://www.youthservicephilippinestagum.me";
-  const SITE_NAME = "Youth Service Philippines - Tagum Chapter";
+  const SITE_NAME = orgConfig.fullName;
   const DEFAULT_OG_IMAGE = "https://i.imgur.com/J4wddTW.png";
 
   type SeoMeta = {
@@ -213,64 +214,64 @@ import LoadingScreen, { type LoadingStep } from "./components/LoadingScreen";
 
   const PUBLIC_SEO_BY_VIEW: Record<string, SeoMeta> = {
     home: {
-      title: "YSP Tagum Portal | Youth Service Philippines - Tagum Chapter",
+      title: `${orgConfig.portalName} | ${orgConfig.fullName}`,
       description:
-        "Official YSP Tagum Portal for Youth Service Philippines - Tagum Chapter. Join youth leadership, volunteer, and community service programs in Tagum City.",
+        `Official ${orgConfig.portalName} for ${orgConfig.fullName}. Join youth leadership, volunteer, and community service programs in ${orgConfig.location}.`,
       keywords:
-        "YSP Tagum, Youth Service Philippines, Youth Service Philippines Tagum, Tagum youth volunteers, youth leadership Tagum",
+        `${orgConfig.shortName}, Youth Service Philippines, ${orgConfig.chapterName}, youth volunteers, youth leadership`,
       canonicalPath: "/",
     },
     Feedback: {
-      title: "Feedback | YSP Tagum Portal",
+      title: `Feedback | ${orgConfig.portalName}`,
       description:
-        "Send feedback to Youth Service Philippines - Tagum Chapter to help improve our youth programs and services.",
-      keywords: "YSP Tagum feedback, Youth Service Philippines feedback",
+        `Send feedback to ${orgConfig.fullName} to help improve our youth programs and services.`,
+      keywords: `${orgConfig.shortName} feedback, Youth Service Philippines feedback`,
       canonicalPath: "/visitor?page=Feedback",
     },
     MembershipApplications: {
-      title: "Opportunities | YSP Tagum",
+      title: `Opportunities | ${orgConfig.shortName}`,
       description:
-        "Explore and apply for opportunities from Youth Service Philippines - Tagum Chapter.",
+        `Explore and apply for opportunities from ${orgConfig.fullName}.`,
       keywords:
-        "YSP Tagum opportunities, Youth Service Philippines opportunities, join YSP Tagum",
+        `${orgConfig.shortName} opportunities, Youth Service Philippines opportunities, join ${orgConfig.shortName}`,
       canonicalPath: "/visitor?page=Opportunities",
     },
     Opportunities: {
-      title: "Opportunities | YSP Tagum",
+      title: `Opportunities | ${orgConfig.shortName}`,
       description:
-        "Explore and apply for opportunities from Youth Service Philippines - Tagum Chapter.",
+        `Explore and apply for opportunities from ${orgConfig.fullName}.`,
       keywords:
-        "YSP Tagum opportunities, Youth Service Philippines opportunities, join YSP Tagum",
+        `${orgConfig.shortName} opportunities, Youth Service Philippines opportunities, join ${orgConfig.shortName}`,
       canonicalPath: "/visitor?page=Opportunities",
     },
     Founder: {
-      title: "Founder | YSP Tagum",
+      title: `Founder | ${orgConfig.shortName}`,
       description:
-        "Learn about the founder and leadership story behind Youth Service Philippines - Tagum Chapter.",
-      keywords: "YSP Tagum founder, Youth Service Philippines Tagum founder",
+        `Learn about the founder and leadership story behind ${orgConfig.fullName}.`,
+      keywords: `${orgConfig.shortName} founder, Youth Service Philippines founder`,
       canonicalPath: "/visitor?page=Founder",
     },
     Developer: {
-      title: "Developer | YSP Tagum Portal",
+      title: `Developer | ${orgConfig.portalName}`,
       description:
-        "Meet the developer and technical team behind the YSP Tagum Portal.",
-      keywords: "YSP Tagum developer, Youth Service Philippines portal developer",
+        `Meet the developer and technical team behind the ${orgConfig.portalName}.`,
+      keywords: `${orgConfig.shortName} developer, Youth Service Philippines portal developer`,
       canonicalPath: "/visitor?page=Developer",
     },
     Login: {
-      title: "Member Login | YSP Tagum Portal",
+      title: `Member Login | ${orgConfig.portalName}`,
       description:
-        "Secure login for Youth Service Philippines - Tagum Chapter members and officers.",
-      keywords: "YSP Tagum login, Youth Service Philippines member login",
+        `Secure login for ${orgConfig.fullName} members and officers.`,
+      keywords: `${orgConfig.shortName} login, Youth Service Philippines member login`,
       canonicalPath: "/visitor?page=Login",
       noindex: true,
     },
   };
 
   const PRIVATE_SEO: SeoMeta = {
-    title: "YSP Tagum Portal",
-    description: "Youth Service Philippines - Tagum Chapter member portal.",
-    keywords: "YSP Tagum portal",
+    title: orgConfig.portalName,
+    description: `${orgConfig.fullName} member portal.`,
+    keywords: `${orgConfig.shortName} portal`,
     canonicalPath: "/",
     noindex: true,
   };
@@ -1218,12 +1219,12 @@ export default function App() {
         },
         contact: {
           title: "Get in Touch",
-          email: "YSPTagumChapter@gmail.com",
+          email: orgConfig.contactEmail,
           phone: "+63 917 123 4567",
-          location: "Tagum City, Davao del Norte, Philippines",
+          location: orgConfig.location,
           locationLink: "https://maps.google.com/?q=Tagum+City,Davao+del+Norte,Philippines",
           socialLinks: [
-            { id: 1, url: "https://www.facebook.com/YSPTagumChapter", label: "YSP Tagum Chapter" },
+            { id: 1, url: "https://www.facebook.com/YSPTagumChapter", label: `${orgConfig.shortName} Chapter` },
           ],
           partnerTitle: "🤝 Become Our Partner",
           partnerDescription: "Join us in making a difference in our community. Partner with YSP and help us create lasting impact through collaborative projects.",
@@ -3656,7 +3657,7 @@ export default function App() {
             message={fullMaintenanceConfig.message}
             estimatedTime={fullMaintenanceConfig.estimatedTime}
             isFullPWA={true}
-            pageName="Youth Service Philippines Tagum Chapter Web Portal"
+            pageName={`${orgConfig.fullName} Web Portal`}
             onContactDeveloper={() => setShowDeveloperModal(true)}
           />
           <Suspense fallback={null}>
@@ -4455,9 +4456,9 @@ export default function App() {
 
     const isDefaultHeroHeading =
       homepageContent.hero.mainHeading === "Welcome to Youth Service Philippines" &&
-      homepageContent.hero.subHeading === "Tagum Chapter";
+      homepageContent.hero.subHeading === orgConfig.chapterName;
     const heroMainHeading = isDefaultHeroHeading
-      ? "Youth Service Philippines Tagum Portal"
+      ? orgConfig.portalName
       : homepageContent.hero.mainHeading;
     const heroSubHeading = isDefaultHeroHeading ? "" : homepageContent.hero.subHeading;
     const normalizedThemeSongUrl = normalizeThemeSongUrl(homepageContent.themeSong.url);
@@ -5429,7 +5430,7 @@ export default function App() {
                     projectId: "org-chart",
                     title: "Organizational Chart",
                     description:
-                      "Youth Service Philippines - Tagum Chapter organizational structure",
+                      `${orgConfig.fullName} organizational structure`,
                     imageUrl: orgChartUrl,
                     status: "Active",
                   })
@@ -5641,7 +5642,7 @@ export default function App() {
                                   contact: { ...editedContent.contact, socialLinks: newLinks },
                                 });
                               }}
-                              placeholder="Display name (e.g., YSP Tagum Chapter)"
+                              placeholder={`Display name (e.g., ${orgConfig.shortName} Chapter)`}
                               className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
                             />
                             {link.url && (
@@ -6003,7 +6004,7 @@ export default function App() {
                 className="text-gray-800 dark:text-gray-100"
                 style={{ fontSize: "1rem", fontWeight: "500" }}
               >
-                Youth Service Philippines - Tagum Chapter
+                {orgConfig.fullName}
               </p>
 
               <div className="mt-4 pt-4 border-t border-gray-300 dark:border-gray-600">
@@ -6031,15 +6032,15 @@ export default function App() {
                   </a>{" "}
                   or send us an Email:{" "}
                   <a
-                    href={`mailto:${"ysptagumchapter+portal@gmail.com".replace(/\+/g, '%2B')}`}
+                    href={`mailto:${orgConfig.contactEmail.replace(/\+/g, '%2B')}`}
                     onClick={(e) => {
                       e.preventDefault();
-                      openEmailApp("ysptagumchapter+portal@gmail.com");
+                      openEmailApp(orgConfig.contactEmail);
                     }}
                     className="text-[#f6421f] dark:text-[#ee8724] hover:underline transition-colors"
                     style={{ fontWeight: "500" }}
                   >
-                    YSPTagumChapter+portal@gmail.com
+                    {orgConfig.contactEmail}
                   </a>{" "}
                   for further assistance. We value your feedback
                   and will address your concerns as promptly as
@@ -6082,11 +6083,10 @@ export default function App() {
         <footer className="border-t border-border py-8 relative">
           <div className="max-w-6xl mx-auto px-4 md:px-6 text-center text-sm text-muted-foreground">
             <p>
-              &copy; 2025 Youth Service Philippines - Tagum
-              Chapter. All rights reserved.
+              &copy; 2025 {orgConfig.fullName}. All rights reserved.
             </p>
             <p className="mt-2">
-              Shaping the Future to a Greater Society
+              {orgConfig.motto}
             </p>
             <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
               App version: {appVersion} | Cache version: {cacheVersion}
@@ -6616,7 +6616,7 @@ export default function App() {
                         Organizational Chart
                       </p>
                       <p className="text-xs text-gray-500 dark:text-gray-400">
-                        YSP Tagum Chapter structure
+                        {orgConfig.shortName} Chapter structure
                       </p>
                     </div>
                   </div>

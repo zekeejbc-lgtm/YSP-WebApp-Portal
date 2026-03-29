@@ -18,6 +18,7 @@ import { ChevronDown, X, Moon, Sun, User, LogOut, Home as HomeIcon, Menu, Loader
 import { useState, createContext, useContext, ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { DESIGN_TOKENS } from "./tokens";
+import { orgConfig } from "../../config/org.config";
 
 export interface NavPage {
   id: string;
@@ -194,7 +195,7 @@ function DesktopSideBar({
                         whiteSpace: "nowrap",
                       }}
                     >
-                      Youth Service Philippines
+                      {orgConfig.orgName}
                     </div>
                     <div
                       style={{
@@ -206,7 +207,7 @@ function DesktopSideBar({
                         lineHeight: 1.2,
                       }}
                     >
-                      Tagum Chapter
+                      {orgConfig.chapterName}
                     </div>
                   </motion.div>
                 )}
@@ -583,7 +584,7 @@ function MobileSideBar({
                         textOverflow: "ellipsis",
                       }}
                     >
-                      Youth Service Philippines
+                      {orgConfig.orgName}
                     </div>
                     <div
                       style={{
@@ -595,7 +596,7 @@ function MobileSideBar({
                         lineHeight: 1.2,
                       }}
                     >
-                      Tagum Chapter
+                      {orgConfig.chapterName}
                     </div>
                   </div>
                 </div>

@@ -13,6 +13,7 @@
 import { Moon, Sun, Menu, Home as HomeIcon, Telescope, FolderOpen, Mail, MessageCircle, LogIn, LogOut } from "lucide-react";
 import { DESIGN_TOKENS, getGlassStyle } from "./tokens";
 import { ExpandableTabs } from "./ExpandableTabs";
+import { orgConfig } from "../../config/org.config";
 
 interface TopBarProps {
   isDark: boolean;
@@ -121,7 +122,7 @@ export default function TopBar({
                 color: DESIGN_TOKENS.colors.brand.orange,
               }}
             >
-              Youth Service Philippines
+              {orgConfig.orgName}
             </span>
             <span
               className="text-xs md:text-[10px] lg:text-xs whitespace-nowrap"
@@ -133,7 +134,7 @@ export default function TopBar({
                 lineHeight: "1.2",
               }}
             >
-              Tagum Chapter
+              {orgConfig.chapterName}
             </span>
           </div>
         </a>

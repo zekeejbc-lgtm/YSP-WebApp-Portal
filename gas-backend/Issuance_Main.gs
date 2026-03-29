@@ -23,6 +23,130 @@
   // CONFIGURATION
   // ============================================================================
 
+  const ISSUANCE_BRANDING_CACHE_KEY = 'issuance_org_branding_v1';
+  const ISSUANCE_BRANDING_CACHE_TTL_SECONDS = 1800;
+  const ISSUANCE_BRANDING_SHEET_NAME = 'Organization Branding';
+  const ISSUANCE_BRANDING_DEFAULTS = {
+    orgName: 'Youth Service Philippines',
+    chapterName: 'Tagum Chapter',
+    shortName: 'YSP Tagum',
+    motto: 'Shaping the Future to a Greater Society',
+    chapterCode: 'TC',
+    location: 'Tagum City, Davao del Norte, Philippines',
+    contactEmail: 'ysptagumchapter@gmail.com',
+    logoUrl: 'https://i.imgur.com/J4wddTW.png',
+    themeColor: '#f6421f'
+  };
+
+  function normalizeIssuanceBranding_(raw) {
+    var merged = Object.assign({}, ISSUANCE_BRANDING_DEFAULTS, raw || {});
+    merged.orgName = String(merged.orgName || '').trim() || ISSUANCE_BRANDING_DEFAULTS.orgName;
+    merged.chapterName = String(merged.chapterName || '').trim() || ISSUANCE_BRANDING_DEFAULTS.chapterName;
+    merged.shortName = String(merged.shortName || '').trim() || ISSUANCE_BRANDING_DEFAULTS.shortName;
+    merged.motto = String(merged.motto || '').trim() || ISSUANCE_BRANDING_DEFAULTS.motto;
+    merged.chapterCode = String(merged.chapterCode || '').trim() || ISSUANCE_BRANDING_DEFAULTS.chapterCode;
+    merged.location = String(merged.location || '').trim() || ISSUANCE_BRANDING_DEFAULTS.location;
+    merged.contactEmail = String(merged.contactEmail || '').trim() || ISSUANCE_BRANDING_DEFAULTS.contactEmail;
+    merged.logoUrl = String(merged.logoUrl || '').trim() || ISSUANCE_BRANDING_DEFAULTS.logoUrl;
+    merged.themeColor = String(merged.themeColor || '').trim() || ISSUANCE_BRANDING_DEFAULTS.themeColor;
+    merged.fullName = merged.orgName + ' - ' + merged.chapterName;
+    return merged;
+  }
+
+  function getIssuanceBrandingFromSheet_() {
+    try {
+      var props = PropertiesService.getScriptProperties();
+      var settingsId = String(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '').trim();
+      if (!settingsId) return null;
+
+      var ss = SpreadsheetApp.openById(settingsId);
+      var sheet = ss.getSheetByName(ISSUANCE_BRANDING_SHEET_NAME);
+      if (!sheet || sheet.getLastRow() < 2) return null;
+
+      var values = sheet.getDataRange().getValues();
+      var headers = values[0] || [];
+      var keyIdx = headers.indexOf('ConfigKey');
+      var valueIdx = headers.indexOf('Value');
+      if (keyIdx === -1 || valueIdx === -1) return null;
+
+      var rowMap = {};
+      for (var i = 1; i < values.length; i++) {
+        var key = String(values[i][keyIdx] || '').trim();
+        if (!key) continue;
+        rowMap[key] = String(values[i][valueIdx] || '').trim();
+      }
+
+      return {
+        orgName: rowMap.orgName || '',
+        chapterName: rowMap.chapterName || '',
+        shortName: rowMap.shortName || '',
+        motto: rowMap.motto || '',
+        chapterCode: rowMap.chapterCode || '',
+        location: rowMap.location || '',
+        contactEmail: rowMap.contactEmail || '',
+        logoUrl: rowMap.logoUrl || '',
+        themeColor: rowMap.themeColor || ''
+      };
+    } catch (sheetReadError) {
+      Logger.log('Issuance branding sheet fallback read error: ' + sheetReadError);
+      return null;
+    }
+  }
+
+  function getIssuanceOrgBranding_() {
+    var cache = CacheService.getScriptCache();
+    try {
+      var cachedRaw = cache.get(ISSUANCE_BRANDING_CACHE_KEY);
+      if (cachedRaw) {
+        return normalizeIssuanceBranding_(JSON.parse(cachedRaw));
+      }
+    } catch (cacheReadError) {
+      Logger.log('Issuance branding cache read error: ' + cacheReadError);
+    }
+
+    var branding = normalizeIssuanceBranding_({});
+  var resolvedFromEndpoint = false;
+    try {
+      var props = PropertiesService.getScriptProperties();
+      var endpoint = String(props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL') || '').trim();
+      if (endpoint) {
+        var response = UrlFetchApp.fetch(endpoint, {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify({ action: 'getOrgBranding' }),
+          muteHttpExceptions: true
+        });
+        var code = response.getResponseCode();
+        if (code >= 200 && code < 300) {
+          var parsed = JSON.parse(response.getContentText() || '{}');
+          if (parsed && parsed.success === true && parsed.data) {
+            branding = normalizeIssuanceBranding_(parsed.data);
+            resolvedFromEndpoint = true;
+          }
+        }
+      }
+    } catch (fetchError) {
+      Logger.log('Issuance branding fetch error: ' + fetchError);
+    }
+
+    if (!resolvedFromEndpoint) {
+      var sheetBranding = getIssuanceBrandingFromSheet_();
+      if (sheetBranding) {
+        branding = normalizeIssuanceBranding_(sheetBranding);
+      }
+    }
+
+    try {
+      cache.put(ISSUANCE_BRANDING_CACHE_KEY, JSON.stringify(branding), ISSUANCE_BRANDING_CACHE_TTL_SECONDS);
+    } catch (cacheWriteError) {
+      Logger.log('Issuance branding cache write error: ' + cacheWriteError);
+    }
+
+    return branding;
+  }
+
+  const ISSUANCE_ORG_BRANDING = getIssuanceOrgBranding_();
+
   const ISSUANCE_CONFIG = {
     SPREADSHEET_ID: '1HUimmBnzy1Rr7Kg-x24iiscKTmqHJdzDoV72N3u4wmE',
     PDF_FOLDER_ID: '1e6g6JLr7y9VcJJ2wQ5jijNu9z6WAmDnt',
@@ -43,7 +167,7 @@
       fontSize: 11
     },
     // Branding - Use Imgur URL for email compatibility (same as OTP emails)
-    LOGO_URL: 'https://i.imgur.com/J4wddTW.png',
+    LOGO_URL: ISSUANCE_ORG_BRANDING.logoUrl || 'https://i.imgur.com/J4wddTW.png',
     WEB_APP_URL: 'https://www.youthservicephilippinestagum.me',
     FB_PAGE_URL: 'https://www.facebook.com/YSPTagumChapter'
   };
@@ -168,10 +292,10 @@
     { key: 'DefaultNoticeTemplate', value: '', description: 'Default Google Docs URL for General Notices' },
     { key: 'DefaultLetterTemplate', value: '', description: 'Default Google Docs URL for Letters' },
     { key: 'DefaultMemoTemplate', value: '', description: 'Default Google Docs URL for Memos' },
-    { key: 'SenderName', value: 'Youth Service Philippines - Tagum Chapter', description: 'Name shown as email sender' },
+    { key: 'SenderName', value: ISSUANCE_ORG_BRANDING.fullName, description: 'Name shown as email sender' },
     { key: 'SenderEmail', value: '', description: 'Reply-to email address' },
-    { key: 'EmailFooter', value: 'This is an automated message from YSP Tagum Chapter. Please do not reply.', description: 'Footer text for all emails' },
-    { key: 'ChapterCode', value: 'TC', description: 'Chapter code for control numbers (e.g., TC for Tagum Chapter)' }
+    { key: 'EmailFooter', value: 'This is an automated message from ' + ISSUANCE_ORG_BRANDING.shortName + '. Please do not reply.', description: 'Footer text for all emails' },
+    { key: 'ChapterCode', value: ISSUANCE_ORG_BRANDING.chapterCode || 'TC', description: 'Chapter code for control numbers (e.g., TC for your chapter)' }
   ];
 
   // ============================================================================
@@ -3004,7 +3128,7 @@
     // Get settings for email
     const settingsResult = getSettings();
     const settings = settingsResult.data || {};
-    const senderName = settings.SenderName?.value || 'YSP Tagum Chapter';
+    const senderName = settings.SenderName?.value || ISSUANCE_ORG_BRANDING.fullName;
     const emailFooter = settings.EmailFooter?.value || '';
     
     const results = {
@@ -3107,7 +3231,7 @@
         }
         
         // Build HTML email body
-        const emailMessage = issuance.EmailMessage || 'Please find attached your document from YSP Tagum Chapter.';
+        const emailMessage = issuance.EmailMessage || ('Please find attached your document from ' + ISSUANCE_ORG_BRANDING.shortName + '.');
         const htmlBody = buildIssuanceEmailHtml(
           recipient.RecipientName,
           issuance.EmailTitle || `Document from ${senderName}`,
@@ -3243,7 +3367,7 @@
     // Get settings for email
     const settingsResult = getSettings();
     const settings = settingsResult.data || {};
-    const senderName = settings.SenderName?.value || 'YSP Tagum Chapter';
+    const senderName = settings.SenderName?.value || ISSUANCE_ORG_BRANDING.fullName;
     const emailFooter = settings.EmailFooter?.value || '';
     
     try {
@@ -3293,7 +3417,7 @@
       }
       
       // Build HTML email body
-      const emailMessage = issuance.EmailMessage || 'Please find attached your document from YSP Tagum Chapter.';
+      const emailMessage = issuance.EmailMessage || ('Please find attached your document from ' + ISSUANCE_ORG_BRANDING.shortName + '.');
       const htmlBody = buildIssuanceEmailHtml(
         recipient.RecipientName,
         issuance.EmailTitle || `Document from ${senderName}`,
@@ -3845,8 +3969,8 @@
               <tr>
                 <td bgcolor="#FF8800" align="center" style="padding: 35px 20px;">
                   <img src="${ISSUANCE_CONFIG.LOGO_URL}" alt="YSP Logo" width="70" style="display: block; width: 70px; height: auto; border-radius: 50%; background: #fff; padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); margin-bottom: 16px;">
-                  <div class="font-header" style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; margin: 0;">Youth Service Philippines</div>
-                  <div class="font-body" style="color: rgba(255,255,255,0.9); font-size: 14px; margin-top: 6px; font-weight: 500;">Tagum Chapter</div>
+                  <div class="font-header" style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; margin: 0;">${ISSUANCE_ORG_BRANDING.orgName}</div>
+                  <div class="font-body" style="color: rgba(255,255,255,0.9); font-size: 14px; margin-top: 6px; font-weight: 500;">${ISSUANCE_ORG_BRANDING.chapterName}</div>
                 </td>
               </tr>
               <tr>
@@ -3880,7 +4004,7 @@
               <tr>
                 <td bgcolor="#f8f9fa" align="center" style="padding: 24px; border-top: 1px solid #eeeeee;">
                   <div class="font-body" style="color: #a0aec0; font-size: 11px; line-height: 1.5;">
-                    &copy; 2026 Youth Service Philippines - Tagum Chapter.<br>
+                    &copy; 2026 ${ISSUANCE_ORG_BRANDING.fullName}.<br>
                     Automated System Notification. Please do not reply.
                   </div>
                 </td>

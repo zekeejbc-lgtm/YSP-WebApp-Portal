@@ -41,6 +41,19 @@ export interface SystemHealthData {
   propertyAudit?: ScriptPropertiesAudit;
 }
 
+export interface OrgBrandingConfig {
+  orgName: string;
+  chapterName: string;
+  shortName: string;
+  fullName: string;
+  motto: string;
+  chapterCode: string;
+  location: string;
+  contactEmail: string;
+  logoUrl: string;
+  themeColor: string;
+}
+
 export interface ScriptPropertiesAudit {
   status: 'ok' | 'incomplete';
   summary: {
@@ -232,7 +245,10 @@ async function callSystemToolsAPI<T>(
   }
 
   // Suppress verbose logging - only log errors in production
-  const isSilentAction = action === 'getCacheVersion' || action === 'getMaintenanceMode';
+  const isSilentAction =
+    action === 'getCacheVersion' ||
+    action === 'getMaintenanceMode' ||
+    action === 'getOrgBranding';
   if (!GAS_API_KEY && !isSilentAction) {
     console.error('[SystemTools] VITE_GAS_API_KEY is missing; requests will be rejected by GAS.');
   }
@@ -310,6 +326,10 @@ async function callSystemToolsAPI<T>(
 }
 
 // =================== SYSTEM HEALTH ===================
+
+export async function getOrgBrandingFromBackend(): Promise<OrgBrandingConfig> {
+  return callSystemToolsAPI<OrgBrandingConfig>('getOrgBranding', {}, undefined, false);
+}
 
 /**
  * Get system health status from backend

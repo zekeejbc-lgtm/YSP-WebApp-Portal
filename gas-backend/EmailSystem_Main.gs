@@ -1,6 +1,6 @@
 /**
  * ============================================================
- * YSP TAGUM CHAPTER - MASTER EMAIL SYSTEM V3.1
+ * YSP CHAPTER - MASTER EMAIL SYSTEM V3.1
  * Features: Dual RSVP, Auto-Reason, Sender/Footer Split, iCal
  * ============================================================
  */
@@ -9,21 +9,145 @@
 // Set this to your Email System spreadsheet ID
 // You can find this in the spreadsheet URL: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
 const SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('EMAIL_SYSTEM_SPREADSHEET_ID') || '';
+const EMAIL_SYSTEM_BRANDING_CACHE_KEY = 'email_system_org_branding_v1';
+const EMAIL_SYSTEM_BRANDING_CACHE_TTL_SECONDS = 1800;
+const EMAIL_SYSTEM_BRANDING_SHEET_NAME = 'Organization Branding';
+const EMAIL_SYSTEM_BRANDING_DEFAULTS = {
+  orgName: 'Youth Service Philippines',
+  chapterName: 'Tagum Chapter',
+  shortName: 'YSP Tagum',
+  motto: 'Shaping the Future to a Greater Society',
+  chapterCode: 'TC',
+  location: 'Tagum City, Davao del Norte, Philippines',
+  contactEmail: 'ysptagumchapter@gmail.com',
+  logoUrl: 'https://i.imgur.com/J4wddTW.png',
+  themeColor: '#f6421f'
+};
 
-const GLOBAL_MOTTO = "Shaping the Future to a Greater Society";
+function normalizeEmailSystemBranding_(raw) {
+  var merged = Object.assign({}, EMAIL_SYSTEM_BRANDING_DEFAULTS, raw || {});
+  merged.orgName = String(merged.orgName || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.orgName;
+  merged.chapterName = String(merged.chapterName || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.chapterName;
+  merged.shortName = String(merged.shortName || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.shortName;
+  merged.motto = String(merged.motto || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.motto;
+  merged.chapterCode = String(merged.chapterCode || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.chapterCode;
+  merged.location = String(merged.location || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.location;
+  merged.contactEmail = String(merged.contactEmail || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.contactEmail;
+  merged.logoUrl = String(merged.logoUrl || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.logoUrl;
+  merged.themeColor = String(merged.themeColor || '').trim() || EMAIL_SYSTEM_BRANDING_DEFAULTS.themeColor;
+  merged.fullName = merged.orgName + ' - ' + merged.chapterName;
+  return merged;
+}
+
+function getEmailSystemBrandingFromSheet_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var settingsId = String(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '').trim();
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName(EMAIL_SYSTEM_BRANDING_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var keyIdx = headers.indexOf('ConfigKey');
+    var valueIdx = headers.indexOf('Value');
+    if (keyIdx === -1 || valueIdx === -1) return null;
+
+    var rowMap = {};
+    for (var i = 1; i < values.length; i++) {
+      var key = String(values[i][keyIdx] || '').trim();
+      if (!key) continue;
+      rowMap[key] = String(values[i][valueIdx] || '').trim();
+    }
+
+    return {
+      orgName: rowMap.orgName || '',
+      chapterName: rowMap.chapterName || '',
+      shortName: rowMap.shortName || '',
+      motto: rowMap.motto || '',
+      chapterCode: rowMap.chapterCode || '',
+      location: rowMap.location || '',
+      contactEmail: rowMap.contactEmail || '',
+      logoUrl: rowMap.logoUrl || '',
+      themeColor: rowMap.themeColor || ''
+    };
+  } catch (sheetReadError) {
+    Logger.log('Email system branding sheet fallback read error: ' + sheetReadError);
+    return null;
+  }
+}
+
+function getEmailSystemOrgBranding_() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var cachedRaw = cache.get(EMAIL_SYSTEM_BRANDING_CACHE_KEY);
+    if (cachedRaw) {
+      return normalizeEmailSystemBranding_(JSON.parse(cachedRaw));
+    }
+  } catch (cacheReadError) {
+    Logger.log('Email system branding cache read error: ' + cacheReadError);
+  }
+
+  var branding = normalizeEmailSystemBranding_({});
+  var resolvedFromEndpoint = false;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var endpoint = String(props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL') || '').trim();
+    if (endpoint) {
+      var response = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'getOrgBranding' }),
+        muteHttpExceptions: true
+      });
+      var code = response.getResponseCode();
+      if (code >= 200 && code < 300) {
+        var parsed = JSON.parse(response.getContentText() || '{}');
+        if (parsed && parsed.success === true && parsed.data) {
+          branding = normalizeEmailSystemBranding_(parsed.data);
+          resolvedFromEndpoint = true;
+        }
+      }
+    }
+  } catch (fetchError) {
+    Logger.log('Email system branding fetch error: ' + fetchError);
+  }
+
+  if (!resolvedFromEndpoint) {
+    var sheetBranding = getEmailSystemBrandingFromSheet_();
+    if (sheetBranding) {
+      branding = normalizeEmailSystemBranding_(sheetBranding);
+    }
+  }
+
+  try {
+    cache.put(EMAIL_SYSTEM_BRANDING_CACHE_KEY, JSON.stringify(branding), EMAIL_SYSTEM_BRANDING_CACHE_TTL_SECONDS);
+  } catch (cacheWriteError) {
+    Logger.log('Email system branding cache write error: ' + cacheWriteError);
+  }
+
+  return branding;
+}
+
+const EMAIL_SYSTEM_ORG_BRANDING = getEmailSystemOrgBranding_();
+const GLOBAL_MOTTO = EMAIL_SYSTEM_ORG_BRANDING.motto;
 const TIMEZONE = "Asia/Manila"; // Manila local time (UTC+8)
-const LOGO_URL = "https://i.imgur.com/J4wddTW.png";
+const LOGO_URL = EMAIL_SYSTEM_ORG_BRANDING.logoUrl;
+const FB_PAGE_URL = "https://www.facebook.com/YSPTagumChapter";
+const WEB_PORTAL_URL = "https://www.youthservicephilippinestagum.me/Home";
 
 // --- CONFIGURATION ---
 // 1. WHAT SHOWS IN THE RECIPIENT'S INBOX LIST:
-const SENDER_DISPLAY_NAME = "Youth Service Philippines Tagum Chapter"; 
+const SENDER_DISPLAY_NAME = EMAIL_SYSTEM_ORG_BRANDING.fullName; 
 
 // 2. WHAT SHOWS AT THE BOTTOM OF THE EMAIL (THE FOOTER):
 const FOOTER_NAME = "Ezequiel John B. Crisostomo";
 const FOOTER_POSITION = "Membership & Internal Affairs Officer";
-const FOOTER_ORG = "Youth Service Philippines — Tagum Chapter";
-const FOOTER_EMAIL = "ysptagumchapter@gmail.com";
-const FOOTER_WEBSITE = "https://www.youthservicephilippinestagum.me/Home";
+const FOOTER_ORG = EMAIL_SYSTEM_ORG_BRANDING.orgName + " — " + EMAIL_SYSTEM_ORG_BRANDING.chapterName;
+const FOOTER_EMAIL = EMAIL_SYSTEM_ORG_BRANDING.contactEmail;
+const FOOTER_WEBSITE = WEB_PORTAL_URL;
 
 const SHEET_LAYOUTS = {
   "Event_Invites": {
@@ -281,7 +405,7 @@ function sendSingleRow(sheet, rowIndex, config, statusColIndex) {
 
       // --- NEW FEATURE: AUTO-LABEL ---
       try {
-        const labelName = "YSP Tagum Email System";
+        const labelName = EMAIL_SYSTEM_ORG_BRANDING.shortName + " Email System";
         // Get label or create if it doesn't exist
         const label = GmailApp.getUserLabelByName(labelName) || GmailApp.createLabel(labelName);
         
@@ -330,7 +454,7 @@ function logToMaster(name, email, type, time, emailId, headline) {
 
 /**
  * Generates a unique Email ID in format: YSPTC-MM-YY-XXX
- * YSPTC = Youth Service Philippines Tagum Chapter
+ * YSPTC = chapter-specific email prefix
  * MM = 2-letter template code (EI, AP, PR, etc.)
  * YY = Last 2 digits of current year
  * XXX = Sequential 3-digit number (per template, per year)
@@ -783,10 +907,10 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
               <td class="mobile-header" align="center" style="padding:40px 40px 24px 40px; background-color:#ffffff;">
                 <img src="${LOGO_URL}" width="80" height="80" alt="YSP Logo" style="display:block; margin-bottom: 20px; border:0; border-radius:12px;">
                 <h2 style="font-family:'Inter', 'Segoe UI', sans-serif; color:#F26522; margin:0; font-size:18px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;">
-                  Youth Service Philippines
+                  ${EMAIL_SYSTEM_ORG_BRANDING.orgName}
                 </h2>
                 <p style="font-family:'Inter', 'Segoe UI', sans-serif; color:#64748b; margin:6px 0 0 0; font-size:13px; font-weight:500; letter-spacing:0.5px;">
-                  Tagum Chapter
+                  ${EMAIL_SYSTEM_ORG_BRANDING.chapterName}
                 </p>
               </td>
             </tr>
@@ -868,16 +992,16 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
             <tr>
               <td align="center" style="padding-bottom:12px;">
                 <p style="color:#64748b; font-size:12px; font-family:'Inter', 'Segoe UI', sans-serif; margin:0;">
-                  <a href="https://www.facebook.com/YSPTagumChapter" target="_blank" style="color:#F26522; text-decoration:none; font-weight:600;">Facebook</a>
+                  <a href="${FB_PAGE_URL}" target="_blank" style="color:#F26522; text-decoration:none; font-weight:600;">Facebook</a>
                   &nbsp;&nbsp;|&nbsp;&nbsp;
-                  <a href="https://www.youthservicephilippinestagum.me/Home" target="_blank" style="color:#F26522; text-decoration:none; font-weight:600;">WebPortal</a>
+                  <a href="${WEB_PORTAL_URL}" target="_blank" style="color:#F26522; text-decoration:none; font-weight:600;">WebPortal</a>
                 </p>
               </td>
             </tr>
             <tr>
               <td align="center">
                 <p style="color:#94a3b8; font-size:12px; font-family:'Inter', 'Segoe UI', sans-serif; margin:0 0 8px 0;">
-                  © ${new Date().getFullYear()} Youth Service Philippines — Tagum Chapter
+                  © ${new Date().getFullYear()} ${EMAIL_SYSTEM_ORG_BRANDING.orgName} — ${EMAIL_SYSTEM_ORG_BRANDING.chapterName}
                 </p>
                 <p style="color:#94a3b8; font-size:11px; font-family:'Inter', 'Segoe UI', sans-serif; margin:0 0 8px 0;">
                   This email was sent to ${data.email}
@@ -1375,7 +1499,7 @@ function createIcsBlob(title, dateObj, timeObj, venue, description) {
     const icsContent = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
-      "PRODID:-//YSP Tagum//Email System//EN",
+      "PRODID:-//" + EMAIL_SYSTEM_ORG_BRANDING.shortName + "//Email System//EN",
       "BEGIN:VEVENT",
       "UID:" + Utilities.getUuid(),
       "DTSTAMP:" + now,

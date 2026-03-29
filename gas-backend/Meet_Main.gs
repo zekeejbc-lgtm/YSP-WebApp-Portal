@@ -56,6 +56,135 @@ const MEET_ATTENDANCE_HEADERS = [
   'UpdatedBy',
 ];
 
+const MEET_BRANDING_CACHE_KEY = 'meet_org_branding_v1';
+const MEET_BRANDING_CACHE_TTL_SECONDS = 1800;
+const MEET_BRANDING_SHEET_NAME = 'Organization Branding';
+const MEET_BRANDING_DEFAULTS = {
+  orgName: 'Youth Service Philippines',
+  chapterName: 'Tagum Chapter',
+  shortName: 'YSP Tagum',
+  motto: 'Shaping the Future to a Greater Society',
+  chapterCode: 'TC',
+  location: 'Tagum City, Davao del Norte, Philippines',
+  contactEmail: 'ysptagumchapter@gmail.com',
+  logoUrl: MEET_ATTENDANCE_CONFIG.LOGO_URL,
+  themeColor: '#f6421f',
+};
+
+function normalizeMeetBranding_(raw) {
+  var merged = Object.assign({}, MEET_BRANDING_DEFAULTS, raw || {});
+  merged.orgName = sanitizeMeetText_(merged.orgName) || MEET_BRANDING_DEFAULTS.orgName;
+  merged.chapterName = sanitizeMeetText_(merged.chapterName) || MEET_BRANDING_DEFAULTS.chapterName;
+  merged.shortName = sanitizeMeetText_(merged.shortName) || MEET_BRANDING_DEFAULTS.shortName;
+  merged.motto = sanitizeMeetText_(merged.motto) || MEET_BRANDING_DEFAULTS.motto;
+  merged.chapterCode = sanitizeMeetText_(merged.chapterCode) || MEET_BRANDING_DEFAULTS.chapterCode;
+  merged.location = sanitizeMeetText_(merged.location) || MEET_BRANDING_DEFAULTS.location;
+  merged.contactEmail = sanitizeMeetText_(merged.contactEmail) || MEET_BRANDING_DEFAULTS.contactEmail;
+  merged.logoUrl = sanitizeMeetText_(merged.logoUrl) || MEET_BRANDING_DEFAULTS.logoUrl;
+  merged.themeColor = sanitizeMeetText_(merged.themeColor) || MEET_BRANDING_DEFAULTS.themeColor;
+  merged.fullName = merged.orgName + ' - ' + merged.chapterName;
+  return merged;
+}
+
+function toMeetSlugToken_(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function getMeetBrandingFromSheet_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var settingsId = sanitizeMeetText_(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID'));
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName(MEET_BRANDING_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var keyIdx = headers.indexOf('ConfigKey');
+    var valueIdx = headers.indexOf('Value');
+    if (keyIdx === -1 || valueIdx === -1) return null;
+
+    var rowMap = {};
+    for (var i = 1; i < values.length; i++) {
+      var key = sanitizeMeetText_(values[i][keyIdx]);
+      if (!key) continue;
+      rowMap[key] = sanitizeMeetText_(values[i][valueIdx]);
+    }
+
+    return {
+      orgName: rowMap.orgName || '',
+      chapterName: rowMap.chapterName || '',
+      shortName: rowMap.shortName || '',
+      motto: rowMap.motto || '',
+      chapterCode: rowMap.chapterCode || '',
+      location: rowMap.location || '',
+      contactEmail: rowMap.contactEmail || '',
+      logoUrl: rowMap.logoUrl || '',
+      themeColor: rowMap.themeColor || ''
+    };
+  } catch (sheetReadError) {
+    Logger.log('Meet branding sheet fallback read error: ' + sheetReadError);
+    return null;
+  }
+}
+
+function getMeetOrgBranding_() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var cachedRaw = cache.get(MEET_BRANDING_CACHE_KEY);
+    if (cachedRaw) {
+      return normalizeMeetBranding_(JSON.parse(cachedRaw));
+    }
+  } catch (cacheReadError) {
+    Logger.log('Meet branding cache read error: ' + cacheReadError);
+  }
+
+  var branding = normalizeMeetBranding_({});
+  var resolvedFromEndpoint = false;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var endpoint = sanitizeMeetText_(props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL'));
+    if (endpoint) {
+      var response = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'getOrgBranding' }),
+        muteHttpExceptions: true,
+      });
+      var code = response.getResponseCode();
+      if (code >= 200 && code < 300) {
+        var payload = JSON.parse(response.getContentText() || '{}');
+        if (payload && payload.success === true && payload.data) {
+          branding = normalizeMeetBranding_(payload.data);
+          resolvedFromEndpoint = true;
+        }
+      }
+    }
+  } catch (fetchError) {
+    Logger.log('Meet branding fetch error: ' + fetchError);
+  }
+
+  if (!resolvedFromEndpoint) {
+    var sheetBranding = getMeetBrandingFromSheet_();
+    if (sheetBranding) {
+      branding = normalizeMeetBranding_(sheetBranding);
+    }
+  }
+
+  try {
+    cache.put(MEET_BRANDING_CACHE_KEY, JSON.stringify(branding), MEET_BRANDING_CACHE_TTL_SECONDS);
+  } catch (cacheWriteError) {
+    Logger.log('Meet branding cache write error: ' + cacheWriteError);
+  }
+
+  return branding;
+}
+
 function canAccessMeetAttendanceByUsername_(username) {
   // Standalone Meet project fallback:
   // If shared auth helpers are unavailable in this GAS project, allow access.
@@ -1180,13 +1309,14 @@ function handleExportMeetAttendancePDF(meetingId) {
 }
 
 function createMeetAttendancePdfHtml_(meeting, logoBase64) {
+  var orgBranding = getMeetOrgBranding_();
   const dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MM/dd/yyyy, hh:mm:ss a');
   const meetingLabel = sanitizeMeetText_(meeting.meetingId || '');
   const meetingDate = sanitizeMeetText_(meeting.meetingDate || '');
   const meetingTitle = sanitizeMeetText_(meeting.title || meeting.meetingId || 'Untitled Meeting');
   const meetingUrl = sanitizeMeetText_(meeting.meetUrl || '');
   const organizer = sanitizeMeetText_(meeting.organizer || '');
-  const logoSrc = logoBase64 || MEET_ATTENDANCE_CONFIG.LOGO_URL;
+  const logoSrc = logoBase64 || orgBranding.logoUrl || MEET_ATTENDANCE_CONFIG.LOGO_URL;
   const rows = Array.isArray(meeting.attendees) ? meeting.attendees : [];
 
   function fmtDate(value) {
@@ -1270,8 +1400,8 @@ function createMeetAttendancePdfHtml_(meeting, logoBase64) {
     '<div class="header-banner">' +
     '<div class="logo-container"><img src="' + logoSrc + '" class="logo-img"></div>' +
     '<div class="header-text">' +
-    '<div class="org-title">Youth Service Philippines</div>' +
-    '<div class="chapter-subtitle">Tagum Chapter</div>' +
+    '<div class="org-title">' + escapeHtmlMeet_(orgBranding.orgName) + '</div>' +
+    '<div class="chapter-subtitle">' + escapeHtmlMeet_(orgBranding.chapterName) + '</div>' +
     '<div class="report-label">GOOGLE MEET ATTENDANCE REPORT</div>' +
     '</div>' +
     '<div class="meta-data">Exported: ' + dateStr + '</div>' +
@@ -1283,7 +1413,7 @@ function createMeetAttendancePdfHtml_(meeting, logoBase64) {
     '<thead><tr><th style="width:5%;text-align:center;">#</th><th style="width:30%;">NAME</th><th style="width:20%;">COMMITTEE</th><th style="width:20%;">POSITION</th><th style="width:13%;">JOIN TIME</th><th style="width:12%;">DURATION</th></tr></thead>' +
     '<tbody>' + tableRows + '</tbody></table>' +
     '</div>' +
-    '<div class="footer"><span>Youth Service Philippines - Tagum Chapter</span></div>' +
+    '<div class="footer"><span>' + escapeHtmlMeet_(orgBranding.fullName) + '</span></div>' +
     '</body></html>'
   );
 }
@@ -2667,11 +2797,13 @@ function escapeIcsTextMeet_(value) {
 }
 
 function buildMeetCalendarIcsBlob_(context) {
+  var orgBranding = getMeetOrgBranding_();
   var startDate = new Date(context.scheduledStart);
   var endDate = new Date(context.scheduledEnd);
   if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return null;
 
-  var uid = (context.meetingId || Utilities.getUuid()) + '@ysp-tagum-meet';
+  var orgSlug = toMeetSlugToken_(orgBranding.shortName || orgBranding.chapterName || 'ysp');
+  var uid = (context.meetingId || Utilities.getUuid()) + '@' + (orgSlug || 'ysp') + '-meet';
   var nowStamp = formatMeetIcsDateUtc_(new Date());
   var title = escapeIcsTextMeet_(context.title || 'KaagapAI Meet Session');
   var description = escapeIcsTextMeet_(
@@ -2686,7 +2818,7 @@ function buildMeetCalendarIcsBlob_(context) {
   var ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//YSP Tagum//KaagapAI Meet//EN',
+    'PRODID:-//' + escapeIcsTextMeet_(orgBranding.shortName || orgBranding.orgName) + '//KaagapAI Meet//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:REQUEST',
     'X-WR-TIMEZONE:Asia/Manila',
@@ -2730,9 +2862,9 @@ function buildMeetGoogleCalendarUrl_(context) {
 }
 
 function buildMeetInviteEmailHtml_(attendeeName, context, googleCalUrl) {
-  var logoUrl = MEET_ATTENDANCE_CONFIG.LOGO_URL || 'https://i.imgur.com/J4wddTW.png';
+  var orgBranding = getMeetOrgBranding_();
+  var logoUrl = orgBranding.logoUrl || MEET_ATTENDANCE_CONFIG.LOGO_URL || 'https://i.imgur.com/J4wddTW.png';
   var webAppUrl = 'https://www.youthservicephilippinestagum.me/';
-  var fbPageUrl = 'https://www.facebook.com/YSPTagumChapter';
   var name = escapeHtmlMeet_(attendeeName || 'Member');
   var title = escapeHtmlMeet_(context.title || 'KaagapAI Meet Session');
   var meetingId = escapeHtmlMeet_(context.meetingId || '');
@@ -2792,8 +2924,8 @@ function buildMeetInviteEmailHtml_(attendeeName, context, googleCalUrl) {
     // Header banner (matches existing YSP email style)
     '<tr><td align="center" class="email-header" style="background:linear-gradient(135deg,#FF8800 0%,#F97316 100%);padding:28px 20px">' +
     '<img src="' + logoUrl + '" width="64" height="64" alt="YSP Logo" style="border-radius:50%;background:#fff;padding:3px;display:block;margin:0 auto" />' +
-    '<div style="color:#ffffff;font-weight:700;font-size:22px;margin-top:10px;letter-spacing:-0.3px">Youth Service Philippines</div>' +
-    '<div style="color:#ffe7cc;font-size:13px;margin-top:2px">Tagum Chapter</div></td></tr>' +
+    '<div style="color:#ffffff;font-weight:700;font-size:22px;margin-top:10px;letter-spacing:-0.3px">' + escapeHtmlMeet_(orgBranding.orgName) + '</div>' +
+    '<div style="color:#ffe7cc;font-size:13px;margin-top:2px">' + escapeHtmlMeet_(orgBranding.chapterName) + '</div></td></tr>' +
 
     // Content area
     '<tr><td class="email-padding" style="padding:30px">' +
@@ -2845,7 +2977,7 @@ function buildMeetInviteEmailHtml_(attendeeName, context, googleCalUrl) {
     // Footer (matches existing YSP style)
     '<tr><td style="padding:16px 30px;background:#F8FAFC;border-top:1px solid #E2E8F0;text-align:center">' +
     '<div style="font-size:11px;color:#94a3b8;line-height:1.5">' +
-    'Youth Service Philippines &bull; Tagum Chapter<br/>' +
+    escapeHtmlMeet_(orgBranding.orgName) + ' &bull; ' + escapeHtmlMeet_(orgBranding.chapterName) + '<br/>' +
     'This is an automated notification from the YSP Web App.' +
     '</div></td></tr>' +
 

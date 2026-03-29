@@ -52,6 +52,7 @@ import type jsPDF from "jspdf";
 import CustomDropdown from "./CustomDropdown";
 import { logAccess, clearAllAccessLogs, clearAccessLogsByDateRange, clearSpecificAccessLogs, uploadAccessLogsPDF } from "../services/gasSystemToolsService";
 import { getSessionToken } from "../services/gasLoginService";
+import { orgConfig } from "../config/org.config";
 import { loadPdfTools } from "../utils/exportLoaders";
 import {
   PieChart,
@@ -68,10 +69,10 @@ import {
 } from "recharts";
 
 // Organization branding (match AttendanceDashboardPage)
-const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
-const ORG_NAME = "Youth Service Philippines";
-const ORG_CHAPTER = "Tagum Chapter";
-const ORG_MOTTO = "Shaping the Future to a Greater Society";
+const ORG_LOGO_URL = orgConfig.logoUrl;
+const ORG_NAME = orgConfig.orgName;
+const ORG_CHAPTER = orgConfig.chapterName;
+const ORG_MOTTO = orgConfig.motto;
 
 // Helper to load image as base64 for jsPDF
 function loadImage(url: string): Promise<string> {

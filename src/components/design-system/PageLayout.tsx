@@ -29,6 +29,7 @@ import {
   getLocalCacheVersion,
   setLocalCacheVersion,
 } from "../../services/gasSystemToolsService";
+import { orgConfig } from "../../config/org.config";
 
 interface PageLayoutProps {
   children: React.ReactNode;
@@ -245,9 +246,9 @@ export default function PageLayout({
             <footer className="border-t border-border py-8 relative mt-8">
               <div className="text-center text-sm text-muted-foreground">
                 <p>
-                  &copy; 2025 Youth Service Philippines - Tagum Chapter. All rights reserved.
+                  &copy; 2025 {orgConfig.fullName}. All rights reserved.
                 </p>
-                <p className="mt-2">Shaping the Future to a Greater Society</p>
+                <p className="mt-2">{orgConfig.motto}</p>
                 <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
                   App version: {appVersion} | Cache version: {cacheVersion}
                 </p>

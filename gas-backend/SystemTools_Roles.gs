@@ -51,6 +51,23 @@ const SYSTEM_PERMISSION_KEYS = [
   'fn_manage_projects',
 ];
 
+function getDefaultChapterPresidentRoleName_() {
+  try {
+    if (typeof getOrgBrandingConfig_ === 'function') {
+      var branding = getOrgBrandingConfig_();
+      var chapterName = String((branding && branding.chapterName) || '').trim();
+      if (chapterName) {
+        return chapterName + ' President';
+      }
+    }
+  } catch (error) {
+    Logger.log('System roles branding lookup failed: ' + error.toString());
+  }
+
+  var fallbackChapter = String(PropertiesService.getScriptProperties().getProperty('ORG_CHAPTER_NAME') || 'Tagum Chapter').trim();
+  return (fallbackChapter || 'Tagum Chapter') + ' President';
+}
+
 function getDefaultPermissionsForLevel_(powerLevel) {
   const level = Number(powerLevel) || 0;
   const defaults = {
@@ -106,6 +123,8 @@ function getDefaultPermissionsForLevel_(powerLevel) {
 }
 
 function getDefaultSystemRoles_() {
+  const chapterPresidentRoleName = getDefaultChapterPresidentRoleName_();
+  const chapterPresidentDescription = chapterPresidentRoleName + ' role.';
   const defaults = [
     ['Auditor', 10, '#f59e0b', 'Top level.'],
     ['Assistant Auditor 1', 9, '#d97706', 'Assistant to Auditor.'],
@@ -114,7 +133,7 @@ function getDefaultSystemRoles_() {
     ['Assistant Admin 1', 7, '#dc2626', 'Assistant to Admin.'],
     ['Assistant Admin 2', 7, '#dc2626', 'Assistant to Admin.'],
     ['Founder', 6, '#7c3aed', 'Below Admin.'],
-    ['Tagum Chapter President', 5, '#059669', 'Tagum chapter leader.'],
+    [chapterPresidentRoleName, 5, '#059669', chapterPresidentDescription],
     ['Barangay Chapter President', 4, '#10b981', 'Barangay chapter leader.'],
     ['Member', 2, '#3b82f6', 'Standard member role.'],
     ['Volunteer', 2, '#6366f1', 'Volunteer role.'],

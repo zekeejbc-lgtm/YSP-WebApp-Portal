@@ -45,11 +45,12 @@ import {
   type MeetAttendanceMeeting,
   type MeetDashboardCard,
 } from "../services/gasMeetService";
+import { orgConfig } from "../config/org.config";
 
 // PDF Constants
-const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
-const ORG_NAME = "Youth Service Philippines";
-const ORG_CHAPTER = "Tagum Chapter";
+const ORG_LOGO_URL = orgConfig.logoUrl || "https://i.imgur.com/J4wddTW.png";
+const ORG_NAME = orgConfig.orgName;
+const ORG_CHAPTER = orgConfig.chapterName;
 
 interface KaagapAIMeetPageProps {
   onClose: () => void;
@@ -660,7 +661,7 @@ export default function KaagapAIMeetPage({
       hour12: true,
       timeZone: "Asia/Manila",
     });
-    const orgMotto = "Shaping the Future to a Greater Society";
+    const orgMotto = orgConfig.motto;
     const attendees = selectedMeeting.attendees || [];
 
     // Helper: Draw page footer
@@ -671,7 +672,7 @@ export default function KaagapAIMeetPage({
       doc.setFontSize(7);
       doc.setTextColor(100, 100, 100);
       doc.setFont("helvetica", "normal");
-      doc.text("Youth Service Philippines - Tagum Chapter", margin, pageHeight - 10);
+      doc.text(orgConfig.fullName, margin, pageHeight - 10);
       doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: "right" });
       doc.setFont("helvetica", "italic");
       doc.text(`"${orgMotto}"`, pageWidth / 2, pageHeight - 10, { align: "center" });

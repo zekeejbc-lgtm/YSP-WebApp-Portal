@@ -16,6 +16,138 @@ const WEB_APP_URL = 'https://www.youthservicephilippinestagum.me/';
 const FB_PAGE_URL = 'https://www.facebook.com/YSPTagumChapter';
 const MANILA_TIMEZONE = 'Asia/Manila';
 const MANILA_UTC_OFFSET_HOURS = 8;
+const ANNOUNCEMENTS_BRANDING_CACHE_KEY = 'announcements_org_branding_v1';
+const ANNOUNCEMENTS_BRANDING_CACHE_TTL_SECONDS = 1800;
+const ANNOUNCEMENTS_BRANDING_SHEET_NAME = 'Organization Branding';
+const ANNOUNCEMENTS_BRANDING_DEFAULTS = {
+  orgName: 'Youth Service Philippines',
+  chapterName: 'Tagum Chapter',
+  shortName: 'YSP Tagum',
+  motto: 'Shaping the Future to a Greater Society',
+  chapterCode: 'TC',
+  location: 'Tagum City, Davao del Norte, Philippines',
+  contactEmail: 'ysptagumchapter@gmail.com',
+  logoUrl: LOGO_URL,
+  themeColor: '#f6421f'
+};
+
+function toSlugToken_(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function normalizeAnnouncementsBranding_(raw) {
+  var merged = Object.assign({}, ANNOUNCEMENTS_BRANDING_DEFAULTS, raw || {});
+  merged.orgName = normalizeText_(merged.orgName) || ANNOUNCEMENTS_BRANDING_DEFAULTS.orgName;
+  merged.chapterName = normalizeText_(merged.chapterName) || ANNOUNCEMENTS_BRANDING_DEFAULTS.chapterName;
+  merged.shortName = normalizeText_(merged.shortName) || ANNOUNCEMENTS_BRANDING_DEFAULTS.shortName;
+  merged.motto = normalizeText_(merged.motto) || ANNOUNCEMENTS_BRANDING_DEFAULTS.motto;
+  merged.chapterCode = normalizeText_(merged.chapterCode) || ANNOUNCEMENTS_BRANDING_DEFAULTS.chapterCode;
+  merged.location = normalizeText_(merged.location) || ANNOUNCEMENTS_BRANDING_DEFAULTS.location;
+  merged.contactEmail = normalizeText_(merged.contactEmail) || ANNOUNCEMENTS_BRANDING_DEFAULTS.contactEmail;
+  merged.logoUrl = normalizeText_(merged.logoUrl) || ANNOUNCEMENTS_BRANDING_DEFAULTS.logoUrl;
+  merged.themeColor = normalizeText_(merged.themeColor) || ANNOUNCEMENTS_BRANDING_DEFAULTS.themeColor;
+  merged.fullName = merged.orgName + ' - ' + merged.chapterName;
+  return merged;
+}
+
+function getAnnouncementsBrandingFromSheet_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var settingsId = normalizeText_(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID'));
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName(ANNOUNCEMENTS_BRANDING_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var keyIdx = headers.indexOf('ConfigKey');
+    var valueIdx = headers.indexOf('Value');
+    if (keyIdx === -1 || valueIdx === -1) return null;
+
+    var rowMap = {};
+    for (var i = 1; i < values.length; i++) {
+      var key = normalizeText_(values[i][keyIdx]);
+      if (!key) continue;
+      rowMap[key] = normalizeText_(values[i][valueIdx]);
+    }
+
+    return {
+      orgName: rowMap.orgName || '',
+      chapterName: rowMap.chapterName || '',
+      shortName: rowMap.shortName || '',
+      motto: rowMap.motto || '',
+      chapterCode: rowMap.chapterCode || '',
+      location: rowMap.location || '',
+      contactEmail: rowMap.contactEmail || '',
+      logoUrl: rowMap.logoUrl || '',
+      themeColor: rowMap.themeColor || ''
+    };
+  } catch (sheetReadError) {
+    Logger.log('Announcements branding sheet fallback read error: ' + sheetReadError);
+    return null;
+  }
+}
+
+function getAnnouncementsOrgBranding_() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var cachedRaw = cache.get(ANNOUNCEMENTS_BRANDING_CACHE_KEY);
+    if (cachedRaw) {
+      var cachedParsed = parseJsonSafe_(cachedRaw, null);
+      if (cachedParsed) {
+        return normalizeAnnouncementsBranding_(cachedParsed);
+      }
+    }
+  } catch (cacheReadError) {
+    Logger.log('Announcements branding cache read error: ' + cacheReadError);
+  }
+
+  var branding = normalizeAnnouncementsBranding_({});
+  var resolvedFromEndpoint = false;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var endpoint = normalizeText_(props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL'));
+
+    if (endpoint) {
+      var response = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'getOrgBranding' }),
+        muteHttpExceptions: true
+      });
+      var code = response.getResponseCode();
+      if (code >= 200 && code < 300) {
+        var payload = parseJsonSafe_(response.getContentText(), null);
+        if (payload && payload.success === true && payload.data) {
+          branding = normalizeAnnouncementsBranding_(payload.data);
+          resolvedFromEndpoint = true;
+        }
+      }
+    }
+  } catch (fetchError) {
+    Logger.log('Announcements branding fetch error: ' + fetchError);
+  }
+
+  if (!resolvedFromEndpoint) {
+    var sheetBranding = getAnnouncementsBrandingFromSheet_();
+    if (sheetBranding) {
+      branding = normalizeAnnouncementsBranding_(sheetBranding);
+    }
+  }
+
+  try {
+    cache.put(ANNOUNCEMENTS_BRANDING_CACHE_KEY, JSON.stringify(branding), ANNOUNCEMENTS_BRANDING_CACHE_TTL_SECONDS);
+  } catch (cacheWriteError) {
+    Logger.log('Announcements branding cache write error: ' + cacheWriteError);
+  }
+
+  return branding;
+}
 
 function getAnnouncementsSpreadsheetId_() {
   return PropertiesService.getScriptProperties().getProperty('ANNOUNCEMENTS_SPREADSHEET_ID') || ANNOUNCEMENTS_DEFAULT_SPREADSHEET_ID;
@@ -1165,7 +1297,9 @@ function escapeIcsText_(value) {
 
 function buildCalendarIcsBlob_(announcement, eventStart, eventEnd, emailOptions) {
   if (!eventStart || !eventEnd) return null;
-  var uid = (announcement.announcementId || Utilities.getUuid()) + '@ysp-tagum';
+  var orgBranding = getAnnouncementsOrgBranding_();
+  var orgSlug = toSlugToken_(orgBranding.shortName || orgBranding.chapterName || 'ysp');
+  var uid = (announcement.announcementId || Utilities.getUuid()) + '@' + (orgSlug || 'ysp') + '-announcements';
   var nowStamp = formatIcsDateUtc_(new Date());
   var title = escapeIcsText_(announcement.title || 'YSP Event');
   var description = escapeIcsText_(announcement.body || '');
@@ -1173,7 +1307,7 @@ function buildCalendarIcsBlob_(announcement, eventStart, eventEnd, emailOptions)
   var ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//YSP Tagum//Announcements//EN',
+    'PRODID:-//' + escapeIcsText_(orgBranding.shortName || orgBranding.orgName) + '//Announcements//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:REQUEST',
     'X-WR-TIMEZONE:' + MANILA_TIMEZONE,
@@ -1411,6 +1545,7 @@ function sendAnnouncementEmail_(target, announcement, attachments) {
   }
 
   // ──── Fully responsive email HTML ────
+  var orgBranding = getAnnouncementsOrgBranding_();
   var htmlBody =
     '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">' +
     '<meta http-equiv="X-UA-Compatible" content="IE=edge">' +
@@ -1435,9 +1570,9 @@ function sendAnnouncementEmail_(target, announcement, attachments) {
 
     // Header banner
     '<tr><td align="center" class="email-header" style="background:linear-gradient(135deg,#FF8800 0%,#F97316 100%);padding:28px 20px">' +
-    '<img src="' + LOGO_URL + '" width="64" height="64" alt="YSP Logo" style="border-radius:50%;background:#fff;padding:3px;display:block;margin:0 auto" />' +
-    '<div style="color:#ffffff;font-weight:700;font-size:22px;margin-top:10px;letter-spacing:-0.3px">Youth Service Philippines</div>' +
-    '<div style="color:#ffe7cc;font-size:13px;margin-top:2px">Tagum Chapter</div></td></tr>' +
+    '<img src="' + orgBranding.logoUrl + '" width="64" height="64" alt="YSP Logo" style="border-radius:50%;background:#fff;padding:3px;display:block;margin:0 auto" />' +
+    '<div style="color:#ffffff;font-weight:700;font-size:22px;margin-top:10px;letter-spacing:-0.3px">' + escapeHtml_(orgBranding.orgName) + '</div>' +
+    '<div style="color:#ffe7cc;font-size:13px;margin-top:2px">' + escapeHtml_(orgBranding.chapterName) + '</div></td></tr>' +
 
     // Content area
     '<tr><td class="email-padding" style="padding:30px">' +
@@ -1480,7 +1615,7 @@ function sendAnnouncementEmail_(target, announcement, attachments) {
     // Footer
     '<tr><td style="padding:16px 30px;background:#F8FAFC;border-top:1px solid #E2E8F0;text-align:center">' +
     '<div style="font-size:11px;color:#94a3b8;line-height:1.5">' +
-    'Youth Service Philippines &bull; Tagum Chapter<br/>' +
+    escapeHtml_(orgBranding.orgName) + ' &bull; ' + escapeHtml_(orgBranding.chapterName) + '<br/>' +
     'This is an automated notification from the YSP Web App.' +
     '</div></td></tr>' +
 

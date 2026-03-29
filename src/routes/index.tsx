@@ -1,5 +1,5 @@
 /**
- * Route Configuration for YSP Tagum WebApp
+ * Route Configuration for YSP WebApp
  * 
  * Defines all application routes with:
  * - Path
@@ -11,6 +11,7 @@
  */
 
 import { lazy, ComponentType } from 'react';
+import { orgConfig } from '../config/org.config';
 
 // Lazy load all page components
 // Note: These use default exports. Components need to have default exports.
@@ -46,6 +47,11 @@ export interface AppRoute {
 }
 
 /**
+ * Build a route title with the currently configured org short name.
+ */
+const routeTitle = (page: string): string => `${page} - ${orgConfig.shortName}`;
+
+/**
  * All application routes
  * 
  * Note: The "/" (homepage) route is handled by the AppLayout component,
@@ -56,7 +62,7 @@ export const routes: AppRoute[] = [
   {
     path: '/feedback',
     element: FeedbackPage,
-    title: 'Feedback - YSP Tagum',
+    title: routeTitle('Feedback'),
   },
 
   // Member+ routes
@@ -64,49 +70,49 @@ export const routes: AppRoute[] = [
     path: '/my-qrid',
     element: MyQRIDPage,
     requiredRoles: ['member'],
-    title: 'My QR ID - YSP Tagum',
+    title: routeTitle('My QR ID'),
   },
   {
     path: '/attendance/transparency',
     element: AttendanceTransparencyPage,
     requiredRoles: ['member'],
-    title: 'Attendance - YSP Tagum',
+    title: routeTitle('Attendance'),
   },
   {
     path: '/profile',
     element: MyProfilePage,
     requiredRoles: ['member'],
-    title: 'My Profile - YSP Tagum',
+    title: routeTitle('My Profile'),
   },
   {
     path: '/announcements',
     element: AnnouncementsPage,
     requiredRoles: ['member'],
-    title: 'Announcements - YSP Tagum',
+    title: routeTitle('Announcements'),
   },
   {
     path: '/issuance',
     element: IssuanceCenterPage,
     requiredRoles: ['member'],
-    title: 'Issuance Center - YSP Tagum',
+    title: routeTitle('Issuance Center'),
   },
   {
     path: '/email-system',
     element: EmailSystemPage,
     requiredRoles: ['admin'],
-    title: 'Email System - YSP Tagum',
+    title: routeTitle('Email System'),
   },
   {
     path: '/applications',
     element: MembershipApplicationsPage,
     requiredRoles: ['member'],
-    title: 'Membership Applications - YSP Tagum',
+    title: routeTitle('Membership Applications'),
   },
   {
     path: '/settings',
     element: SettingsPage,
     requiredRoles: ['member'],
-    title: 'Settings - YSP Tagum',
+    title: routeTitle('Settings'),
   },
 
   // Head+ routes (leadership)
@@ -114,19 +120,19 @@ export const routes: AppRoute[] = [
     path: '/directory',
     element: OfficerDirectoryPage,
     requiredRoles: ['head'],
-    title: 'Officer Directory - YSP Tagum',
+    title: routeTitle('Officer Directory'),
   },
   {
     path: '/attendance/dashboard',
     element: AttendanceDashboardPage,
     requiredRoles: ['head'],
-    title: 'Attendance Dashboard - YSP Tagum',
+    title: routeTitle('Attendance Dashboard'),
   },
   {
     path: '/attendance/recording',
     element: AttendanceRecordingPage,
     requiredRoles: ['head'],
-    title: 'Record Attendance - YSP Tagum',
+    title: routeTitle('Record Attendance'),
   },
 
   // Admin+ routes (management)
@@ -134,13 +140,13 @@ export const routes: AppRoute[] = [
     path: '/events',
     element: ManageEventsPage,
     requiredRoles: ['admin'],
-    title: 'Manage Events - YSP Tagum',
+    title: routeTitle('Manage Events'),
   },
   {
     path: '/admin/members',
     element: ManageMembersPage,
     requiredRoles: ['admin'],
-    title: 'Manage Members - YSP Tagum',
+    title: routeTitle('Manage Members'),
   },
 
   // Auditor+ routes (highest access)
@@ -148,13 +154,13 @@ export const routes: AppRoute[] = [
     path: '/admin/logs',
     element: AccessLogsPage,
     requiredRoles: ['auditor'],
-    title: 'Access Logs - YSP Tagum',
+    title: routeTitle('Access Logs'),
   },
   {
     path: '/admin/tools',
     element: SystemToolsPage,
     requiredRoles: ['auditor'],
-    title: 'System Tools - YSP Tagum',
+    title: routeTitle('System Tools'),
   },
 ];
 

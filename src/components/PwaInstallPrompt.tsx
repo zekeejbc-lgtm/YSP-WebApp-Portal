@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Download } from "lucide-react";
 import Button from "./design-system/Button";
 import { secureGetItem, secureSetItem } from "../utils/secureStorage";
+import { orgConfig } from "../config/org.config";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -160,7 +161,7 @@ export default function PwaInstallPrompt({
             <Download className="h-4 w-4" />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-semibold text-gray-900">Install YSP Tagum</p>
+            <p className="text-sm font-semibold text-gray-900">Install {orgConfig.shortName}</p>
             <p className="text-xs text-gray-600">
               On iPhone, install from Safari:
             </p>
@@ -206,7 +207,7 @@ export default function PwaInstallPrompt({
           <Download className="h-4 w-4" />
         </div>
         <div className="flex-1">
-          <p className="text-sm font-semibold text-gray-900">Install YSP Tagum</p>
+          <p className="text-sm font-semibold text-gray-900">Install {orgConfig.shortName}</p>
           <p className="text-xs text-gray-600">
             Add the app to your home screen for faster access and offline support.
           </p>

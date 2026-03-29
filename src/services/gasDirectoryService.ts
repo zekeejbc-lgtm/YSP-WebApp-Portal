@@ -8,6 +8,10 @@
 
 /// <reference types="vite/client" />
 import { getSessionToken } from './gasLoginService';
+import { orgConfig } from '../config/org.config';
+
+const CHAPTER_PRESIDENT_ROLE_LABEL = `${orgConfig.chapterName} President`;
+const CHAPTER_PRESIDENT_ROLE_KEY = CHAPTER_PRESIDENT_ROLE_LABEL.toLowerCase();
 
 // =================== TYPES ===================
 
@@ -515,6 +519,7 @@ export function getRoleDisplayName(role: string): string {
     'assistant admin 2': 'Assistant Admin 2',
     founder: 'Founder',
     head: 'Head',
+    [CHAPTER_PRESIDENT_ROLE_KEY]: CHAPTER_PRESIDENT_ROLE_LABEL,
     'tagum chapter president': 'Tagum Chapter President',
     'barangay chapter president': 'Barangay Chapter President',
     member: 'Member',
@@ -540,6 +545,7 @@ export function getRoleBadgeColor(role: string): string {
     'assistant admin 2': 'rose',
     founder: 'violet',
     head: 'orange',
+    [CHAPTER_PRESIDENT_ROLE_KEY]: 'emerald',
     'tagum chapter president': 'emerald',
     'barangay chapter president': 'green',
     member: 'blue',

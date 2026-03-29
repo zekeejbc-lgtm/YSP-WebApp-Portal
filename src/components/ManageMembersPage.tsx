@@ -40,6 +40,7 @@ import { getSystemRoles } from "../services/gasSystemToolsService";
 import type { SystemRole } from "../types/app";
 import { useLocation, useNavigate } from "react-router-dom";
 import { YSP_COMMITTEE_OPTIONS } from "../constants/committees";
+import { orgConfig } from "../config/org.config";
 
 // =================== SKELETON COMPONENTS ===================
 
@@ -336,10 +337,10 @@ interface ManageMembersPageProps {
 }
 
 // Logo URL for PDF export
-const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
-const ORG_NAME = "Youth Service Philippines";
-const ORG_CHAPTER = "Tagum Chapter";
-const ORG_MOTTO = "Shaping the Future to a Greater Society";
+const ORG_LOGO_URL = orgConfig.logoUrl || "https://i.imgur.com/J4wddTW.png";
+const ORG_NAME = orgConfig.orgName;
+const ORG_CHAPTER = orgConfig.chapterName;
+const ORG_MOTTO = orgConfig.motto;
 const ITEMS_PER_PAGE = 10;
 const MEMBERS_CACHE_KEY = "ysp_manage_members_cache";
 const APPLICANT_MAPPING_DEBUG =
@@ -1174,7 +1175,7 @@ export default function ManageMembersPage({
     
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(16);
-    doc.text("Tagum Chapter", 50, 29);
+    doc.text(ORG_CHAPTER, 50, 29);
     
     doc.setFontSize(10);
     doc.text(`MEMBERS LIST EXPORT`, 50, 38);
@@ -1379,7 +1380,7 @@ export default function ManageMembersPage({
         doc.setTextColor(100, 100, 100);
         doc.setFont('helvetica', 'normal');
         doc.text(
-          'Youth Service Philippines - Tagum Chapter',
+          orgConfig.fullName,
           margin,
           pageHeight - 10
         );
@@ -2323,7 +2324,7 @@ export default function ManageMembersPage({
                 role: accountData.role,
                 position: accountData.position,
                 committee: accountData.committee,
-                chapter: selectedApplication.fullData.chapter || "Tagum Chapter",
+                chapter: selectedApplication.fullData.chapter || orgConfig.chapterName,
                 membershipType: "Regular",
                 contactNumber: selectedApplication.fullData.phone || selectedApplication.phone || "",
               });
@@ -2466,7 +2467,7 @@ function ApplicationPanel({
         role: accountData.role,
         position: accountData.position,
         committee: accountData.committee,
-        chapter: data.chapter || "Tagum Chapter",
+        chapter: data.chapter || orgConfig.chapterName,
         membershipType: "Regular",
         contactNumber: data.phone || application.phone || "",
       });
@@ -2532,7 +2533,7 @@ function ApplicationPanel({
 
               <div className="flex-1 min-w-0">
                 <h2
-                  className="mb-2 text-2xl sm:text-3xl break-words"
+                  className="mb-2 text-2xl sm:text-3xl wrap-break-word"
                   style={{
                     fontFamily: DESIGN_TOKENS.typography.fontFamily.headings,
                     fontWeight: DESIGN_TOKENS.typography.fontWeight.bold,

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
+import { orgConfig } from "../config/org.config";
 
 // Loading step status types
 type StepStatus = "pending" | "loading" | "success" | "error";
@@ -27,7 +28,7 @@ interface LoadingScreenProps {
 const LOADING_PHRASES = [
   "Initiating secure connection...",
   "Preparing the portal...",
-  "Syncing Tagum Chapter data...",
+  `Syncing ${orgConfig.chapterName} data...`,
   "Loading visual resources...",
   "Configuring dashboard...",
   "Organizing projects and events...",
@@ -159,12 +160,12 @@ export default function LoadingScreen({
                letterSpacing: "-0.02em",
              }}
            >
-              Youth Service Philippines
+              {orgConfig.orgName}
            </h1>
            <div className="flex items-center justify-center gap-2 md:gap-3">
              <div className={`h-px w-8 sm:w-12 md:w-16 bg-linear-to-r from-transparent ${isDark ? "to-[#ee8724]/60" : "to-[#ee8724]/40"}`} />
              <p className="text-[10px] sm:text-xs md:text-sm tracking-[0.2em] font-bold uppercase text-[#ee8724] transition-all duration-300">
-                Tagum Chapter
+               {orgConfig.chapterName}
              </p>
              <div className={`h-px w-8 sm:w-12 md:w-16 bg-linear-to-l from-transparent ${isDark ? "to-[#ee8724]/60" : "to-[#ee8724]/40"}`} />
            </div>

@@ -5,6 +5,7 @@ import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { useState, useEffect } from "react";
 import { CustomToast } from "./CustomToast";
 import { MaintenanceLoginModal } from "./MaintenanceLoginModal";
+import { orgConfig } from "../config/org.config";
 
 interface MaintenanceScreenProps {
   message?: string;
@@ -17,6 +18,11 @@ interface MaintenanceScreenProps {
   reason?: string;
   onMaintenanceLogin?: (email: string, password: string) => void;
 }
+
+const ORG_NAME = orgConfig.orgName;
+const ORG_CHAPTER = orgConfig.chapterName;
+const ORG_FULL_NAME = orgConfig.fullName;
+const ORG_CONTACT_EMAIL = orgConfig.contactEmail;
 
 export default function MaintenanceScreen({
   message,
@@ -214,7 +220,7 @@ export default function MaintenanceScreen({
                         whiteSpace: "nowrap",
                       }}
                     >
-                      Youth Service Philippines
+                      {ORG_NAME}
                     </h2>
                     <p
                       style={{
@@ -225,7 +231,7 @@ export default function MaintenanceScreen({
                         color: DESIGN_TOKENS.colors.brand.orange,
                       }}
                     >
-                      Tagum Chapter
+                      {ORG_CHAPTER}
                     </p>
                   </div>
                 </div>
@@ -295,7 +301,7 @@ export default function MaintenanceScreen({
                       fontWeight: DESIGN_TOKENS.typography.fontWeight.medium,
                     }}
                   >
-                    © 2026 Youth Service Philippines - Tagum Chapter. All rights reserved.
+                    © 2026 {ORG_FULL_NAME}. All rights reserved.
                   </p>
                 </div>
               </div>
@@ -693,7 +699,7 @@ export default function MaintenanceScreen({
                                 color: isDark ? "#9ca3af" : "#6b7280",
                               }}
                             >
-                              © 2026 Youth Service Philippines - Tagum Chapter. All rights reserved.
+                              © 2026 {ORG_FULL_NAME}. All rights reserved.
                             </p>
                           </div>
                         </div>
@@ -797,7 +803,7 @@ export default function MaintenanceScreen({
                   color: DESIGN_TOKENS.colors.brand.red,
                 }}
               >
-                Youth Service Philippines
+                {ORG_NAME}
               </h2>
               <p
                 style={{
@@ -808,7 +814,7 @@ export default function MaintenanceScreen({
                   color: DESIGN_TOKENS.colors.brand.orange,
                 }}
               >
-                Tagum Chapter
+                {ORG_CHAPTER}
               </p>
             </div>
           </div>
@@ -907,11 +913,11 @@ export default function MaintenanceScreen({
               
               {/* FIXED: Updated mail link with +maintenance tag - properly encoded */}
               <a
-                href="mailto:ysptagumchapter%2Bmaintenance@gmail.com"
+                href={`mailto:${encodeURIComponent(ORG_CONTACT_EMAIL)}`}
                 onClick={(e) => {
                   e.preventDefault();
-                  console.warn('[Email Debug] MaintenanceScreen email clicked: ysptagumchapter+maintenance@gmail.com');
-                  openEmailApp('ysptagumchapter+maintenance@gmail.com');
+                  console.warn(`[Email Debug] MaintenanceScreen email clicked: ${ORG_CONTACT_EMAIL}`);
+                  openEmailApp(ORG_CONTACT_EMAIL);
                 }}
                 className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110 active:scale-95 shadow-md"
                 style={{

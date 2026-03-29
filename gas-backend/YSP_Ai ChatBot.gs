@@ -37,6 +37,120 @@ const CHATBOT_CONFIG = {
 };
 
 var CHATBOT_RUNTIME_TRACE_ = null;
+const CHATBOT_BRANDING_CACHE_KEY = 'chatbot_org_branding_v1';
+const CHATBOT_BRANDING_CACHE_TTL_SECONDS = 1800;
+const CHATBOT_BRANDING_SHEET_NAME = 'Organization Branding';
+const CHATBOT_BRANDING_DEFAULTS = {
+  orgName: 'Youth Service Philippines',
+  chapterName: 'Tagum Chapter',
+  shortName: 'YSP Tagum'
+};
+
+function normalizeChatbotBranding_(raw) {
+  var props = PropertiesService.getScriptProperties();
+  var branding = raw || {};
+  var orgName = String(branding.orgName || props.getProperty('ORG_NAME') || CHATBOT_BRANDING_DEFAULTS.orgName).trim();
+  var chapterName = String(branding.chapterName || props.getProperty('ORG_CHAPTER_NAME') || CHATBOT_BRANDING_DEFAULTS.chapterName).trim();
+  var shortName = String(branding.shortName || props.getProperty('ORG_SHORT_NAME') || CHATBOT_BRANDING_DEFAULTS.shortName).trim();
+
+  if (!orgName) orgName = CHATBOT_BRANDING_DEFAULTS.orgName;
+  if (!chapterName) chapterName = CHATBOT_BRANDING_DEFAULTS.chapterName;
+  if (!shortName) shortName = CHATBOT_BRANDING_DEFAULTS.shortName;
+
+  return {
+    orgName: orgName,
+    chapterName: chapterName,
+    shortName: shortName,
+    fullName: orgName + ' - ' + chapterName
+  };
+}
+
+function getChatbotBrandingFromSheet_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var settingsId = String(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '').trim();
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName(CHATBOT_BRANDING_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var keyIdx = headers.indexOf('ConfigKey');
+    var valueIdx = headers.indexOf('Value');
+    if (keyIdx === -1 || valueIdx === -1) return null;
+
+    var rowMap = {};
+    for (var i = 1; i < values.length; i++) {
+      var key = String(values[i][keyIdx] || '').trim();
+      if (!key) continue;
+      rowMap[key] = String(values[i][valueIdx] || '').trim();
+    }
+
+    return {
+      orgName: rowMap.orgName || '',
+      chapterName: rowMap.chapterName || '',
+      shortName: rowMap.shortName || ''
+    };
+  } catch (sheetReadError) {
+    Logger.log('Chatbot branding sheet fallback read error: ' + sheetReadError);
+    return null;
+  }
+}
+
+function getChatbotOrgBranding_() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var cachedRaw = cache.get(CHATBOT_BRANDING_CACHE_KEY);
+    if (cachedRaw) {
+      return normalizeChatbotBranding_(JSON.parse(cachedRaw));
+    }
+  } catch (cacheReadError) {
+    Logger.log('Chatbot branding cache read error: ' + cacheReadError);
+  }
+
+  var branding = normalizeChatbotBranding_({});
+  var resolvedFromEndpoint = false;
+
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var endpoint = String(props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL') || '').trim();
+    if (endpoint) {
+      var response = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'getOrgBranding' }),
+        muteHttpExceptions: true
+      });
+      var code = response.getResponseCode();
+      if (code >= 200 && code < 300) {
+        var parsed = JSON.parse(response.getContentText() || '{}');
+        if (parsed && parsed.success === true && parsed.data) {
+          branding = normalizeChatbotBranding_(parsed.data);
+          resolvedFromEndpoint = true;
+        }
+      }
+    }
+  } catch (fetchError) {
+    Logger.log('Chatbot branding fetch error: ' + fetchError);
+  }
+
+  if (!resolvedFromEndpoint) {
+    var sheetBranding = getChatbotBrandingFromSheet_();
+    if (sheetBranding) {
+      branding = normalizeChatbotBranding_(sheetBranding);
+    }
+  }
+
+  try {
+    cache.put(CHATBOT_BRANDING_CACHE_KEY, JSON.stringify(branding), CHATBOT_BRANDING_CACHE_TTL_SECONDS);
+  } catch (cacheWriteError) {
+    Logger.log('Chatbot branding cache write error: ' + cacheWriteError);
+  }
+
+  return branding;
+}
 
 function doPost(e) {
   try {
@@ -1549,12 +1663,14 @@ function callGemini(msg, context, requestContext, history) {
   var approvedHit = lookupApprovedUnknownAnswer_(msg, requestContext.currentPage);
   if (approvedHit) return approvedHit;
 
+  var orgBranding = getChatbotOrgBranding_();
+  var orgPortalName = orgBranding.fullName + ' Portal';
   var promptContext = buildContextBlockForPrompt_(requestContext, history, { answer: approvedHit });
   var contextText = context ? '\nExtra Context:\n' + context : '';
   var payload = {
     "system_instruction": {
       "parts": [{ "text": `
-      You are YSP-Bot, the official AI assistant for the Youth Service Philippines (YSP) Tagum Chapter Portal.
+      You are YSP-Bot, the official AI assistant for the ${orgPortalName}.
       CONTEXT: You are a floating chat bubble inside the student leader WebApp.
       TONE: Professional, encouraging, concise. Use "We".
       INFO: Membership Officer is Ezequiel John B. Crisostomo. Apply in 'Membership' tab. Attendance in 'Events' tab.

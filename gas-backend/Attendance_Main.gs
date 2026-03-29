@@ -1,11 +1,11 @@
 /**
  * =====================================================
- * YSP TAGUM - ATTENDANCE RECORDING SYSTEM
+ * YSP - ATTENDANCE RECORDING SYSTEM
  * Google Apps Script Backend
  * =====================================================
  * 
  * This script handles all attendance recording operations
- * for the YSP Tagum WebApp including:
+ * for the YSP WebApp including:
  * - Time In / Time Out recording
  * - Geofence validation
  * - Attendance history lookup
@@ -14,7 +14,7 @@
  * USES SAME SPREADSHEET AS Attendance_Events.gs
  * Sheet: EventAttendance
  * 
- * @author YSP Tagum Development Team
+ * @author YSP Development Team
  * @version 1.0.0
  * @lastUpdated 2026-01-10
  */

@@ -1,10 +1,11 @@
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import type { ComponentType } from "react";
 import { toast } from "sonner";
 import { registerSW } from "virtual:pwa-register";
 import { HelmetProvider } from "react-helmet-async"; // <--- Imported here
 import ErrorBoundary from "./components/ErrorBoundary";
-import App from "./App.tsx";
+import { hydrateOrgConfigFromBackend } from "./config/org.config";
 import { clearAppBadge } from "./utils/appBadge";
 import { validateEnv } from "./utils/validateEnv";
 import "./index.css";
@@ -25,24 +26,45 @@ if (import.meta.env.PROD) {
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("Root element not found");
 
-createRoot(rootEl).render(
-  <ErrorBoundary>
-    <HelmetProvider>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </HelmetProvider>
-  </ErrorBoundary>
-);
-
-// Hide the static boot splash once React has painted.
-requestAnimationFrame(() => {
+function hideBootSplash() {
   requestAnimationFrame(() => {
-    const splash = document.getElementById("boot-splash");
-    if (!splash) return;
-    splash.classList.add("hidden");
-    setTimeout(() => splash.remove(), 260);
+    requestAnimationFrame(() => {
+      const splash = document.getElementById("boot-splash");
+      if (!splash) return;
+      splash.classList.add("hidden");
+      setTimeout(() => splash.remove(), 260);
+    });
   });
+}
+
+function renderApp(App: ComponentType) {
+
+  createRoot(rootEl).render(
+    <ErrorBoundary>
+      <HelmetProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </HelmetProvider>
+    </ErrorBoundary>
+  );
+
+  hideBootSplash();
+}
+
+async function bootstrapApp() {
+  try {
+    await hydrateOrgConfigFromBackend();
+  } catch (error) {
+    console.error("Branding bootstrap failed, using fallback values:", error);
+  }
+
+  const { default: App } = await import("./App.tsx");
+  renderApp(App);
+}
+
+bootstrapApp().catch((error) => {
+  console.error("App bootstrap failed:", error);
 });
 
 let updateToastId: string | number | undefined;

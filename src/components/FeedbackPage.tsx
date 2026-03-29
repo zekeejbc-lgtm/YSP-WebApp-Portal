@@ -7,13 +7,14 @@ import Breadcrumb from './design-system/Breadcrumb';
 import { DESIGN_TOKENS } from './design-system';
 import { logCreate, logEdit, logDelete } from "../services/gasSystemToolsService";
 import { getFeedbacks, createFeedback, updateFeedback, deleteFeedback, uploadFeedbackImage, Feedback, FeedbackAPIError, FeedbackErrorCodes } from '../services/gasFeedbackService';
+import { orgConfig } from '../config/org.config';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { loadExcelJS, loadPdfTools } from '../utils/exportLoaders';
 
 // Organization details for export
-const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
-const ORG_NAME = "Youth Service Philippines";
-const ORG_CHAPTER = "Tagum Chapter";
+const ORG_LOGO_URL = orgConfig.logoUrl;
+const ORG_NAME = orgConfig.orgName;
+const ORG_CHAPTER = orgConfig.chapterName;
 
 // Upload toast message interface
 interface UploadToastMessage {
@@ -637,7 +638,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 15;
     const generatedTimestamp = new Date().toLocaleString();
-    const orgMotto = "Shaping the Future to a Greater Society";
+    const orgMotto = orgConfig.motto;
 
     // 1. Filter Data based on Export Settings
     const startDate = new Date(exportOptions.dateRange.start);
@@ -675,7 +676,7 @@ export default function FeedbackPage({ onClose, isAdmin, isDark, userRole = 'gue
       doc.setFontSize(7);
       doc.setTextColor(100, 100, 100);
       doc.setFont('helvetica', 'normal');
-      doc.text('Youth Service Philippines - Tagum Chapter', margin, pageHeight - 10);
+      doc.text(`${ORG_NAME} - ${ORG_CHAPTER}`, margin, pageHeight - 10);
       doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
       
       doc.setFontSize(7);

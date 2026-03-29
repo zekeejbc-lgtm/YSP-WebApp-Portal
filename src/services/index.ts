@@ -157,6 +157,7 @@ export {
 
 // System Tools GAS Service
 export {
+  getOrgBrandingFromBackend,
   getSystemHealth,
   createDatabaseBackup,
   exportData,
@@ -177,6 +178,7 @@ export {
   AVAILABLE_PAGES_BACKEND,
   SystemToolsErrorCodes,
   SystemToolsAPIError,
+  type OrgBrandingConfig,
   type SystemHealthData,
   type BackupResult,
   type ExportResult,

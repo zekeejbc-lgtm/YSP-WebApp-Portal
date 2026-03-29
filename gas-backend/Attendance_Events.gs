@@ -1,11 +1,11 @@
 /**
  * =====================================================
- * YSP TAGUM - EVENTS MANAGEMENT SYSTEM
+ * YSP - EVENTS MANAGEMENT SYSTEM
  * Google Apps Script Backend
  * =====================================================
  * 
  * This script handles all event management operations
- * for the YSP Tagum WebApp including:
+ * for the YSP WebApp including:
  * - Event CRUD operations with geofencing support
  * - Event attendance tracking
  * - Sheet initialization
@@ -15,7 +15,7 @@
  * - EventAttendance: Attendance records per event
  * - EventSettings: Configuration settings
  * 
- * @author YSP Tagum Development Team
+ * @author YSP Development Team
  * @version 1.1.0
  * @lastUpdated 2026-01-10
  */
@@ -38,6 +38,105 @@ function getEventsSpreadsheetId() {
  */
 function setEventsSpreadsheetId(spreadsheetId) {
   PropertiesService.getScriptProperties().setProperty('EVENTS_SPREADSHEET_ID', spreadsheetId);
+}
+
+const EVENTS_BRANDING_DEFAULTS = {
+  shortName: 'YSP Tagum',
+  chapterName: 'Tagum Chapter'
+};
+const EVENTS_BRANDING_SHEET_NAME = 'Organization Branding';
+
+function normalizeEventsBranding_(raw) {
+  var props = PropertiesService.getScriptProperties();
+  var branding = raw || {};
+
+  var shortName = sanitizeEventsParam_(
+    branding.shortName || props.getProperty('ORG_SHORT_NAME') || EVENTS_BRANDING_DEFAULTS.shortName,
+    120
+  );
+  var chapterName = sanitizeEventsParam_(
+    branding.chapterName || props.getProperty('ORG_CHAPTER_NAME') || EVENTS_BRANDING_DEFAULTS.chapterName,
+    120
+  );
+
+  return {
+    shortName: shortName || EVENTS_BRANDING_DEFAULTS.shortName,
+    chapterName: chapterName || EVENTS_BRANDING_DEFAULTS.chapterName
+  };
+}
+
+function getEventsBrandingFromSheet_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var settingsId = sanitizeEventsParam_(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID'), 120);
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName(EVENTS_BRANDING_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var keyIdx = headers.indexOf('ConfigKey');
+    var valueIdx = headers.indexOf('Value');
+    if (keyIdx === -1 || valueIdx === -1) return null;
+
+    var rowMap = {};
+    for (var i = 1; i < values.length; i++) {
+      var key = sanitizeEventsParam_(values[i][keyIdx], 120);
+      if (!key) continue;
+      rowMap[key] = sanitizeEventsParam_(values[i][valueIdx], 500);
+    }
+
+    return {
+      shortName: rowMap.shortName || '',
+      chapterName: rowMap.chapterName || ''
+    };
+  } catch (sheetReadError) {
+    Logger.log('Events branding sheet fallback read failed: ' + sheetReadError.toString());
+    return null;
+  }
+}
+
+function getEventsOrgBranding_() {
+  var branding = normalizeEventsBranding_({});
+  var resolvedFromEndpoint = false;
+
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var endpoint = sanitizeEventsParam_(
+      props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL'),
+      500
+    );
+
+    if (endpoint) {
+      var response = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'getOrgBranding' }),
+        muteHttpExceptions: true
+      });
+
+      if (response.getResponseCode() >= 200 && response.getResponseCode() < 300) {
+        var parsed = JSON.parse(response.getContentText() || '{}');
+        if (parsed && parsed.success === true && parsed.data) {
+          branding = normalizeEventsBranding_(parsed.data);
+          resolvedFromEndpoint = true;
+        }
+      }
+    }
+  } catch (error) {
+    Logger.log('Events branding fetch failed: ' + error.toString());
+  }
+
+  if (!resolvedFromEndpoint) {
+    var sheetBranding = getEventsBrandingFromSheet_();
+    if (sheetBranding) {
+      branding = normalizeEventsBranding_(sheetBranding);
+    }
+  }
+
+  return branding;
 }
 
 // =====================================================
@@ -510,10 +609,11 @@ function initializeEventSheets() {
   try {
     let spreadsheetId = getEventsSpreadsheetId();
     let ss;
+    var orgBranding = getEventsOrgBranding_();
     
     // Create new spreadsheet if ID not set
     if (!spreadsheetId) {
-      ss = SpreadsheetApp.create('YSP Tagum - Events Management');
+      ss = SpreadsheetApp.create(orgBranding.shortName + ' - Events Management');
       spreadsheetId = ss.getId();
       setEventsSpreadsheetId(spreadsheetId);
       Logger.log('Created new Events spreadsheet with ID: ' + spreadsheetId);
@@ -992,7 +1092,7 @@ function getEventById(eventId) {
 
 /**
  * Generate a unique Event ID in format: YSPTCEV-yyyy-xxxx
- * YSPTCEV = YSP Tagum City Events
+ * YSPTCEV = chapter event prefix
  * yyyy = current year
  * xxxx = random alphanumeric
  */

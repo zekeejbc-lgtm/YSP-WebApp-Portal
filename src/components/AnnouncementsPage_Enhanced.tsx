@@ -78,6 +78,7 @@ import {
 } from "../services/gasAnnouncementsService";
 import { getAllOfficers, type DirectoryOfficer } from "../services/gasDirectoryService";
 import type { UploadToastMessage } from "./UploadToast";
+import { orgConfig } from "../config/org.config";
 
 /* ─────────────────────────────── types ─────────────────────────────── */
 
@@ -2839,7 +2840,7 @@ export default function AnnouncementsPageEnhanced({
                     <input
                       className="w-full px-3 border transition-colors focus:outline-none focus:ring-2"
                       style={inputStyle(isDark)}
-                      placeholder="e.g. YSP Tagum Office, Zoom Meeting"
+                      placeholder={`e.g. ${orgConfig.shortName} Office, Zoom Meeting`}
                       value={emailOptions.eventLocation}
                       onChange={(e) =>
                         setEmailOptions((p) => ({ ...p, eventLocation: e.target.value }))
@@ -3091,8 +3092,8 @@ export default function AnnouncementsPageEnhanced({
                     className="mx-auto rounded-full"
                     style={{ width: 52, height: 52, background: "#fff", padding: 2, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}
                   />
-                  <div className="text-white font-bold text-base sm:text-lg mt-2 tracking-tight">Youth Service Philippines</div>
-                  <div className="text-xs sm:text-sm mt-0.5" style={{ color: "#ffe7cc" }}>Tagum Chapter</div>
+                  <div className="text-white font-bold text-base sm:text-lg mt-2 tracking-tight">{orgConfig.orgName}</div>
+                  <div className="text-xs sm:text-sm mt-0.5" style={{ color: "#ffe7cc" }}>{orgConfig.chapterName}</div>
                 </div>
 
                 {/* ─── Email Header: From / To / Date ─── */}
@@ -3107,7 +3108,7 @@ export default function AnnouncementsPageEnhanced({
                     <span className="font-semibold shrink-0" style={{ opacity: 0.5, minWidth: 40 }}>From:</span>
                     <span className="font-medium">
                       {viewing.recipientPayload?.emailOptions?.hideAuthor
-                        ? "Youth Service Philippines Tagum Chapter"
+                        ? orgConfig.fullName
                         : (viewing.createdByFullName || viewing.createdBy)}
                     </span>
                   </div>
@@ -3406,7 +3407,7 @@ export default function AnnouncementsPageEnhanced({
                   }}
                 >
                   <div className="text-[11px] sm:text-xs font-semibold" style={{ opacity: 0.5 }}>
-                    Youth Service Philippines &bull; Tagum Chapter
+                    {orgConfig.orgName} &bull; {orgConfig.chapterName}
                   </div>
                   <div className="text-[10px] sm:text-[11px] mt-0.5" style={{ opacity: 0.35 }}>
                     Announcement ID: {viewing.announcementId}

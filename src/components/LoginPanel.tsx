@@ -3,6 +3,7 @@ import { X, Lock, User, Eye, EyeOff, LogIn, AlertCircle, ShieldCheck } from 'luc
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { secureGetItem, secureRemoveItem } from '../utils/secureStorage';
 import ForgotPasswordModal from './ForgotPasswordModal';
+import { orgConfig } from '../config/org.config';
 
 interface LoginPanelProps {
   isOpen: boolean;
@@ -294,7 +295,7 @@ export default function LoginPanel({
               Welcome Back!
             </h2>
             <p className="text-gray-600 text-xs sm:text-sm" style={{ fontWeight: '500' }}>
-              Youth Service Philippines Tagum Chapter
+              {orgConfig.fullName}
             </p>
           </div>
 

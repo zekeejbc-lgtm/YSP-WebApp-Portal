@@ -2,25 +2,33 @@
   const DIR_SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
   const SOURCE_SHEET_NAME = 'User Profiles';
   const TARGET_SHEET_NAME = 'Directory';
+  const CHAPTER_NAME = String(PropertiesService.getScriptProperties().getProperty('ORG_CHAPTER_NAME') || 'Tagum Chapter').trim() || 'Tagum Chapter';
+  const CHAPTER_PRESIDENT_POSITION = CHAPTER_NAME + ' President';
+
+  const POSITION_RANK_BASE = [
+    CHAPTER_PRESIDENT_POSITION,
+    'Membership and Internal Affairs Officer',            // 2
+    'External Relations Officer',                         // 3
+    'Secretary and Documentation Officer',                // 4
+    'Finance and Treasury Officer',                       // 5
+    'Communications and Marketing Officer',               // 6
+    'Program Development Officer',                        // 7
+    'Committee Member: Membership and Internal Affairs',  // 8
+    'Committee Member: External Relations',               // 9
+    'Committee Member: Secretariat and Documentation',    // 10
+    'Committee Member: Finance and Treasury',             // 11
+    'Committee Member: Program Development',              // 12
+    'Committee Member: Communications and Marketing',     // 13
+    'Volunteer Member',                                   // 14
+    'Member'                                              // 15
+  ];
+
+  if (CHAPTER_PRESIDENT_POSITION !== 'Tagum Chapter President') {
+    POSITION_RANK_BASE.push('Tagum Chapter President');
+  }
 
   // =================== HIERARCHY RANKING ===================
-  const POSITION_RANK = [
-    "Tagum Chapter President",                            // 1
-    "Membership and Internal Affairs Officer",            // 2
-    "External Relations Officer",                         // 3
-    "Secretary and Documentation Officer",                // 4
-    "Finance and Treasury Officer",                       // 5
-    "Communications and Marketing Officer",               // 6
-    "Program Development Officer",                        // 7
-    "Committee Member: Membership and Internal Affairs",  // 8
-    "Committee Member: External Relations",               // 9
-    "Committee Member: Secretariat and Documentation",    // 10
-    "Committee Member: Finance and Treasury",             // 11
-    "Committee Member: Program Development",              // 12
-    "Committee Member: Communications and Marketing",     // 13
-    "Volunteer Member",                                   // 14
-    "Member"                                              // 15
-  ];
+  const POSITION_RANK = POSITION_RANK_BASE;
 
   // =================== 1. ONE-TIME SETUP FUNCTION ===================
   /**

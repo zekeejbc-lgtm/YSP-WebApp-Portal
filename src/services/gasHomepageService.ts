@@ -26,6 +26,7 @@
 
 import { getSessionToken, getStoredUser } from './gasLoginService';
 import { secureGetItem, secureSetItem } from '../utils/secureStorage';
+import { orgConfig } from '../config/org.config';
 
 /**
  * Get auth payload to include in every POST request.
@@ -274,9 +275,9 @@ export const fetchHomepageContent = async (): Promise<HomepageMainContent> => {
     // Transform GAS response to HomepageMainContent
     const content: HomepageMainContent = {
       hero: {
-        mainHeading: result.data.mainHeading || 'Youth Service Philippines Tagum Portal',
+        mainHeading: result.data.mainHeading || `${orgConfig.shortName} Portal`,
         subHeading: result.data.subHeading || '',
-        tagline: result.data.tagline || 'Shaping the Future to a Greater Society',
+        tagline: result.data.tagline || orgConfig.motto,
         loginButtonText: 'Log In',
         memberButtonText: 'Opportunities!',
       },
@@ -460,23 +461,23 @@ export const clearHomepageCache = (): void => {
 export const getDefaultHomepageContent = (): HomepageMainContent => {
   return {
     hero: {
-      mainHeading: 'Youth Service Philippines Tagum Portal',
+      mainHeading: `${orgConfig.shortName} Portal`,
       subHeading: '',
-      tagline: 'Shaping the Future to a Greater Society',
+      tagline: orgConfig.motto,
       loginButtonText: 'Log In',
       memberButtonText: 'Opportunities!',
     },
     about: {
       title: 'About Us',
-      content: 'Youth Service Philippines - Tagum Chapter is a dynamic organization dedicated to mobilizing Filipino youth to actively participate in nation-building through community service and volunteerism.',
+      content: `${orgConfig.fullName} is a dynamic organization dedicated to mobilizing Filipino youth to actively participate in nation-building through community service and volunteerism.`,
     },
     mission: {
       title: 'Our Mission',
-      content: 'To inspire and empower Filipino youth in Tagum City and Davao del Norte to become active agents of positive change.',
+      content: `To inspire and empower Filipino youth in ${orgConfig.location} to become active agents of positive change.`,
     },
     vision: {
       title: 'Our Vision',
-      content: 'A community where every young person in Tagum City and Davao del Norte is actively engaged in building strong, resilient, and compassionate communities.',
+      content: `A community where every young person in ${orgConfig.location} is actively engaged in building strong, resilient, and compassionate communities.`,
     },
     advocacyPillars: {
       title: 'Our Advocacy Pillars',
@@ -753,16 +754,16 @@ export const getDefaultHomepageOtherContent = (): HomepageOtherContent => {
   return {
     sectionTitle: 'Get in Touch',
     orgChartUrl: '',
-    orgEmail: 'YSPTagumChapter@gmail.com',
+    orgEmail: orgConfig.contactEmail,
     orgPhone: '+63 917 123 4567',
-    orgLocation: 'Tagum City, Davao del Norte, Philippines',
-    orgGoogleMapUrl: 'https://maps.google.com/?q=Tagum+City,Davao+del+Norte,Philippines',
+    orgLocation: orgConfig.location,
+    orgGoogleMapUrl: `https://maps.google.com/?q=${encodeURIComponent(orgConfig.location)}`,
     partnerTitle: '🤝 Become Our Partner',
     partnerDescription: 'Join us in making a difference in our community. Partner with YSP and help us create lasting impact through collaborative projects.',
     partnerButtonText: 'Partner with Us',
     partnerGformUrl: '',
     socialLinks: [
-      { id: 1, url: 'https://www.facebook.com/YSPTagumChapter', displayName: 'YSP Tagum Chapter' },
+      { id: 1, url: 'https://www.facebook.com/YSPTagumChapter', displayName: orgConfig.fullName },
     ],
   };
 };

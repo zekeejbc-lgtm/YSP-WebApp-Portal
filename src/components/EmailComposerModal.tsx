@@ -20,6 +20,7 @@ import { X, Mail, Send, FileText, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button, DESIGN_TOKENS } from "./design-system";
 import { getModalStyles } from "./modal-regulations";
+import { orgConfig } from "../config/org.config";
 
 interface EmailComposerModalProps {
   isOpen: boolean;
@@ -46,23 +47,23 @@ export default function EmailComposerModal({
   const emailTemplates = [
     {
       name: "Welcome Message",
-      subject: "Welcome to YSP Tagum Chapter!",
-      body: `Dear ${recipientName || "[Name]"},\n\nWelcome to Youth Service Philippines - Tagum Chapter! We're thrilled to have you join our community of passionate youth leaders.\n\nYour journey with us begins now. We look forward to working with you on various community projects and initiatives.\n\nBest regards,\nYSP Tagum Chapter`,
+      subject: `Welcome to ${orgConfig.shortName}!`,
+      body: `Dear ${recipientName || "[Name]"},\n\nWelcome to ${orgConfig.fullName}! We're thrilled to have you join our community of passionate youth leaders.\n\nYour journey with us begins now. We look forward to working with you on various community projects and initiatives.\n\nBest regards,\n${orgConfig.shortName}`,
     },
     {
       name: "Follow-up Request",
       subject: "Additional Information Required - YSP Application",
-      body: `Dear ${recipientName || "[Name]"},\n\nThank you for your application to YSP Tagum Chapter. We need some additional information to complete your application review.\n\nPlease provide:\n- [Specify required documents/information]\n\nKindly respond to this email at your earliest convenience.\n\nBest regards,\nYSP Tagum Chapter`,
+      body: `Dear ${recipientName || "[Name]"},\n\nThank you for your application to ${orgConfig.shortName}. We need some additional information to complete your application review.\n\nPlease provide:\n- [Specify required documents/information]\n\nKindly respond to this email at your earliest convenience.\n\nBest regards,\n${orgConfig.shortName}`,
     },
     {
       name: "Event Invitation",
       subject: "You're Invited: YSP Community Event",
-      body: `Dear ${recipientName || "[Name]"},\n\nWe're excited to invite you to our upcoming community event!\n\nEvent: [Event Name]\nDate: [Date]\nTime: [Time]\nVenue: [Location]\n\nPlease confirm your attendance by replying to this email.\n\nBest regards,\nYSP Tagum Chapter`,
+      body: `Dear ${recipientName || "[Name]"},\n\nWe're excited to invite you to our upcoming community event!\n\nEvent: [Event Name]\nDate: [Date]\nTime: [Time]\nVenue: [Location]\n\nPlease confirm your attendance by replying to this email.\n\nBest regards,\n${orgConfig.shortName}`,
     },
     {
       name: "General Inquiry",
       subject: "Regarding Your YSP Application",
-      body: `Dear ${recipientName || "[Name]"},\n\n[Your message here]\n\nIf you have any questions, please don't hesitate to reach out.\n\nBest regards,\nYSP Tagum Chapter`,
+      body: `Dear ${recipientName || "[Name]"},\n\n[Your message here]\n\nIf you have any questions, please don't hesitate to reach out.\n\nBest regards,\n${orgConfig.shortName}`,
     },
   ];
 
@@ -286,9 +287,9 @@ export default function EmailComposerModal({
           >
             <p className="text-xs text-muted-foreground mb-1">Email Signature (auto-appended):</p>
             <div className="text-xs text-muted-foreground mt-2 pt-2 border-t" style={{ borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)" }}>
-              <p style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>Youth Service Philippines</p>
-              <p>Tagum Chapter</p>
-              <p>Email: ysp.tagum@ysp.org.ph</p>
+              <p style={{ fontWeight: DESIGN_TOKENS.typography.fontWeight.semibold }}>{orgConfig.orgName}</p>
+              <p>{orgConfig.chapterName}</p>
+              <p>Email: {orgConfig.contactEmail}</p>
               <p>Website: www.ysp.org.ph</p>
             </div>
           </div>

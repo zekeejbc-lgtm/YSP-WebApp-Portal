@@ -23,16 +23,17 @@ import {
 import { Loader2, TrendingUp, PieChartIcon, BarChart3, LineChartIcon, Eye, Settings, FileText, Download, RefreshCw, Users, FileSpreadsheet, ChevronDown, ExternalLink, Smartphone, Search, User, Calendar, Clock, CheckCircle2, AlertCircle, X, ChevronUp, Timer, ToggleLeft, ToggleRight, Trophy, Medal, Award, Sparkles } from "lucide-react";
 import { fetchEventsSafe, EventData } from "../services/gasEventsService";
 import { getEventAttendanceRecords, AttendanceRecord, getMembersForAttendance, MemberForAttendance, getMemberAttendanceHistory } from "../services/gasAttendanceService";
+import { orgConfig } from "../config/org.config";
 import type jsPDF from "jspdf";
 import type { CellHookData } from "jspdf-autotable";
 import { YSP_COMMITTEE_NAMES } from "../constants/committees";
 import { loadExcelJS, loadPdfTools } from "../utils/exportLoaders";
 
 // Organization Logo URL
-const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png";
-const ORG_NAME = "Youth Service Philippines";
-const ORG_CHAPTER = "Tagum Chapter";
-const ORG_MOTTO = "Shaping the Future to a Greater Society";
+const ORG_LOGO_URL = orgConfig.logoUrl;
+const ORG_NAME = orgConfig.orgName;
+const ORG_CHAPTER = orgConfig.chapterName;
+const ORG_MOTTO = orgConfig.motto;
 const PRESENT_STATUSES = new Set(['Present', 'CheckedIn', 'CheckedOut']);
 
 // Extended member type that includes attendance flags for modal display
@@ -1736,7 +1737,7 @@ export default function AttendanceDashboardPage({
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 15;
       const generatedTimestamp = new Date().toLocaleString();
-      const orgMotto = "Shaping the Future to a Greater Society";
+      const orgMotto = ORG_MOTTO;
 
       // Helper function to draw page footer
       const drawFooter = (pageNum: number, totalPages: number) => {
@@ -1747,7 +1748,7 @@ export default function AttendanceDashboardPage({
         doc.setFontSize(7);
         doc.setTextColor(100, 100, 100);
         doc.setFont('helvetica', 'normal');
-        doc.text('Youth Service Philippines - Tagum Chapter', margin, pageHeight - 10);
+        doc.text(`${ORG_NAME} - ${ORG_CHAPTER}`, margin, pageHeight - 10);
         doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
         
         doc.setFontSize(7);
@@ -2174,7 +2175,7 @@ export default function AttendanceDashboardPage({
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 15;
       const generatedTimestamp = new Date().toLocaleString();
-      const orgMotto = "Shaping the Future to a Greater Society";
+      const orgMotto = ORG_MOTTO;
 
       // Helper function to draw page footer
       const drawFooter = (pageNum: number, totalPages: number) => {
@@ -2185,7 +2186,7 @@ export default function AttendanceDashboardPage({
         doc.setFontSize(7);
         doc.setTextColor(100, 100, 100);
         doc.setFont('helvetica', 'normal');
-        doc.text('Youth Service Philippines - Tagum Chapter', margin, pageHeight - 10);
+        doc.text(`${ORG_NAME} - ${ORG_CHAPTER}`, margin, pageHeight - 10);
         doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
         
         // Org motto in center
@@ -5609,7 +5610,7 @@ export default function AttendanceDashboardPage({
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">#{committee.rank}</p>
-                                <p className="font-semibold break-words">{committee.name}</p>
+                                <p className="font-semibold" style={{ overflowWrap: 'anywhere' }}>{committee.name}</p>
                               </div>
                               <div className="text-right shrink-0">
                                 <p className="text-sm font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
@@ -5870,8 +5871,8 @@ export default function AttendanceDashboardPage({
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="text-xs uppercase tracking-wide text-muted-foreground">Rank #{ranked.rank}</p>
-                              <p className="font-semibold break-words">{ranked.member.name}</p>
-                              <p className="text-xs text-muted-foreground break-words">{ranked.member.committee || 'General Members'}</p>
+                              <p className="font-semibold" style={{ overflowWrap: 'anywhere' }}>{ranked.member.name}</p>
+                              <p className="text-xs text-muted-foreground" style={{ overflowWrap: 'anywhere' }}>{ranked.member.committee || 'General Members'}</p>
                             </div>
                             <div className="text-right shrink-0">
                               <p className="text-base font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>
@@ -5939,8 +5940,8 @@ export default function AttendanceDashboardPage({
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0 flex-1">
                                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Rank #{ranked.rank}</p>
-                                  <p className={`${isTop3 ? 'font-semibold' : 'font-medium'} break-words`}>{ranked.member.name}</p>
-                                  <p className="text-xs text-muted-foreground break-words">{ranked.member.committee || 'General Members'}</p>
+                                  <p className={`${isTop3 ? 'font-semibold' : 'font-medium'}`} style={{ overflowWrap: 'anywhere' }}>{ranked.member.name}</p>
+                                  <p className="text-xs text-muted-foreground" style={{ overflowWrap: 'anywhere' }}>{ranked.member.committee || 'General Members'}</p>
                                 </div>
                                 <div className="text-right shrink-0">
                                   <p className="text-base font-bold" style={{ color: DESIGN_TOKENS.colors.brand.orange }}>

@@ -1,6 +1,6 @@
 ﻿/**
  * =====================================================
- * YSP TAGUM - NOTIFICATIONS SYSTEM
+ * YSP - NOTIFICATIONS SYSTEM
  * Google Apps Script Backend
  * =====================================================
  *
@@ -34,6 +34,110 @@ function getNotificationsApiUrl() {
 
 function setNotificationsApiUrl(apiUrl) {
   PropertiesService.getScriptProperties().setProperty('NOTIFICATIONS_API_URL', apiUrl);
+}
+
+const NOTIFICATIONS_BRANDING_DEFAULTS = {
+  shortName: 'YSP Tagum',
+  chapterName: 'Tagum Chapter'
+};
+const NOTIFICATIONS_BRANDING_SHEET_NAME = 'Organization Branding';
+
+function toSafeNotificationsText_(value, fallbackValue, maxLen) {
+  var text = String(value || '').trim();
+  if (!text) text = String(fallbackValue || '').trim();
+  var limit = maxLen || 200;
+  return text.length > limit ? text.substring(0, limit) : text;
+}
+
+function normalizeNotificationsBranding_(raw) {
+  var props = PropertiesService.getScriptProperties();
+  var branding = raw || {};
+  return {
+    shortName: toSafeNotificationsText_(
+      branding.shortName || props.getProperty('ORG_SHORT_NAME') || NOTIFICATIONS_BRANDING_DEFAULTS.shortName,
+      NOTIFICATIONS_BRANDING_DEFAULTS.shortName,
+      120
+    ),
+    chapterName: toSafeNotificationsText_(
+      branding.chapterName || props.getProperty('ORG_CHAPTER_NAME') || NOTIFICATIONS_BRANDING_DEFAULTS.chapterName,
+      NOTIFICATIONS_BRANDING_DEFAULTS.chapterName,
+      120
+    )
+  };
+}
+
+function getNotificationsBrandingFromSheet_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var settingsId = toSafeNotificationsText_(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID'), '', 120);
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName(NOTIFICATIONS_BRANDING_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var keyIdx = headers.indexOf('ConfigKey');
+    var valueIdx = headers.indexOf('Value');
+    if (keyIdx === -1 || valueIdx === -1) return null;
+
+    var rowMap = {};
+    for (var i = 1; i < values.length; i++) {
+      var key = toSafeNotificationsText_(values[i][keyIdx], '', 120);
+      if (!key) continue;
+      rowMap[key] = toSafeNotificationsText_(values[i][valueIdx], '', 500);
+    }
+
+    return {
+      shortName: rowMap.shortName || '',
+      chapterName: rowMap.chapterName || ''
+    };
+  } catch (sheetReadError) {
+    Logger.log('Notifications branding sheet fallback read failed: ' + sheetReadError.toString());
+    return null;
+  }
+}
+
+function getNotificationsOrgBranding_() {
+  var branding = normalizeNotificationsBranding_({});
+  var resolvedFromEndpoint = false;
+
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var endpoint = toSafeNotificationsText_(
+      props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL'),
+      '',
+      500
+    );
+
+    if (endpoint) {
+      var response = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'getOrgBranding' }),
+        muteHttpExceptions: true
+      });
+      if (response.getResponseCode() >= 200 && response.getResponseCode() < 300) {
+        var parsed = JSON.parse(response.getContentText() || '{}');
+        if (parsed && parsed.success === true && parsed.data) {
+          branding = normalizeNotificationsBranding_(parsed.data);
+          resolvedFromEndpoint = true;
+        }
+      }
+    }
+  } catch (error) {
+    Logger.log('Notifications branding fetch failed: ' + error.toString());
+  }
+
+  if (!resolvedFromEndpoint) {
+    var sheetBranding = getNotificationsBrandingFromSheet_();
+    if (sheetBranding) {
+      branding = normalizeNotificationsBranding_(sheetBranding);
+    }
+  }
+
+  return branding;
 }
 
 // =====================================================
@@ -322,9 +426,10 @@ function initializeNotificationSheets() {
   try {
     let spreadsheetId = getNotificationsSpreadsheetId();
     let ss;
+    var orgBranding = getNotificationsOrgBranding_();
 
     if (!spreadsheetId) {
-      ss = SpreadsheetApp.create('YSP Tagum - Notifications');
+      ss = SpreadsheetApp.create(orgBranding.shortName + ' - Notifications');
       spreadsheetId = ss.getId();
       setNotificationsSpreadsheetId(spreadsheetId);
     } else {

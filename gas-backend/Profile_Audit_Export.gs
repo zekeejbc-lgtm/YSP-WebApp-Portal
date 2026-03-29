@@ -2,24 +2,147 @@
 const AUDIT_SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('LOGIN_SPREADSHEET_ID') || '';
 const AUDIT_SHEET_NAME = 'User Profiles';
 const ORG_LOGO_URL = "https://i.imgur.com/J4wddTW.png"; 
+const PROFILE_AUDIT_BRANDING_CACHE_KEY = 'profile_audit_org_branding_v1';
+const PROFILE_AUDIT_BRANDING_CACHE_TTL_SECONDS = 1800;
+const PROFILE_AUDIT_BRANDING_SHEET_NAME = 'Organization Branding';
+const PROFILE_AUDIT_BRANDING_DEFAULTS = {
+  orgName: 'Youth Service Philippines',
+  chapterName: 'Tagum Chapter',
+  shortName: 'YSP Tagum',
+  motto: 'Shaping the Future to a Greater Society',
+  chapterCode: 'TC',
+  location: 'Tagum City, Davao del Norte, Philippines',
+  contactEmail: 'ysptagumchapter@gmail.com',
+  logoUrl: ORG_LOGO_URL,
+  themeColor: '#f6421f'
+};
+
+function normalizeAuditBranding_(raw) {
+  var merged = Object.assign({}, PROFILE_AUDIT_BRANDING_DEFAULTS, raw || {});
+  merged.orgName = String(merged.orgName || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.orgName;
+  merged.chapterName = String(merged.chapterName || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.chapterName;
+  merged.shortName = String(merged.shortName || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.shortName;
+  merged.motto = String(merged.motto || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.motto;
+  merged.chapterCode = String(merged.chapterCode || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.chapterCode;
+  merged.location = String(merged.location || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.location;
+  merged.contactEmail = String(merged.contactEmail || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.contactEmail;
+  merged.logoUrl = String(merged.logoUrl || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.logoUrl;
+  merged.themeColor = String(merged.themeColor || '').trim() || PROFILE_AUDIT_BRANDING_DEFAULTS.themeColor;
+  merged.fullName = merged.orgName + ' - ' + merged.chapterName;
+  return merged;
+}
+
+function getAuditBrandingFromSheet_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var settingsId = String(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '').trim();
+    if (!settingsId) return null;
+
+    var ss = SpreadsheetApp.openById(settingsId);
+    var sheet = ss.getSheetByName(PROFILE_AUDIT_BRANDING_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0] || [];
+    var keyIdx = headers.indexOf('ConfigKey');
+    var valueIdx = headers.indexOf('Value');
+    if (keyIdx === -1 || valueIdx === -1) return null;
+
+    var rowMap = {};
+    for (var i = 1; i < values.length; i++) {
+      var key = String(values[i][keyIdx] || '').trim();
+      if (!key) continue;
+      rowMap[key] = String(values[i][valueIdx] || '').trim();
+    }
+
+    return {
+      orgName: rowMap.orgName || '',
+      chapterName: rowMap.chapterName || '',
+      shortName: rowMap.shortName || '',
+      motto: rowMap.motto || '',
+      chapterCode: rowMap.chapterCode || '',
+      location: rowMap.location || '',
+      contactEmail: rowMap.contactEmail || '',
+      logoUrl: rowMap.logoUrl || '',
+      themeColor: rowMap.themeColor || ''
+    };
+  } catch (sheetReadError) {
+    Logger.log('Profile audit branding sheet fallback read error: ' + sheetReadError);
+    return null;
+  }
+}
+
+function getAuditOrgBranding_() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var cachedRaw = cache.get(PROFILE_AUDIT_BRANDING_CACHE_KEY);
+    if (cachedRaw) {
+      return normalizeAuditBranding_(JSON.parse(cachedRaw));
+    }
+  } catch (cacheReadError) {
+    Logger.log('Profile audit branding cache read error: ' + cacheReadError);
+  }
+
+  var branding = normalizeAuditBranding_({});
+  var resolvedFromEndpoint = false;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var endpoint = String(props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL') || '').trim();
+    if (endpoint) {
+      var response = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ action: 'getOrgBranding' }),
+        muteHttpExceptions: true
+      });
+      var code = response.getResponseCode();
+      if (code >= 200 && code < 300) {
+        var parsed = JSON.parse(response.getContentText() || '{}');
+        if (parsed && parsed.success === true && parsed.data) {
+          branding = normalizeAuditBranding_(parsed.data);
+          resolvedFromEndpoint = true;
+        }
+      }
+    }
+  } catch (fetchError) {
+    Logger.log('Profile audit branding fetch error: ' + fetchError);
+  }
+
+  if (!resolvedFromEndpoint) {
+    var sheetBranding = getAuditBrandingFromSheet_();
+    if (sheetBranding) {
+      branding = normalizeAuditBranding_(sheetBranding);
+    }
+  }
+
+  try {
+    cache.put(PROFILE_AUDIT_BRANDING_CACHE_KEY, JSON.stringify(branding), PROFILE_AUDIT_BRANDING_CACHE_TTL_SECONDS);
+  } catch (cacheWriteError) {
+    Logger.log('Profile audit branding cache write error: ' + cacheWriteError);
+  }
+
+  return branding;
+}
 
 // =================== MAIN FUNCTION ===================
 
 function generateProfileAuditPDF() {
+  const orgBranding = getAuditOrgBranding_();
   const data = getAuditData();
   
   let logoBase64 = "";
   try {
-    const imageBlob = UrlFetchApp.fetch(ORG_LOGO_URL).getBlob();
+    const imageBlob = UrlFetchApp.fetch(orgBranding.logoUrl).getBlob();
     const b64 = Utilities.base64Encode(imageBlob.getBytes());
     logoBase64 = "data:" + imageBlob.getContentType() + ";base64," + b64;
   } catch (e) {
     Logger.log("⚠️ Failed to fetch logo: " + e.toString());
   }
 
-  const htmlContent = createAuditHTML(data, logoBase64);
+  const htmlContent = createAuditHTML(data, logoBase64, orgBranding);
   const blob = Utilities.newBlob(htmlContent, MimeType.HTML, "YSP_Audit.html");
-  const pdf = blob.getAs(MimeType.PDF).setName("YSP_Profile_Audit_" + getTimestamp() + ".pdf");
+  const filenamePrefix = String(orgBranding.shortName || 'YSP').replace(/\s+/g, '_');
+  const pdf = blob.getAs(MimeType.PDF).setName(filenamePrefix + "_Profile_Audit_" + getTimestamp() + ".pdf");
   
   const file = DriveApp.createFile(pdf);
   Logger.log("✅ PDF Created: " + file.getUrl());
@@ -146,7 +269,7 @@ function getAuditData() {
 
 // =================== HTML GENERATION ===================
 
-function createAuditHTML(data, logoBase64) {
+function createAuditHTML(data, logoBase64, orgBranding) {
   const { 
     stats, 
     allIncomplete, 
@@ -158,7 +281,8 @@ function createAuditHTML(data, logoBase64) {
   } = data;
 
   const dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MM/dd/yyyy, hh:mm:ss a");
-  const logoSrc = logoBase64 || ORG_LOGO_URL;
+  const branding = normalizeAuditBranding_(orgBranding || {});
+  const logoSrc = logoBase64 || branding.logoUrl || ORG_LOGO_URL;
 
   // Colors
   const C = {
@@ -342,8 +466,8 @@ function createAuditHTML(data, logoBase64) {
     <div class="header-banner">
       <div class="logo-container"><img src="${logoSrc}" class="logo-img"></div>
       <div class="header-text">
-        <div class="org-title">Youth Service Philippines</div>
-        <div class="chapter-subtitle">Tagum Chapter</div>
+        <div class="org-title">${branding.orgName}</div>
+        <div class="chapter-subtitle">${branding.chapterName}</div>
         <div class="report-label">PROFILE INTEGRITY AUDIT</div>
       </div>
       <div class="meta-data">Exported: ${dateStr}</div>
@@ -381,7 +505,7 @@ function createAuditHTML(data, logoBase64) {
     ${createTableSection("FULLY COMPLETE PROFILES", C.green, completeProfiles)}
 
     <div class="footer">
-      <span>Youth Service Philippines - Tagum Chapter</span>
+      <span>${branding.fullName}</span>
     </div>
 
   </body>

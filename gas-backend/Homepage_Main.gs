@@ -68,6 +68,128 @@
   }
 
   // Configuration - Homepage
+  const HOMEPAGE_BRANDING_CACHE_KEY = 'homepage_org_branding_v1';
+  const HOMEPAGE_BRANDING_CACHE_TTL_SECONDS = 1800;
+  const HOMEPAGE_BRANDING_SHEET_NAME = 'Organization Branding';
+  const HOMEPAGE_BRANDING_DEFAULTS = {
+    orgName: 'Youth Service Philippines',
+    chapterName: 'Tagum Chapter',
+    shortName: 'YSP Tagum',
+    motto: 'Shaping the Future to a Greater Society',
+    chapterCode: 'TC',
+    location: 'Tagum City, Davao del Norte, Philippines',
+    contactEmail: 'ysptagumchapter@gmail.com',
+    logoUrl: 'https://i.imgur.com/J4wddTW.png',
+    themeColor: '#f6421f'
+  };
+
+  function normalizeHomepageBranding_(raw) {
+    var merged = Object.assign({}, HOMEPAGE_BRANDING_DEFAULTS, raw || {});
+    merged.orgName = String(merged.orgName || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.orgName;
+    merged.chapterName = String(merged.chapterName || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.chapterName;
+    merged.shortName = String(merged.shortName || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.shortName;
+    merged.motto = String(merged.motto || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.motto;
+    merged.chapterCode = String(merged.chapterCode || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.chapterCode;
+    merged.location = String(merged.location || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.location;
+    merged.contactEmail = String(merged.contactEmail || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.contactEmail;
+    merged.logoUrl = String(merged.logoUrl || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.logoUrl;
+    merged.themeColor = String(merged.themeColor || '').trim() || HOMEPAGE_BRANDING_DEFAULTS.themeColor;
+    merged.fullName = merged.orgName + ' - ' + merged.chapterName;
+    return merged;
+  }
+
+  function getHomepageBrandingFromSheet_() {
+    try {
+      var props = PropertiesService.getScriptProperties();
+      var settingsId = String(props.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '').trim();
+      if (!settingsId) return null;
+
+      var ss = SpreadsheetApp.openById(settingsId);
+      var sheet = ss.getSheetByName(HOMEPAGE_BRANDING_SHEET_NAME);
+      if (!sheet || sheet.getLastRow() < 2) return null;
+
+      var values = sheet.getDataRange().getValues();
+      var headers = values[0] || [];
+      var keyIdx = headers.indexOf('ConfigKey');
+      var valueIdx = headers.indexOf('Value');
+      if (keyIdx === -1 || valueIdx === -1) return null;
+
+      var rowMap = {};
+      for (var i = 1; i < values.length; i++) {
+        var key = String(values[i][keyIdx] || '').trim();
+        if (!key) continue;
+        rowMap[key] = String(values[i][valueIdx] || '').trim();
+      }
+
+      return {
+        orgName: rowMap.orgName || '',
+        chapterName: rowMap.chapterName || '',
+        shortName: rowMap.shortName || '',
+        motto: rowMap.motto || '',
+        chapterCode: rowMap.chapterCode || '',
+        location: rowMap.location || '',
+        contactEmail: rowMap.contactEmail || '',
+        logoUrl: rowMap.logoUrl || '',
+        themeColor: rowMap.themeColor || ''
+      };
+    } catch (sheetReadError) {
+      Logger.log('Homepage branding sheet fallback read error: ' + sheetReadError);
+      return null;
+    }
+  }
+
+  function getHomepageOrgBranding_() {
+    var cache = CacheService.getScriptCache();
+    try {
+      var cachedRaw = cache.get(HOMEPAGE_BRANDING_CACHE_KEY);
+      if (cachedRaw) {
+        return normalizeHomepageBranding_(JSON.parse(cachedRaw));
+      }
+    } catch (cacheReadError) {
+      Logger.log('Homepage branding cache read error: ' + cacheReadError);
+    }
+
+    var branding = normalizeHomepageBranding_({});
+  var resolvedFromEndpoint = false;
+    try {
+      var props = PropertiesService.getScriptProperties();
+      var endpoint = String(props.getProperty('SYSTEM_TOOLS_BRANDING_URL') || props.getProperty('SYSTEM_TOOLS_WEB_APP_URL') || '').trim();
+      if (endpoint) {
+        var response = UrlFetchApp.fetch(endpoint, {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify({ action: 'getOrgBranding' }),
+          muteHttpExceptions: true
+        });
+        var code = response.getResponseCode();
+        if (code >= 200 && code < 300) {
+          var parsed = JSON.parse(response.getContentText() || '{}');
+          if (parsed && parsed.success === true && parsed.data) {
+            branding = normalizeHomepageBranding_(parsed.data);
+            resolvedFromEndpoint = true;
+          }
+        }
+      }
+    } catch (fetchError) {
+      Logger.log('Homepage branding fetch error: ' + fetchError);
+    }
+
+    if (!resolvedFromEndpoint) {
+      var sheetBranding = getHomepageBrandingFromSheet_();
+      if (sheetBranding) {
+        branding = normalizeHomepageBranding_(sheetBranding);
+      }
+    }
+
+    try {
+      cache.put(HOMEPAGE_BRANDING_CACHE_KEY, JSON.stringify(branding), HOMEPAGE_BRANDING_CACHE_TTL_SECONDS);
+    } catch (cacheWriteError) {
+      Logger.log('Homepage branding cache write error: ' + cacheWriteError);
+    }
+
+    return branding;
+  }
+
   const CONFIG = {
     SHEET_NAME: 'Homepage_Main',
     HEADER_ROW: 1,
@@ -937,6 +1059,7 @@
   * Initialize sheet with headers
   */
   function initializeSheet(sheet) {
+    const orgBranding = getHomepageOrgBranding_();
     const headers = [
       'Main Heading',
       'Sub Heading',
@@ -958,13 +1081,13 @@
     
     // Set default values in row 2
     const defaultValues = [
-      'Welcome to Youth Service Philippines',
-      'Tagum Chapter',
-      'Shaping the Future to a Greater Society',
+      'Welcome to ' + orgBranding.orgName,
+      orgBranding.chapterName,
+      orgBranding.motto,
       'About Us',
-      'Youth Service Philippines - Tagum Chapter is a dynamic organization dedicated to mobilizing Filipino youth.',
+      orgBranding.fullName + ' is a dynamic organization dedicated to mobilizing Filipino youth.',
       'Our Mission',
-      'To inspire and empower Filipino youth in Tagum City and Davao del Norte.',
+      'To inspire and empower Filipino youth in ' + orgBranding.location + '.',
       'Our Vision',
       'A community where every young person is actively engaged in building strong communities.',
       'Our Advocacy Pillars',
@@ -1423,6 +1546,7 @@
   * Initialize Homepage_Other sheet with headers and default values
   */
   function initializeHomepageOtherSheet(sheet) {
+    const orgBranding = getHomepageOrgBranding_();
     const headers = [
       'Section_Title',      // A
       'OrgChart_Url',       // B
@@ -1445,16 +1569,16 @@
     const defaultValues = [
       'Get in Touch',                                    // Section_Title
       '',                                                // OrgChart_Url (empty by default)
-      'YSPTagumChapter@gmail.com',                       // Org_Email
+      orgBranding.contactEmail,                          // Org_Email
       '+63 917 123 4567',                                // Org_Phone
-      'Tagum City, Davao del Norte, Philippines',        // Org_Location
-      'https://maps.google.com/?q=Tagum+City,Davao+del+Norte,Philippines', // Org_GoogleMapURL
+      orgBranding.location,                              // Org_Location
+      'https://maps.google.com/?q=' + encodeURIComponent(orgBranding.location), // Org_GoogleMapURL
       'ðŸ¤ Become Our Partner',                           // Partner_Title
       'Join us in making a difference in our community. Partner with YSP and help us create lasting impact through collaborative projects.', // Partner_Description
       'Partner with Us',                                 // Partner_Button_Text
       '',                                                // Partner_GformURL (empty by default)
       'https://www.facebook.com/YSPTagumChapter',        // Social_URL (first social link)
-      'YSP Tagum Chapter'                                // Social_Display_Name (first social link)
+      orgBranding.fullName                               // Social_Display_Name (first social link)
     ];
     
     sheet.getRange(2, 1, 1, defaultValues.length).setValues([defaultValues]);
