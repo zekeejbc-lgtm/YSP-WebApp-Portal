@@ -134,6 +134,749 @@ const LOGO_URL = ORG_BRANDING_CONFIG.logoUrl || "https://i.imgur.com/J4wddTW.png
 const WEB_APP_URL = "https://www.youthservicephilippinestagum.me/";
 const FB_PAGE_URL = "https://www.facebook.com/YSPTagumChapter";
 const MANILA_TIMEZONE = 'Asia/Manila';
+const PROFILE_UPDATE_QUEUE_SHEET_NAME = 'Profile Update Email Queue';
+const PROFILE_UPDATE_QUEUE_ONEDIT_HANDLER = 'onUserProfilesEditQueueInstallable';
+const PROFILE_QUEUE_STATUS_COLUMN = 'Queue Status';
+const PROFILE_QUEUE_STATUS_UPDATED_AT_COLUMN = 'Status Updated At';
+const PROFILE_QUEUE_LAST_ERROR_COLUMN = 'Last Error';
+const PROFILE_DIRECT_ONEDIT_SEND_FIELDS = ['Username', 'Password', 'Position'];
+
+function escapeHtml_(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildUserProfileColumnIndex_(headers) {
+  const idx = {};
+  (headers || []).forEach(function(header, i) {
+    idx[String(header || '').trim()] = i;
+  });
+  return idx;
+}
+
+function generateTemporaryAccountPassword_() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+  let password = '';
+  for (let i = 0; i < 12; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+}
+
+function ensureProfileUpdateQueueSheet_(spreadsheet) {
+  const ss = spreadsheet || SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+  let sheet = ss.getSheetByName(PROFILE_UPDATE_QUEUE_SHEET_NAME);
+  const requiredHeaders = [
+    'Timestamp',
+    'Username',
+    'Email Address',
+    'Full name',
+    'Requested By',
+    'Field',
+    'Old Value',
+    'New Value',
+    PROFILE_QUEUE_STATUS_COLUMN,
+    PROFILE_QUEUE_STATUS_UPDATED_AT_COLUMN,
+    PROFILE_QUEUE_LAST_ERROR_COLUMN,
+  ];
+
+  if (!sheet) {
+    sheet = ss.insertSheet(PROFILE_UPDATE_QUEUE_SHEET_NAME);
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+    return {
+      sheet: sheet,
+      headers: requiredHeaders,
+      idx: buildUserProfileColumnIndex_(requiredHeaders),
+    };
+  }
+
+  const headerValues = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0] || [];
+  const headers = headerValues.slice();
+  let lastCol = headers.length;
+  requiredHeaders.forEach(function(headerName) {
+    if (headers.indexOf(headerName) !== -1) return;
+    sheet.getRange(1, lastCol + 1).setValue(headerName);
+    headers.push(headerName);
+    lastCol += 1;
+  });
+
+  return {
+    sheet: sheet,
+    headers: headers,
+    idx: buildUserProfileColumnIndex_(headers),
+  };
+}
+
+function queueProfileUpdateChanges_(queueSheet, username, email, fullName, requestedBy, changes) {
+  if (!queueSheet || !changes || changes.length === 0) return 0;
+
+  const normalizedUsername = String(username || '').toLowerCase().trim();
+  if (!normalizedUsername) return 0;
+
+  const now = new Date();
+  const statusUpdatedAt = Utilities.formatDate(now, MANILA_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+  const lastCol = Math.max(queueSheet.getLastColumn(), 1);
+  const headers = queueSheet.getRange(1, 1, 1, lastCol).getValues()[0] || [];
+  const idx = buildUserProfileColumnIndex_(headers);
+  const timestampIdx = idx['Timestamp'];
+  const usernameIdx = idx['Username'];
+  const emailIdx = idx['Email Address'];
+  const fullNameIdx = idx['Full name'];
+  const requestedByIdx = idx['Requested By'];
+  const fieldIdx = idx['Field'];
+  const oldIdx = idx['Old Value'];
+  const newIdx = idx['New Value'];
+  const statusIdx = idx[PROFILE_QUEUE_STATUS_COLUMN];
+  const updatedAtIdx = idx[PROFILE_QUEUE_STATUS_UPDATED_AT_COLUMN];
+  const errorIdx = idx[PROFILE_QUEUE_LAST_ERROR_COLUMN];
+
+  if (
+    usernameIdx === undefined ||
+    fieldIdx === undefined ||
+    oldIdx === undefined ||
+    newIdx === undefined
+  ) {
+    return 0;
+  }
+
+  const existingLastRow = queueSheet.getLastRow();
+  const existingValues =
+    existingLastRow > 1
+      ? queueSheet.getRange(2, 1, existingLastRow - 1, lastCol).getValues()
+      : [];
+
+  const existingByField = {};
+  const duplicateRowsToDelete = [];
+
+  for (let i = 0; i < existingValues.length; i++) {
+    const row = existingValues[i];
+    const rowNumber = i + 2;
+    const rowUsername = String(usernameIdx !== undefined ? row[usernameIdx] : '').toLowerCase().trim();
+    if (rowUsername !== normalizedUsername) continue;
+
+    const queueStatus = String(statusIdx !== undefined ? row[statusIdx] : 'Held').trim().toLowerCase();
+    if (queueStatus === 'sent') continue;
+
+    const fieldName = String(fieldIdx !== undefined ? row[fieldIdx] : '').trim();
+    if (!fieldName) continue;
+
+    const key = fieldName.toLowerCase();
+    if (!existingByField[key]) existingByField[key] = [];
+    existingByField[key].push({
+      rowNumber: rowNumber,
+      field: fieldName,
+      oldVal: String(oldIdx !== undefined ? row[oldIdx] : '(Empty)'),
+      newVal: String(newIdx !== undefined ? row[newIdx] : '(Empty)'),
+    });
+  }
+
+  // Collapse older unsent duplicates for the same user+field.
+  Object.keys(existingByField).forEach(function(key) {
+    const entries = existingByField[key] || [];
+    if (entries.length <= 1) return;
+
+    const first = entries[0];
+    const latest = entries[entries.length - 1];
+    const mergedOld = first.oldVal;
+    const mergedNew = latest.newVal;
+
+    if (mergedOld === mergedNew) {
+      entries.forEach(function(entry) {
+        duplicateRowsToDelete.push(entry.rowNumber);
+      });
+      delete existingByField[key];
+      return;
+    }
+
+    for (let i = 0; i < entries.length - 1; i++) {
+      duplicateRowsToDelete.push(entries[i].rowNumber);
+    }
+
+    if (oldIdx !== undefined && latest.oldVal !== mergedOld) {
+      queueSheet.getRange(latest.rowNumber, oldIdx + 1).setValue(mergedOld);
+    }
+
+    existingByField[key] = [{
+      rowNumber: latest.rowNumber,
+      field: latest.field,
+      oldVal: mergedOld,
+      newVal: mergedNew,
+    }];
+  });
+
+  // Collapse incoming changes from this single edit event.
+  const incomingByField = {};
+  (changes || []).forEach(function(change) {
+    const fieldName = String(change && change.field ? change.field : '').trim();
+    if (!fieldName) return;
+
+    const oldVal = String(change && change.oldVal !== undefined ? change.oldVal : '(Empty)');
+    const newVal = String(change && change.newVal !== undefined ? change.newVal : '(Empty)');
+    if (oldVal === newVal) return;
+
+    const key = fieldName.toLowerCase();
+    const statusValue = String(change && change.status ? change.status : 'Held');
+    const errorValue = String(change && change.error ? change.error : '');
+
+    if (!incomingByField[key]) {
+      incomingByField[key] = {
+        field: fieldName,
+        oldVal: oldVal,
+        newVal: newVal,
+        status: statusValue,
+        error: errorValue,
+      };
+      return;
+    }
+
+    incomingByField[key].newVal = newVal;
+    incomingByField[key].status = statusValue;
+    incomingByField[key].error = errorValue;
+    if (incomingByField[key].oldVal === incomingByField[key].newVal) {
+      delete incomingByField[key];
+    }
+  });
+
+  let affectedCount = 0;
+  const rowsToDeleteSet = {};
+  duplicateRowsToDelete.forEach(function(rowNumber) {
+    rowsToDeleteSet[rowNumber] = true;
+  });
+  const rowsToAppend = [];
+
+  Object.keys(incomingByField).forEach(function(key) {
+    const incoming = incomingByField[key];
+    const existingEntries = existingByField[key] || [];
+    const existing = existingEntries.length > 0 ? existingEntries[existingEntries.length - 1] : null;
+
+    if (existing) {
+      const mergedOld = existing.oldVal;
+      const mergedNew = incoming.newVal;
+
+      if (mergedOld === mergedNew) {
+        rowsToDeleteSet[existing.rowNumber] = true;
+        delete existingByField[key];
+        return;
+      }
+
+      const targetRow = existing.rowNumber;
+      const nextStatus = String(incoming.status || 'Held');
+      const nextError = String(incoming.error || '');
+
+      if (timestampIdx !== undefined) queueSheet.getRange(targetRow, timestampIdx + 1).setValue(now);
+      if (emailIdx !== undefined) queueSheet.getRange(targetRow, emailIdx + 1).setValue(String(email || '').trim());
+      if (fullNameIdx !== undefined) queueSheet.getRange(targetRow, fullNameIdx + 1).setValue(String(fullName || '').trim() || 'Member');
+      if (requestedByIdx !== undefined) queueSheet.getRange(targetRow, requestedByIdx + 1).setValue(String(requestedBy || '').trim());
+      if (fieldIdx !== undefined) queueSheet.getRange(targetRow, fieldIdx + 1).setValue(incoming.field);
+      if (oldIdx !== undefined) queueSheet.getRange(targetRow, oldIdx + 1).setValue(mergedOld);
+      if (newIdx !== undefined) queueSheet.getRange(targetRow, newIdx + 1).setValue(mergedNew);
+      if (statusIdx !== undefined) queueSheet.getRange(targetRow, statusIdx + 1).setValue(nextStatus);
+      if (updatedAtIdx !== undefined) queueSheet.getRange(targetRow, updatedAtIdx + 1).setValue(statusUpdatedAt);
+      if (errorIdx !== undefined) queueSheet.getRange(targetRow, errorIdx + 1).setValue(nextError);
+
+      existing.newVal = mergedNew;
+      affectedCount += 1;
+      return;
+    }
+
+    const row = new Array(lastCol).fill('');
+    if (timestampIdx !== undefined) row[timestampIdx] = now;
+    if (usernameIdx !== undefined) row[usernameIdx] = String(username || '').trim();
+    if (emailIdx !== undefined) row[emailIdx] = String(email || '').trim();
+    if (fullNameIdx !== undefined) row[fullNameIdx] = String(fullName || '').trim() || 'Member';
+    if (requestedByIdx !== undefined) row[requestedByIdx] = String(requestedBy || '').trim();
+    if (fieldIdx !== undefined) row[fieldIdx] = incoming.field;
+    if (oldIdx !== undefined) row[oldIdx] = incoming.oldVal;
+    if (newIdx !== undefined) row[newIdx] = incoming.newVal;
+    if (statusIdx !== undefined) row[statusIdx] = String(incoming.status || 'Held');
+    if (updatedAtIdx !== undefined) row[updatedAtIdx] = statusUpdatedAt;
+    if (errorIdx !== undefined) row[errorIdx] = String(incoming.error || '');
+
+    rowsToAppend.push(row);
+    affectedCount += 1;
+  });
+
+  const rowsToDelete = Object.keys(rowsToDeleteSet)
+    .map(function(key) { return parseInt(key, 10); })
+    .filter(function(rowNumber) { return !isNaN(rowNumber) && rowNumber > 1; })
+    .sort(function(a, b) { return b - a; });
+
+  rowsToDelete.forEach(function(rowNumber) {
+    if (rowNumber <= queueSheet.getLastRow()) {
+      queueSheet.deleteRow(rowNumber);
+    }
+  });
+
+  if (rowsToAppend.length > 0) {
+    const startRow = queueSheet.getLastRow() + 1;
+    queueSheet.getRange(startRow, 1, rowsToAppend.length, lastCol).setValues(rowsToAppend);
+  }
+
+  return affectedCount;
+}
+
+function getQueuedProfileUpdateChanges_(queueSheet, username) {
+  if (!queueSheet) return { changes: [], rowNumbers: [] };
+  const target = String(username || '').toLowerCase().trim();
+  if (!target) return { changes: [], rowNumbers: [] };
+
+  const values = queueSheet.getDataRange().getValues();
+  if (!values || values.length < 2) return { changes: [], rowNumbers: [] };
+
+  const headers = values[0] || [];
+  const idx = buildUserProfileColumnIndex_(headers);
+  const usernameIdx = idx['Username'];
+  const fieldIdx = idx['Field'];
+  const oldIdx = idx['Old Value'];
+  const newIdx = idx['New Value'];
+  const statusIdx = idx[PROFILE_QUEUE_STATUS_COLUMN];
+
+  const changes = [];
+  const rowNumbers = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const rowUsername = String(usernameIdx !== undefined ? row[usernameIdx] : '').toLowerCase().trim();
+    if (rowUsername !== target) continue;
+
+    const queueStatus = String(statusIdx !== undefined ? row[statusIdx] : 'Held').trim().toLowerCase();
+    if (queueStatus === 'sent') continue;
+
+    changes.push({
+      field: String(fieldIdx !== undefined ? row[fieldIdx] : '').trim(),
+      oldVal: String(oldIdx !== undefined ? row[oldIdx] : '(Empty)'),
+      newVal: String(newIdx !== undefined ? row[newIdx] : '(Empty)'),
+    });
+    rowNumbers.push(i + 1);
+  }
+
+  return { changes: changes, rowNumbers: rowNumbers };
+}
+
+function updateProfileQueueRowsStatus_(queueSheet, rowNumbers, status, error) {
+  if (!queueSheet || !rowNumbers || rowNumbers.length === 0) return;
+
+  const headers = queueSheet.getRange(1, 1, 1, Math.max(queueSheet.getLastColumn(), 1)).getValues()[0] || [];
+  const idx = buildUserProfileColumnIndex_(headers);
+  const statusCol = idx[PROFILE_QUEUE_STATUS_COLUMN] !== undefined ? idx[PROFILE_QUEUE_STATUS_COLUMN] + 1 : 0;
+  const updatedAtCol = idx[PROFILE_QUEUE_STATUS_UPDATED_AT_COLUMN] !== undefined ? idx[PROFILE_QUEUE_STATUS_UPDATED_AT_COLUMN] + 1 : 0;
+  const errorCol = idx[PROFILE_QUEUE_LAST_ERROR_COLUMN] !== undefined ? idx[PROFILE_QUEUE_LAST_ERROR_COLUMN] + 1 : 0;
+  const statusUpdatedAt = Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+  const sorted = rowNumbers.slice().sort(function(a, b) { return a - b; });
+
+  sorted.forEach(function(rowNumber) {
+    if (rowNumber <= 1 || rowNumber > queueSheet.getLastRow()) return;
+    if (statusCol > 0) queueSheet.getRange(rowNumber, statusCol).setValue(String(status || 'Held'));
+    if (updatedAtCol > 0) queueSheet.getRange(rowNumber, updatedAtCol).setValue(statusUpdatedAt);
+    if (errorCol > 0) queueSheet.getRange(rowNumber, errorCol).setValue(String(error || ''));
+  });
+}
+
+function deleteProfileQueueRows_(queueSheet, rowNumbers) {
+  if (!queueSheet || !rowNumbers || rowNumbers.length === 0) return;
+  const sorted = rowNumbers.slice().sort(function(a, b) { return b - a; });
+  sorted.forEach(function(rowNumber) {
+    if (rowNumber > 1 && rowNumber <= queueSheet.getLastRow()) {
+      queueSheet.deleteRow(rowNumber);
+    }
+  });
+}
+
+function setupProfileUpdateQueueAutomation() {
+  if (!LOGIN_SPREADSHEET_ID) {
+    throw new Error('LOGIN_SPREADSHEET_ID is not configured in Script Properties');
+  }
+
+  const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+  if (!sheet) {
+    throw new Error('User Profiles sheet was not found');
+  }
+
+  const queueContext = ensureProfileUpdateQueueSheet_(ss);
+
+  return {
+    success: true,
+    message: 'Profile update queue automation sheets are ready',
+    sheetName: LOGIN_SHEET_NAME,
+    queueSheetName: PROFILE_UPDATE_QUEUE_SHEET_NAME,
+    queueColumns: queueContext.headers,
+  };
+}
+
+function cleanupLegacyAccountEmailColumnsFromUserProfiles() {
+  if (!LOGIN_SPREADSHEET_ID) {
+    throw new Error('LOGIN_SPREADSHEET_ID is not configured in Script Properties');
+  }
+
+  const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+  if (!sheet) {
+    throw new Error('User Profiles sheet was not found');
+  }
+
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < 1) {
+    return {
+      success: true,
+      removedColumns: [],
+      message: 'No headers found in User Profiles sheet',
+    };
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0] || [];
+  const legacyHeaders = [
+    'Account Email Status',
+    'Account Email Last Sent At',
+    'Account Email Last Error',
+  ];
+
+  const targets = [];
+  legacyHeaders.forEach(function(headerName) {
+    const idx = headers.indexOf(headerName);
+    if (idx > -1) {
+      targets.push({
+        name: headerName,
+        col: idx + 1,
+      });
+    }
+  });
+
+  if (targets.length === 0) {
+    return {
+      success: true,
+      removedColumns: [],
+      message: 'No legacy account-email columns found in User Profiles',
+    };
+  }
+
+  const sorted = targets.slice().sort(function(a, b) { return b.col - a.col; });
+  sorted.forEach(function(target) {
+    sheet.deleteColumn(target.col);
+  });
+
+  SpreadsheetApp.flush();
+
+  return {
+    success: true,
+    removedColumns: sorted.map(function(item) { return item.name; }),
+    message: 'Removed legacy account-email columns from User Profiles',
+  };
+}
+
+function installProfileUpdateQueueOnEditTrigger() {
+  setupProfileUpdateQueueAutomation();
+
+  const triggers = ScriptApp.getProjectTriggers();
+  let removed = 0;
+  triggers.forEach(function(trigger) {
+    if (trigger.getHandlerFunction() === PROFILE_UPDATE_QUEUE_ONEDIT_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+      removed += 1;
+    }
+  });
+
+  ScriptApp.newTrigger(PROFILE_UPDATE_QUEUE_ONEDIT_HANDLER)
+    .forSpreadsheet(LOGIN_SPREADSHEET_ID)
+    .onEdit()
+    .create();
+
+  return {
+    success: true,
+    message: 'Installable onEdit trigger created for User Profiles queueing and queue-sheet commands',
+    handler: PROFILE_UPDATE_QUEUE_ONEDIT_HANDLER,
+    removedExistingTriggers: removed,
+  };
+}
+
+function processQueuedProfileUpdateCommand_(queueSheet, username, command, requestedBy) {
+  if (!queueSheet) {
+    return { success: false, error: 'Queue sheet not found' };
+  }
+
+  const normalizedUsername = String(username || '').trim();
+  if (!normalizedUsername) {
+    return { success: false, error: 'Username is required' };
+  }
+
+  const normalizedCommand = String(command || '').trim().toLowerCase();
+  if (['send', 'resend', 'hold'].indexOf(normalizedCommand) === -1) {
+    return { success: false, error: 'Invalid queue command' };
+  }
+
+  const ss = queueSheet.getParent();
+  const userSheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+  if (!userSheet) {
+    return { success: false, error: 'User database not found' };
+  }
+
+  const values = userSheet.getDataRange().getValues();
+  const headers = values[0] || [];
+  const idx = buildUserProfileColumnIndex_(headers);
+  const usernameIdx = idx['Username'];
+  if (usernameIdx === undefined || usernameIdx < 0) {
+    return { success: false, error: 'Username column is missing' };
+  }
+
+  const targetLower = normalizedUsername.toLowerCase();
+  let row = null;
+  for (let i = 1; i < values.length; i++) {
+    const rowUsername = String(values[i][usernameIdx] || '').toLowerCase().trim();
+    if (rowUsername === targetLower) {
+      row = values[i];
+      break;
+    }
+  }
+
+  if (!row) {
+    return { success: false, error: 'User not found' };
+  }
+
+  const queuedProfileChanges = getQueuedProfileUpdateChanges_(queueSheet, normalizedUsername);
+  if (normalizedCommand === 'hold') {
+    if (queuedProfileChanges.rowNumbers.length > 0) {
+      updateProfileQueueRowsStatus_(queueSheet, queuedProfileChanges.rowNumbers, 'Held', '');
+    }
+    return {
+      success: true,
+      status: 'Held',
+      queuedChangesHeld: queuedProfileChanges.changes.length,
+      message: 'Queued profile updates are on hold',
+    };
+  }
+
+  if (queuedProfileChanges.changes.length === 0) {
+    return {
+      success: false,
+      status: 'Held',
+      error: 'No queued profile updates found for this username',
+    };
+  }
+
+  const email = String(idx['Email Address'] !== undefined ? row[idx['Email Address']] : '').trim();
+  const fullName = String(idx['Full name'] !== undefined ? row[idx['Full name']] : 'Member').trim() || 'Member';
+  if (!email) {
+    updateProfileQueueRowsStatus_(queueSheet, queuedProfileChanges.rowNumbers, 'Failed', 'Recipient email is empty');
+    return {
+      success: false,
+      status: 'Failed',
+      error: 'Recipient email is empty',
+    };
+  }
+
+  try {
+    sendProfileUpdateEmail(email, fullName, queuedProfileChanges.changes, normalizedUsername);
+    updateProfileQueueRowsStatus_(queueSheet, queuedProfileChanges.rowNumbers, 'Sent', '');
+    deleteProfileQueueRows_(queueSheet, queuedProfileChanges.rowNumbers);
+
+    return {
+      success: true,
+      status: 'Sent',
+      sentAt: Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd HH:mm:ss'),
+      queuedChangesSent: queuedProfileChanges.changes.length,
+      message:
+        normalizedCommand === 'resend'
+          ? 'Queued profile update email resent successfully. Queue cleared.'
+          : 'Queued profile update email sent successfully. Queue cleared.',
+    };
+  } catch (error) {
+    const errorMessage = String(error && error.message ? error.message : error || 'Unknown email error');
+    updateProfileQueueRowsStatus_(queueSheet, queuedProfileChanges.rowNumbers, 'Failed', errorMessage);
+    return {
+      success: false,
+      status: 'Failed',
+      error: errorMessage,
+    };
+  }
+}
+
+function handleQueueSheetCommandEdit_(queueSheet, range) {
+  if (!queueSheet || !range) return;
+
+  const lastCol = Math.max(queueSheet.getLastColumn(), 1);
+  const headers = queueSheet.getRange(1, 1, 1, lastCol).getValues()[0] || [];
+  const idx = buildUserProfileColumnIndex_(headers);
+  const statusCol = idx[PROFILE_QUEUE_STATUS_COLUMN] !== undefined ? idx[PROFILE_QUEUE_STATUS_COLUMN] + 1 : 0;
+  const usernameCol = idx['Username'] !== undefined ? idx['Username'] + 1 : 0;
+  const errorCol = idx[PROFILE_QUEUE_LAST_ERROR_COLUMN] !== undefined ? idx[PROFILE_QUEUE_LAST_ERROR_COLUMN] + 1 : 0;
+
+  if (!statusCol || !usernameCol) return;
+
+  const startRow = range.getRow();
+  const startCol = range.getColumn();
+  const numRows = range.getNumRows();
+  const numCols = range.getNumColumns();
+  if (startRow <= 1) return;
+
+  const editedStartCol = startCol;
+  const editedEndCol = startCol + numCols - 1;
+  if (statusCol < editedStartCol || statusCol > editedEndCol) return;
+
+  const commandsByUsername = {};
+  for (let r = 0; r < numRows; r++) {
+    const rowIndex = startRow + r;
+    if (rowIndex <= 1) continue;
+
+    const username = String(queueSheet.getRange(rowIndex, usernameCol).getValue() || '').trim();
+    const commandValue = String(queueSheet.getRange(rowIndex, statusCol).getValue() || '').trim().toLowerCase();
+    if (!username || ['send', 'resend', 'hold'].indexOf(commandValue) === -1) continue;
+
+    commandsByUsername[username.toLowerCase()] = {
+      username: username,
+      command: commandValue,
+      rowIndex: rowIndex,
+    };
+  }
+
+  const commandEntries = Object.keys(commandsByUsername).map(function(key) {
+    return commandsByUsername[key];
+  });
+
+  commandEntries.forEach(function(entry) {
+    const result = processQueuedProfileUpdateCommand_(queueSheet, entry.username, entry.command, 'Queue Sheet Command');
+    if (!result.success && errorCol > 0) {
+      queueSheet.getRange(entry.rowIndex, errorCol).setValue(String(result.error || 'Queue command failed'));
+      queueSheet.getRange(entry.rowIndex, statusCol).setValue('Failed');
+    }
+  });
+}
+
+function onUserProfilesEditQueueInstallable(e) {
+  try {
+    if (!e || !e.range) return;
+
+    const range = e.range;
+    const sheet = range.getSheet();
+    if (!sheet) return;
+
+    if (sheet.getName() === PROFILE_UPDATE_QUEUE_SHEET_NAME) {
+      handleQueueSheetCommandEdit_(sheet, range);
+      return;
+    }
+
+    if (sheet.getName() !== LOGIN_SHEET_NAME) return;
+
+    const startRow = range.getRow();
+    const startCol = range.getColumn();
+    const numRows = range.getNumRows();
+    const numCols = range.getNumColumns();
+    if (startRow <= 1) return;
+
+    const ss = sheet.getParent();
+    const queueContext = ensureProfileUpdateQueueSheet_(ss);
+    const lastCol = sheet.getLastColumn();
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0] || [];
+    const idx = buildUserProfileColumnIndex_(headers);
+
+    const usernameIdx = idx['Username'];
+    if (usernameIdx === undefined || usernameIdx < 0) return;
+
+    const emailIdx = idx['Email Address'];
+    const fullNameIdx = idx['Full name'];
+
+    for (let r = 0; r < numRows; r++) {
+      const rowIndex = startRow + r;
+      if (rowIndex <= 1) continue;
+
+      const rowValues = sheet.getRange(rowIndex, 1, 1, lastCol).getValues()[0] || [];
+      const username = String(rowValues[usernameIdx] || '').trim();
+      if (!username) continue;
+
+      const email = String(emailIdx !== undefined ? rowValues[emailIdx] : '').trim();
+      const fullName = String(fullNameIdx !== undefined ? rowValues[fullNameIdx] : '').trim() || 'Member';
+      const changedFields = [];
+
+      for (let c = 0; c < numCols; c++) {
+        const colIndex = startCol + c - 1;
+        const fieldName = String(headers[colIndex] || '').trim();
+        if (!fieldName) continue;
+
+        const newValue = String(rowValues[colIndex] || '(Empty)');
+        let oldValue = '(Unknown - edited directly in sheet)';
+
+        // oldValue is only available for single-cell edit events.
+        if (numRows === 1 && numCols === 1 && r === 0 && c === 0 && e.oldValue !== undefined) {
+          oldValue = String(e.oldValue || '(Empty)');
+          if (oldValue === newValue) continue;
+        }
+
+        changedFields.push({
+          field: fieldName,
+          oldVal: oldValue,
+          newVal: newValue,
+        });
+      }
+
+      if (changedFields.length === 0) continue;
+
+      const directFields = changedFields.filter(function(change) {
+        return PROFILE_DIRECT_ONEDIT_SEND_FIELDS.indexOf(change.field) !== -1;
+      });
+      const heldFields = changedFields.filter(function(change) {
+        return PROFILE_DIRECT_ONEDIT_SEND_FIELDS.indexOf(change.field) === -1;
+      });
+
+      if (directFields.length > 0) {
+        if (email) {
+          try {
+            sendProfileUpdateEmail(email, fullName, directFields, username);
+            const sentRows = directFields.map(function(change) {
+              return {
+                field: change.field,
+                oldVal: change.oldVal,
+                newVal: change.newVal,
+                status: 'Sent',
+                error: '',
+              };
+            });
+            queueProfileUpdateChanges_(
+              queueContext.sheet,
+              username,
+              email,
+              fullName,
+              'Sheet Edit Trigger (Auto Sent)',
+              sentRows
+            );
+          } catch (emailError) {
+            const errorMessage = String(emailError && emailError.message ? emailError.message : emailError || 'Unknown email error');
+            const failedRows = directFields.map(function(change) {
+              return {
+                field: change.field,
+                oldVal: change.oldVal,
+                newVal: change.newVal,
+                status: 'Failed',
+                error: errorMessage,
+              };
+            });
+            queueProfileUpdateChanges_(queueContext.sheet, username, email, fullName, 'Sheet Edit Trigger', failedRows);
+            Logger.log('❌ Failed to auto-send direct sheet edit notification: ' + errorMessage);
+          }
+        } else {
+          const failedNoEmailRows = directFields.map(function(change) {
+            return {
+              field: change.field,
+              oldVal: change.oldVal,
+              newVal: change.newVal,
+              status: 'Failed',
+              error: 'Recipient email is empty',
+            };
+          });
+          queueProfileUpdateChanges_(queueContext.sheet, username, email, fullName, 'Sheet Edit Trigger', failedNoEmailRows);
+          Logger.log('ℹ️ Direct sheet edit notification skipped because recipient email is empty.');
+        }
+      }
+
+      if (heldFields.length > 0) {
+        queueProfileUpdateChanges_(queueContext.sheet, username, email, fullName, 'Sheet Edit Trigger', heldFields);
+      }
+    }
+  } catch (error) {
+    Logger.log('onUserProfilesEditQueueInstallable Error: ' + error.toString());
+  }
+}
 
 function getManilaDateParts_(dateValue) {
   const formatted = Utilities.formatDate(dateValue || new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd');
@@ -355,6 +1098,113 @@ function sendProfileUpdateEmail(email, name, changes, username) {
     htmlBody: htmlBody
   });
   Logger.log('MailApp.sendEmail completed');
+}
+
+function sendAccountCreationEmail_(payload) {
+  const recipientEmail = String(payload.email || '').trim();
+  if (!recipientEmail) {
+    throw new Error('Recipient email is required');
+  }
+
+  const roleLabel = String(payload.role || 'Member').trim() || 'Member';
+  const positionLabel = String(payload.position || 'Member').trim() || 'Member';
+  const committeeLabel = String(payload.committee || 'Unassigned').trim() || 'Unassigned';
+  const chapterLabel = String(payload.chapter || ORG_BRANDING_CONFIG.chapterName).trim() || ORG_BRANDING_CONFIG.chapterName;
+  const membershipTypeLabel = String(payload.membershipType || 'Regular').trim() || 'Regular';
+  const statusLabel = String(payload.status || 'Active').trim() || 'Active';
+  const fullName = String(payload.fullName || 'Member').trim() || 'Member';
+  const username = String(payload.username || '').trim();
+  const idCode = String(payload.idCode || '').trim();
+  const contactNumber = String(payload.contactNumber || '').trim();
+  const temporaryPassword = String(payload.temporaryPassword || '').trim();
+  const dateJoined = String(payload.dateJoined || Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd')).trim();
+  const sentAt = Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'MMMM dd, yyyy hh:mm a');
+  const resendNotice = payload.isResend
+    ? '<p style="margin: 0 0 20px; color: #9f1239; font-weight: 600;">This is a resend of your account credentials.</p>'
+    : '';
+
+  const accountRows = [
+    { label: 'Role', value: roleLabel },
+    { label: 'Position', value: positionLabel },
+    { label: 'Username', value: username || '(Not set)' },
+    { label: 'Temporary Password', value: temporaryPassword || '(Not set)' },
+    { label: 'ID Code', value: idCode || '(Not set)' },
+    { label: 'Committee', value: committeeLabel },
+    { label: 'Chapter', value: chapterLabel },
+    { label: 'Membership Type', value: membershipTypeLabel },
+    { label: 'Status', value: statusLabel },
+    { label: 'Date Joined', value: dateJoined },
+    { label: 'Email Address', value: recipientEmail },
+    { label: 'Contact Number', value: contactNumber || '(Not set)' },
+  ];
+
+  const rowsHtml = accountRows
+    .map(function(item) {
+      return '<tr>' +
+        '<td style="padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: #475569; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; width: 38%;">' + escapeHtml_(item.label) + '</td>' +
+        '<td style="padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: #0f172a; font-size: 13px; font-weight: 500;">' + escapeHtml_(item.value) + '</td>' +
+      '</tr>';
+    })
+    .join('');
+
+  const subjectLine = 'Account Created - ' + roleLabel + ' | ' + ORG_BRANDING_CONFIG.shortName;
+
+  const htmlBody = `
+  <!DOCTYPE html>
+  <html>
+    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: Arial, sans-serif;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f8fafc">
+        <tr>
+          <td align="center" style="padding: 30px 12px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 640px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+              <tr>
+                <td style="background: linear-gradient(135deg, #f6421f 0%, #ee8724 100%); padding: 28px 20px; text-align: center; color: #ffffff;">
+                  <img src="${LOGO_URL}" alt="YSP Logo" width="68" style="display: block; width: 68px; height: 68px; border-radius: 999px; margin: 0 auto 14px; background: #ffffff; padding: 4px;">
+                  <div style="font-size: 24px; font-weight: 700;">${escapeHtml_(ORG_BRANDING_CONFIG.orgName)}</div>
+                  <div style="font-size: 14px; opacity: 0.95; margin-top: 6px;">${escapeHtml_(ORG_BRANDING_CONFIG.chapterName)}</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 28px 24px; color: #334155;">
+                  <h2 style="margin: 0 0 10px; color: #0f172a;">Welcome, ${escapeHtml_(fullName)}!</h2>
+                  <p style="margin: 0 0 18px; font-size: 14px; line-height: 1.5;">
+                    Your account has been created successfully. Your role is set to
+                    <strong>${escapeHtml_(roleLabel)}</strong>.
+                  </p>
+                  ${resendNotice}
+                  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 20px;">
+                    ${rowsHtml}
+                  </table>
+                  <p style="margin: 0 0 18px; font-size: 13px; line-height: 1.5; color: #475569;">
+                    For security, please log in and change your temporary password immediately.
+                  </p>
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                    <tr>
+                      <td>
+                        <a href="${WEB_APP_URL}" style="display: inline-block; background: #f6421f; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 700; padding: 11px 22px; border-radius: 8px;">Open Web App</a>
+                      </td>
+                    </tr>
+                  </table>
+                  <p style="margin: 18px 0 0; font-size: 12px; color: #64748b;">Email sent: ${escapeHtml_(sentAt)} (Manila time)</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 18px 20px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0;">
+                  &copy; 2026 ${escapeHtml_(ORG_BRANDING_CONFIG.fullName)}. Automated message, please do not reply.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+  </html>`;
+
+  MailApp.sendEmail({
+    to: recipientEmail,
+    subject: subjectLine,
+    htmlBody: htmlBody,
+  });
 }
 
 /**
@@ -679,6 +1529,8 @@ function doPost(e) {
         return handleAuthorizePageAccess(requestData.username, requestData.pagePath || requestData.pageKey);
       case 'createUserAccount':
         return handleCreateUserAccount(requestData.data || {}, requestData.username);
+      case 'manageAccountCreationEmail':
+        return handleManageAccountCreationEmail(requestData.data || {}, requestData.username);
       case 'syncMeetAttendance':
         return handleSyncMeetAttendance(requestData);
       case 'getMembers':
@@ -1745,22 +2597,6 @@ function handleUpdateProfile(username, profileData, requesterUsername) {
   // Default requester to the user themselves if not provided
   const requester = requesterUsername || username;
 
-  // === 1. CONFIGURATION: NOTIFICATION ALLOWLIST ===
-  // These are the fields that trigger an email if changed
-  const CRITICAL_FIELDS = [
-    'Personal Email Address',
-    'Username',
-    'Password',
-    'ID Code',
-    'Position',       // <--- Promoted!
-    'Role',           // <--- Promoted!
-    'Chapter',        // <--- Transfer!
-    'Committee',      // <--- Reassigned!
-    'Membership Type',
-    'EmailVerified',
-    'Status'          // <--- Suspended/Banned check
-  ];
-
   try {
     const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
     const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
@@ -1909,30 +2745,41 @@ function handleUpdateProfile(username, profileData, requesterUsername) {
       }
     }
 
-    // === 7. EMAIL NOTIFICATION LOGIC ===
-    // Filter the changes. Only keep items that are in CRITICAL_FIELDS.
-    const criticalChanges = changedFields.filter(change => CRITICAL_FIELDS.includes(change.field));
+    // === 7. EMAIL NOTIFICATION LOGIC (FRONTEND/API UPDATES) ===
+    // Frontend/API profile edits are sent directly (no queue).
+    const manualChanges = changedFields.filter(change => change.field !== 'Age');
+    const userEmail = currentRowData[idx['Email Address']] || '';
+    const userName = currentRowData[idx['Full name']] || 'Member';
+    const userUsername = currentRowData[idx['Username']] || username;
+    let notificationMode = 'none';
 
-    if (criticalChanges.length > 0) {
-      const userEmail = currentRowData[idx['Email Address']] || '';
-      const userName = currentRowData[idx['Full name']] || 'Member';
-      const userUsername = currentRowData[idx['Username']] || username;
-      
-      if (userEmail) {
-        try {
-          // Send email. Because 'Role' and 'Position' are in criticalChanges, 
-          // this will send the "Before: Member -> New: Admin" email.
-          sendProfileUpdateEmail(userEmail, userName, criticalChanges, userUsername);
-          Logger.log('✅ Critical update email sent. Fields: ' + criticalChanges.map(c => c.field).join(', '));
-        } catch (emailError) {
-          Logger.log('❌ Failed to send email: ' + emailError.toString());
-        }
+    if (manualChanges.length > 0 && userEmail) {
+      try {
+        sendProfileUpdateEmail(userEmail, userName, manualChanges, userUsername);
+        notificationMode = 'sent';
+        Logger.log('✅ Frontend/API profile update email sent. Fields: ' + manualChanges.map(c => c.field).join(', '));
+      } catch (emailError) {
+        const errorMessage = String(emailError && emailError.message ? emailError.message : emailError || 'Unknown email error');
+        notificationMode = 'failed';
+        Logger.log('❌ Failed to send frontend/API profile update email: ' + errorMessage);
       }
+    } else if (manualChanges.length > 0 && !userEmail) {
+      notificationMode = 'missing_email';
+      Logger.log('ℹ️ Frontend/API profile updates were not emailed because recipient email is missing.');
     }
+
+    const notificationSuffix =
+      notificationMode === 'sent'
+        ? ' Direct notification sent for all profile changes.'
+        : notificationMode === 'missing_email'
+        ? ' Profile changed but no email was sent because recipient email is missing.'
+        : notificationMode === 'failed'
+        ? ' Profile changed but email notification failed.'
+        : '';
 
     return createSuccessResponse({
       success: true,
-      message: `Profile updated successfully. ${updatedCount} fields modified.${ageCorrectionApplied ? ' Age was also revalidated using Manila local date.' : ''}`,
+      message: `Profile updated successfully. ${updatedCount} fields modified.${ageCorrectionApplied ? ' Age was also revalidated using Manila local date.' : ''}${notificationSuffix}`,
       updatedCount: updatedCount,
       ageCorrectionApplied: ageCorrectionApplied,
       ageVerifiedAt: Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd hh:mm a')
@@ -1968,6 +2815,7 @@ function handleCreateUserAccount(data, requesterUsername) {
     const chapter = String(data.chapter || ORG_BRANDING_CONFIG.chapterName).trim();
     const membershipType = String(data.membershipType || 'Regular').trim();
     const contactNumber = String(data.contactNumber || '').trim();
+    const accountEmailAction = String(data.accountEmailAction || 'send').trim().toLowerCase() === 'hold' ? 'hold' : 'send';
 
     if (!username) return createErrorResponse('Username is required', 400);
     if (!plainPassword || plainPassword.length < 8) {
@@ -2058,9 +2906,45 @@ function handleCreateUserAccount(data, requesterUsername) {
 
     sheet.appendRow(newRow);
 
+    let accountEmailStatus = accountEmailAction === 'hold' ? 'Held' : 'Pending';
+    let accountEmailSentAt = '';
+    let accountEmailError = '';
+
+    if (accountEmailAction !== 'hold') {
+      try {
+        sendAccountCreationEmail_({
+          email: email,
+          fullName: fullName,
+          username: username,
+          temporaryPassword: plainPassword,
+          idCode: idCode,
+          role: role,
+          position: position,
+          committee: committee,
+          chapter: chapter,
+          membershipType: membershipType,
+          status: 'Active',
+          dateJoined: dateJoined,
+          contactNumber: contactNumber,
+          isResend: false,
+        });
+        accountEmailStatus = 'Sent';
+        accountEmailSentAt = Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+      } catch (emailError) {
+        accountEmailStatus = 'Failed';
+        accountEmailError = String(emailError && emailError.message ? emailError.message : emailError || 'Unknown email error');
+        Logger.log('handleCreateUserAccount Email Error: ' + accountEmailError);
+      }
+    }
+
     return createSuccessResponse({
       success: true,
-      message: 'Account created successfully',
+      message:
+        accountEmailStatus === 'Sent'
+          ? 'Account created successfully. Account email sent.'
+          : accountEmailStatus === 'Held'
+          ? 'Account created successfully. Account email is on hold.'
+          : 'Account created successfully, but account email was not sent.',
       user: {
         username: username,
         fullName: fullName,
@@ -2071,10 +2955,166 @@ function handleCreateUserAccount(data, requesterUsername) {
         committee: committee,
         chapter: chapter,
       },
+      accountEmail: {
+        status: accountEmailStatus,
+        sentAt: accountEmailSentAt,
+        error: accountEmailError,
+      },
     });
   } catch (error) {
     Logger.log('handleCreateUserAccount Error: ' + error.toString());
     return createErrorResponse('Failed to create account: ' + error.message, 500);
+  }
+}
+
+function handleManageAccountCreationEmail(data, requesterUsername) {
+  try {
+    const requesterRole = getUserRoleForLoginActions_(requesterUsername);
+    if (!canManageUsersByRole_(requesterRole)) {
+      return createErrorResponse('Permission denied', 403);
+    }
+
+    const username = String(data.username || '').trim();
+    const emailAction = String(data.emailAction || '').trim().toLowerCase();
+    if (!username) return createErrorResponse('Username is required', 400);
+    if (['send', 'hold', 'resend'].indexOf(emailAction) === -1) {
+      return createErrorResponse('Invalid email action', 400);
+    }
+
+    const ss = SpreadsheetApp.openById(LOGIN_SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(LOGIN_SHEET_NAME);
+    if (!sheet) return createErrorResponse('User database not found', 500);
+
+    const queueContext = ensureProfileUpdateQueueSheet_(ss);
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0] || [];
+    const idx = buildUserProfileColumnIndex_(headers);
+    const usernameIdx = idx['Username'];
+    if (usernameIdx === undefined || usernameIdx < 0) {
+      return createErrorResponse('Username column is missing', 500);
+    }
+
+    const targetLower = username.toLowerCase();
+    let rowIndex = -1;
+    let row = null;
+    for (let i = 1; i < values.length; i++) {
+      const rowUsername = String(values[i][usernameIdx] || '').toLowerCase().trim();
+      if (rowUsername === targetLower) {
+        rowIndex = i + 1;
+        row = values[i];
+        break;
+      }
+    }
+
+    if (rowIndex === -1 || !row) {
+      return createErrorResponse('User not found', 404);
+    }
+
+    if (emailAction === 'hold') {
+      const holdResult = processQueuedProfileUpdateCommand_(queueContext.sheet, username, 'hold', requesterUsername || username);
+      if (!holdResult.success) {
+        return createErrorResponse(holdResult.error || 'Failed to hold queued profile updates', 500);
+      }
+      return createSuccessResponse({
+        success: true,
+        message: 'Account email placed on hold',
+        accountEmail: {
+          status: 'Held',
+          sentAt: '',
+          error: '',
+        },
+        queuedChangesHeld: holdResult.queuedChangesHeld || 0,
+      });
+    }
+
+    const email = String(idx['Email Address'] !== undefined ? row[idx['Email Address']] : '').trim();
+    const fullName = String(idx['Full name'] !== undefined ? row[idx['Full name']] : 'Member').trim() || 'Member';
+    if (!email) {
+      return createErrorResponse('Recipient email is empty', 400);
+    }
+
+    const queuedProfileChanges = getQueuedProfileUpdateChanges_(queueContext.sheet, username);
+    if (queuedProfileChanges.changes.length > 0) {
+      const queuedCommandResult = processQueuedProfileUpdateCommand_(
+        queueContext.sheet,
+        username,
+        emailAction,
+        requesterUsername || username
+      );
+      if (!queuedCommandResult.success) {
+        return createErrorResponse('Failed to send queued profile update email: ' + (queuedCommandResult.error || 'Unknown error'), 500);
+      }
+
+      return createSuccessResponse({
+        success: true,
+        message: queuedCommandResult.message,
+        accountEmail: {
+          status: queuedCommandResult.status || 'Sent',
+          sentAt: queuedCommandResult.sentAt || '',
+          error: '',
+        },
+        queuedChangesSent: queuedCommandResult.queuedChangesSent || queuedProfileChanges.changes.length,
+      });
+    }
+
+    const oldPasswordHash = String(idx['Password'] !== undefined ? row[idx['Password']] : '');
+    const oldSalt = String(idx['Salt'] !== undefined ? row[idx['Salt']] : '');
+    const temporaryPassword = generateTemporaryAccountPassword_();
+    const passwordHash = hashString(temporaryPassword);
+    const salt = generateSalt();
+    const saltedHash = hashWithSalt(passwordHash, salt);
+
+    if (idx['Password'] !== undefined && idx['Password'] > -1) {
+      sheet.getRange(rowIndex, idx['Password'] + 1).setValue(saltedHash);
+    }
+    if (idx['Salt'] !== undefined && idx['Salt'] > -1) {
+      sheet.getRange(rowIndex, idx['Salt'] + 1).setValue(salt);
+    }
+
+    try {
+      sendAccountCreationEmail_({
+        email: email,
+        fullName: fullName,
+        username: username,
+        temporaryPassword: temporaryPassword,
+        idCode: String(idx['ID Code'] !== undefined ? row[idx['ID Code']] : '').trim(),
+        role: String(idx['Role'] !== undefined ? row[idx['Role']] : 'Member').trim() || 'Member',
+        position: String(idx['Position'] !== undefined ? row[idx['Position']] : 'Member').trim() || 'Member',
+        committee: String(idx['Committee'] !== undefined ? row[idx['Committee']] : '').trim(),
+        chapter: String(idx['Chapter'] !== undefined ? row[idx['Chapter']] : ORG_BRANDING_CONFIG.chapterName).trim(),
+        membershipType: String(idx['Membership Type'] !== undefined ? row[idx['Membership Type']] : 'Regular').trim() || 'Regular',
+        status: String(idx['Status'] !== undefined ? row[idx['Status']] : 'Active').trim() || 'Active',
+        dateJoined: String(idx['Date Joined'] !== undefined ? row[idx['Date Joined']] : '').trim(),
+        contactNumber: String(idx['Contact Number'] !== undefined ? row[idx['Contact Number']] : '').trim(),
+        isResend: emailAction === 'resend',
+      });
+
+      const sentAt = Utilities.formatDate(new Date(), MANILA_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+
+      return createSuccessResponse({
+        success: true,
+        message: emailAction === 'resend' ? 'Account email resent successfully' : 'Account email sent successfully',
+        accountEmail: {
+          status: 'Sent',
+          sentAt: sentAt,
+          error: '',
+        },
+      });
+    } catch (emailError) {
+      if (idx['Password'] !== undefined && idx['Password'] > -1) {
+        sheet.getRange(rowIndex, idx['Password'] + 1).setValue(oldPasswordHash);
+      }
+      if (idx['Salt'] !== undefined && idx['Salt'] > -1) {
+        sheet.getRange(rowIndex, idx['Salt'] + 1).setValue(oldSalt);
+      }
+
+      const message = String(emailError && emailError.message ? emailError.message : emailError || 'Unknown email error');
+
+      return createErrorResponse('Failed to send account email: ' + message, 500);
+    }
+  } catch (error) {
+    Logger.log('handleManageAccountCreationEmail Error: ' + error.toString());
+    return createErrorResponse('Failed to manage account email: ' + error.message, 500);
   }
 }
 
@@ -3913,14 +4953,11 @@ function handleVerifyOTP(username, email, otp) {
 }
 
 /**
- * Update the verified email in user profile
+ * Update the verified email in user profile.
+ * Frontend/API verification updates send direct notifications (no queue).
  * @param {string} username - Username to update
  * @param {string} verifiedEmail - The verified email address
  * @returns {Object} Success status
- */
-/**
- * Update the verified email in user profile
- * MODIFIED: Sends notification since "EmailVerified" is a critical field
  */
 function updateVerifiedEmailInProfile(username, verifiedEmail) {
   try {
@@ -3937,25 +4974,27 @@ function updateVerifiedEmailInProfile(username, verifiedEmail) {
     const usernameColIdx = idx['Username'];
     const emailVerifiedColIdx = idx['EmailVerified'];
     const verifiedEmailColIdx = idx['VerifiedEmail'];
-    const emailColIdx = idx['Email Address']; // Needed to send the notification
-    const nameColIdx = idx['Full name'];      // Needed for notification
+    const emailColIdx = idx['Email Address'];
+    const fullNameColIdx = idx['Full name'];
     
     const usernameLower = username.toLowerCase().trim();
     let rowIndex = -1;
-    let userEmail = '';
-    let userName = 'Member';
     
     for (let i = 1; i < data.length; i++) {
       const rowUsername = (data[i][usernameColIdx] || '').toString().toLowerCase().trim();
       if (rowUsername === usernameLower) {
         rowIndex = i + 1;
-        userEmail = data[i][emailColIdx];
-        userName = data[i][nameColIdx];
         break;
       }
     }
     
     if (rowIndex === -1) return { success: false, message: 'User not found' };
+
+    const row = data[rowIndex - 1] || [];
+    const oldEmailVerified = emailVerifiedColIdx !== undefined ? row[emailVerifiedColIdx] : '';
+    const oldVerifiedEmail = verifiedEmailColIdx !== undefined ? row[verifiedEmailColIdx] : '';
+    const userEmail = String(emailColIdx !== undefined ? row[emailColIdx] : '').trim();
+    const userFullName = String(fullNameColIdx !== undefined ? row[fullNameColIdx] : 'Member').trim() || 'Member';
     
     // Update Columns
     if (emailVerifiedColIdx !== undefined) {
@@ -3964,22 +5003,37 @@ function updateVerifiedEmailInProfile(username, verifiedEmail) {
     if (verifiedEmailColIdx !== undefined) {
       sheet.getRange(rowIndex, verifiedEmailColIdx + 1).setValue(verifiedEmail);
     }
-    
-    // === NOTIFICATION TRIGGER ===
-    // Since EmailVerified is a critical field, we trigger the email manually here
-    if (userEmail) {
-       const changes = [{
-         field: 'EmailVerified',
-         oldVal: 'False/Unverified',
-         newVal: 'True (Verified: ' + verifiedEmail + ')'
-       }];
-       try {
-         sendProfileUpdateEmail(userEmail, userName, changes, username);
-         Logger.log('✅ Verification notification sent to ' + userEmail);
-       } catch (e) {
-         Logger.log('❌ Failed to send verification notification: ' + e.toString());
-       }
+
+    const verificationChanges = [];
+    if (String(oldEmailVerified).toLowerCase() !== 'true') {
+      verificationChanges.push({
+        field: 'EmailVerified',
+        oldVal: String(oldEmailVerified || 'False/Unverified'),
+        newVal: 'True',
+      });
     }
+    if (String(oldVerifiedEmail || '').trim() !== String(verifiedEmail || '').trim()) {
+      verificationChanges.push({
+        field: 'VerifiedEmail',
+        oldVal: String(oldVerifiedEmail || '(Empty)'),
+        newVal: String(verifiedEmail || '(Empty)'),
+      });
+    }
+
+    if (verificationChanges.length > 0) {
+      if (userEmail) {
+        try {
+          sendProfileUpdateEmail(userEmail, userFullName, verificationChanges, username);
+          Logger.log('✅ Verification update email sent directly for username: ' + username);
+        } catch (emailError) {
+          Logger.log('❌ Failed to send verification update email: ' + emailError.toString());
+        }
+      } else {
+        Logger.log('ℹ️ Verification updated, but no recipient email is set for username: ' + username);
+      }
+    }
+
+    Logger.log('ℹ️ Email verification update applied for username: ' + username);
     
     return { success: true };
     
