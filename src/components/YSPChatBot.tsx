@@ -8,9 +8,15 @@ import { fetchAllProjects, type Project } from "../services/projectsService";
 import { getStoredUser, getSessionToken, fetchUserProfile, type UserProfile } from "../services/gasLoginService";
 import type { AttendanceDashboardContext } from "./AttendanceDashboardPage";
 import { orgConfig } from "../config/org.config";
+import { translateTextInFrontend } from "../services/frontendTranslationService";
 
 // API URL loaded from environment variable
 const API_URL = import.meta.env.VITE_GAS_CHATBOT_API_URL || '';
+const TRANSLATOR_API_URL =
+  import.meta.env.VITE_GAS_TRANSLATOR_API_URL ||
+  import.meta.env.VITE_GAS_SYSTEM_TOOLS_API_URL ||
+  import.meta.env.VITE_GAS_LOGIN_API_URL ||
+  '';
 
 type Sender = "user" | "bot";
 type KnowledgeSource = "database" | "mixed" | "gemini";
@@ -19,6 +25,7 @@ type ChatMode = "assistant" | "llm";
 interface Message {
   id: number;
   text: string;
+  originalText?: string;
   sender: Sender;
   image?: string;
   source?: KnowledgeSource;
@@ -48,6 +55,9 @@ const BASE_SUGGESTIONS = [
   "/help",
   "/mode llm",
   "/mode assistant",
+  "/translate list",
+  "/translate filipino",
+  "/translate off",
   "Who is the founder?",
   "What are the advocacy pillars?",
   "About YSP",
@@ -67,6 +77,298 @@ const BASE_SUGGESTIONS = [
 ];
 
 const ORG_LABEL = orgConfig.shortName;
+
+const CHATBOT_TRANSLATION_STORAGE_KEY = "ysp_chatbot_translation_language";
+const CHATBOT_TRANSLATION_DEFAULT_LANGUAGE = "eng_Latn";
+const CHATBOT_TRANSLATION_EVENT_NAME = "ysp:chatbot-translation-language-changed";
+const CHATBOT_TRANSLATION_DEBUG = import.meta.env.DEV;
+
+function logChatbotTranslation_(message: string, details?: unknown): void {
+  if (!CHATBOT_TRANSLATION_DEBUG) return;
+  if (typeof details === "undefined") {
+    console.warn(`[ChatbotTranslation] ${message}`);
+    return;
+  }
+  console.warn(`[ChatbotTranslation] ${message}`, details);
+}
+
+function logChatbotTranslationError_(message: string, error?: unknown): void {
+  if (!CHATBOT_TRANSLATION_DEBUG) return;
+  console.error(`[ChatbotTranslation] ${message}`, error);
+}
+
+type ChatbotTranslationLanguage = {
+  code: string;
+  label: string;
+  aliases: string[];
+};
+
+const CHATBOT_TRANSLATION_LANGUAGES: ChatbotTranslationLanguage[] = [
+  { code: "eng_Latn", label: "English", aliases: ["english", "eng", "off", "none", "disable", "disabled"] },
+  { code: "tgl_Latn", label: "Filipino (Tagalog)", aliases: ["filipino", "tagalog", "tl"] },
+  { code: "ceb_Latn", label: "Cebuano", aliases: ["cebuano", "bisaya"] },
+  { code: "ilo_Latn", label: "Ilocano", aliases: ["ilocano"] },
+  { code: "hil_Latn", label: "Hiligaynon", aliases: ["hiligaynon", "ilonggo"] },
+  { code: "war_Latn", label: "Waray", aliases: ["waray"] },
+  { code: "bik_Latn", label: "Bikol", aliases: ["bikol", "bicolano", "bicol"] },
+  { code: "pam_Latn", label: "Kapampangan", aliases: ["kapampangan", "kap"] },
+  { code: "pag_Latn", label: "Pangasinan", aliases: ["pangasinan"] },
+  { code: "spa_Latn", label: "Spanish", aliases: ["spanish", "espanol", "espa\u00f1ol"] },
+  { code: "fra_Latn", label: "French", aliases: ["french", "francais", "fr"] },
+  { code: "deu_Latn", label: "German", aliases: ["german", "deutsch", "de"] },
+  { code: "ita_Latn", label: "Italian", aliases: ["italian", "italiano", "it"] },
+  { code: "por_Latn", label: "Portuguese", aliases: ["portuguese", "portugues", "pt"] },
+  { code: "nld_Latn", label: "Dutch", aliases: ["dutch", "nederlands", "nl"] },
+  { code: "rus_Cyrl", label: "Russian", aliases: ["russian", "russki", "ru"] },
+  { code: "zho_Hans", label: "Chinese (Simplified)", aliases: ["chinese", "mandarin", "zh", "zh-cn"] },
+  { code: "kor_Hang", label: "Korean", aliases: ["korean", "hangul", "ko"] },
+  { code: "ind_Latn", label: "Indonesian", aliases: ["indonesian", "bahasa"] },
+  { code: "msa_Latn", label: "Malay", aliases: ["malay", "bahasa melayu", "ms"] },
+  { code: "hin_Deva", label: "Hindi", aliases: ["hindi", "hi"] },
+  { code: "tha_Thai", label: "Thai", aliases: ["thai", "th"] },
+  { code: "vie_Latn", label: "Vietnamese", aliases: ["vietnamese", "tieng viet", "vi"] },
+  { code: "ara_Arab", label: "Arabic", aliases: ["arabic", "ar"] },
+  { code: "tur_Latn", label: "Turkish", aliases: ["turkish", "turkce", "tr"] },
+  { code: "ukr_Cyrl", label: "Ukrainian", aliases: ["ukrainian", "ukrainska", "uk"] },
+  { code: "jpn_Jpan", label: "Japanese", aliases: ["japanese", "nihongo"] },
+];
+
+function escapeRegExpForChatbot_(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeTranslationLanguage_(value: string): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+
+  const direct = CHATBOT_TRANSLATION_LANGUAGES.find(
+    (language) => language.code.toLowerCase() === normalized
+  );
+  if (direct) return direct.code;
+
+  const alias = CHATBOT_TRANSLATION_LANGUAGES.find((language) =>
+    language.aliases.some((entry) => entry.toLowerCase() === normalized)
+  );
+  return alias ? alias.code : "";
+}
+
+function getTranslationLanguageLabel_(code: string): string {
+  const match = CHATBOT_TRANSLATION_LANGUAGES.find((language) => language.code === code);
+  return match ? match.label : code;
+}
+
+function loadChatbotTranslationLanguage_(): string {
+  try {
+    const stored = localStorage.getItem(CHATBOT_TRANSLATION_STORAGE_KEY) || "";
+    const normalized = normalizeTranslationLanguage_(stored);
+    return normalized || CHATBOT_TRANSLATION_DEFAULT_LANGUAGE;
+  } catch {
+    return CHATBOT_TRANSLATION_DEFAULT_LANGUAGE;
+  }
+}
+
+function saveChatbotTranslationLanguage_(language: string): void {
+  try {
+    localStorage.setItem(CHATBOT_TRANSLATION_STORAGE_KEY, language);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent(CHATBOT_TRANSLATION_EVENT_NAME, {
+          detail: { language },
+        })
+      );
+    }
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function maskOrgNamesForTranslation_(text: string): { maskedText: string; tokens: Array<{ key: string; value: string }> } {
+  const orgCandidates = Array.from(
+    new Set([
+      String(orgConfig.orgName || "").trim(),
+      String(orgConfig.chapterName || "").trim(),
+      String(orgConfig.shortName || "").trim(),
+      String(orgConfig.fullName || "").trim(),
+      String(orgConfig.portalName || "").trim(),
+    ].filter(Boolean))
+  ).sort((a, b) => b.length - a.length);
+
+  let maskedText = String(text || "");
+  const tokens: Array<{ key: string; value: string }> = [];
+
+  for (const candidate of orgCandidates) {
+    const regex = new RegExp(escapeRegExpForChatbot_(candidate), "gi");
+    maskedText = maskedText.replace(regex, (matched) => {
+      const key = `__ORG_NAME_TOKEN_${tokens.length}__`;
+      tokens.push({ key, value: matched });
+      return key;
+    });
+  }
+
+  return { maskedText, tokens };
+}
+
+function unmaskOrgNamesForTranslation_(text: string, tokens: Array<{ key: string; value: string }>): string {
+  let restored = String(text || "");
+  for (const token of tokens) {
+    restored = restored.split(token.key).join(token.value);
+  }
+  return restored;
+}
+
+function splitTranslationText_(text: string, maxLen: number): string[] {
+  const source = String(text || "");
+  if (!source.trim()) return [];
+  if (source.length <= maxLen) return [source];
+
+  const lines = source.split("\n");
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const line of lines) {
+    const next = current ? `${current}\n${line}` : line;
+    if (next.length <= maxLen) {
+      current = next;
+      continue;
+    }
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+
+    if (line.length <= maxLen) {
+      current = line;
+      continue;
+    }
+
+    let start = 0;
+    while (start < line.length) {
+      chunks.push(line.slice(start, start + maxLen));
+      start += maxLen;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+async function translateBotText_(text: string, targetLanguage: string): Promise<string> {
+  if (!text.trim()) return text;
+  if (targetLanguage === CHATBOT_TRANSLATION_DEFAULT_LANGUAGE) return text;
+
+  logChatbotTranslation_("translateBotText_ called", {
+    targetLanguage,
+    inputLength: text.length,
+    preview: text.slice(0, 80),
+  });
+
+  const masked = maskOrgNamesForTranslation_(text);
+  const chunks = splitTranslationText_(masked.maskedText, 3800);
+  if (!chunks.length) return text;
+
+  logChatbotTranslation_("Text split into chunks", {
+    chunkCount: chunks.length,
+    targetLanguage,
+  });
+
+  const translatedChunks: string[] = [];
+
+  for (const chunk of chunks) {
+    try {
+      logChatbotTranslation_("Trying frontend translation chunk", {
+        targetLanguage,
+        chunkLength: chunk.length,
+        preview: chunk.slice(0, 80),
+      });
+      const frontendTranslated = await translateTextInFrontend(chunk, targetLanguage, "eng_Latn");
+      if (frontendTranslated && frontendTranslated.trim()) {
+        logChatbotTranslation_("Frontend chunk translation success", {
+          translatedLength: frontendTranslated.length,
+          preview: frontendTranslated.slice(0, 80),
+        });
+        translatedChunks.push(frontendTranslated);
+        continue;
+      }
+    } catch (frontendError) {
+      logChatbotTranslationError_("Frontend chunk translation failed; trying backend fallback", frontendError);
+      // Fallback to backend route if frontend translation is unavailable.
+    }
+
+    if (!TRANSLATOR_API_URL.trim()) {
+      logChatbotTranslationError_("No backend translation URL configured for fallback", {
+        targetLanguage,
+        preview: chunk.slice(0, 80),
+      });
+      throw new Error("Frontend translation is unavailable and backend route is not configured.");
+    }
+
+    logChatbotTranslation_("Trying backend translation chunk", {
+      endpoint: TRANSLATOR_API_URL,
+      targetLanguage,
+      chunkLength: chunk.length,
+    });
+
+    const response = await fetch(TRANSLATOR_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8",
+      },
+      body: JSON.stringify({
+        action: "translateText",
+        text: chunk,
+        sourceLanguage: "eng_Latn",
+        targetLanguage,
+      }),
+    });
+
+    const raw = await response.text();
+    let parsed: {
+      success?: boolean;
+      translatedText?: string;
+      error?: string;
+      data?: {
+        translatedText?: string;
+      };
+    } = {};
+    try {
+      parsed = JSON.parse(raw);
+    } catch (jsonError) {
+      logChatbotTranslationError_("Backend translation JSON parse failed", {
+        jsonError,
+        rawPreview: raw.slice(0, 160),
+      });
+      throw new Error("Translation service returned invalid JSON.");
+    }
+
+    if (!response.ok || parsed.success === false) {
+      logChatbotTranslationError_("Backend translation response not OK", {
+        status: response.status,
+        parsed,
+      });
+      throw new Error(parsed.error || `Translation failed (${response.status}).`);
+    }
+
+    const translated = String(parsed.translatedText || parsed.data?.translatedText || "").trim();
+    if (!translated) {
+      logChatbotTranslationError_("Backend translation response missing translated text", {
+        parsed,
+      });
+      throw new Error("Translation response did not include translated text.");
+    }
+    logChatbotTranslation_("Backend chunk translation success", {
+      translatedLength: translated.length,
+      preview: translated.slice(0, 80),
+    });
+    translatedChunks.push(translated);
+  }
+
+  const translatedMerged = translatedChunks.join("\n");
+  logChatbotTranslation_("translateBotText_ success", {
+    targetLanguage,
+    outputLength: translatedMerged.length,
+  });
+  return unmaskOrgNamesForTranslation_(translatedMerged, masked.tokens);
+}
 
 // 📋 PROFILE KNOWLEDGE BASE: Answers for @profile command
 const PROFILE_KNOWLEDGE_BASE = [
@@ -172,7 +474,7 @@ function generatePersonalIntroduction(profile: UserProfile): string {
   }
   
   // Build greeting based on gender/pronouns
-  let greeting = "👋 Allow me to introduce you!\n\n";
+  const greeting = "👋 Allow me to introduce you!\n\n";
   
   // Main introduction
   let intro = `🌟 ${name}\n\n`;
@@ -249,8 +551,6 @@ function generatePersonalIntroduction(profile: UserProfile): string {
   
   return greeting + intro + personalDetails + yspJourney + randomClosing;
 }
-
-const SUGGESTIONS = BASE_SUGGESTIONS;
 
 // 🗄️ EXTENSIVE LOCAL KNOWLEDGE BASE
 // The bot checks this FIRST. If a match is found, it skips the API.
@@ -509,7 +809,7 @@ const CLARIFYING_FALLBACK =
 
 function buildErrorMessage(code?: string | number): string {
   const errorCode = code ? String(code) : "500";
-  return `Error code: ${errorCode}. Please ask the developer for fixing this problem. I am currently experiencing fluctuations, please chuchu.`;
+  return `Service temporarily unavailable (code ${errorCode}). Please try again in a moment.`;
 }
 
 function isExecutiveBoardQuery(query: string): boolean {
@@ -902,46 +1202,6 @@ function extractMembersTargets(text: string): string[] {
     .filter(Boolean);
 }
 
-function formatOfficerDetails(officer: DirectoryOfficer): string {
-  const lines: string[] = [];
-  const addLine = (label: string, value?: string | number) => {
-    if (value === undefined || value === null) return;
-    const cleaned = String(value).trim();
-    if (!cleaned) return;
-    lines.push(`${label}: ${cleaned}`);
-  };
-
-  addLine("Name", officer.fullName);
-  addLine("ID Code", officer.idCode);
-  addLine("Position", officer.position);
-  addLine("Committee", officer.committee);
-  addLine("Role", officer.role);
-  addLine("Status", officer.status);
-  addLine("Chapter", officer.chapter);
-  addLine("Date Joined", officer.dateJoined);
-  addLine("Membership Type", officer.membershipType);
-  addLine("Email", officer.email);
-  if (officer.personalEmail && officer.personalEmail !== officer.email) {
-    addLine("Personal Email", officer.personalEmail);
-  }
-  addLine("Contact", officer.contactNumber);
-  addLine("Birthday", officer.birthday);
-  addLine("Age", officer.age);
-  addLine("Gender", officer.gender);
-  addLine("Pronouns", officer.pronouns);
-  addLine("Civil Status", officer.civilStatus);
-  addLine("Nationality", officer.nationality);
-  addLine("Religion", officer.religion);
-  addLine("Emergency Contact Name", officer.emergencyContactName);
-  addLine("Emergency Contact Relation", officer.emergencyContactRelation);
-  addLine("Emergency Contact Number", officer.emergencyContactNumber);
-  addLine("Facebook", officer.facebook);
-  addLine("Instagram", officer.instagram);
-  addLine("Twitter", officer.twitter);
-
-  return lines.length > 0 ? lines.join("\n") : "No additional details available.";
-}
-
 function formatOfficerSummary(officer: DirectoryOfficer): string {
   const lines: string[] = [];
   const addLine = (label: string, value?: string | number) => {
@@ -1005,13 +1265,17 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
   const [lastDirectoryOfficer, setLastDirectoryOfficer] = useState<DirectoryOfficer | null>(null);
   const [membersCommandActive, setMembersCommandActive] = useState(false);
   const [fullImageUrl, setFullImageUrl] = useState<string | null>(null);
-  const [lastKnowledgeSource, setLastKnowledgeSource] = useState<KnowledgeSource>("database");
+  const [, setLastKnowledgeSource] = useState<KnowledgeSource>("database");
   const [chatMode, setChatMode] = useState<ChatMode>("llm");
+  const [chatTargetLanguage, setChatTargetLanguage] = useState<string>(loadChatbotTranslationLanguage_);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const directoryAnalyticsCacheRef = useRef<{ timestamp: number; officers: DirectoryOfficer[] } | null>(null);
   const cooldownEndRef = useRef<number>(0); // 👈 Tracks real time
+  const translatedMessageKeysRef = useRef<Set<string>>(new Set());
+  const translatingMessageIdsRef = useRef<Set<number>>(new Set());
+  const previousTargetLanguageRef = useRef<string>(chatTargetLanguage);
 
   // 📊 ATTENDANCE DASHBOARD KNOWLEDGE BASE
   const generateAttendanceContextResponse = (query: string): string | null => {
@@ -1170,6 +1434,68 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (previousTargetLanguageRef.current === chatTargetLanguage) return;
+    previousTargetLanguageRef.current = chatTargetLanguage;
+    translatedMessageKeysRef.current = new Set();
+    translatingMessageIdsRef.current.clear();
+
+    if (chatTargetLanguage === CHATBOT_TRANSLATION_DEFAULT_LANGUAGE) {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.sender === "bot" && message.originalText
+            ? { ...message, text: message.originalText }
+            : message
+        )
+      );
+    }
+  }, [chatTargetLanguage]);
+
+  useEffect(() => {
+    if (chatTargetLanguage === CHATBOT_TRANSLATION_DEFAULT_LANGUAGE) return;
+
+    const candidate = messages.find((message) => {
+      if (message.sender !== "bot") return false;
+      const sourceText = String(message.originalText || message.text || "").trim();
+      if (!sourceText) return false;
+      const cacheKey = `${chatTargetLanguage}:${message.id}`;
+      if (translatedMessageKeysRef.current.has(cacheKey)) return false;
+      if (translatingMessageIdsRef.current.has(message.id)) return false;
+      return true;
+    });
+
+    if (!candidate) return;
+
+    const cacheKey = `${chatTargetLanguage}:${candidate.id}`;
+    const sourceText = candidate.originalText || candidate.text;
+    translatingMessageIdsRef.current.add(candidate.id);
+
+    void translateBotText_(sourceText, chatTargetLanguage)
+      .then((translated) => {
+        translatedMessageKeysRef.current.add(cacheKey);
+        setMessages((prev) =>
+          prev.map((message) => {
+            if (message.id !== candidate.id) return message;
+            if (message.sender !== "bot") return message;
+
+            const baseText = message.originalText || sourceText;
+            const nextText = translated && translated.trim() ? translated : baseText;
+            return {
+              ...message,
+              originalText: baseText,
+              text: nextText,
+            };
+          })
+        );
+      })
+      .catch(() => {
+        translatedMessageKeysRef.current.add(cacheKey);
+      })
+      .finally(() => {
+        translatingMessageIdsRef.current.delete(candidate.id);
+      });
+  }, [messages, chatTargetLanguage]);
+
   // 🔍 Helper: Check Local DB with Smart Matching (Best Match & Word Boundaries)
   const findLocalAnswer = (query: string): KBEntry | null => {
     const lowerQuery = query.toLowerCase();
@@ -1293,6 +1619,8 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     lines.push("- /help: Show available commands for the current page");
     lines.push("- /mode llm: LLM-first chat mode");
     lines.push("- /mode assistant: Rule/feature-first assistant mode");
+    lines.push("- /translate [language]: Translate bot replies (ex: /translate japanese)");
+    lines.push("- /translate off: Disable chatbot translation");
     lines.push("- @clear chat history: Reset chat conversation");
 
     if (loggedIn && (page === "my-profile" || page === "profile")) {
@@ -1380,6 +1708,157 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     const shouldUseAssistantHeuristics = chatMode === "assistant";
     const isMembersCommandAllowed =
       pageKey === "officer-directory" || pageKey === "manage-members";
+
+    const maybeTranslateBotText_ = async (sourceText: string): Promise<{ text: string; originalText?: string }> => {
+      const normalizedSource = String(sourceText || "");
+      if (!normalizedSource.trim()) return { text: normalizedSource };
+      if (chatTargetLanguage === CHATBOT_TRANSLATION_DEFAULT_LANGUAGE) return { text: normalizedSource };
+
+      logChatbotTranslation_("maybeTranslateBotText_ invoked", {
+        targetLanguage: chatTargetLanguage,
+        inputLength: normalizedSource.length,
+        preview: normalizedSource.slice(0, 80),
+      });
+
+      try {
+        const translated = await translateBotText_(normalizedSource, chatTargetLanguage);
+        const finalText = translated && translated.trim() ? translated : normalizedSource;
+        if (finalText.trim() === normalizedSource.trim()) {
+          logChatbotTranslation_("maybeTranslateBotText_ returned original text", {
+            targetLanguage: chatTargetLanguage,
+          });
+          return { text: normalizedSource };
+        }
+        logChatbotTranslation_("maybeTranslateBotText_ translated successfully", {
+          targetLanguage: chatTargetLanguage,
+          outputLength: finalText.length,
+        });
+        return {
+          text: finalText,
+          originalText: normalizedSource,
+        };
+      } catch (error) {
+        logChatbotTranslationError_("maybeTranslateBotText_ failed; using original text", error);
+        return { text: normalizedSource };
+      }
+    };
+
+    if (/^\/(translate|lang|language)\b/i.test(workingText)) {
+      const commandValue = workingText.replace(/^\/(translate|lang|language)\b[:\s]*/i, "").trim();
+      logChatbotTranslation_("Translate command received", {
+        commandValue,
+        currentLanguage: chatTargetLanguage,
+      });
+
+      if (!commandValue || /^status$/i.test(commandValue)) {
+        const currentLabel = getTranslationLanguageLabel_(chatTargetLanguage);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text:
+              `Current translation language: ${currentLabel}\n` +
+              "Use /translate list to see available options, or /translate off to disable.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (/^(list|languages|options)$/i.test(commandValue)) {
+        logChatbotTranslation_("Translate command list requested", {
+          currentLanguage: chatTargetLanguage,
+        });
+        const list = CHATBOT_TRANSLATION_LANGUAGES
+          .filter((language) => language.code !== CHATBOT_TRANSLATION_DEFAULT_LANGUAGE)
+          .map((language) => `- ${language.label}`)
+          .join("\n");
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text:
+              "Available translation languages:\n" +
+              `${list}\n` +
+              "Use /translate [language name] (example: /translate japanese).",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      const resolvedLanguage = normalizeTranslationLanguage_(commandValue);
+      logChatbotTranslation_("Resolved language from command", {
+        commandValue,
+        resolvedLanguage,
+      });
+      if (!resolvedLanguage) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text:
+              "Unknown language option. Try /translate list, /translate filipino, /translate japanese, or /translate off.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (resolvedLanguage !== CHATBOT_TRANSLATION_DEFAULT_LANGUAGE) {
+        try {
+          await translateBotText_("Translation service health check.", resolvedLanguage);
+        } catch (translationError) {
+          logChatbotTranslationError_("Health check failed", {
+            resolvedLanguage,
+            error: translationError,
+          });
+          const errorMessage =
+            translationError instanceof Error && translationError.message
+              ? translationError.message
+              : "Translation service is currently unavailable.";
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              text: `Cannot enable translation yet: ${errorMessage}`,
+              sender: "bot",
+            },
+          ]);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      setChatTargetLanguage(resolvedLanguage);
+      saveChatbotTranslationLanguage_(resolvedLanguage);
+      logChatbotTranslation_("Language selected", {
+        resolvedLanguage,
+        resolvedLabel: getTranslationLanguageLabel_(resolvedLanguage),
+      });
+
+      const resolvedLabel = getTranslationLanguageLabel_(resolvedLanguage);
+      const statusText =
+        resolvedLanguage === CHATBOT_TRANSLATION_DEFAULT_LANGUAGE
+          ? "Translation disabled. Homepage and bot replies will stay in English."
+          : `Translation enabled: ${resolvedLabel}. I will translate homepage content and bot replies while keeping the organization name unchanged.`;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          text: statusText,
+          sender: "bot",
+        },
+      ]);
+      setIsLoading(false);
+      return;
+    }
 
     if (/^@clear\b/i.test(workingText) || /^@clear chat history\b/i.test(workingText)) {
       setMessages([{ id: Date.now(), text: "Hello! I'm the YSP Assistant. How can I help you?", sender: "bot" }]);
@@ -2456,10 +2935,12 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     if (shouldUseAssistantHeuristics && (currentPage === 'attendance-dashboard' || currentPage === 'AttendanceDashboard')) {
       const attendanceResponse = generateAttendanceContextResponse(text);
       if (attendanceResponse) {
+        const translatedAttendance = await maybeTranslateBotText_(attendanceResponse);
         setTimeout(() => {
           const botMsg: Message = {
             id: Date.now() + 1,
-            text: attendanceResponse,
+            text: translatedAttendance.text,
+            originalText: translatedAttendance.originalText,
             sender: "bot",
           };
           setMessages((prev) => [...prev, botMsg]);
@@ -2470,7 +2951,11 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     }
 
     const localMatch = findLocalAnswer(text);
-    if (shouldUseAssistantHeuristics && localMatch) {
+    const storedUser = getStoredUser();
+    const sessionToken = getSessionToken();
+    const canUseLocalFallback = shouldUseAssistantHeuristics || !sessionToken;
+
+    if (localMatch && canUseLocalFallback) {
       setLastKnowledgeSource("database");
       let imageUrl: string | undefined = undefined;
 
@@ -2485,10 +2970,13 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
         }
       }
 
+      const translatedLocal = await maybeTranslateBotText_(localMatch.answer);
+
       setTimeout(() => {
         const botMsg: Message = {
           id: Date.now() + 1,
-          text: localMatch.answer,
+          text: translatedLocal.text,
+          originalText: translatedLocal.originalText,
           sender: "bot",
           image: imageUrl,
         };
@@ -2499,12 +2987,20 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       return;
     }
 
+    if (!sessionToken) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          text: "Guest mode supports homepage FAQs. Use /mode assistant for local answers, or log in to use LLM chat.",
+          sender: "bot",
+        },
+      ]);
+      setIsLoading(false);
+      return;
+    }
+
     try {
-      const storedUser = getStoredUser();
-      const sessionToken = getSessionToken();
-      if (!sessionToken) {
-        throw new Error("Please log in to use the chatbot.");
-      }
       const recentHistory = messages.slice(-8).map((m) => ({
         role: m.sender === "bot" ? "assistant" : "user",
         text: m.text,
@@ -2513,6 +3009,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       const contextParts: string[] = [];
       if (currentPage) contextParts.push(`Current page: ${currentPage}`);
       contextParts.push(`Chat mode: ${chatMode}`);
+      contextParts.push(`Translation language: ${chatTargetLanguage}`);
       if (attendanceDashboardContext) {
         contextParts.push(
           `Attendance mode: ${attendanceDashboardContext.mode}, records: ${attendanceDashboardContext.statistics.totalRecords}`
@@ -2539,25 +3036,39 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       const raw = await res.text();
       let reply = "";
       let source: KnowledgeSource = "gemini";
+      let replyCode: string | number | undefined;
       try {
         const parsed = JSON.parse(raw);
         reply = typeof parsed?.reply === "string" ? parsed.reply : "";
+        replyCode = parsed?.code;
         const parsedSource = normalizeKnowledgeSource(parsed?.source);
         if (parsedSource) source = parsedSource;
       } catch {
         reply = raw;
       }
 
+      if (!res.ok) {
+        throw new Error(reply || buildErrorMessage(replyCode || res.status));
+      }
+
       if (!reply.trim()) reply = CLARIFYING_FALLBACK;
+      const translatedReply = await maybeTranslateBotText_(reply);
 
       setLastKnowledgeSource(source);
-      const botMsg: Message = { id: Date.now() + 1, text: reply, sender: "bot", source };
+      const botMsg: Message = {
+        id: Date.now() + 1,
+        text: translatedReply.text,
+        originalText: translatedReply.originalText,
+        sender: "bot",
+        source,
+      };
       setMessages((prev) => [...prev, botMsg]);
     } catch (err) {
       console.error("Chatbot API error:", err);
+      const message = err instanceof Error && err.message ? err.message : buildErrorMessage("500");
       setMessages((prev) => [
         ...prev,
-        { id: Date.now() + 1, text: buildErrorMessage("500"), sender: "bot" },
+        { id: Date.now() + 1, text: message, sender: "bot" },
       ]);
     } finally {
       setIsLoading(false);
@@ -2684,8 +3195,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     chatWindowShadow: isDark ? "0 10px 40px -10px rgba(0,0,0,0.5)" : "0 10px 40px -10px rgba(0,0,0,0.2)",
   };
 
-  const ui = useMemo(() => {
-    return (
+  const ui = (
       <div
         className="font-sans ysp-chatbot-root"
         style={{
@@ -3212,7 +3722,6 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
         `}</style>
       </div>
     );
-}, [isOpen, isLoading, input, messages, cooldown, fullImageUrl, suggestionList, isDark, colors, chatMode]); // ✅ Add cooldown, isDark, colors here
 
   if (!mounted) return null;
   if (hidden) return null; // Hide chatbot when in edit mode
