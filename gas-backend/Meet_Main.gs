@@ -2864,7 +2864,7 @@ function buildMeetGoogleCalendarUrl_(context) {
 function buildMeetInviteEmailHtml_(attendeeName, context, googleCalUrl) {
   var orgBranding = getMeetOrgBranding_();
   var logoUrl = orgBranding.logoUrl || MEET_ATTENDANCE_CONFIG.LOGO_URL || 'https://i.imgur.com/J4wddTW.png';
-  var webAppUrl = 'https://www.youthservicephilippinestagum.me/';
+  var webAppUrl = 'https://tgm.youthserviceph.org/Home';
   var name = escapeHtmlMeet_(attendeeName || 'Member');
   var title = escapeHtmlMeet_(context.title || 'KaagapAI Meet Session');
   var meetingId = escapeHtmlMeet_(context.meetingId || '');

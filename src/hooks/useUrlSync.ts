@@ -121,6 +121,30 @@ const PAGE_ALIASES: Record<string, string> = {
   MembershipApplicationsAdmin: 'MembershipEditor',
 };
 
+// Public SEO-friendly path aliases for indexable visitor pages
+const PUBLIC_PAGE_PATHS: Record<string, string> = {
+  Feedback: '/feedback',
+  Opportunities: '/opportunities',
+  Founder: '/founder',
+  Developer: '/developer',
+  Login: '/login',
+};
+
+const PATH_TO_PUBLIC_PAGE: Record<string, string> = Object.entries(PUBLIC_PAGE_PATHS).reduce(
+  (acc, [page, pagePath]) => {
+    acc[pagePath.toLowerCase()] = page;
+    return acc;
+  },
+  {} as Record<string, string>
+);
+
+function normalizePathname(pathname: string): string {
+  const cleaned = String(pathname || '').trim();
+  if (!cleaned) return '/';
+  const withoutTrailing = cleaned.replace(/\/+$/, '');
+  return withoutTrailing || '/';
+}
+
 function normalizePageName(pageName: string | null): string | null {
   if (!pageName) return null;
   if (pageName === 'Home') return null;
@@ -304,6 +328,16 @@ export function useUrlSync({
     if (!normalizedPageName) {
       return getHomePath(isLoggedIn, userRole);
     }
+
+    const publicPath = PUBLIC_PAGE_PATHS[normalizedPageName];
+    if (publicPath) {
+      const publicParams = new URLSearchParams();
+      if (params?.id) publicParams.set('id', params.id);
+      if (params?.eventId) publicParams.set('eventId', params.eventId);
+      if (params?.mode) publicParams.set('mode', params.mode);
+      const query = publicParams.toString();
+      return query ? `${publicPath}?${query}` : publicPath;
+    }
     
     const searchParams = new URLSearchParams();
     searchParams.set('page', normalizedPageName);
@@ -385,8 +419,11 @@ export function useUrlSync({
   // Update URL when role changes (to keep role segment in sync)
   useEffect(() => {
     if (!sessionChecked || skipStateSyncRef.current) return;
+    const explicitPage = searchParams.get('page');
+    // Preserve clean public SEO paths (e.g., /feedback) without forcing role-segment URLs.
+    if (!explicitPage) return;
     
-    const currentPage = searchParams.get('page');
+    const currentPage = explicitPage;
     const expectedPath = currentPage
       ? `/${getRolePathSegment(userRole, isLoggedIn)}`
       : getHomePath(isLoggedIn, userRole);
@@ -404,10 +441,13 @@ export function useUrlSync({
     if (!sessionChecked) return;
     if (processingUrlRef.current) return;
     
-    const rawPage = searchParams.get('page');
+    const rawPageParam = searchParams.get('page');
+    const normalizedPath = normalizePathname(location.pathname).toLowerCase();
+    const pathPage = PATH_TO_PUBLIC_PAGE[normalizedPath] || null;
+    const rawPage = rawPageParam || pathPage;
     const currentPage = normalizePageName(rawPage);
 
-    if (rawPage && currentPage && rawPage !== currentPage) {
+    if (rawPageParam && currentPage && rawPageParam !== currentPage) {
       const normalizedParams = new URLSearchParams(searchParams.toString());
       normalizedParams.set('page', currentPage);
       replaceCurrentUrl(`${location.pathname}?${normalizedParams.toString()}`);
@@ -526,7 +566,9 @@ export function useUrlSync({
   return {
     navigateToPage,
     closePage,
-    currentPage: searchParams.get('page'),
+    currentPage: normalizePageName(
+      searchParams.get('page') || PATH_TO_PUBLIC_PAGE[normalizePathname(location.pathname).toLowerCase()] || null
+    ),
     hasPageAccess,
     setIntendedDestination,
     getAndClearIntendedDestination,

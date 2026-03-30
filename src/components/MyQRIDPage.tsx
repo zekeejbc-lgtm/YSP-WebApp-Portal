@@ -1168,7 +1168,7 @@ export default function MyQRIDPage({
     // Contact links
     ctx.fillStyle = '#374151';
     ctx.font = `${5 * scale}px Roboto, sans-serif`;
-    ctx.fillText('fb.com/YSPTagumChapter  •  youthservicephilippinestagum.me', canvas.width / 2, contactCardY + 16 * scale);
+    ctx.fillText('fb.com/YSPTagumChapter  •  tgm.youthserviceph.org/Home', canvas.width / 2, contactCardY + 16 * scale);
 
     // Reminders - smaller text
     ctx.fillStyle = '#6b7280';

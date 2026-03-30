@@ -136,7 +136,7 @@ const GLOBAL_MOTTO = EMAIL_SYSTEM_ORG_BRANDING.motto;
 const TIMEZONE = "Asia/Manila"; // Manila local time (UTC+8)
 const LOGO_URL = EMAIL_SYSTEM_ORG_BRANDING.logoUrl;
 const FB_PAGE_URL = "https://www.facebook.com/YSPTagumChapter";
-const WEB_PORTAL_URL = "https://www.youthservicephilippinestagum.me/Home";
+const WEB_PORTAL_URL = "https://tgm.youthserviceph.org/Home";
 
 // --- CONFIGURATION ---
 // 1. WHAT SHOWS IN THE RECIPIENT'S INBOX LIST:

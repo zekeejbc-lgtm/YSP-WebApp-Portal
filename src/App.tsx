@@ -201,7 +201,7 @@ import { translateTextInFrontend } from "./services/frontendTranslationService";
   const PAGE_ACCESS_DEBUG = false;
   const SIDEBAR_DEBUG_TOAST_ID = "sidebar-pages-debug";
   const PROJECT_ID_QUERY_PARAM = "projectId";
-  const SITE_ORIGIN = "https://www.youthservicephilippinestagum.me";
+  const SITE_ORIGIN = "https://tgm.youthserviceph.org";
   const SITE_NAME = orgConfig.fullName;
   const DEFAULT_OG_IMAGE = "https://i.imgur.com/J4wddTW.png";
   const CHATBOT_TRANSLATION_STORAGE_KEY = "ysp_chatbot_translation_language";
@@ -516,14 +516,14 @@ import { translateTextInFrontend } from "./services/frontendTranslationService";
         `Official ${orgConfig.portalName} for ${orgConfig.fullName}. Join youth leadership, volunteer, and community service programs in ${orgConfig.location}.`,
       keywords:
         `${orgConfig.shortName}, Youth Service Philippines, ${orgConfig.chapterName}, youth volunteers, youth leadership`,
-      canonicalPath: "/",
+      canonicalPath: "/Home",
     },
     Feedback: {
       title: `Feedback | ${orgConfig.portalName}`,
       description:
         `Send feedback to ${orgConfig.fullName} to help improve our youth programs and services.`,
       keywords: `${orgConfig.shortName} feedback, Youth Service Philippines feedback`,
-      canonicalPath: "/visitor?page=Feedback",
+      canonicalPath: "/feedback",
     },
     MembershipApplications: {
       title: `Opportunities | ${orgConfig.shortName}`,
@@ -531,7 +531,7 @@ import { translateTextInFrontend } from "./services/frontendTranslationService";
         `Explore and apply for opportunities from ${orgConfig.fullName}.`,
       keywords:
         `${orgConfig.shortName} opportunities, Youth Service Philippines opportunities, join ${orgConfig.shortName}`,
-      canonicalPath: "/visitor?page=Opportunities",
+      canonicalPath: "/opportunities",
     },
     Opportunities: {
       title: `Opportunities | ${orgConfig.shortName}`,
@@ -539,28 +539,28 @@ import { translateTextInFrontend } from "./services/frontendTranslationService";
         `Explore and apply for opportunities from ${orgConfig.fullName}.`,
       keywords:
         `${orgConfig.shortName} opportunities, Youth Service Philippines opportunities, join ${orgConfig.shortName}`,
-      canonicalPath: "/visitor?page=Opportunities",
+      canonicalPath: "/opportunities",
     },
     Founder: {
       title: `Founder | ${orgConfig.shortName}`,
       description:
         `Learn about the founder and leadership story behind ${orgConfig.fullName}.`,
       keywords: `${orgConfig.shortName} founder, Youth Service Philippines founder`,
-      canonicalPath: "/visitor?page=Founder",
+      canonicalPath: "/founder",
     },
     Developer: {
       title: `Developer | ${orgConfig.portalName}`,
       description:
         `Meet the developer and technical team behind the ${orgConfig.portalName}.`,
       keywords: `${orgConfig.shortName} developer, Youth Service Philippines portal developer`,
-      canonicalPath: "/visitor?page=Developer",
+      canonicalPath: "/developer",
     },
     Login: {
       title: `Member Login | ${orgConfig.portalName}`,
       description:
         `Secure login for ${orgConfig.fullName} members and officers.`,
       keywords: `${orgConfig.shortName} login, Youth Service Philippines member login`,
-      canonicalPath: "/visitor?page=Login",
+      canonicalPath: "/login",
       noindex: true,
     },
   };
@@ -569,7 +569,7 @@ import { translateTextInFrontend } from "./services/frontendTranslationService";
     title: orgConfig.portalName,
     description: `${orgConfig.fullName} member portal.`,
     keywords: `${orgConfig.shortName} portal`,
-    canonicalPath: "/",
+    canonicalPath: "/Home",
     noindex: true,
   };
 
@@ -747,13 +747,8 @@ export default function App() {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: SITE_NAME,
-    url: SITE_ORIGIN,
+    url: `${SITE_ORIGIN}/Home`,
     inLanguage: "en-PH",
-    potentialAction: {
-      "@type": "SearchAction",
-      target: `${SITE_ORIGIN}/visitor?page=Feedback`,
-      "query-input": "required name=search_term_string",
-    },
   });
 
   const handleRequestCacheClear = () => {

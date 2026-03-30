@@ -12,7 +12,7 @@ const ANNOUNCEMENTS_LOGS_SHEET = 'Announcement_Send_Logs';
 const ANNOUNCEMENTS_READ_SHEET = 'Announcement_Read_Receipts';
 
 const LOGO_URL = 'https://i.imgur.com/J4wddTW.png';
-const WEB_APP_URL = 'https://www.youthservicephilippinestagum.me/';
+const WEB_APP_URL = 'https://tgm.youthserviceph.org/Home';
 const FB_PAGE_URL = 'https://www.facebook.com/YSPTagumChapter';
 const MANILA_TIMEZONE = 'Asia/Manila';
 const MANILA_UTC_OFFSET_HOURS = 8;

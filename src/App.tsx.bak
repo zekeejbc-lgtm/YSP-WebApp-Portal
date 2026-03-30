@@ -182,7 +182,7 @@ import MyQRIDPage from "./components/MyQRIDPage";
   const PAGE_ACCESS_DEBUG = false;
   const SIDEBAR_DEBUG_TOAST_ID = "sidebar-pages-debug";
   const PROJECT_ID_QUERY_PARAM = "projectId";
-  const SITE_ORIGIN = "https://www.youthservicephilippinestagum.me";
+  const SITE_ORIGIN = "https://tgm.youthserviceph.org";
   const SITE_NAME = "Youth Service Philippines - Tagum Chapter";
   const DEFAULT_OG_IMAGE = "https://i.imgur.com/J4wddTW.png";
 

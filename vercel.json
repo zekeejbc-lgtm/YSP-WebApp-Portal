@@ -18,6 +18,59 @@
       ]
     }
   ],
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/Home",
+      "permanent": true
+    },
+    {
+      "source": "/home",
+      "destination": "/Home",
+      "permanent": true
+    },
+    {
+      "source": "/index.html",
+      "destination": "/Home",
+      "permanent": true
+    },
+    {
+      "source": "/visitor",
+      "has": [{ "type": "query", "key": "page", "value": "Feedback" }],
+      "destination": "/feedback",
+      "permanent": true
+    },
+    {
+      "source": "/visitor",
+      "has": [{ "type": "query", "key": "page", "value": "Opportunities" }],
+      "destination": "/opportunities",
+      "permanent": true
+    },
+    {
+      "source": "/visitor",
+      "has": [{ "type": "query", "key": "page", "value": "MembershipApplications" }],
+      "destination": "/opportunities",
+      "permanent": true
+    },
+    {
+      "source": "/visitor",
+      "has": [{ "type": "query", "key": "page", "value": "Founder" }],
+      "destination": "/founder",
+      "permanent": true
+    },
+    {
+      "source": "/visitor",
+      "has": [{ "type": "query", "key": "page", "value": "Developer" }],
+      "destination": "/developer",
+      "permanent": true
+    },
+    {
+      "source": "/visitor",
+      "has": [{ "type": "query", "key": "page", "value": "Login" }],
+      "destination": "/login",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",

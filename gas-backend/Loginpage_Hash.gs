@@ -524,7 +524,7 @@ function generateUniqueID(sheet, position, colIndex) {
 function sendYSPEmail(email, name, type, data) {
   const orgBranding = getLoginHashOrgBranding_();
   const LOGO_URL = orgBranding.logoUrl || "https://i.imgur.com/J4wddTW.png"; 
-  const WEB_APP_URL = "https://www.youthservicephilippinestagum.me/";
+  const WEB_APP_URL = "https://tgm.youthserviceph.org/Home";
   const FB_PAGE_URL = "https://www.facebook.com/YSPTagumChapter";
   
   let subjectLine = "";

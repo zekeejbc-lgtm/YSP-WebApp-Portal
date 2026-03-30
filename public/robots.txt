@@ -1,5 +1,5 @@
 # robots.txt for Youth Service Philippines - Tagum Chapter
-# https://www.youthservicephilippinestagum.me/
+# https://tgm.youthserviceph.org/Home
 
 User-agent: *
 Allow: /
@@ -16,5 +16,5 @@ Disallow: /head
 Disallow: /member
 
 # Sitemap location
-Sitemap: https://www.youthservicephilippinestagum.me/sitemap.xml
-Host: www.youthservicephilippinestagum.me
+Sitemap: https://tgm.youthserviceph.org/sitemap.xml
+Host: tgm.youthserviceph.org

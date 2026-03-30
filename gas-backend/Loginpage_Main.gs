@@ -131,7 +131,7 @@ function getLoginMainOrgBranding_() {
 
 const ORG_BRANDING_CONFIG = getLoginMainOrgBranding_();
 const LOGO_URL = ORG_BRANDING_CONFIG.logoUrl || "https://i.imgur.com/J4wddTW.png";
-const WEB_APP_URL = "https://www.youthservicephilippinestagum.me/";
+const WEB_APP_URL = "https://tgm.youthserviceph.org/Home";
 const FB_PAGE_URL = "https://www.facebook.com/YSPTagumChapter";
 const MANILA_TIMEZONE = 'Asia/Manila';
 const PROFILE_UPDATE_QUEUE_SHEET_NAME = 'Profile Update Email Queue';
