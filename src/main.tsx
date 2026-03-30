@@ -53,14 +53,13 @@ function renderApp(App: ComponentType) {
 }
 
 async function bootstrapApp() {
-  try {
-    await hydrateOrgConfigFromBackend();
-  } catch (error) {
-    console.error("Branding bootstrap failed, using fallback values:", error);
-  }
-
   const { default: App } = await import("./App.tsx");
   renderApp(App);
+
+  // Hydrate org branding in the background so first paint is never blocked.
+  void hydrateOrgConfigFromBackend().catch((error) => {
+    console.error("Branding bootstrap failed, using fallback values:", error);
+  });
 }
 
 bootstrapApp().catch((error) => {

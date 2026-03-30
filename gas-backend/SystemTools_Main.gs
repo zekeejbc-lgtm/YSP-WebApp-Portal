@@ -22,7 +22,7 @@ function doPost(e) {
   try {
     const requestData = JSON.parse(e.postData.contents);
     const action = requestData.action;
-    const PUBLIC_ACTIONS = ['getMaintenanceMode', 'getCacheVersion', 'getOrgBranding'];
+    const PUBLIC_ACTIONS = ['getMaintenanceMode', 'getCacheVersion', 'getOrgBranding', 'translateText'];
     const isPublicAction = PUBLIC_ACTIONS.indexOf(action) !== -1;
 
     // Dedicated cross-project Gemini key count endpoint (shared-secret only).
@@ -89,6 +89,8 @@ function doPost(e) {
         return handleGetCacheVersion();
       case 'getOrgBranding':
         return handleGetOrgBranding();
+      case 'translateText':
+        return handleTranslateText(requestData);
       case 'bumpCacheVersion':
         return handleBumpCacheVersion(requestData.username);
       
@@ -233,6 +235,20 @@ function forceAuthorization() {
   }
   
   Logger.log('');
+  Logger.log('=== CHECKING EXTERNAL REQUEST ACCESS ===');
+
+  // Check UrlFetchApp permission needed by translation (Hugging Face calls)
+  try {
+    const fetchResponse = UrlFetchApp.fetch('https://www.google.com/generate_204', {
+      method: 'get',
+      muteHttpExceptions: true
+    });
+    Logger.log('\u2713 External request access OK: HTTP ' + fetchResponse.getResponseCode());
+  } catch (e) {
+    Logger.log('\u2717 External request access FAILED: ' + e.toString());
+  }
+
+  Logger.log('');
   Logger.log('=== CHECKING EMAIL QUOTA ===');
   
   // Check MailApp access for email quota tracking
@@ -249,6 +265,37 @@ function forceAuthorization() {
   Logger.log('If any failed, check the spreadsheet IDs and permissions.');
   
   return 'Authorization triggered. Check the Logs for details.';
+}
+
+/**
+ * Convenience auth bootstrap for manual runs.
+ * Executes the full authorization check plus email authorization in one call.
+ * RUN THIS FUNCTION MANUALLY when setting up a fresh deployment.
+ */
+function forceAuth() {
+  const result = {
+    success: true,
+    timestamp: new Date().toISOString(),
+    authorization: '',
+    emailAuthorization: ''
+  };
+
+  try {
+    result.authorization = forceAuthorization();
+  } catch (error) {
+    result.success = false;
+    result.authorization = 'forceAuthorization failed: ' + error.toString();
+  }
+
+  try {
+    result.emailAuthorization = forceEmailAuthorization();
+  } catch (error) {
+    result.success = false;
+    result.emailAuthorization = 'forceEmailAuthorization failed: ' + error.toString();
+  }
+
+  Logger.log('forceAuth summary: ' + JSON.stringify(result));
+  return result;
 }
 
 /**
@@ -461,6 +508,8 @@ const ORG_BRANDING_DEFAULTS = {
 
 const ORG_BRANDING_SHEET_NAME = 'Organization Branding';
 const ORG_BRANDING_HEADERS = ['ConfigKey', 'Value', 'PropertyKey', 'Description', 'LastUpdated', 'UpdatedBy'];
+const ORG_BRANDING_CACHE_KEY = 'system_tools_org_branding_v1';
+const ORG_BRANDING_CACHE_TTL_SECONDS = 300;
 const ORG_BRANDING_FIELDS = [
   {
     configKey: 'orgName',
@@ -1967,6 +2016,16 @@ function resolveOrgBrandingValue_(sheetValues, configKey, propertyKey, fallbackV
 }
 
 function getOrgBrandingConfig_() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var cachedRaw = cache.get(ORG_BRANDING_CACHE_KEY);
+    if (cachedRaw) {
+      return JSON.parse(cachedRaw);
+    }
+  } catch (cacheReadError) {
+    Logger.log('Org branding cache read error: ' + cacheReadError.toString());
+  }
+
   var sheetValues = {};
   try {
     var brandingSheet = initializeOrgBrandingSheet();
@@ -1985,7 +2044,7 @@ function getOrgBrandingConfig_() {
   var logoUrl = resolveOrgBrandingValue_(sheetValues, 'logoUrl', 'ORG_LOGO_URL', ORG_BRANDING_DEFAULTS.logoUrl);
   var themeColor = resolveOrgBrandingValue_(sheetValues, 'themeColor', 'ORG_THEME_COLOR', ORG_BRANDING_DEFAULTS.themeColor);
 
-  return {
+  var branding = {
     orgName: orgName,
     chapterName: chapterName,
     shortName: shortName,
@@ -1997,6 +2056,14 @@ function getOrgBrandingConfig_() {
     logoUrl: logoUrl,
     themeColor: themeColor,
   };
+
+  try {
+    cache.put(ORG_BRANDING_CACHE_KEY, JSON.stringify(branding), ORG_BRANDING_CACHE_TTL_SECONDS);
+  } catch (cacheWriteError) {
+    Logger.log('Org branding cache write error: ' + cacheWriteError.toString());
+  }
+
+  return branding;
 }
 
 function handleGetOrgBranding() {

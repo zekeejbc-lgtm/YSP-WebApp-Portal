@@ -103,6 +103,7 @@ import { determineRoleChangeType, type RoleChangeType } from "./utils/roleChange
   import { Helmet } from 'react-helmet-async';
 import type { AttendanceDashboardContext } from "./components/AttendanceDashboardPage";
 import LoadingScreen, { type LoadingStep } from "./components/LoadingScreen";
+import { translateTextInFrontend } from "./services/frontendTranslationService";
   const LoginPanel = lazy(() => import("./components/LoginPanel"));
   const FeedbackPage = lazy(() => import("./components/FeedbackPage"));
   const OfficerDirectoryPage = lazy(() => import("./components/OfficerDirectoryPage"));
@@ -203,6 +204,302 @@ import LoadingScreen, { type LoadingStep } from "./components/LoadingScreen";
   const SITE_ORIGIN = "https://www.youthservicephilippinestagum.me";
   const SITE_NAME = orgConfig.fullName;
   const DEFAULT_OG_IMAGE = "https://i.imgur.com/J4wddTW.png";
+  const CHATBOT_TRANSLATION_STORAGE_KEY = "ysp_chatbot_translation_language";
+  const CHATBOT_TRANSLATION_DEFAULT_LANGUAGE = "eng_Latn";
+  const CHATBOT_TRANSLATION_EVENT_NAME = "ysp:chatbot-translation-language-changed";
+  const HOMEPAGE_SECTION_IDS = new Set(["home", "about", "projects", "org-chart", "contact"]);
+  const HOMEPAGE_TRANSLATOR_API_URL =
+    import.meta.env.VITE_GAS_TRANSLATOR_API_URL ||
+    import.meta.env.VITE_GAS_SYSTEM_TOOLS_API_URL ||
+    import.meta.env.VITE_GAS_LOGIN_API_URL ||
+    "";
+  const HOMEPAGE_TRANSLATION_DEBUG = import.meta.env.DEV;
+  const HOMEPAGE_TRANSLATION_OBSERVER_COOLDOWN_MS = 200;
+
+  type HomepageTranslationResult = {
+    text: string;
+    didTranslate: boolean;
+  };
+
+  function logHomepageTranslationDebug_(message: string, details?: unknown): void {
+    if (!HOMEPAGE_TRANSLATION_DEBUG) return;
+    if (typeof details === "undefined") {
+      console.log(`[HomepageTranslation] ${message}`);
+      return;
+    }
+    console.log(`[HomepageTranslation] ${message}`, details);
+  }
+
+  function logHomepageTranslationError_(message: string, error?: unknown): void {
+    if (!HOMEPAGE_TRANSLATION_DEBUG) return;
+    console.error(`[HomepageTranslation] ${message}`, error);
+  }
+
+  function normalizeHomepageTranslationLanguage_(value: string): string {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized) return CHATBOT_TRANSLATION_DEFAULT_LANGUAGE;
+
+    if (["off", "none", "disable", "disabled", "english", "eng"].includes(normalized)) {
+      return CHATBOT_TRANSLATION_DEFAULT_LANGUAGE;
+    }
+
+    const aliases: Record<string, string> = {
+      tl: "tgl_Latn",
+      filipino: "tgl_Latn",
+      tagalog: "tgl_Latn",
+      bisaya: "ceb_Latn",
+      cebuano: "ceb_Latn",
+      ilocano: "ilo_Latn",
+      hiligaynon: "hil_Latn",
+      ilonggo: "hil_Latn",
+      waray: "war_Latn",
+      bikol: "bik_Latn",
+      bicol: "bik_Latn",
+      kapampangan: "pam_Latn",
+      pangasinan: "pag_Latn",
+      spanish: "spa_Latn",
+      french: "fra_Latn",
+      german: "deu_Latn",
+      italian: "ita_Latn",
+      portuguese: "por_Latn",
+      dutch: "nld_Latn",
+      russian: "rus_Cyrl",
+      chinese: "zho_Hans",
+      mandarin: "zho_Hans",
+      korean: "kor_Hang",
+      indonesian: "ind_Latn",
+      malay: "msa_Latn",
+      hindi: "hin_Deva",
+      thai: "tha_Thai",
+      vietnamese: "vie_Latn",
+      arabic: "ara_Arab",
+      turkish: "tur_Latn",
+      ukrainian: "ukr_Cyrl",
+      japanese: "jpn_Jpan",
+    };
+
+    return aliases[normalized] || String(value || "").trim();
+  }
+
+  function loadHomepageTranslationLanguage_(): string {
+    try {
+      const stored = localStorage.getItem(CHATBOT_TRANSLATION_STORAGE_KEY) || "";
+      return normalizeHomepageTranslationLanguage_(stored);
+    } catch {
+      return CHATBOT_TRANSLATION_DEFAULT_LANGUAGE;
+    }
+  }
+
+  function escapeRegexForHomepageTranslation_(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function maskHomepageOrgNames_(text: string): { maskedText: string; tokens: Array<{ key: string; value: string }> } {
+    const orgCandidates = Array.from(
+      new Set([
+        String(orgConfig.orgName || "").trim(),
+        String(orgConfig.chapterName || "").trim(),
+        String(orgConfig.shortName || "").trim(),
+        String(orgConfig.fullName || "").trim(),
+        String(orgConfig.portalName || "").trim(),
+      ].filter(Boolean))
+    ).sort((a, b) => b.length - a.length);
+
+    let maskedText = String(text || "");
+    const tokens: Array<{ key: string; value: string }> = [];
+
+    for (const candidate of orgCandidates) {
+      const regex = new RegExp(escapeRegexForHomepageTranslation_(candidate), "gi");
+      maskedText = maskedText.replace(regex, (matched) => {
+        const key = `__ORG_NAME_TOKEN_${tokens.length}__`;
+        tokens.push({ key, value: matched });
+        return key;
+      });
+    }
+
+    return { maskedText, tokens };
+  }
+
+  function unmaskHomepageOrgNames_(text: string, tokens: Array<{ key: string; value: string }>): string {
+    let restored = String(text || "");
+    for (const token of tokens) {
+      restored = restored.split(token.key).join(token.value);
+    }
+    return restored;
+  }
+
+  function splitHomepageTranslationText_(text: string, maxLen: number): string[] {
+    const source = String(text || "");
+    if (!source.trim()) return [];
+    if (source.length <= maxLen) return [source];
+
+    const lines = source.split("\n");
+    const chunks: string[] = [];
+    let current = "";
+
+    for (const line of lines) {
+      const next = current ? `${current}\n${line}` : line;
+      if (next.length <= maxLen) {
+        current = next;
+        continue;
+      }
+
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+
+      if (line.length <= maxLen) {
+        current = line;
+        continue;
+      }
+
+      let start = 0;
+      while (start < line.length) {
+        chunks.push(line.slice(start, start + maxLen));
+        start += maxLen;
+      }
+    }
+
+    if (current) chunks.push(current);
+    return chunks;
+  }
+
+  function shouldTranslateHomepageNodeText_(text: string): boolean {
+    const normalized = String(text || "").trim();
+    if (!normalized) return false;
+    if (normalized.length < 3) return false;
+    if (!/[A-Za-z]/.test(normalized)) return false;
+    if (/^(https?:\/\/|www\.)/i.test(normalized)) return false;
+    if (/^\d+[.)]?$/i.test(normalized)) return false;
+    return true;
+  }
+
+  async function translateHomepageText_(text: string, targetLanguage: string): Promise<HomepageTranslationResult> {
+    if (!text.trim()) {
+      return { text, didTranslate: false };
+    }
+
+    if (targetLanguage === CHATBOT_TRANSLATION_DEFAULT_LANGUAGE) {
+      return { text, didTranslate: false };
+    }
+
+    logHomepageTranslationDebug_("translateHomepageText_ called", {
+      targetLanguage,
+      inputLength: text.length,
+      preview: text.slice(0, 80),
+    });
+
+    const masked = maskHomepageOrgNames_(text);
+    const chunks = splitHomepageTranslationText_(masked.maskedText, 3800);
+    if (!chunks.length) {
+      return { text, didTranslate: false };
+    }
+
+    logHomepageTranslationDebug_("Text split into chunks", {
+      chunkCount: chunks.length,
+      targetLanguage,
+    });
+
+    const translatedChunks: string[] = [];
+
+    for (const chunk of chunks) {
+      try {
+        logHomepageTranslationDebug_("Trying frontend translation chunk", {
+          targetLanguage,
+          chunkLength: chunk.length,
+          preview: chunk.slice(0, 80),
+        });
+        const translated = await translateTextInFrontend(chunk, targetLanguage, "eng_Latn");
+        if (translated && translated.trim()) {
+          logHomepageTranslationDebug_("Frontend chunk translation success", {
+            translatedLength: translated.length,
+            preview: translated.slice(0, 80),
+          });
+          translatedChunks.push(translated);
+          continue;
+        }
+      } catch (frontendError) {
+        logHomepageTranslationError_("Frontend chunk translation failed; switching to backend fallback", frontendError);
+        // Fallback to backend translator endpoint when frontend translation is unavailable.
+      }
+
+      if (!HOMEPAGE_TRANSLATOR_API_URL.trim()) {
+        logHomepageTranslationError_("No backend translator URL configured for fallback", {
+          targetLanguage,
+          preview: chunk.slice(0, 80),
+        });
+        throw new Error("Homepage translator fallback URL is not configured");
+      }
+
+      logHomepageTranslationDebug_("Trying backend translation chunk", {
+        endpoint: HOMEPAGE_TRANSLATOR_API_URL,
+        targetLanguage,
+        chunkLength: chunk.length,
+      });
+
+      const response = await fetch(HOMEPAGE_TRANSLATOR_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+        },
+        body: JSON.stringify({
+          action: "translateText",
+          text: chunk,
+          sourceLanguage: "eng_Latn",
+          targetLanguage,
+        }),
+      });
+
+      const raw = await response.text();
+      let parsed: {
+        success?: boolean;
+        translatedText?: string;
+        data?: { translatedText?: string };
+      } = {};
+
+      try {
+        parsed = JSON.parse(raw);
+      } catch (jsonError) {
+        logHomepageTranslationError_("Backend translation response JSON parse failed", {
+          jsonError,
+          rawPreview: raw.slice(0, 160),
+        });
+        throw new Error("Homepage backend translation JSON parse failed");
+      }
+
+      if (!response.ok || parsed.success === false) {
+        logHomepageTranslationError_("Backend translation response not OK", {
+          status: response.status,
+          parsed,
+        });
+        throw new Error(`Homepage backend translation failed (${response.status})`);
+      }
+
+      const translated = String(parsed.translatedText || parsed.data?.translatedText || "").trim();
+      if (!translated) {
+        logHomepageTranslationError_("Backend translation response missing translated text", {
+          parsed,
+        });
+        throw new Error("Homepage backend translation missing translated text");
+      }
+      logHomepageTranslationDebug_("Backend chunk translation success", {
+        translatedLength: translated.length,
+        preview: translated.slice(0, 80),
+      });
+      translatedChunks.push(translated);
+    }
+
+    logHomepageTranslationDebug_("translateHomepageText_ success", {
+      targetLanguage,
+      outputLength: translatedChunks.join("\n").length,
+    });
+
+    return {
+      text: unmaskHomepageOrgNames_(translatedChunks.join("\n"), masked.tokens),
+      didTranslate: true,
+    };
+  }
 
   type SeoMeta = {
     title: string;
@@ -886,10 +1183,471 @@ export default function App() {
 
     // Homepage Edit Mode
     const [isEditingHomepage, setIsEditingHomepage] = useState(false);
+    const [homepageTranslationLanguage, setHomepageTranslationLanguage] = useState<string>(
+      loadHomepageTranslationLanguage_
+    );
+    const [isHomepageTranslating, setIsHomepageTranslating] = useState(false);
+    const homepageOriginalTextRef = useRef<Map<Text, string>>(new Map());
+    const homepageOriginalAttrRef = useRef<Map<HTMLElement, Record<string, string>>>(new Map());
+    const homepageTranslationCacheRef = useRef<Map<string, string>>(new Map());
+    const homepageTranslationFrameRef = useRef<number | null>(null);
     
     // Profile Edit Mode
     const [isEditingProfile, setIsEditingProfile] = useState(false);
     const [triggerProfileEditMode, setTriggerProfileEditMode] = useState(false);
+
+    useEffect(() => {
+      try {
+        const navigationEntry = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+        if (!navigationEntry || navigationEntry.type !== "reload") return;
+
+        localStorage.setItem(CHATBOT_TRANSLATION_STORAGE_KEY, CHATBOT_TRANSLATION_DEFAULT_LANGUAGE);
+        setHomepageTranslationLanguage(CHATBOT_TRANSLATION_DEFAULT_LANGUAGE);
+
+        window.dispatchEvent(
+          new CustomEvent(CHATBOT_TRANSLATION_EVENT_NAME, {
+            detail: { language: CHATBOT_TRANSLATION_DEFAULT_LANGUAGE },
+          })
+        );
+      } catch {
+        // Ignore storage/performance API issues.
+      }
+    }, []);
+
+    useEffect(() => {
+      const syncLanguage = () => {
+        const nextLanguage = loadHomepageTranslationLanguage_();
+        logHomepageTranslationDebug_("Sync language", { nextLanguage });
+        setHomepageTranslationLanguage(nextLanguage);
+      };
+
+      const handleStorageChange = (event: StorageEvent) => {
+        if (event.key && event.key !== CHATBOT_TRANSLATION_STORAGE_KEY) return;
+        syncLanguage();
+      };
+
+      const handleCustomChange = () => {
+        syncLanguage();
+      };
+
+      syncLanguage();
+
+      window.addEventListener("storage", handleStorageChange);
+      window.addEventListener(CHATBOT_TRANSLATION_EVENT_NAME, handleCustomChange as EventListener);
+
+      return () => {
+        window.removeEventListener("storage", handleStorageChange);
+        window.removeEventListener(CHATBOT_TRANSLATION_EVENT_NAME, handleCustomChange as EventListener);
+      };
+    }, []);
+
+    useEffect(() => {
+      const originalTextMap = homepageOriginalTextRef.current;
+      const originalAttrMap = homepageOriginalAttrRef.current;
+      const translationCache = homepageTranslationCacheRef.current;
+      let observer: MutationObserver | null = null;
+      let cancelled = false;
+      let processing = false;
+      let isApplyingTranslations = false;
+      let suppressObserverUntilTs = 0;
+
+      const translationIgnoreTextSelector = [
+        "[data-translation-ignore]",
+        ".ysp-chatbot-root",
+        "[role='dialog']",
+        "[aria-modal='true']",
+        "[data-sonner-toaster]",
+        "[data-sonner-toast]",
+        "script",
+        "style",
+        "textarea",
+        "input",
+        "select",
+        "option",
+      ].join(", ");
+
+      const translationIgnoreAttrSelector = [
+        "[data-translation-ignore]",
+        ".ysp-chatbot-root",
+        "[role='dialog']",
+        "[aria-modal='true']",
+        "[data-sonner-toaster]",
+        "[data-sonner-toast]",
+        "script",
+        "style",
+      ].join(", ");
+
+      const cleanupDisconnectedNodes = () => {
+        for (const [node] of Array.from(originalTextMap.entries())) {
+          if (!node.isConnected) {
+            originalTextMap.delete(node);
+          }
+        }
+
+        for (const [element] of Array.from(originalAttrMap.entries())) {
+          if (!element.isConnected) {
+            originalAttrMap.delete(element);
+          }
+        }
+      };
+
+      const restoreOriginalHomepageText = () => {
+        for (const [node, original] of Array.from(originalTextMap.entries())) {
+          if (!node.isConnected) continue;
+          node.textContent = original;
+        }
+        originalTextMap.clear();
+
+        for (const [element, attrs] of Array.from(originalAttrMap.entries())) {
+          if (!element.isConnected) continue;
+          const keys = Object.keys(attrs || {});
+          for (const key of keys) {
+            const original = String(attrs[key] || "");
+            if (key === "alt" && element instanceof HTMLImageElement) {
+              element.alt = original;
+            } else {
+              element.setAttribute(key, original);
+            }
+          }
+        }
+        originalAttrMap.clear();
+      };
+
+      const normalizedActivePage = String(activePage || "").trim().toLowerCase();
+      const isHomeRoute =
+        typeof window !== "undefined" && /^(?:\/|\/home\/?)$/i.test(window.location.pathname);
+
+      const shouldTranslateHomepage =
+        (!isAdmin ? isHomeRoute : (HOMEPAGE_SECTION_IDS.has(normalizedActivePage) || isHomeRoute)) &&
+        !isEditingHomepage &&
+        !isLoadingHomepage &&
+        homepageTranslationLanguage !== CHATBOT_TRANSLATION_DEFAULT_LANGUAGE;
+
+      if (!shouldTranslateHomepage) {
+        logHomepageTranslationDebug_("Translation skipped", {
+          normalizedActivePage,
+          isHomeRoute,
+          isAdmin,
+          isEditingHomepage,
+          isLoadingHomepage,
+          homepageTranslationLanguage,
+        });
+        setIsHomepageTranslating(false);
+        restoreOriginalHomepageText();
+        return;
+      }
+
+      const translationRootSelector =
+        "section, header, footer, nav, aside, [data-homepage-translation-modal='true']";
+
+      const getTranslationRoots = (): HTMLElement[] => {
+        const collected = Array.from(
+          document.querySelectorAll<HTMLElement>(translationRootSelector)
+        );
+
+        if (!collected.length && typeof document !== "undefined") {
+          return [document.body as HTMLElement];
+        }
+
+        return collected;
+      };
+
+      const initialRoots = getTranslationRoots();
+      if (!initialRoots.length) return;
+
+      logHomepageTranslationDebug_("Translation start", {
+        rootCount: initialRoots.length,
+        language: homepageTranslationLanguage,
+        isAdmin,
+      });
+
+      const getCacheKey = (sourceText: string) => `${homepageTranslationLanguage}::${sourceText}`;
+
+      const getTranslatedOrCached = async (sourceText: string) => {
+        const cacheKey = `${homepageTranslationLanguage}::${sourceText}`;
+        if (translationCache.has(cacheKey)) {
+          return translationCache.get(cacheKey) || sourceText;
+        }
+
+        try {
+          const translationResult = await translateHomepageText_(sourceText, homepageTranslationLanguage);
+          const finalText = translationResult.text && translationResult.text.trim()
+            ? translationResult.text
+            : sourceText;
+
+          // Cache successful results even when output equals source to prevent repeated no-op API requests.
+          if (translationResult.didTranslate) {
+            translationCache.set(cacheKey, finalText);
+          }
+
+          return finalText;
+        } catch (error) {
+          logHomepageTranslationError_("translateHomepageText_ failed", {
+            sourcePreview: sourceText.slice(0, 80),
+            language: homepageTranslationLanguage,
+            error,
+          });
+          return sourceText;
+        }
+      };
+
+      const resolveTranslationsForSources_ = async (sources: string[]) => {
+        const uniqueSources = Array.from(new Set(
+          sources
+            .map((value) => String(value || "").trim())
+            .filter((value) => shouldTranslateHomepageNodeText_(value))
+        ));
+
+        const uncachedSources = uniqueSources.filter((sourceText) => {
+          return !translationCache.has(getCacheKey(sourceText));
+        });
+
+        if (uncachedSources.length > 0) {
+          const queue = uncachedSources.slice();
+          const workerCount = Math.min(4, queue.length);
+          const workers: Promise<void>[] = [];
+
+          const runWorker = async () => {
+            while (queue.length > 0 && !cancelled) {
+              const sourceText = queue.shift();
+              if (!sourceText) continue;
+              await getTranslatedOrCached(sourceText);
+            }
+          };
+
+          for (let i = 0; i < workerCount; i++) {
+            workers.push(runWorker());
+          }
+
+          await Promise.all(workers);
+        }
+
+        const translatedMap = new Map<string, string>();
+        for (const sourceText of uniqueSources) {
+          translatedMap.set(sourceText, translationCache.get(getCacheKey(sourceText)) || sourceText);
+        }
+
+        return translatedMap;
+      };
+
+      const collectTranslatableTextNodes = (): Text[] => {
+        const nodes: Text[] = [];
+        const roots = getTranslationRoots();
+
+        for (const root of roots) {
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          let current = walker.nextNode();
+
+          while (current) {
+            const textNode = current as Text;
+            const parent = textNode.parentElement;
+            const textValue = textNode.textContent || "";
+
+            if (
+              parent &&
+              !parent.closest(translationIgnoreTextSelector) &&
+              shouldTranslateHomepageNodeText_(textValue)
+            ) {
+              nodes.push(textNode);
+            }
+
+            current = walker.nextNode();
+          }
+        }
+
+        return nodes;
+      };
+
+      const collectTranslatableAttributeTargets = () => {
+        const targets: Array<{ element: HTMLElement; attr: "placeholder" | "title" | "aria-label" | "alt"; text: string }> = [];
+        const roots = getTranslationRoots();
+
+        for (const root of roots) {
+          const elements = root.querySelectorAll<HTMLElement>("[placeholder], [title], [aria-label], img[alt]");
+          for (const element of Array.from(elements)) {
+            if (!element.isConnected) continue;
+            if (element.closest(translationIgnoreAttrSelector)) continue;
+
+            const attrs: Array<"placeholder" | "title" | "aria-label" | "alt"> = ["placeholder", "title", "aria-label", "alt"];
+            for (const attr of attrs) {
+              const raw = element.getAttribute(attr) || "";
+              if (!shouldTranslateHomepageNodeText_(raw)) continue;
+              targets.push({ element, attr, text: raw });
+            }
+          }
+        }
+
+        return targets;
+      };
+
+      const processTranslation = async () => {
+        if (processing || cancelled) return;
+        processing = true;
+        setIsHomepageTranslating(true);
+        logHomepageTranslationDebug_("processTranslation started", {
+          language: homepageTranslationLanguage,
+        });
+
+        try {
+          cleanupDisconnectedNodes();
+          const nodes = collectTranslatableTextNodes();
+          const attributeTargets = collectTranslatableAttributeTargets();
+          const textEntries: Array<{ node: Text; sourceText: string }> = [];
+          const attrEntries: Array<{ element: HTMLElement; attr: "placeholder" | "title" | "aria-label" | "alt"; sourceText: string }> = [];
+
+          for (const node of nodes) {
+            if (cancelled || !node.isConnected) continue;
+
+            const currentText = node.textContent || "";
+            if (!originalTextMap.has(node)) {
+              originalTextMap.set(node, currentText);
+            }
+
+            const sourceText = String(originalTextMap.get(node) || "").trim();
+            if (!shouldTranslateHomepageNodeText_(sourceText)) continue;
+
+            textEntries.push({ node, sourceText });
+          }
+
+          for (const target of attributeTargets) {
+            if (cancelled || !target.element.isConnected) continue;
+
+            const originalEntry = originalAttrMap.get(target.element) || {};
+            if (typeof originalEntry[target.attr] !== "string") {
+              originalEntry[target.attr] = target.text;
+              originalAttrMap.set(target.element, originalEntry);
+            }
+
+            const sourceText = String(originalEntry[target.attr] || "").trim();
+            if (!shouldTranslateHomepageNodeText_(sourceText)) continue;
+
+            attrEntries.push({
+              element: target.element,
+              attr: target.attr,
+              sourceText,
+            });
+          }
+
+          logHomepageTranslationDebug_("Collected translation candidates", {
+            textNodeCount: textEntries.length,
+            attributeCount: attrEntries.length,
+          });
+
+          const sourcePool = [
+            ...textEntries.map((entry) => entry.sourceText),
+            ...attrEntries.map((entry) => entry.sourceText),
+          ];
+
+          const translatedMap = await resolveTranslationsForSources_(sourcePool);
+          if (cancelled) return;
+
+          logHomepageTranslationDebug_("Applying translated payload", {
+            textEntries: textEntries.length,
+            attrEntries: attrEntries.length,
+            language: homepageTranslationLanguage,
+          });
+
+          isApplyingTranslations = true;
+          suppressObserverUntilTs = Date.now() + HOMEPAGE_TRANSLATION_OBSERVER_COOLDOWN_MS;
+
+          for (const entry of textEntries) {
+            if (!entry.node.isConnected) continue;
+            const finalText = translatedMap.get(entry.sourceText) || entry.sourceText;
+            if (entry.node.textContent !== finalText) {
+              entry.node.textContent = finalText;
+            }
+          }
+
+          for (const entry of attrEntries) {
+            if (!entry.element.isConnected) continue;
+            const finalText = translatedMap.get(entry.sourceText) || entry.sourceText;
+
+            if (entry.attr === "alt" && entry.element instanceof HTMLImageElement) {
+              if (entry.element.alt !== finalText) {
+                entry.element.alt = finalText;
+              }
+            } else {
+              if (entry.element.getAttribute(entry.attr) !== finalText) {
+                entry.element.setAttribute(entry.attr, finalText);
+              }
+            }
+          }
+        } finally {
+          suppressObserverUntilTs = Date.now() + HOMEPAGE_TRANSLATION_OBSERVER_COOLDOWN_MS;
+          isApplyingTranslations = false;
+          processing = false;
+          if (!cancelled) {
+            setIsHomepageTranslating(false);
+          }
+          logHomepageTranslationDebug_("processTranslation finished", {
+            cancelled,
+            language: homepageTranslationLanguage,
+          });
+        }
+      };
+
+      const scheduleTranslation = () => {
+        if (homepageTranslationFrameRef.current !== null) {
+          cancelAnimationFrame(homepageTranslationFrameRef.current);
+        }
+
+        logHomepageTranslationDebug_("scheduleTranslation invoked", {
+          language: homepageTranslationLanguage,
+        });
+
+        homepageTranslationFrameRef.current = requestAnimationFrame(() => {
+          homepageTranslationFrameRef.current = null;
+          void processTranslation();
+        });
+      };
+
+      scheduleTranslation();
+
+      observer = new MutationObserver(() => {
+        if (isApplyingTranslations) return;
+        if (Date.now() < suppressObserverUntilTs) return;
+        logHomepageTranslationDebug_("MutationObserver detected changes; scheduling translation", {
+          language: homepageTranslationLanguage,
+        });
+        scheduleTranslation();
+      });
+
+      const observerRoots = Array.from(
+        new Set<HTMLElement>([
+          ...getTranslationRoots(),
+          document.body as HTMLElement,
+        ])
+      );
+
+      for (const root of observerRoots) {
+        observer.observe(root, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+          attributes: true,
+          attributeFilter: ["placeholder", "title", "aria-label", "alt"],
+        });
+      }
+
+      return () => {
+        cancelled = true;
+        if (observer) observer.disconnect();
+        if (homepageTranslationFrameRef.current !== null) {
+          cancelAnimationFrame(homepageTranslationFrameRef.current);
+          homepageTranslationFrameRef.current = null;
+        }
+        setIsHomepageTranslating(false);
+      };
+    }, [
+      activePage,
+      isAdmin,
+      isEditingHomepage,
+      isLoadingHomepage,
+      homepageTranslationLanguage,
+      showFounderModal,
+      showDeveloperModal,
+      modalProject,
+    ]);
 
     // Access Logs Modal State (to hide chatbot when modals are open)
     const [accessLogsModalOpen, setAccessLogsModalOpen] = useState(false);
@@ -4662,8 +5420,9 @@ export default function App() {
           </>
         )}
 
-        {/* Main Content - Adjusted for sidebar when logged in */}
-        <div className={`relative z-10 transition-all duration-300 ${isAdmin ? 'md:pl-[60px]' : ''}`}>
+        <div
+          className={`relative z-10 transition-all duration-300 ${isAdmin ? 'md:pl-[60px]' : ''}`}
+        >
           {/* Edit Homepage Controls - Fixed Position */}
           {(userRole === 'admin' || userRole === 'auditor') && !isEditingHomepage && (
             <div
@@ -6100,6 +6859,7 @@ export default function App() {
         {/* Project Modal */}
         {modalProject && (
           <div
+            data-homepage-translation-modal="true"
             className="fixed flex items-center justify-center p-4 sm:p-6 md:p-8 lg:p-12 animate-[fadeIn_0.25s_ease] overflow-y-auto"
             style={{ 
               zIndex: 10001,

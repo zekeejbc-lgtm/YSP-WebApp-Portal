@@ -151,6 +151,8 @@ const GAS_API_URL =
   import.meta.env.VITE_GAS_LOGIN_API_URL ||
   '';
 const GAS_API_KEY = import.meta.env.VITE_GAS_API_KEY || '';
+const SYSTEM_TOOLS_REQUEST_TIMEOUT_MS = 12000;
+const SYSTEM_TOOLS_SILENT_TIMEOUT_MS = 5000;
 
 // Debug: Log API URL on load (silenced in production)
 // console.warn('[SystemTools] API URL configured:', GAS_API_URL ? GAS_API_URL.substring(0, 60) + '...' : 'NOT SET');
@@ -258,14 +260,35 @@ async function callSystemToolsAPI<T>(
       await refreshSessionToken(false);
     }
 
-    const response = await fetch(GAS_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: JSON.stringify({ action, ...data, key: GAS_API_KEY, sessionToken: getSessionToken() }),
-      signal,
-    });
+    const timeoutMs = isSilentAction ? SYSTEM_TOOLS_SILENT_TIMEOUT_MS : SYSTEM_TOOLS_REQUEST_TIMEOUT_MS;
+    const requestController = new AbortController();
+    const timeoutId = globalThis.setTimeout(() => requestController.abort(), timeoutMs);
+    const forwardAbort = () => requestController.abort();
+
+    if (signal) {
+      if (signal.aborted) {
+        requestController.abort();
+      } else {
+        signal.addEventListener('abort', forwardAbort, { once: true });
+      }
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(GAS_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify({ action, ...data, key: GAS_API_KEY, sessionToken: getSessionToken() }),
+        signal: requestController.signal,
+      });
+    } finally {
+      globalThis.clearTimeout(timeoutId);
+      if (signal) {
+        signal.removeEventListener('abort', forwardAbort);
+      }
+    }
 
     if (!response.ok) {
       if (
@@ -309,6 +332,14 @@ async function callSystemToolsAPI<T>(
       action === 'logAccess' &&
       error instanceof SystemToolsAPIError &&
       error.code === SystemToolsErrorCodes.UNAUTHORIZED;
+
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new SystemToolsAPIError(
+        `Request timeout after ${isSilentAction ? SYSTEM_TOOLS_SILENT_TIMEOUT_MS : SYSTEM_TOOLS_REQUEST_TIMEOUT_MS}ms`,
+        SystemToolsErrorCodes.NETWORK_ERROR,
+        error
+      );
+    }
 
     // Only log errors for non-silent actions to reduce noise
     if (!isSilentAction && !isExpectedAccessLogAuthFailure) {

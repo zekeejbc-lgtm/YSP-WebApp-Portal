@@ -747,6 +747,7 @@ export default function DeveloperModal({
 
   return (
     <div 
+      data-homepage-translation-modal="true"
       className="fixed flex items-center justify-center p-4" 
       style={{ 
         zIndex: 10001,

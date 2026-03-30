@@ -717,6 +717,7 @@ export default function FounderModal({
 
   return (
     <div 
+      data-homepage-translation-modal="true"
       className="fixed flex items-center justify-center p-4" 
       style={{ 
         zIndex: 10001,
