@@ -39,6 +39,12 @@ interface YSPChatBotProps {
   currentPage?: string;
   hidden?: boolean;
   onTriggerEditMode?: () => void;
+  canEditHomepage?: boolean;
+  isHomepageEditing?: boolean;
+  isHomepageSaving?: boolean;
+  onRequestHomepageEditStart?: () => { success: boolean; message?: string };
+  onRequestHomepageEditCancel?: () => void;
+  onRequestHomepageEditSave?: () => void | Promise<void>;
   attendanceDashboardContext?: AttendanceDashboardContext | null;
   isDark?: boolean;
 }
@@ -75,6 +81,8 @@ const BASE_SUGGESTIONS = [
   "@system clear cache",
   "@system hard refresh",
 ];
+
+const HOMEPAGE_SECTION_IDS = new Set(["home", "about", "projects", "org-chart", "contact"]);
 
 const ORG_LABEL = orgConfig.shortName;
 
@@ -1244,6 +1252,12 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
   currentPage = "",
   hidden = false,
   onTriggerEditMode,
+  canEditHomepage = false,
+  isHomepageEditing = false,
+  isHomepageSaving = false,
+  onRequestHomepageEditStart,
+  onRequestHomepageEditCancel,
+  onRequestHomepageEditSave,
   attendanceDashboardContext,
   isDark = false,
 }) => {
@@ -1623,6 +1637,10 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     lines.push("- /translate off: Disable chatbot translation");
     lines.push("- @clear chat history: Reset chat conversation");
 
+    if (isPrivileged && HOMEPAGE_SECTION_IDS.has(page)) {
+      lines.push("- /edit homepage: Enter homepage edit mode");
+    }
+
     if (loggedIn && (page === "my-profile" || page === "profile")) {
       lines.push("- @profile [question]: Profile help and guidance");
       lines.push("- @profile who am I");
@@ -1704,6 +1722,7 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
     const role = userRole.toLowerCase();
     const isPrivileged = role === "auditor" || role === "admin";
     const pageKey = currentPage.toLowerCase();
+    const canUseHomepageEdit = isPrivileged && canEditHomepage;
     const isLoggedIn = Boolean(getStoredUser()?.username);
     const shouldUseAssistantHeuristics = chatMode === "assistant";
     const isMembersCommandAllowed =
@@ -1912,6 +1931,63 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
         {
           id: Date.now() + 1,
           text: "Assistant mode enabled. KaagapAI will prioritize built-in commands and local handlers.",
+          sender: "bot",
+        },
+      ]);
+      setIsLoading(false);
+      return;
+    }
+
+    if (/^\/edit\s+homepage(?:\s+.*)?$/i.test(workingText)) {
+      if (!isLoggedIn) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Login required. Please sign in first before editing the homepage.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!canUseHomepageEdit) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "No access. Only authorized auditors/admins can edit the homepage.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!onRequestHomepageEditStart) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            text: "Homepage edit controls are unavailable in this view.",
+            sender: "bot",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      const result = onRequestHomepageEditStart();
+      const fallback = result.success
+        ? "Homepage edit mode enabled. Use the chatbot buttons below to save or cancel."
+        : "Unable to enable homepage edit mode right now.";
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          text: result.message || fallback,
           sender: "bot",
         },
       ]);
@@ -3167,8 +3243,12 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
       );
     }
 
+    if (isPrivileged && canEditHomepage && HOMEPAGE_SECTION_IDS.has(pageKey)) {
+      list.unshift("/edit homepage");
+    }
+
     return list;
-  }, [currentPage, userRole]);
+  }, [canEditHomepage, currentPage, userRole]);
 
   // 🌙 Dark mode color scheme
   const colors = {
@@ -3309,6 +3389,106 @@ const YSPChatBot: React.FC<YSPChatBotProps> = ({
               <Minimize2 size={20} />
             </button>
           </div>
+
+          {canEditHomepage && (
+            <div
+              style={{
+                padding: "10px 16px 12px 16px",
+                borderBottom: `1px solid ${colors.border}`,
+                backgroundColor: isHomepageEditing
+                  ? (isDark ? "rgba(185, 28, 28, 0.22)" : "rgba(254, 226, 226, 0.9)")
+                  : (isDark ? "rgba(17, 24, 39, 0.7)" : "rgba(249, 250, 251, 0.9)"),
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: isHomepageEditing ? (isDark ? "#fca5a5" : "#b91c1c") : colors.textMuted,
+                }}
+              >
+                Homepage Edit Mode: {isHomepageEditing ? "Active" : "Idle"}
+              </div>
+
+              {isHomepageEditing && (
+                <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isHomepageSaving || !onRequestHomepageEditCancel) return;
+                      onRequestHomepageEditCancel();
+                      setMessages((prev) => [
+                        ...prev,
+                        {
+                          id: Date.now() + 1,
+                          text: "Homepage edit mode cancelled.",
+                          sender: "bot",
+                        },
+                      ]);
+                    }}
+                    disabled={isHomepageSaving || !onRequestHomepageEditCancel}
+                    style={{
+                      border: "none",
+                      borderRadius: "999px",
+                      padding: "8px 12px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      color: "#ffffff",
+                      background: "linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)",
+                      cursor: isHomepageSaving ? "default" : "pointer",
+                      opacity: isHomepageSaving ? 0.6 : 1,
+                    }}
+                  >
+                    Cancel Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isHomepageSaving || !onRequestHomepageEditSave) return;
+                      setMessages((prev) => [
+                        ...prev,
+                        {
+                          id: Date.now() + 1,
+                          text: "Saving homepage changes...",
+                          sender: "bot",
+                        },
+                      ]);
+                      void Promise.resolve(onRequestHomepageEditSave()).catch(() => {
+                        setMessages((prev) => [
+                          ...prev,
+                          {
+                            id: Date.now() + 1,
+                            text: "I could not trigger save from chat. Please try again.",
+                            sender: "bot",
+                          },
+                        ]);
+                      });
+                    }}
+                    disabled={isHomepageSaving || !onRequestHomepageEditSave}
+                    style={{
+                      border: "none",
+                      borderRadius: "999px",
+                      padding: "8px 12px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      color: "#ffffff",
+                      background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
+                      cursor: isHomepageSaving ? "default" : "pointer",
+                      opacity: isHomepageSaving ? 0.6 : 1,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    {isHomepageSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {isHomepageSaving ? "Saving..." : "Save Edit"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Messages Area */}
           <div

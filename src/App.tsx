@@ -25,7 +25,6 @@
     Network,
     Plus,
     Edit2,
-    Edit3,
     Save,
     Loader2,
     RefreshCw,
@@ -3791,15 +3790,16 @@ export default function App() {
       void executeLogout();
     };
 
+    const canEditHomepage = userRole === 'admin' || userRole === 'auditor';
+
     // Homepage Edit Handlers
     const handleStartEditing = () => {
-      if (userRole === 'admin' || userRole === 'auditor') {
-        setEditedContent(homepageContent);
-        setIsEditingHomepage(true);
-        toast.info('Edit mode enabled', {
-          description: 'Make your changes and click Save to apply them.',
-        });
-      }
+      if (!canEditHomepage) return;
+      setEditedContent(homepageContent);
+      setIsEditingHomepage(true);
+      toast.info('Edit mode enabled', {
+        description: 'Make your changes and use chatbot controls to save or cancel.',
+      });
     };
 
     const handleCancelEditing = () => {
@@ -3902,6 +3902,46 @@ export default function App() {
       } finally {
         setIsSavingHomepage(false);
       }
+    };
+
+    const handleHomepageEditStartFromChatbot = () => {
+      if (!canEditHomepage) {
+        return {
+          success: false,
+          message: 'No access. Only auditors and admins can edit the homepage.',
+        };
+      }
+
+      const currentSection = String(activePage || '').toLowerCase();
+      if (!HOMEPAGE_SECTION_IDS.has(currentSection)) {
+        return {
+          success: false,
+          message: 'Open the Homepage first, then run /edit homepage again.',
+        };
+      }
+
+      if (isEditingHomepage) {
+        return {
+          success: true,
+          message: 'Homepage edit mode is already active.',
+        };
+      }
+
+      handleStartEditing();
+      return {
+        success: true,
+        message: 'Homepage edit mode enabled. Use the chatbot buttons to save or cancel.',
+      };
+    };
+
+    const handleHomepageEditCancelFromChatbot = () => {
+      if (!isEditingHomepage || isSavingHomepage) return;
+      handleCancelEditing();
+    };
+
+    const handleHomepageEditSaveFromChatbot = async () => {
+      if (!isEditingHomepage || isSavingHomepage) return;
+      await handleSaveEditing();
     };
 
     // Set active page based on scroll position (optimized with throttle)
@@ -4334,7 +4374,6 @@ export default function App() {
 
     const chatbotForceHidden =
       isEditingProfile ||
-      isEditingHomepage ||
       showAttendanceDashboard ||
       accessLogsModalOpen ||
       issuanceModalOpen ||
@@ -4369,6 +4408,12 @@ export default function App() {
             currentPage={activePage}
             hidden={chatbotForceHidden}
             onTriggerEditMode={handleTriggerProfileEditMode}
+            canEditHomepage={canEditHomepage}
+            isHomepageEditing={isEditingHomepage}
+            isHomepageSaving={isSavingHomepage}
+            onRequestHomepageEditStart={handleHomepageEditStartFromChatbot}
+            onRequestHomepageEditCancel={handleHomepageEditCancelFromChatbot}
+            onRequestHomepageEditSave={handleHomepageEditSaveFromChatbot}
             attendanceDashboardContext={attendanceDashboardContext}
             isDark={isDark}
           />
@@ -5418,71 +5463,17 @@ export default function App() {
         <div
           className={`relative z-10 transition-all duration-300 ${isAdmin ? 'md:pl-[60px]' : ''}`}
         >
-          {/* Edit Homepage Controls - Fixed Position */}
-          {(userRole === 'admin' || userRole === 'auditor') && !isEditingHomepage && (
+          {isEditingHomepage && canEditHomepage && (
             <div
-              className="fixed"
+              className="fixed left-1/2 -translate-x-1/2 rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-white shadow-lg"
               style={{
                 zIndex: 45,
-                bottom: "24px",
-                left: isAdmin ? "76px" : "24px",
+                top: isAdmin ? "82px" : "20px",
+                background: "linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)",
               }}
+              aria-live="polite"
             >
-              <button
-                onClick={handleStartEditing}
-                className="flex items-center justify-center px-3 py-2 rounded-lg text-white transition-all duration-300 shadow-md"
-                style={{
-                  background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
-                  fontWeight: "600",
-                  fontSize: "14px",
-                }}
-                aria-label="Edit homepage"
-              >
-                <Edit3 className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-
-          {/* Save/Cancel Controls - Fixed Position */}
-          {isEditingHomepage && (
-            <div
-              className="fixed flex flex-col gap-3"
-              style={{
-                zIndex: 45,
-                bottom: "24px",
-                left: isAdmin ? "76px" : "24px",
-              }}
-            >
-              <button
-                onClick={handleCancelEditing}
-                disabled={isSavingHomepage}
-                className="flex items-center justify-center px-3 py-2 rounded-lg text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
-                style={{
-                  background: "linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)",
-                  fontWeight: "600",
-                  fontSize: "14px",
-                }}
-                aria-label="Cancel homepage edits"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <button
-                onClick={handleSaveEditing}
-                disabled={isSavingHomepage}
-                className="flex items-center justify-center px-3 py-2 rounded-lg text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
-                style={{
-                  background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
-                  fontWeight: "600",
-                  fontSize: "14px",
-                }}
-                aria-label="Save homepage edits"
-              >
-                {isSavingHomepage ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Save className="w-5 h-5" />
-                )}
-              </button>
+              Homepage Edit Mode Active
             </div>
           )}
 
