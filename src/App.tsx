@@ -6830,6 +6830,9 @@ export default function App() {
             <p>
               &copy; 2025 {orgConfig.fullName}. All rights reserved.
             </p>
+            <p className="mt-2 text-xs text-gray-600 dark:text-gray-300">
+              Youth Service to the Filipino Youth, Inc. is the official owner and operator of youthserviceph.org. SEC Registration No. 2023010080782-00.
+            </p>
             <p className="mt-2">
               {orgConfig.motto}
             </p>
