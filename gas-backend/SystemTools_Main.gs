@@ -21,6 +21,17 @@ function doGet(e) {
 function doPost(e) {
   try {
     const requestData = JSON.parse(e.postData.contents);
+    
+    // ==========================================
+    // 1. DIRECT TRANSLATOR INTERCEPT
+    // If payload has 'text' but no 'action', send directly to Translator
+    // ==========================================
+    if (!requestData.action && requestData.text) {
+      var request = parseTranslatorRequest_(e);
+      var translationPayload = buildTranslationPayload_(request);
+      return createTranslatorJsonResponse_(Object.assign({ success: true }, translationPayload));
+    }
+
     const action = requestData.action;
     const PUBLIC_ACTIONS = ['getMaintenanceMode', 'getCacheVersion', 'getOrgBranding', 'translateText'];
     const isPublicAction = PUBLIC_ACTIONS.indexOf(action) !== -1;
@@ -30,6 +41,7 @@ function doPost(e) {
     if (action === 'getGeminiKeyAudit') {
       return handleGetGeminiKeyAudit_(requestData);
     }
+    
     if (isRequestCancelled_(requestData)) {
       return createErrorResponse('Request cancelled', 499);
     }
@@ -55,7 +67,7 @@ function doPost(e) {
     }
     
     Logger.log('doPost received action: ' + action);
-
+    
     // Legacy support: action message overwrote route action in old clients
     const isLegacyLogAccess = action && action !== 'logAccess' && requestData.actionType && requestData.username;
     if (isLegacyLogAccess) {
@@ -89,17 +101,23 @@ function doPost(e) {
         return handleGetCacheVersion();
       case 'getOrgBranding':
         return handleGetOrgBranding();
-      case 'translateText':
-        return handleTranslateText(requestData);
       case 'bumpCacheVersion':
         return handleBumpCacheVersion(requestData.username);
-      
+        
+      // ==========================================
+      // 2. ACTION-BASED TRANSLATOR ROUTE
+      // ==========================================
+      case 'translateText':
+        var request = parseTranslatorRequest_(e);
+        var translationPayload = buildTranslationPayload_(request);
+        return createTranslatorJsonResponse_(Object.assign({ success: true }, translationPayload));
+
       // Backup & Export
       case 'databaseBackup':
         return handleDatabaseBackup(requestData.username);
       case 'exportData':
         return handleExportData(requestData.username);
-      
+        
       // Maintenance Mode
       case 'getMaintenanceMode':
         return handleGetMaintenanceMode();
@@ -109,7 +127,7 @@ function doPost(e) {
         return handleDisableMaintenanceMode(requestData.pageId, requestData.username);
       case 'clearAllMaintenance':
         return handleClearAllMaintenance(requestData.username);
-      
+        
       // Access Logs
       case 'getAccessLogs': {
         const authError = requireAdminOrAuditor_(requestData.username, 'view access logs');
@@ -135,11 +153,11 @@ function doPost(e) {
         return handleClearAccessLogsByDateRange(requestData.startDate, requestData.endDate, requestData.username);
       case 'clearSpecificAccessLogs':
         return handleClearSpecificAccessLogs(requestData.logIds, requestData.username);
-      
+        
       // Manual Export Access Logs (upload PDF from frontend)
       case 'uploadAccessLogsPDF':
         return handleUploadAccessLogsPDF(requestData.pdfBase64, requestData.fileName, requestData.username, requestData.exportType);
-
+        
       // Role Manager
       case 'getSystemRoles': {
         const authError = requireAdminOrAuditor_(requestData.username, 'view system roles');
@@ -195,21 +213,20 @@ function forceAuthorization() {
   // This function uses all the APIs we need, forcing the auth prompt
   
   Logger.log('=== CHECKING ALL SPREADSHEETS ===');
-  
   // Check ALL spreadsheets in the backup list
   for (let i = 0; i < ALL_SPREADSHEETS.length; i++) {
     const config = ALL_SPREADSHEETS[i];
     if (!config.id) {
-      Logger.log('â­ Skipping ' + config.name + ': No ID configured');
+      Logger.log('✅ Skipping ' + config.name + ': No ID configured');
       continue;
     }
     
     try {
       const ss = SpreadsheetApp.openById(config.id);
       const sheets = ss.getSheets();
-      Logger.log('âœ“ ' + config.name + ' OK: ' + ss.getName() + ' (' + sheets.length + ' sheets)');
+      Logger.log('✓ ' + config.name + ' OK: ' + ss.getName() + ' (' + sheets.length + ' sheets)');
     } catch (e) {
-      Logger.log('âœ— ' + config.name + ' FAILED: ' + e.toString());
+      Logger.log('✗ ' + config.name + ' FAILED: ' + e.toString());
     }
   }
   
@@ -219,9 +236,9 @@ function forceAuthorization() {
   // Check Drive folder access
   try {
     const folder = DriveApp.getFolderById(BACKUPS_FOLDER_ID);
-    Logger.log('âœ“ Backups folder access OK: ' + folder.getName());
+    Logger.log('✓ Backups folder access OK: ' + folder.getName());
   } catch (e) {
-    Logger.log('âœ— Backups folder access FAILED: ' + e.toString());
+    Logger.log('✗ Backups folder access FAILED: ' + e.toString());
   }
   
   // Test create/delete spreadsheet
@@ -229,9 +246,9 @@ function forceAuthorization() {
     const testSS = SpreadsheetApp.create('_AUTH_TEST_DELETE_ME');
     const testId = testSS.getId();
     DriveApp.getFileById(testId).setTrashed(true);
-    Logger.log('âœ“ Create/delete spreadsheet OK');
+    Logger.log('✓ Create/delete spreadsheet OK');
   } catch (e) {
-    Logger.log('âœ— Create spreadsheet FAILED: ' + e.toString());
+    Logger.log('✗ Create spreadsheet FAILED: ' + e.toString());
   }
   
   Logger.log('');
@@ -243,9 +260,9 @@ function forceAuthorization() {
       method: 'get',
       muteHttpExceptions: true
     });
-    Logger.log('\u2713 External request access OK: HTTP ' + fetchResponse.getResponseCode());
+    Logger.log('✓ External request access OK: HTTP ' + fetchResponse.getResponseCode());
   } catch (e) {
-    Logger.log('\u2717 External request access FAILED: ' + e.toString());
+    Logger.log('✗ External request access FAILED: ' + e.toString());
   }
 
   Logger.log('');
@@ -254,9 +271,9 @@ function forceAuthorization() {
   // Check MailApp access for email quota tracking
   try {
     const quota = MailApp.getRemainingDailyQuota();
-    Logger.log('âœ“ Email quota access OK: ' + quota + ' emails remaining');
+    Logger.log('✓ Email quota access OK: ' + quota + ' emails remaining');
   } catch (e) {
-    Logger.log('âœ— Email quota access FAILED: ' + e.toString());
+    Logger.log('✗ Email quota access FAILED: ' + e.toString());
   }
   
   Logger.log('');
@@ -279,7 +296,6 @@ function forceAuth() {
     authorization: '',
     emailAuthorization: ''
   };
-
   try {
     result.authorization = forceAuthorization();
   } catch (error) {
@@ -322,7 +338,6 @@ function debugCheckConnections() {
     timestamp: new Date().toISOString(),
     checks: []
   };
-  
   // Check System Settings Spreadsheet
   try {
     const ss = SpreadsheetApp.openById(SYSTEM_SETTINGS_SPREADSHEET_ID);
@@ -417,23 +432,19 @@ function handleTestConnection() {
 // =================== SYSTEM TOOLS CONFIGURATION ===================
 /**
  * SystemTools_Main.gs
- * 
- * Handles:
+ * * Handles:
  * - Database Backup (export all data to new spreadsheet)
  * - Export Data (create spreadsheet with all sheets)
  * - Clear Cache (bump cache version globally)
  * - Maintenance Mode (CRUD operations with separate spreadsheet)
  * - System Health monitoring
- * 
- * NOTE: These functions are routed through Loginpage_Main.gs doPost()
+ * * NOTE: These functions are routed through Loginpage_Main.gs doPost()
  */
 
 // IDs loaded from Script Properties for security (Project Settings > Script Properties)
 const props_ = PropertiesService.getScriptProperties();
-
 // Main data spreadsheet (same as LOGIN_SPREADSHEET_ID)
 const SYSTEM_DATA_SPREADSHEET_ID = props_.getProperty('LOGIN_SPREADSHEET_ID') || '';
-
 // Separate spreadsheet for System Settings (Maintenance Mode, Cache Version, etc.)
 const SYSTEM_SETTINGS_SPREADSHEET_ID = props_.getProperty('SYSTEM_SETTINGS_SPREADSHEET_ID') || '';
 const SYSTEM_SETTINGS_SHEET_NAME = 'System Settings';
@@ -444,10 +455,8 @@ const BACKUPS_FOLDER_ID = props_.getProperty('BACKUPS_FOLDER_ID') || '';
 
 // Access Logs Archive folder in Google Drive (for automatic monthly archives before deletion)
 const ACCESS_LOGS_ARCHIVE_FOLDER_ID = props_.getProperty('ACCESS_LOGS_ARCHIVE_FOLDER_ID') || '';
-
 // Access Logs Manual Export folder in Google Drive (for manual exports by users)
 const ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID = props_.getProperty('ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID') || '';
-
 // Events Spreadsheet ID (from Attendance_Events.gs)
 const EVENTS_SPREADSHEET_ID = props_.getProperty('EVENTS_SPREADSHEET_ID') || '';
 
@@ -461,7 +470,6 @@ const ALL_SPREADSHEETS = [
   { id: EVENTS_SPREADSHEET_ID, name: 'Events', description: 'Events, EventAttendance' },
   { id: HOMEPAGE_SPREADSHEET_ID, name: 'Homepage', description: 'Homepage content, Projects, Contact' },
 ];
-
 // Universal project-level properties
 const REQUIRED_SCRIPT_PROPERTIES = [
   'SESSION_SECRET_KEY',
@@ -472,7 +480,6 @@ const REQUIRED_SCRIPT_PROPERTIES = [
 const RECOMMENDED_SCRIPT_PROPERTIES = [
   'SYSTEM_SETTINGS_SPREADSHEET_ID'
 ];
-
 // Feature/module properties used by one or more GAS modules in this project
 const FEATURE_SCRIPT_PROPERTIES = [
   'CHATBOT_UNKNOWN_LOG_SPREADSHEET_ID',
@@ -493,7 +500,6 @@ const FEATURE_SCRIPT_PROPERTIES = [
   'CROSS_GAS_AUDIT_SECRET',
   'MEET_EXTENSION_SHARED_SECRET'
 ];
-
 const ORG_BRANDING_DEFAULTS = {
   orgName: 'Youth Service Philippines',
   chapterName: 'Tagum Chapter',
@@ -505,7 +511,6 @@ const ORG_BRANDING_DEFAULTS = {
   logoUrl: 'https://i.imgur.com/J4wddTW.png',
   themeColor: '#f6421f',
 };
-
 const ORG_BRANDING_SHEET_NAME = 'Organization Branding';
 const ORG_BRANDING_HEADERS = ['ConfigKey', 'Value', 'PropertyKey', 'Description', 'LastUpdated', 'UpdatedBy'];
 const ORG_BRANDING_CACHE_KEY = 'system_tools_org_branding_v1';
@@ -581,7 +586,6 @@ function initializeSystemSettingsSheet() {
       settingsSheet = ss.insertSheet(SYSTEM_SETTINGS_SHEET_NAME);
       // Set up headers: SettingKey, SettingValue, LastUpdated, UpdatedBy
       settingsSheet.getRange('A1:D1').setValues([['SettingKey', 'SettingValue', 'LastUpdated', 'UpdatedBy']]);
-      
       // Initialize default settings
       const defaultSettings = [
         ['cache_version', '1', new Date().toISOString(), 'system'],
@@ -617,14 +621,12 @@ function initializeMaintenanceSheet() {
         'PageId', 'Enabled', 'Reason', 'Message', 'EstimatedTime', 
         'MaintenanceDate', 'DurationDays', 'EnabledAt', 'EnabledBy'
       ]]);
-      
       // Add default page rows
       maintenanceSheet.getRange(2, 1, 3, 9).setValues([
         ['fullPWA', 'FALSE', '', '', '', '', '', '', ''],
         ['issuance', 'FALSE', '', '', '', '', '', '', ''],
         ['email-system', 'FALSE', '', '', '', '', '', '', '']
       ]);
-      
       // Format header row
       maintenanceSheet.getRange('A1:I1').setFontWeight('bold');
       maintenanceSheet.setFrozenRows(1);
@@ -649,7 +651,6 @@ function initializeOrgBrandingSheet() {
 
     const ss = SpreadsheetApp.openById(SYSTEM_SETTINGS_SPREADSHEET_ID);
     let brandingSheet = ss.getSheetByName(ORG_BRANDING_SHEET_NAME);
-
     if (!brandingSheet) {
       brandingSheet = ss.insertSheet(ORG_BRANDING_SHEET_NAME);
       brandingSheet.getRange(1, 1, 1, ORG_BRANDING_HEADERS.length).setValues([ORG_BRANDING_HEADERS]);
@@ -678,7 +679,6 @@ function upsertOrgBrandingRows_(sheet, updatedBy, overwriteExistingValues) {
 
   const lastRow = sheet.getLastRow();
   const rowMap = {};
-
   if (lastRow > 1) {
     const existingRows = sheet.getRange(2, 1, lastRow - 1, ORG_BRANDING_HEADERS.length).getValues();
     for (let i = 0; i < existingRows.length; i++) {
@@ -691,13 +691,11 @@ function upsertOrgBrandingRows_(sheet, updatedBy, overwriteExistingValues) {
 
   let insertedCount = 0;
   let updatedCount = 0;
-
   for (let j = 0; j < ORG_BRANDING_FIELDS.length; j++) {
     const field = ORG_BRANDING_FIELDS[j];
     const propertyValue = toSafePropValue_(props_.getProperty(field.propertyKey));
     const seedValue = propertyValue || toSafePropValue_(field.defaultValue);
     const rowIndex = rowMap[field.configKey];
-
     if (!rowIndex) {
       sheet.appendRow([
         field.configKey,
@@ -714,7 +712,6 @@ function upsertOrgBrandingRows_(sheet, updatedBy, overwriteExistingValues) {
     const rowValues = sheet.getRange(rowIndex, 1, 1, ORG_BRANDING_HEADERS.length).getValues()[0];
     const currentValue = toSafePropValue_(rowValues[1]);
     const nextValue = overwriteValues || !currentValue ? seedValue : currentValue;
-
     const shouldWrite =
       toSafePropValue_(rowValues[0]) !== field.configKey ||
       currentValue !== nextValue ||
@@ -813,13 +810,11 @@ function initializeBackupHistorySheet() {
         'Type', 'Name', 'URL', 'SpreadsheetId', 'SheetsCount', 
         'TotalRows', 'TotalCells', 'CreatedBy', 'CreatedAt', 'FolderMoved'
       ]]);
-      
       // Format header row
       historySheet.getRange('A1:J1').setFontWeight('bold');
       historySheet.setFrozenRows(1);
-      
       // Set column widths for better readability
-      historySheet.setColumnWidth(1, 80);  // Type
+      historySheet.setColumnWidth(1, 80); // Type
       historySheet.setColumnWidth(2, 200); // Name
       historySheet.setColumnWidth(3, 350); // URL
       historySheet.setColumnWidth(4, 200); // SpreadsheetId
@@ -858,7 +853,6 @@ function saveBackupRecord(record) {
       record.createdAt || new Date().toISOString(),
       record.folderMoved ? 'Yes' : 'No'
     ]]);
-    
     Logger.log('Backup record saved: ' + record.name);
     return true;
   } catch (error) {
@@ -956,7 +950,6 @@ function generateNextYSPId() {
 
     const yearSuffix = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yy');
     let maxSeq = 0;
-
     if (lastRow > 1) {
       const idValues = sheet.getRange(2, idCodeIndex + 1, lastRow - 1, 1).getValues();
       for (let i = 0; i < idValues.length; i++) {
@@ -995,7 +988,6 @@ function getUserRole_(username) {
     const usernameIndex = headers.indexOf('Username');
     const roleIndex = headers.indexOf('Role');
     if (usernameIndex === -1 || roleIndex === -1) return null;
-
     const usernameLower = String(username).toLowerCase().trim();
     for (let i = 1; i < data.length; i++) {
       const rowUsername = (data[i][usernameIndex] || '').toString().toLowerCase().trim();
@@ -1029,7 +1021,6 @@ function getSystemRoleRecordByName_(roleName) {
     const powerLevelIdx = headers.indexOf('PowerLevel');
     const permissionsIdx = headers.indexOf('Permissions');
     if (roleNameIdx === -1) return null;
-
     const target = normalizeRoleValue_(roleName);
     for (let i = 1; i < values.length; i++) {
       const rowName = normalizeRoleValue_(values[i][roleNameIdx]);
@@ -1061,8 +1052,8 @@ function getSystemRoleRecordByName_(roleName) {
 /**
  * Reusable role gate â€” returns an error response if the user is NOT an admin or auditor,
  * or null if the user is authorized. Usage:
- *   const authError = requireAdminOrAuditor_(username, 'perform this action');
- *   if (authError) return authError;
+ * const authError = requireAdminOrAuditor_(username, 'perform this action');
+ * if (authError) return authError;
  */
 function requireAdminOrAuditor_(username, actionDescription) {
   if (!username) {
@@ -1083,7 +1074,6 @@ function requireAdminOrAuditor_(username, actionDescription) {
       roleRecord.permissions.canAccessSystemTools === true
     )
   );
-
   if (!hasLegacyAdminAccess && !hasPermissionAccess) {
     const desc = actionDescription || 'perform this action';
     return createErrorResponse('Permission denied: cannot ' + desc, 403);
@@ -1252,7 +1242,6 @@ function handleDatabaseBackup(username) {
     // Backup each spreadsheet
     for (let s = 0; s < ALL_SPREADSHEETS.length; s++) {
       const spreadsheetConfig = ALL_SPREADSHEETS[s];
-      
       // Skip if no ID provided
       if (!spreadsheetConfig.id) {
         Logger.log('Skipping ' + spreadsheetConfig.name + ': No ID configured');
@@ -1262,7 +1251,6 @@ function handleDatabaseBackup(username) {
       try {
         const sourceSpreadsheet = SpreadsheetApp.openById(spreadsheetConfig.id);
         const backupName = 'YSP_Backup_' + spreadsheetConfig.name + '_' + timestamp;
-        
         // Create new spreadsheet for backup
         const backupSpreadsheet = SpreadsheetApp.create(backupName);
         const backupId = backupSpreadsheet.getId();
@@ -1272,17 +1260,14 @@ function handleDatabaseBackup(username) {
         let copiedSheets = [];
         let totalRows = 0;
         let totalCells = 0;
-        
         for (let i = 0; i < sheets.length; i++) {
           const sheet = sheets[i];
           const sheetName = sheet.getName();
           const rows = sheet.getLastRow();
           const cols = sheet.getLastColumn();
-          
           // Copy sheet to backup spreadsheet
           const copiedSheet = sheet.copyTo(backupSpreadsheet);
           copiedSheet.setName(sheetName);
-          
           totalRows += rows;
           totalCells += rows * cols;
           
@@ -1311,7 +1296,6 @@ function handleDatabaseBackup(username) {
         }
         
         const backupUrl = backupSpreadsheet.getUrl();
-        
         grandTotalRows += totalRows;
         grandTotalCells += totalCells;
         successCount++;
@@ -1329,9 +1313,7 @@ function handleDatabaseBackup(username) {
           folderMoved: folderMoved,
           status: 'success'
         });
-        
         Logger.log('Backup created for ' + spreadsheetConfig.name + ': ' + backupUrl);
-        
       } catch (spreadsheetError) {
         Logger.log('Failed to backup ' + spreadsheetConfig.name + ': ' + spreadsheetError.toString());
         failCount++;
@@ -1345,7 +1327,6 @@ function handleDatabaseBackup(username) {
     }
     
     const now = new Date();
-    
     // Save backup record to history (summary of all backups)
     saveBackupRecord({
       type: 'Full Backup',
@@ -1359,14 +1340,11 @@ function handleDatabaseBackup(username) {
       createdAt: now.toISOString(),
       folderMoved: true
     });
-    
     // Update last backup timestamp
     setSystemSetting('last_backup', now.toISOString(), username);
     setSystemSetting('last_backup_url', backupFolder.getUrl(), username);
     setSystemSetting('last_backup_name', 'YSP_FullBackup_' + timestamp, username);
-    
     Logger.log('Full backup completed: ' + successCount + ' succeeded, ' + failCount + ' failed');
-    
     return createSuccessResponse({
       backups: allBackupResults,
       totalSpreadsheets: successCount,
@@ -1408,7 +1386,6 @@ function handleExportData(username) {
     // Export each spreadsheet
     for (let s = 0; s < ALL_SPREADSHEETS.length; s++) {
       const spreadsheetConfig = ALL_SPREADSHEETS[s];
-      
       // Skip if no ID provided
       if (!spreadsheetConfig.id) {
         Logger.log('Skipping ' + spreadsheetConfig.name + ': No ID configured');
@@ -1418,7 +1395,6 @@ function handleExportData(username) {
       try {
         const sourceSpreadsheet = SpreadsheetApp.openById(spreadsheetConfig.id);
         const exportName = 'YSP_Export_' + spreadsheetConfig.name + '_' + timestamp;
-        
         // Create new spreadsheet for export
         const exportSpreadsheet = SpreadsheetApp.create(exportName);
         const exportId = exportSpreadsheet.getId();
@@ -1428,17 +1404,14 @@ function handleExportData(username) {
         let exportedSheets = [];
         let totalRows = 0;
         let totalCells = 0;
-        
         for (let i = 0; i < sheets.length; i++) {
           const sheet = sheets[i];
           const sheetName = sheet.getName();
           const rows = sheet.getLastRow();
           const cols = sheet.getLastColumn();
-          
           // Copy sheet to export spreadsheet
           const copiedSheet = sheet.copyTo(exportSpreadsheet);
           copiedSheet.setName(sheetName);
-          
           totalRows += rows;
           totalCells += rows * cols;
           
@@ -1468,7 +1441,6 @@ function handleExportData(username) {
         }
         
         const exportUrl = exportSpreadsheet.getUrl();
-        
         grandTotalRows += totalRows;
         grandTotalCells += totalCells;
         successCount++;
@@ -1486,9 +1458,7 @@ function handleExportData(username) {
           folderMoved: folderMoved,
           status: 'success'
         });
-        
         Logger.log('Export created for ' + spreadsheetConfig.name + ': ' + exportUrl);
-        
       } catch (spreadsheetError) {
         Logger.log('Failed to export ' + spreadsheetConfig.name + ': ' + spreadsheetError.toString());
         failCount++;
@@ -1502,7 +1472,6 @@ function handleExportData(username) {
     }
     
     const now = new Date();
-    
     // Save export record to history (summary of all exports)
     saveBackupRecord({
       type: 'Full Export',
@@ -1516,14 +1485,11 @@ function handleExportData(username) {
       createdAt: now.toISOString(),
       folderMoved: true
     });
-    
     // Update last export timestamp
     setSystemSetting('last_export', now.toISOString(), username);
     setSystemSetting('last_export_url', backupFolder.getUrl(), username);
     setSystemSetting('last_export_name', 'YSP_FullExport_' + timestamp, username);
-    
     Logger.log('Full export completed: ' + successCount + ' succeeded, ' + failCount + ' failed');
-    
     return createSuccessResponse({
       exports: allExportResults,
       totalSpreadsheets: successCount,
@@ -1561,7 +1527,6 @@ function getEmailQuotaRefreshTime() {
   
   // Convert back to UTC
   const refreshTimeUTC = new Date(midnightPacific.getTime() - (3600000 * pacificOffset) - (now.getTimezoneOffset() * 60000));
-  
   return refreshTimeUTC.toISOString();
 }
 
@@ -1606,7 +1571,6 @@ function getEmailQuotaStatus() {
     // Calculate percentage used
     const used = dailyLimit - remaining;
     const percentageUsed = Math.round((used / dailyLimit) * 100 * 100) / 100;
-    
     // Determine status
     let status = 'healthy';
     if (percentageUsed >= 90) {
@@ -1649,7 +1613,8 @@ function handleGetSystemHealth() {
       const ss = SpreadsheetApp.openById(SYSTEM_DATA_SPREADSHEET_ID);
       const sheet = ss.getSheetByName('User Profiles');
       if (sheet) {
-        databaseRows = sheet.getLastRow() - 1; // Exclude header
+        databaseRows = sheet.getLastRow() - 1;
+        // Exclude header
       }
     } catch (dbError) {
       databaseStatus = 'error';
@@ -1658,11 +1623,9 @@ function handleGetSystemHealth() {
     
     // Check email quota
     let emailQuota = getEmailQuotaStatus();
-    
     // Get storage info across ALL spreadsheets
     let totalCells = 0;
     let spreadsheetDetails = [];
-    
     for (let s = 0; s < ALL_SPREADSHEETS.length; s++) {
       const config = ALL_SPREADSHEETS[s];
       if (!config.id) continue;
@@ -1689,14 +1652,13 @@ function handleGetSystemHealth() {
     
     // Google Sheets limit is 10 million cells per spreadsheet
     // For multiple spreadsheets, we'll show total usage
-    const maxCells = 10000000 * ALL_SPREADSHEETS.length; // 10M per spreadsheet
+    const maxCells = 10000000 * ALL_SPREADSHEETS.length;
+    // 10M per spreadsheet
     const storagePercentage = Math.round((totalCells / maxCells) * 100 * 100) / 100;
-    
     // Get last backup info with URL
     const lastBackup = getSystemSetting('last_backup') || 'Never';
     const lastBackupUrl = getSystemSetting('last_backup_url') || '';
     const lastBackupName = getSystemSetting('last_backup_name') || '';
-    
     // Get last export info with URL
     const lastExport = getSystemSetting('last_export') || 'Never';
     const lastExportUrl = getSystemSetting('last_export_url') || '';
@@ -1704,7 +1666,6 @@ function handleGetSystemHealth() {
     
     const cacheVersion = getCacheVersion();
     const propertyAudit = getScriptPropertiesAudit_();
-
     return createSuccessResponse({
       database: databaseStatus,
       databaseRows: databaseRows,
@@ -1749,7 +1710,6 @@ function getScriptPropertiesAudit_() {
   var requiredMissing = [];
   var recommendedMissing = [];
   var featureMissing = [];
-
   for (var i = 0; i < REQUIRED_SCRIPT_PROPERTIES.length; i++) {
     var requiredKey = REQUIRED_SCRIPT_PROPERTIES[i];
     if (!toSafePropValue_(props[requiredKey])) requiredMissing.push(requiredKey);
@@ -1855,7 +1815,6 @@ function verifyCrossAuditSecret_(providedSecret) {
 function resolveGeminiPrefixFromSource_(sourceValue, explicitPrefix) {
   var requestedPrefix = String(explicitPrefix || '').trim();
   if (requestedPrefix) return requestedPrefix;
-
   var source = String(sourceValue || '').toLowerCase().trim();
   if (source === 'chatbot') return 'AI_CHATBOT_API_KEY';
   if (source === 'applications' || source === 'applicant') return 'GEMINI_API_KEY';
@@ -1905,14 +1864,12 @@ function fetchExternalGeminiAudit_(url, sharedSecret, sourceName) {
       auditSecret: secret,
       source: String(sourceName || 'external')
     };
-
     var response = UrlFetchApp.fetch(endpoint, {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify(payload),
       muteHttpExceptions: true
     });
-
     var code = response.getResponseCode();
     var text = response.getContentText() || '';
     if (code < 200 || code >= 300) {
@@ -1964,7 +1921,6 @@ function collectConfiguredPrefixedKeys_(props, baseKey) {
   var source = props || {};
   var keys = Object.keys(source);
   var seen = {};
-
   // Support exact base key (e.g. AI_CHATBOT_API_KEY)
   if (toSafePropValue_(source[normalizedBase])) {
     out.push(normalizedBase);
@@ -1989,7 +1945,6 @@ function collectConfiguredPrefixedKeys_(props, baseKey) {
     var bNum = parseInt(b.substring(numberedPrefix.length), 10);
     return aNum - bNum;
   });
-
   for (var j = 0; j < numberedMatches.length; j++) {
     var matchedKey = numberedMatches[j];
     if (seen[matchedKey]) continue;
@@ -2056,7 +2011,6 @@ function getOrgBrandingConfig_() {
     logoUrl: logoUrl,
     themeColor: themeColor,
   };
-
   try {
     cache.put(ORG_BRANDING_CACHE_KEY, JSON.stringify(branding), ORG_BRANDING_CACHE_TTL_SECONDS);
   } catch (cacheWriteError) {
@@ -2086,12 +2040,10 @@ function handleGetMaintenanceMode() {
     
     let fullPWA = { enabled: false };
     let pages = {};
-    
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       const pageId = row[0];
       const enabled = row[1] === true || row[1] === 'TRUE' || row[1] === 'true';
-      
       const config = {
         enabled: enabled,
         reason: row[2] || '',
@@ -2102,7 +2054,6 @@ function handleGetMaintenanceMode() {
         enabledAt: row[7] || '',
         enabledBy: row[8] || ''
       };
-      
       if (pageId === 'fullPWA') {
         fullPWA = config;
       } else if (pageId) {
@@ -2168,7 +2119,6 @@ function handleEnableMaintenanceMode(pageId, config, username) {
     }
     
     Logger.log('Maintenance mode enabled for: ' + pageId + ' by ' + username);
-    
     return createSuccessResponse({
       pageId: pageId,
       enabled: true,
@@ -2191,7 +2141,6 @@ function handleDisableMaintenanceMode(pageId, username) {
 
     const sheet = initializeMaintenanceSheet();
     const data = sheet.getDataRange().getValues();
-    
     for (let i = 1; i < data.length; i++) {
       if (data[i][0] === pageId) {
         // Update row to disabled
@@ -2210,7 +2159,6 @@ function handleDisableMaintenanceMode(pageId, username) {
     }
     
     Logger.log('Maintenance mode disabled for: ' + pageId + ' by ' + username);
-    
     return createSuccessResponse({
       pageId: pageId,
       enabled: false,
@@ -2233,7 +2181,6 @@ function handleClearAllMaintenance(username) {
 
     const sheet = initializeMaintenanceSheet();
     const data = sheet.getDataRange().getValues();
-    
     for (let i = 1; i < data.length; i++) {
       // Clear all rows (set enabled to FALSE and clear other fields)
       sheet.getRange(i + 1, 2, 1, 8).setValues([[
@@ -2242,7 +2189,6 @@ function handleClearAllMaintenance(username) {
     }
     
     Logger.log('All maintenance modes cleared by: ' + username);
-    
     return createSuccessResponse({
       message: 'All maintenance modes cleared successfully',
       timestamp: new Date().toISOString()
@@ -2283,7 +2229,6 @@ function createErrorResponse(message, code) {
 // =================== ACCESS LOGS MANAGEMENT ===================
 
 const ACCESS_LOGS_SHEET_NAME = 'Access Logs';
-
 /**
  * Initialize Access Logs sheet if it doesn't exist
  */
@@ -2298,11 +2243,9 @@ function initializeAccessLogsSheet() {
       logsSheet.getRange('A1:G1').setValues([[
         'User', 'Action', 'Type', 'Status', 'Timestamp', 'IP Address', 'Device'
       ]]);
-      
       // Format header row
       logsSheet.getRange('A1:G1').setFontWeight('bold');
       logsSheet.setFrozenRows(1);
-      
       // Set column widths for readability
       logsSheet.setColumnWidth(1, 150); // User
       logsSheet.setColumnWidth(2, 200); // Action
@@ -2334,7 +2277,6 @@ function handleLogAccess(username, action, actionType, status, ipAddress, device
       'Asia/Manila',
       'yyyy-MM-dd hh:mm:ss a'
     );
-    
     sheet.getRange(lastRow + 1, 1, 1, 7).setValues([[
       username || 'Unknown',
       action || '',
@@ -2344,7 +2286,6 @@ function handleLogAccess(username, action, actionType, status, ipAddress, device
       ipAddress || 'Unknown',
       device || 'Unknown'
     ]]);
-    
     Logger.log('Access logged: ' + username + ' - ' + action);
     return true;
   } catch (error) {
@@ -2395,12 +2336,10 @@ function handleGetAccessLogs(page = 1, limit = 50, filterType = null) {
     const logs = [];
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
-      
       // Skip empty rows
       if (!row[0] && !row[1]) continue;
       
       const logType = row[2] || 'view';
-      
       // Apply type filter if provided
       if (filterType && filterType !== 'all' && logType !== filterType) {
         continue;
@@ -2408,7 +2347,6 @@ function handleGetAccessLogs(page = 1, limit = 50, filterType = null) {
 
       const rawUser = (row[0] || '').toString().trim();
       const profile = userLookup[rawUser.toLowerCase()] || {};
-      
       logs.push({
         id: String(i),
         user: rawUser,
@@ -2429,7 +2367,6 @@ function handleGetAccessLogs(page = 1, limit = 50, filterType = null) {
       const dateB = new Date(b.timestamp).getTime() || 0;
       return dateB - dateA;
     });
-    
     // Paginate
     const totalLogs = logs.length;
     const startIndex = (page - 1) * limit;
@@ -2437,9 +2374,7 @@ function handleGetAccessLogs(page = 1, limit = 50, filterType = null) {
     const paginatedLogs = logs.slice(startIndex, endIndex);
     
     const totalPages = Math.ceil(totalLogs / limit);
-    
     Logger.log('Returning access logs: page ' + page + ' of ' + totalPages + ', total logs: ' + totalLogs);
-    
     return createSuccessResponse({
       logs: paginatedLogs,
       pagination: {
@@ -2472,12 +2407,10 @@ function handleGetAccessLogsStats() {
       byType: {},
       recentLogs: []
     };
-    
     const logs = [];
     
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
-      
       // Skip empty rows
       if (!row[0] && !row[1]) continue;
       
@@ -2488,10 +2421,8 @@ function handleGetAccessLogsStats() {
       
       // Count by status
       stats.byStatus[status] = (stats.byStatus[status] || 0) + 1;
-      
       // Count by type
       stats.byType[type] = (stats.byType[type] || 0) + 1;
-      
       logs.push({
         user: row[0],
         action: row[1],
@@ -2507,7 +2438,6 @@ function handleGetAccessLogsStats() {
       const dateB = new Date(b.timestamp).getTime() || 0;
       return dateB - dateA;
     });
-    
     stats.recentLogs = logs.slice(0, 10);
     
     return createSuccessResponse({
@@ -2533,7 +2463,6 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
   const orgBranding = getOrgBrandingConfig_();
   const now = new Date();
   const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-  
   // Create spreadsheet
   const tempSpreadsheet = SpreadsheetApp.create('AccessLogs_temp_' + now.getTime());
   
@@ -2549,7 +2478,6 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
   summarySheet.setColumnWidth(5, 100);
   
   let row = 1;
-  
   // Organization Header
   summarySheet.getRange(row, 1, 1, 5).merge();
   summarySheet.getRange(row, 1).setValue(orgBranding.fullName);
@@ -2584,7 +2512,6 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
   const successCount = logsData.filter(log => String(log[5]).toLowerCase() === 'success').length;
   const failedCount = logsData.filter(log => String(log[5]).toLowerCase() === 'failed').length;
   const warningCount = logsData.filter(log => String(log[5]).toLowerCase() === 'warning').length;
-  
   // Status boxes header
   summarySheet.getRange(row, 1).setValue('TOTAL LOGS');
   summarySheet.getRange(row, 2).setValue('SUCCESSFUL');
@@ -2592,7 +2519,6 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
   summarySheet.getRange(row, 4).setValue('WARNINGS');
   summarySheet.getRange(row, 1, 1, 4).setFontWeight('bold').setHorizontalAlignment('center').setFontSize(9);
   row++;
-  
   // Status boxes values
   summarySheet.getRange(row, 1).setValue(logsData.length).setBackground('#646464').setFontColor('#ffffff');
   summarySheet.getRange(row, 2).setValue(successCount).setBackground('#10b981').setFontColor('#ffffff');
@@ -2600,13 +2526,11 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
   summarySheet.getRange(row, 4).setValue(warningCount).setBackground('#f59e0b').setFontColor('#ffffff');
   summarySheet.getRange(row, 1, 1, 4).setFontWeight('bold').setHorizontalAlignment('center').setFontSize(16);
   row += 2;
-  
   // LOGS BY TYPE section
   summarySheet.getRange(row, 1, 1, 5).merge();
   summarySheet.getRange(row, 1).setValue('LOGS BY TYPE');
   summarySheet.getRange(row, 1).setFontSize(12).setFontWeight('bold');
   row++;
-  
   const logTypes = [
     { name: 'LOGIN', type: 'login', color: '#f6421f' },
     { name: 'LOGOUT', type: 'logout', color: '#6b7280' },
@@ -2615,7 +2539,6 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
     { name: 'CREATE', type: 'create', color: '#10b981' },
     { name: 'DELETE', type: 'delete', color: '#ef4444' },
   ];
-  
   // Log type headers
   for (let i = 0; i < logTypes.length; i++) {
     summarySheet.getRange(row, i + 1).setValue(logTypes[i].name);
@@ -2630,13 +2553,11 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
     summarySheet.getRange(row, i + 1).setBackground(logTypes[i].color).setFontColor('#ffffff').setFontWeight('bold').setHorizontalAlignment('center').setFontSize(14);
   }
   row += 2;
-  
   // QUICK STATISTICS
   summarySheet.getRange(row, 1, 1, 5).merge();
   summarySheet.getRange(row, 1).setValue('QUICK STATISTICS');
   summarySheet.getRange(row, 1).setFontSize(12).setFontWeight('bold');
   row++;
-  
   const uniqueUsers = [...new Set(logsData.map(log => log[1]))].length;
   const successRate = logsData.length > 0 ? Math.round((successCount / logsData.length) * 100) : 0;
   
@@ -2663,10 +2584,8 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
   summarySheet.getRange(row, 1, 1, 5).merge();
   summarySheet.getRange(row, 1).setValue(orgBranding.fullName + ' | ' + orgBranding.motto);
   summarySheet.getRange(row, 1).setFontSize(8).setHorizontalAlignment('center').setFontColor('#888888');
-  
   // ===== ALL LOGS PAGE (Chronological) =====
   const allLogsSheet = tempSpreadsheet.insertSheet('All Logs - Chronological');
-  
   // Header
   allLogsSheet.getRange(1, 1, 1, 8).merge();
   allLogsSheet.getRange(1, 1).setValue('ALL LOGS - CHRONOLOGICAL ORDER (' + logsData.length + ' entries)');
@@ -2713,14 +2632,12 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
     create: { header: '#10b981', alt: '#ecfdf5' },
     delete: { header: '#ef4444', alt: '#fef2f2' },
   };
-  
   for (const logType of logTypes) {
     const typeLogs = logsData.filter(log => String(log[3]).toLowerCase() === logType.type);
     if (typeLogs.length === 0) continue;
     
     const typeSheet = tempSpreadsheet.insertSheet(logType.name + ' Logs');
     const colors = logTypeColors[logType.type];
-    
     // Header
     typeSheet.getRange(1, 1, 1, 7).merge();
     typeSheet.getRange(1, 1).setValue(logType.name + ' LOGS (' + typeLogs.length + ' entries)');
@@ -2771,12 +2688,10 @@ function createStyledAccessLogsPDF(logsData, reportType, metadata) {
 function archiveAccessLogsToDrive(logsData, archiveType, metadata) {
   try {
     const archiveFolder = DriveApp.getFolderById(ACCESS_LOGS_ARCHIVE_FOLDER_ID);
-    
     // Generate archive filename with timestamp
     const now = new Date();
     const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm-ss');
     let fileName = 'AccessLogs_Archive_' + archiveType + '_' + dateStr;
-    
     if (metadata.monthYear) {
       fileName = 'AccessLogs_' + metadata.monthYear;
     }
@@ -2793,7 +2708,6 @@ function archiveAccessLogsToDrive(logsData, archiveType, metadata) {
       .setFontWeight('bold')
       .setBackground('#f64218')
       .setFontColor('#ffffff');
-    
     // Add data rows
     if (logsData.length > 0) {
       archiveSheet.getRange(2, 1, logsData.length, logsData[0].length).setValues(logsData);
@@ -2824,7 +2738,6 @@ function archiveAccessLogsToDrive(logsData, archiveType, metadata) {
     DriveApp.getRootFolder().removeFile(spreadsheetFile);
     
     Logger.log('Access logs archived as spreadsheet: ' + fileName + ', Records: ' + logsData.length);
-    
     return {
       success: true,
       fileName: fileName,
@@ -2872,7 +2785,6 @@ function autoArchiveOldLogs(monthsOld) {
   try {
     const sheet = initializeAccessLogsSheet();
     const data = sheet.getDataRange().getValues();
-    
     if (data.length <= 1) {
       Logger.log('No logs to archive');
       return { archived: 0, message: 'No logs to archive' };
@@ -2899,7 +2811,8 @@ function autoArchiveOldLogs(monthsOld) {
           logsByMonth[monthYear] = [];
         }
         logsByMonth[monthYear].push(row);
-        rowsToDelete.push(i + 1); // Sheet rows are 1-indexed
+        rowsToDelete.push(i + 1);
+        // Sheet rows are 1-indexed
       }
     }
     
@@ -2926,7 +2839,6 @@ function autoArchiveOldLogs(monthsOld) {
     }
     
     Logger.log('Auto-archive complete. Archived: ' + rowsToDelete.length + ' logs into ' + Object.keys(logsByMonth).length + ' monthly files');
-    
     return {
       archived: rowsToDelete.length,
       monthsArchived: Object.keys(logsByMonth).length,
@@ -2973,14 +2885,11 @@ function handleUploadAccessLogsPDF(pdfBase64, fileName, username, exportType) {
       : ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID;
     
     const folder = DriveApp.getFolderById(folderId);
-    
     // Decode base64 PDF data
     const pdfData = Utilities.base64Decode(pdfBase64);
     const pdfBlob = Utilities.newBlob(pdfData, MimeType.PDF, fileName || 'AccessLogs_Export.pdf');
-    
     // Save to Google Drive
     const pdfFile = folder.createFile(pdfBlob);
-    
     // Log this action
     handleLogAccess(
       username || 'System', 
@@ -2990,9 +2899,7 @@ function handleUploadAccessLogsPDF(pdfBase64, fileName, username, exportType) {
       'System', 
       exportType === 'archive' ? 'Archive Export' : 'Manual Export'
     );
-    
     Logger.log('PDF uploaded to Google Drive: ' + fileName + ' to folder: ' + (exportType === 'archive' ? 'Archive' : 'Manual Export'));
-    
     return createSuccessResponse({
       message: 'PDF saved to Google Drive successfully',
       fileName: fileName,
@@ -3023,7 +2930,6 @@ function handleManualExportAccessLogs(username, filterType, startDate, endDate) 
     
     // Get logs (excluding header)
     let logsToExport = data.slice(1);
-    
     // Apply type filter if specified
     if (filterType && filterType !== 'all') {
       logsToExport = logsToExport.filter(row => {
@@ -3061,12 +2967,10 @@ function handleManualExportAccessLogs(username, filterType, startDate, endDate) 
     
     // Get the manual export folder
     const exportFolder = DriveApp.getFolderById(ACCESS_LOGS_MANUAL_EXPORT_FOLDER_ID);
-    
     // Generate filename with timestamp and filter info
     const now = new Date();
     const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm-ss');
     let fileName = 'AccessLogs_Manual_Export_' + dateStr;
-    
     if (filterType && filterType !== 'all') {
       fileName += '_' + filterType.toUpperCase();
     }
@@ -3090,7 +2994,6 @@ function handleManualExportAccessLogs(username, filterType, startDate, endDate) 
       .setFontWeight('bold')
       .setBackground('#f64218')
       .setFontColor('#ffffff');
-    
     // Add data rows
     if (logsToExport.length > 0) {
       exportSheet.getRange(2, 1, logsToExport.length, logsToExport[0].length).setValues(logsToExport);
@@ -3119,22 +3022,17 @@ function handleManualExportAccessLogs(username, filterType, startDate, endDate) 
     
     // Flush changes before PDF conversion
     SpreadsheetApp.flush();
-    
     // Convert to PDF
     const pdfBlob = tempSpreadsheet.getAs(MimeType.PDF);
     pdfBlob.setName(fileName + '.pdf');
-    
     // Save PDF to manual export folder
     const pdfFile = exportFolder.createFile(pdfBlob);
-    
     // Delete the temporary spreadsheet
     DriveApp.getFileById(tempSpreadsheet.getId()).setTrashed(true);
     
     // Log this action
     handleLogAccess(username || 'System', 'Manual PDF export: ' + logsToExport.length + ' logs exported to Google Drive (' + fileName + '.pdf)', 'view', 'success', 'System', 'Manual Export');
-    
     Logger.log('Manual access logs PDF export completed: ' + fileName + '.pdf, Records: ' + logsToExport.length);
-    
     return createSuccessResponse({
       message: 'Access logs exported as PDF to Google Drive',
       exportedCount: logsToExport.length,
@@ -3163,7 +3061,6 @@ function handleClearAllAccessLogs(username) {
 
     const sheet = initializeAccessLogsSheet();
     const lastRow = sheet.getLastRow();
-    
     if (lastRow <= 1) {
       return createSuccessResponse({
         message: 'No logs to clear',
@@ -3175,7 +3072,6 @@ function handleClearAllAccessLogs(username) {
     // Archive logs before deletion
     const logsToArchive = getLogsDataForArchive(sheet);
     const archiveResult = archiveAccessLogsToDrive(logsToArchive, 'all', { username: username || 'System' });
-    
     if (!archiveResult.success) {
       return createErrorResponse('Failed to archive logs before deletion: ' + archiveResult.error, 500);
     }
@@ -3186,9 +3082,7 @@ function handleClearAllAccessLogs(username) {
     
     // Log this action
     handleLogAccess(username || 'System', 'Archived and cleared all access logs (' + deletedCount + ' entries) - Archive: ' + archiveResult.fileName, 'delete', 'success', 'System', 'System Action');
-    
     Logger.log('All access logs archived and cleared by: ' + username + ', count: ' + deletedCount);
-    
     return createSuccessResponse({
       message: 'All access logs archived and cleared successfully',
       deletedCount: deletedCount,
@@ -3220,7 +3114,6 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
     
     const sheet = initializeAccessLogsSheet();
     const data = sheet.getDataRange().getValues();
-    
     if (data.length <= 1) {
       return createSuccessResponse({
         message: 'No logs to clear',
@@ -3234,7 +3127,6 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
     start.setHours(0, 0, 0, 0);
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
-    
     // Find rows to delete and collect data for archiving
     const rowsToDelete = [];
     const logsToArchive = [];
@@ -3243,10 +3135,10 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
       const timestampStr = row[4]; // Timestamp column
       
       if (!timestampStr) continue;
-      
       const logDate = new Date(timestampStr);
       if (logDate >= start && logDate <= end) {
-        rowsToDelete.push(i + 1); // Sheet rows are 1-indexed
+        rowsToDelete.push(i + 1);
+        // Sheet rows are 1-indexed
         logsToArchive.push(row);
       }
     }
@@ -3265,7 +3157,6 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
       username: username || 'System',
       dateRange: { start: startDate, end: endDate }
     });
-    
     if (!archiveResult.success) {
       return createErrorResponse('Failed to archive logs before deletion: ' + archiveResult.error, 500);
     }
@@ -3276,12 +3167,9 @@ function handleClearAccessLogsByDateRange(startDate, endDate, username) {
     }
     
     const deletedCount = rowsToDelete.length;
-    
     // Log this action
     handleLogAccess(username || 'System', 'Archived and cleared access logs by date range (' + startDate + ' to ' + endDate + ', ' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
-    
     Logger.log('Access logs archived and cleared by date range by: ' + username + ', count: ' + deletedCount);
-    
     return createSuccessResponse({
       message: 'Access logs archived and cleared successfully for date range',
       deletedCount: deletedCount,
@@ -3312,23 +3200,23 @@ function handleClearSpecificAccessLogs(logIds, username) {
     }
     
     const sheet = initializeAccessLogsSheet();
-    
     // Convert IDs to row numbers and sort descending (to delete from bottom up)
     const rowNumbers = logIds
       .map(id => parseInt(id, 10))
       .filter(num => !isNaN(num) && num > 0)
       .map(id => id + 1) // Row number = ID + 1 (since ID is 0-based index from header)
-      .sort((a, b) => b - a); // Sort descending
+      .sort((a, b) => b - a);
+    // Sort descending
     
     // Remove duplicates
     const uniqueRows = [...new Set(rowNumbers)];
-    
     // Get data for archiving before deletion
     const data = sheet.getDataRange().getValues();
     const logsToArchive = uniqueRows
       .filter(rowIndex => rowIndex > 1 && rowIndex <= data.length)
       .map(rowIndex => data[rowIndex - 1])
-      .reverse(); // Maintain chronological order
+      .reverse();
+    // Maintain chronological order
     
     if (logsToArchive.length > 0) {
       // Archive logs before deletion
@@ -3336,7 +3224,6 @@ function handleClearSpecificAccessLogs(logIds, username) {
         username: username || 'System',
         selectedCount: logsToArchive.length
       });
-      
       if (!archiveResult.success) {
         return createErrorResponse('Failed to archive logs before deletion: ' + archiveResult.error, 500);
       }
@@ -3353,9 +3240,7 @@ function handleClearSpecificAccessLogs(logIds, username) {
     
     // Log this action
     handleLogAccess(username || 'System', 'Archived and cleared specific access logs (' + deletedCount + ' entries)', 'delete', 'success', 'System', 'System Action');
-    
     Logger.log('Specific access logs archived and cleared by: ' + username + ', count: ' + deletedCount);
-    
     return createSuccessResponse({
       message: 'Selected access logs archived and cleared successfully',
       deletedCount: deletedCount,
@@ -3398,10 +3283,10 @@ function scheduledWeeklyClearAccessLogs() {
       const timestampStr = row[4]; // Timestamp column
       
       if (!timestampStr) continue;
-      
       const logDate = new Date(timestampStr);
       if (logDate < oneWeekAgo) {
-        rowsToDelete.push(i + 1); // Sheet rows are 1-indexed
+        rowsToDelete.push(i + 1);
+        // Sheet rows are 1-indexed
         logsToArchive.push(row);
       }
     }
@@ -3415,7 +3300,6 @@ function scheduledWeeklyClearAccessLogs() {
     const archiveResult = archiveAccessLogsToDrive(logsToArchive.reverse(), 'scheduled-weekly', { 
       username: 'System Scheduler'
     });
-    
     if (!archiveResult.success) {
       Logger.log('Failed to archive logs in scheduled clear: ' + archiveResult.error);
       return;
@@ -3427,10 +3311,8 @@ function scheduledWeeklyClearAccessLogs() {
     }
     
     const deletedCount = rowsToDelete.length;
-    
     // Log the scheduled action
     handleLogAccess('System Scheduler', 'Scheduled weekly: archived and removed ' + deletedCount + ' logs older than 7 days', 'delete', 'success', 'System', 'Scheduled Task');
-    
     Logger.log('Scheduled weekly clear completed: ' + deletedCount + ' logs archived and removed');
   } catch (error) {
     Logger.log('Error in scheduled weekly clear: ' + error.toString());
@@ -3444,7 +3326,8 @@ function scheduledWeeklyClearAccessLogs() {
  */
 function scheduledMonthlyArchiveAccessLogs() {
   try {
-    const result = autoArchiveOldLogs(1); // Archive logs older than 1 month
+    const result = autoArchiveOldLogs(1);
+    // Archive logs older than 1 month
     
     if (result.error) {
       Logger.log('Scheduled monthly archive error: ' + result.error);
@@ -3480,7 +3363,6 @@ function setupWeeklyAccessLogClearTrigger() {
     .nearMinute(0)
     .inTimezone('Asia/Manila')
     .create();
-  
   Logger.log('Weekly access log clear trigger created: Every Monday at 12:00 AM Manila time');
   
   return 'Weekly trigger set up successfully. Access logs older than 7 days will be archived and cleared every Monday at 12:00 AM.';
@@ -3509,9 +3391,7 @@ function setupMonthlyAccessLogArchiveTrigger() {
     .nearMinute(0)
     .inTimezone('Asia/Manila')
     .create();
-  
   Logger.log('Monthly access log archive trigger created: 1st of every month at 1:00 AM Manila time');
-  
   return 'Monthly trigger set up successfully. Access logs older than 1 month will be archived on the 1st of each month at 1:00 AM.';
 }
 
@@ -3539,7 +3419,6 @@ function removeWeeklyAccessLogClearTrigger() {
  */
 function checkWeeklyAccessLogClearTrigger() {
   const triggers = ScriptApp.getProjectTriggers();
-  
   for (const trigger of triggers) {
     if (trigger.getHandlerFunction() === 'scheduledWeeklyClearAccessLogs') {
       return {
@@ -3584,7 +3463,6 @@ function removeMonthlyAccessLogArchiveTrigger() {
  */
 function checkMonthlyAccessLogArchiveTrigger() {
   const triggers = ScriptApp.getProjectTriggers();
-  
   for (const trigger of triggers) {
     if (trigger.getHandlerFunction() === 'scheduledMonthlyArchiveAccessLogs') {
       return {
@@ -3656,5 +3534,3 @@ function testGetMaintenanceMode() {
   const result = handleGetMaintenanceMode();
   Logger.log(result.getContent());
 }
-
-

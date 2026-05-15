@@ -148,6 +148,7 @@ const FOOTER_POSITION = "Membership & Internal Affairs Officer";
 const FOOTER_ORG = EMAIL_SYSTEM_ORG_BRANDING.orgName + " — " + EMAIL_SYSTEM_ORG_BRANDING.chapterName;
 const FOOTER_EMAIL = EMAIL_SYSTEM_ORG_BRANDING.contactEmail;
 const FOOTER_WEBSITE = WEB_PORTAL_URL;
+const SEC_REGISTRATION_NO = "SEC Registration No. 2023010080782-00";
 
 const SHEET_LAYOUTS = {
   "Event_Invites": {
@@ -205,6 +206,13 @@ const SHEET_LAYOUTS = {
     btn: "Renew My Membership",
     type: "simple",
     code: "MR" // Membership Renewal
+  },
+  "Membership_Approval": {
+    headers: ["Applicant Name", "Email", "Approval Subject", "Message", "Onboarding Date", "Onboarding Time", "Onboarding Venue", "GC Link", "GC Button Label", "RSVP Button 1 Label", "RSVP Button 1 Message", "RSVP Button 2 Label", "RSVP Button 2 Message", "Attachments"],
+    map: { name:0, email:1, headline:2, msg:3, date:4, time:5, venue:6, link:7, gcButtonLabel:8, rsvpPrimaryLabel:9, rsvpPrimaryMessage:10, rsvpSecondaryLabel:11, rsvpSecondaryMessage:12, attach:13 },
+    btn: "Send RSVP",
+    type: "event",
+    code: "MA" // Membership Approval
   },
   "Resource_Share": {
     headers: ["Recipient Name", "Email", "Resource Title", "Message", "Download Link", "Attachments"],
@@ -265,6 +273,7 @@ function onOpen() {
         .addItem('All Volunteer Call', 'sendVolunteerCall')
         .addItem('All Feedback Request', 'sendFeedbackReq')
         .addItem('All Membership Renewal', 'sendMembershipRenewal')
+        .addItem('All Membership Approval', 'sendMembershipApproval')
         .addItem('All Resource Share', 'sendResourceShare')
         .addItem('All Emergency Alert', 'sendEmergencyAlert'))
     .addToUi();
@@ -305,7 +314,7 @@ function handleEdit(e) {
 
 function sendSingleRow(sheet, rowIndex, config, statusColIndex) {
   const data = sheet.getRange(rowIndex, 1, 1, config.headers.length + 4).getValues()[0];
-  const map = config.map;
+  const map = resolveTemplateMap_(sheet, config);
   
   // Get status value
   const statusValue = String(data[statusColIndex-1]).trim().toLowerCase();
@@ -356,7 +365,12 @@ function sendSingleRow(sheet, rowIndex, config, statusColIndex) {
     venue:       (map.venue !== undefined) ? data[map.venue] : "",
     amount:      (map.amount !== undefined) ? data[map.amount] : "",
     link:        (map.link !== undefined) ? data[map.link] : "",
+    gcButtonLabel: (map.gcButtonLabel !== undefined) ? data[map.gcButtonLabel] : "",
     registrationLink: (map.registrationLink !== undefined) ? data[map.registrationLink] : "",
+    rsvpPrimaryLabel: (map.rsvpPrimaryLabel !== undefined) ? data[map.rsvpPrimaryLabel] : "",
+    rsvpPrimaryMessage: (map.rsvpPrimaryMessage !== undefined) ? data[map.rsvpPrimaryMessage] : "",
+    rsvpSecondaryLabel: (map.rsvpSecondaryLabel !== undefined) ? data[map.rsvpSecondaryLabel] : "",
+    rsvpSecondaryMessage: (map.rsvpSecondaryMessage !== undefined) ? data[map.rsvpSecondaryMessage] : "",
     attach:      (map.attach !== undefined) ? data[map.attach] : "",
     oldPosition: (map.oldPosition !== undefined) ? data[map.oldPosition] : "",
     btnText:     config.btn,
@@ -563,7 +577,7 @@ function generateDualMailtoButtons(linkYes, textYes, linkNo, textNo) {
   return `
     <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
       <tr>
-        <td align="center">
+        <td align="center" class="btn-row">
           <!--[if mso]>
           <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${linkYes}" style="height:48px;v-text-anchor:middle;width:180px;" arcsize="10%" strokecolor="#F26522" fillcolor="#F26522">
             <w:anchorlock/>
@@ -571,7 +585,7 @@ function generateDualMailtoButtons(linkYes, textYes, linkNo, textNo) {
           </v:roundrect>
           <![endif]-->
           <!--[if !mso]><!-->
-          <a href="${linkYes}" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
+          <a href="${linkYes}" class="btn-stack" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
             ${textYes}
           </a>
           <!--<![endif]-->
@@ -582,7 +596,7 @@ function generateDualMailtoButtons(linkYes, textYes, linkNo, textNo) {
           </v:roundrect>
           <![endif]-->
           <!--[if !mso]><!-->
-          <a href="${linkNo}" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+          <a href="${linkNo}" class="btn-stack" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
             ${textNo}
           </a>
           <!--<![endif]-->
@@ -599,14 +613,14 @@ function generateDualButtons(linkPrimary, textPrimary, linkSecondary, textSecond
   return `
     <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
       <tr>
-        <td align="center">
+        <td align="center" class="btn-row">
           <!--[if !mso]><!-->
-          <a href="${linkPrimary}" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
+          <a href="${linkPrimary}" class="btn-stack" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
             ${textPrimary}
           </a>
           <!--<![endif]-->
           <!--[if !mso]><!-->
-          <a href="${secondaryLink}" target="_blank" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+          <a href="${secondaryLink}" class="btn-stack" target="_blank" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
             ${textSecondary}
           </a>
           <!--<![endif]-->
@@ -620,14 +634,14 @@ function generateTripleButtons(linkPrimary, textPrimary, linkSecondary, textSeco
   return `
     <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
       <tr>
-        <td align="center">
-          <a href="${linkPrimary}" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
+        <td align="center" class="btn-row">
+          <a href="${linkPrimary}" class="btn-stack" style="background-color:#F26522; color:#ffffff; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: none; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(242, 101, 34, 0.3);">
             ${textPrimary}
           </a>
-          <a href="${linkSecondary}" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+          <a href="${linkSecondary}" class="btn-stack" style="background-color:#ffffff; color:#F26522; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 2px solid #F26522; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
             ${textSecondary}
           </a>
-          <a href="${tertiaryLink}" target="_blank" style="background-color:#fff7ed; color:#c2410c; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 1px solid #fdba74; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+          <a href="${tertiaryLink}" class="btn-stack" target="_blank" style="background-color:#fff7ed; color:#c2410c; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 1px solid #fdba74; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
             ${textTertiary}
           </a>
         </td>
@@ -663,6 +677,97 @@ function formatActionLink(link) {
   
   // Default: return as-is (could be a relative path or other)
   return trimmed;
+}
+
+function normalizeTemplateText_(value) {
+  const cleaned = String(value == null ? '' : value).trim();
+  return /^default$/i.test(cleaned) ? '' : cleaned;
+}
+
+function escapeHtmlEmailSystem_(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatEmailMessageContent_(rawMessage) {
+  return String(rawMessage == null ? '' : rawMessage).replace(/\n/g, '<br>');
+}
+
+function resolveTemplateMap_(sheet, config) {
+  const rawMap = (config && config.map) ? config.map : {};
+  const resolved = {};
+
+  if (!sheet || !config || !Array.isArray(config.headers)) {
+    return rawMap;
+  }
+
+  const headerRow = sheet
+    .getRange(1, 1, 1, Math.max(1, sheet.getLastColumn()))
+    .getValues()[0]
+    .map(function (h) { return String(h || '').trim(); });
+
+  for (var key in rawMap) {
+    if (!rawMap.hasOwnProperty(key)) continue;
+    var defaultIndex = rawMap[key];
+    var expectedHeader = config.headers[defaultIndex];
+
+    if (expectedHeader) {
+      var actualIndex = headerRow.indexOf(expectedHeader);
+      if (actualIndex !== -1) {
+        resolved[key] = actualIndex;
+        continue;
+      }
+    }
+
+    // If expected header is missing, only use default index when it still points to the same header.
+    // This prevents accidental field-shifting when optional columns are not yet present.
+    if (expectedHeader && String(headerRow[defaultIndex] || '').trim() === expectedHeader) {
+      resolved[key] = defaultIndex;
+    }
+  }
+
+  return resolved;
+}
+
+function buildCustomRsvpMailto_(trackingEmail, data, buttonLabel, messageTemplate) {
+  const safeLabel = normalizeTemplateText_(buttonLabel) || 'RSVP';
+  const safeTemplate = normalizeTemplateText_(messageTemplate);
+  const safeHeadline = String(data.headline || '').trim();
+  const safeName = String(data.name || '').trim();
+  const safeDate = String(data.date || '').trim();
+  const safeTime = String(data.time || '').trim();
+  const safeVenue = String(data.venue || '').trim();
+  const safeGcLink = String(data.link || '').trim();
+
+  let body = safeTemplate;
+  if (!body) {
+    body =
+      'Dear ' + SENDER_DISPLAY_NAME + ',\n\n' +
+      'I am responding to "' + safeHeadline + '".\n' +
+      'RSVP: ' + safeLabel + '\n' +
+      'Name: ' + safeName + '\n' +
+      (safeDate ? ('Date: ' + safeDate + '\n') : '') +
+      (safeTime ? ('Time: ' + safeTime + '\n') : '') +
+      (safeVenue ? ('Venue: ' + safeVenue + '\n') : '') +
+      '\nBest regards,\n' + safeName;
+  }
+
+  body = body
+    .replace(/\{name\}/gi, safeName)
+    .replace(/\{headline\}/gi, safeHeadline)
+    .replace(/\{response\}/gi, safeLabel)
+    .replace(/\{date\}/gi, safeDate)
+    .replace(/\{time\}/gi, safeTime)
+    .replace(/\{venue\}/gi, safeVenue)
+    .replace(/\{gc_link\}/gi, safeGcLink)
+    .replace(/\{tracking_email\}/gi, String(trackingEmail || '').trim());
+
+  const subject = 'RSVP: ' + safeHeadline + ' [' + safeLabel + ']';
+  return 'mailto:' + trackingEmail + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
 }
 
 function generateUniversalTemplate(data, trackingEmail, emailId) {
@@ -814,6 +919,67 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
         </td>
       </tr>
     </table>`;
+
+  } else if (data.sheetName === "Membership_Approval") {
+    // Membership Approval: two custom RSVP buttons + Join Group Chat button
+    const gcLink = formatActionLink(data.link);
+    const gcButtonLabel = normalizeTemplateText_(data.gcButtonLabel) || 'Join Group Chat';
+    const primaryLabelRaw = normalizeTemplateText_(data.rsvpPrimaryLabel);
+    const secondaryLabelRaw = normalizeTemplateText_(data.rsvpSecondaryLabel);
+    const primaryMessageRaw = normalizeTemplateText_(data.rsvpPrimaryMessage);
+    const secondaryMessageRaw = normalizeTemplateText_(data.rsvpSecondaryMessage);
+    const hasAnyRsvpConfig = !!(primaryLabelRaw || secondaryLabelRaw || primaryMessageRaw || secondaryMessageRaw);
+
+    if (!hasAnyRsvpConfig) {
+      if (gcLink && gcLink !== '#') {
+        buttonsHtml = `
+          <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top: 28px;">
+            <tr>
+              <td align="center" class="btn-row">
+                <a href="${gcLink}" class="btn-stack" target="_blank" style="background-color:#fff7ed; color:#c2410c; padding:14px 28px; text-decoration:none; border-radius:8px; font-weight:600; font-size:14px; display:inline-block; margin: 8px; border: 1px solid #fdba74; font-family:'Inter', 'Segoe UI', sans-serif; white-space: nowrap;">
+                  ${gcButtonLabel}
+                </a>
+              </td>
+            </tr>
+          </table>`;
+      } else {
+        buttonsHtml = '';
+      }
+    } else {
+      const buttonOneLabel = primaryLabelRaw || 'I Will Attend';
+      const buttonTwoLabel = secondaryLabelRaw || 'I Cannot Attend';
+
+      const buttonOneMailto = buildCustomRsvpMailto_(
+        trackingEmail,
+        data,
+        buttonOneLabel,
+        primaryMessageRaw
+      );
+      const buttonTwoMailto = buildCustomRsvpMailto_(
+        trackingEmail,
+        data,
+        buttonTwoLabel,
+        secondaryMessageRaw
+      );
+
+      if (gcLink && gcLink !== '#') {
+        buttonsHtml = generateTripleButtons(
+          buttonOneMailto,
+          buttonOneLabel,
+          buttonTwoMailto,
+          buttonTwoLabel,
+          gcLink,
+          gcButtonLabel
+        );
+      } else {
+        buttonsHtml = generateDualMailtoButtons(
+          buttonOneMailto,
+          buttonOneLabel,
+          buttonTwoMailto,
+          buttonTwoLabel
+        );
+      }
+    }
     
   } else if (data.sheetName === "Doc_Acknowledgment") {
     // Doc Acknowledgment: I Acknowledge (mailto) + View Document (external link)
@@ -879,7 +1045,8 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
         .mobile-pad { padding: 24px 20px !important; }
         .mobile-header { padding: 32px 20px 16px 20px !important; }
         .headline { font-size: 22px !important; }
-        .btn-stack { display: block !important; width: 100% !important; margin: 8px 0 !important; }
+        .btn-row { text-align: center !important; }
+        .btn-stack { display: block !important; width: 100% !important; max-width: 320px !important; margin: 8px auto !important; box-sizing: border-box !important; }
       }
     </style>
   </head>
@@ -939,9 +1106,9 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
                 <p style="font-size:16px; line-height:1.7; margin:0 0 16px 0; color:#334155; font-family:'Inter', 'Segoe UI', sans-serif;">
                   Dear <strong style="color:#0f172a;">${data.name}</strong>,
                 </p>
-                <p style="font-size:16px; line-height:1.7; margin:0; color:#334155; font-family:'Inter', 'Segoe UI', sans-serif; text-align:justify;">
-                  ${data.message.replace(/\n/g, '<br>')}
-                </p>
+                <div style="font-size:16px; line-height:1.7; margin:0; color:#334155; font-family:'Inter', 'Segoe UI', sans-serif; text-align:justify;">
+                  ${formatEmailMessageContent_(data.message)}
+                </div>
                 
                 ${detailBox}
                 ${buttonsHtml}
@@ -1004,8 +1171,12 @@ function generateUniversalTemplate(data, trackingEmail, emailId) {
                   © ${new Date().getFullYear()} ${EMAIL_SYSTEM_ORG_BRANDING.orgName} — ${EMAIL_SYSTEM_ORG_BRANDING.chapterName}
                 </p>
                 <p style="color:#94a3b8; font-size:11px; font-family:'Inter', 'Segoe UI', sans-serif; margin:0 0 8px 0;">
+                  ${SEC_REGISTRATION_NO}
+                </p>
+                <p style="color:#94a3b8; font-size:11px; font-family:'Inter', 'Segoe UI', sans-serif; margin:0 0 8px 0;">
                   This email was sent to ${data.email}
                 </p>
+                <p style="color:#94a3b8; font-size:11px; font-family:'Inter', 'Segoe UI', sans-serif; margin:0 0 8px 0;">
                 <p style="color:#cbd5e1; font-size:10px; font-family:'Inter', 'Segoe UI', sans-serif; margin:0; letter-spacing:1px;">
                   Reference: <strong style="color:#94a3b8;">${emailId}</strong>
                 </p>
@@ -1438,6 +1609,7 @@ function sendDocAck() { processBatch("Doc_Acknowledgment"); }
 function sendVolunteerCall() { processBatch("Volunteer_Call"); }
 function sendFeedbackReq() { processBatch("Feedback_Request"); }
 function sendMembershipRenewal() { processBatch("Membership_Renewal"); }
+function sendMembershipApproval() { processBatch("Membership_Approval"); }
 function sendResourceShare() { processBatch("Resource_Share"); }
 function sendEmergencyAlert() { processBatch("Emergency_Alert"); }
 
@@ -1472,19 +1644,51 @@ function installTrigger() {
  */
 function createIcsBlob(title, dateObj, timeObj, venue, description) {
   try {
-    // 1. Combine Date and Time columns into one specific Date Object
-    let eventStart = new Date(dateObj);
-    if (timeObj instanceof Date) {
-      eventStart.setHours(timeObj.getHours());
-      eventStart.setMinutes(timeObj.getMinutes());
+    // 1. Combine Date and Time columns. If no time is provided, create an all-day event.
+    let baseDate;
+    if (dateObj instanceof Date) {
+      baseDate = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
     } else {
-      // Default to 8 AM if no time provided
-      eventStart.setHours(8, 0, 0); 
+      const parsedDate = new Date(dateObj);
+      if (isNaN(parsedDate.getTime())) {
+        Logger.log('ICS Error: Invalid date input -> ' + dateObj);
+        return null;
+      }
+      baseDate = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate());
     }
-    
-    // Set End time (Default to 2 hours later)
-    let eventEnd = new Date(eventStart);
-    eventEnd.setHours(eventStart.getHours() + 2);
+
+    let eventStart = new Date(baseDate);
+    eventStart.setHours(0, 0, 0, 0);
+    let eventEnd = new Date(baseDate);
+    eventEnd.setDate(eventEnd.getDate() + 1); // all-day default end
+    let hasSpecificTime = false;
+
+    if (timeObj instanceof Date) {
+      eventStart.setHours(timeObj.getHours(), timeObj.getMinutes(), 0, 0);
+      eventEnd = new Date(eventStart);
+      eventEnd.setHours(eventStart.getHours() + 2);
+      hasSpecificTime = true;
+    } else if (typeof timeObj === "string" && timeObj.trim() && !/^default$/i.test(timeObj.trim())) {
+      var rawTime = timeObj.trim();
+      var rangeParts = rawTime.split(/\s*-\s*/);
+      var parsedStart = parseIcsTimeToken_(rangeParts[0]);
+      var parsedEnd = rangeParts.length > 1 ? parseIcsTimeToken_(rangeParts[1]) : null;
+
+      if (parsedStart) {
+        eventStart.setHours(parsedStart.h, parsedStart.m, 0, 0);
+        eventEnd = new Date(eventStart);
+        hasSpecificTime = true;
+
+        if (parsedEnd) {
+          eventEnd.setHours(parsedEnd.h, parsedEnd.m, 0, 0);
+          if (eventEnd.getTime() <= eventStart.getTime()) {
+            eventEnd.setDate(eventEnd.getDate() + 1);
+          }
+        } else {
+          eventEnd.setHours(eventStart.getHours() + 2);
+        }
+      }
+    }
 
     // 2. Format dates for ICS
     // We use "Floating Time" (no 'Z' at the end) so the event locks to the user's local time
@@ -1494,6 +1698,8 @@ function createIcsBlob(title, dateObj, timeObj, venue, description) {
     const now = formatICS_Stamp(new Date());
     const start = formatICS_Floating(eventStart);
     const end = formatICS_Floating(eventEnd);
+    const startDateOnly = Utilities.formatDate(eventStart, Session.getScriptTimeZone(), "yyyyMMdd");
+    const endDateOnly = Utilities.formatDate(eventEnd, Session.getScriptTimeZone(), "yyyyMMdd");
 
     // 3. Build the ICS Content with DUAL ALERTS
     const icsContent = [
@@ -1503,8 +1709,8 @@ function createIcsBlob(title, dateObj, timeObj, venue, description) {
       "BEGIN:VEVENT",
       "UID:" + Utilities.getUuid(),
       "DTSTAMP:" + now,
-      "DTSTART:" + start, // Floating time (Local)
-      "DTEND:" + end,     // Floating time (Local)
+      hasSpecificTime ? ("DTSTART:" + start) : ("DTSTART;VALUE=DATE:" + startDateOnly),
+      hasSpecificTime ? ("DTEND:" + end) : ("DTEND;VALUE=DATE:" + endDateOnly),
       "SUMMARY:" + title,
       "DESCRIPTION:" + description,
       "LOCATION:" + venue,
@@ -1514,15 +1720,15 @@ function createIcsBlob(title, dateObj, timeObj, venue, description) {
       "DESCRIPTION:Reminder: " + title,
       "ACTION:DISPLAY",
       "END:VALARM",
-      // --- ALARM 2: At Start Time ---
-      "BEGIN:VALARM",
-      "TRIGGER:-PT0M",
-      "DESCRIPTION:Starting Now: " + title,
-      "ACTION:DISPLAY",
-      "END:VALARM",
+      // --- ALARM 2: At Start Time (only when a specific time exists) ---
+      hasSpecificTime ? "BEGIN:VALARM" : "",
+      hasSpecificTime ? "TRIGGER:-PT0M" : "",
+      hasSpecificTime ? ("DESCRIPTION:Starting Now: " + title) : "",
+      hasSpecificTime ? "ACTION:DISPLAY" : "",
+      hasSpecificTime ? "END:VALARM" : "",
       "END:VEVENT",
       "END:VCALENDAR"
-    ].join("\r\n");
+    ].filter(function (line) { return line !== ''; }).join("\r\n");
 
     // 4. Return as a file blob with DYNAMIC NAME
     return Utilities.newBlob(icsContent, "text/calendar", title + ".ics");
@@ -1531,6 +1737,31 @@ function createIcsBlob(title, dateObj, timeObj, venue, description) {
     Logger.log("ICS Error: " + e.toString());
     return null; // Fail gracefully if date is invalid
   }
+}
+
+function parseIcsTimeToken_(token) {
+  var raw = String(token || '').trim().toUpperCase();
+  if (!raw) return null;
+
+  // Accept values like 12:00PM, 12:00 PM, 14:30, 8:05am.
+  var match = raw.match(/^(\d{1,2}):(\d{2})\s*([AP]M)?$/i);
+  if (!match) return null;
+
+  var hour = parseInt(match[1], 10);
+  var minute = parseInt(match[2], 10);
+  var period = match[3] ? String(match[3]).toUpperCase() : '';
+
+  if (isNaN(hour) || isNaN(minute) || minute < 0 || minute > 59) return null;
+
+  if (period) {
+    if (hour < 1 || hour > 12) return null;
+    hour = hour % 12;
+    if (period === 'PM') hour += 12;
+  } else {
+    if (hour < 0 || hour > 23) return null;
+  }
+
+  return { h: hour, m: minute };
 }
 
 // =============================================================================
@@ -1836,7 +2067,7 @@ function handleGetEmails_(params) {
     }
 
     // Always expose normalized fields for frontend consistency
-    var map = SHEET_LAYOUTS[templateType].map || {};
+    var map = resolveTemplateMap_(sheet, SHEET_LAYOUTS[templateType]);
     email.RecipientName = map.name !== undefined ? (row[map.name] || '') : '';
     email.Email = map.email !== undefined ? (row[map.email] || '') : '';
     email.Headline = map.headline !== undefined ? (row[map.headline] || '') : '';
@@ -1846,7 +2077,12 @@ function handleGetEmails_(params) {
     email.Venue = map.venue !== undefined ? (row[map.venue] || '') : '';
     email.Amount = map.amount !== undefined ? (row[map.amount] || '') : '';
     email.Link = map.link !== undefined ? (row[map.link] || '') : '';
+    email.GcButtonLabel = map.gcButtonLabel !== undefined ? (row[map.gcButtonLabel] || '') : '';
     email.RegistrationLink = map.registrationLink !== undefined ? (row[map.registrationLink] || '') : '';
+    email.RsvpPrimaryLabel = map.rsvpPrimaryLabel !== undefined ? (row[map.rsvpPrimaryLabel] || '') : '';
+    email.RsvpPrimaryMessage = map.rsvpPrimaryMessage !== undefined ? (row[map.rsvpPrimaryMessage] || '') : '';
+    email.RsvpSecondaryLabel = map.rsvpSecondaryLabel !== undefined ? (row[map.rsvpSecondaryLabel] || '') : '';
+    email.RsvpSecondaryMessage = map.rsvpSecondaryMessage !== undefined ? (row[map.rsvpSecondaryMessage] || '') : '';
     email.Attachments = map.attach !== undefined ? (row[map.attach] || '') : '';
     email.Status = row[headers.length] || '';
     email.Response = row[headers.length + 1] || '';
@@ -1931,12 +2167,15 @@ function handleAddEmailRecipient_(body) {
   }
 
   var layout = SHEET_LAYOUTS[templateType];
-  var headers = layout.headers;
-  var map = layout.map || {};
-  var newRow = [];
+  var map = resolveTemplateMap_(sheet, layout);
+  var sheetHeaders = sheet
+    .getRange(1, 1, 1, Math.max(1, sheet.getLastColumn()))
+    .getValues()[0]
+    .map(function (h) { return String(h || '').trim(); });
+  var newRow = new Array(sheetHeaders.length);
 
-  for (var i = 0; i < headers.length; i++) {
-    var header = headers[i];
+  for (var i = 0; i < sheetHeaders.length; i++) {
+    var header = sheetHeaders[i];
     var value = body[header];
     if (value === undefined || value === null || value === '') {
       if (map.name === i) value = body.RecipientName || body.Name || '';
@@ -1949,16 +2188,21 @@ function handleAddEmailRecipient_(body) {
       else if (map.amount === i) value = body.Amount || '';
       else if (map.oldPosition === i) value = body.OldPosition || '';
       else if (map.link === i) value = body.Link || '';
+      else if (map.gcButtonLabel === i) value = body.GcButtonLabel || '';
       else if (map.registrationLink === i) value = body.RegistrationLink || '';
+      else if (map.rsvpPrimaryLabel === i) value = body.RsvpPrimaryLabel || '';
+      else if (map.rsvpPrimaryMessage === i) value = body.RsvpPrimaryMessage || '';
+      else if (map.rsvpSecondaryLabel === i) value = body.RsvpSecondaryLabel || '';
+      else if (map.rsvpSecondaryMessage === i) value = body.RsvpSecondaryMessage || '';
       else if (map.attach === i) value = body.Attachments || '';
       else value = '';
     }
     
     // Set defaults
     if (header === 'Status' && !value) value = 'Draft';
-    if (header === 'EmailId' && !value) value = Utilities.getUuid();
+    if ((header === 'Email ID' || header === 'EmailId') && !value) value = '';
     
-    newRow.push(value);
+    newRow[i] = value;
   }
 
   sheet.appendRow(newRow);
@@ -1988,8 +2232,11 @@ function handleUpdateEmailRecipient_(body) {
   }
 
   var layout = SHEET_LAYOUTS[templateType];
-  var headers = layout.headers;
-  var map = layout.map || {};
+  var map = resolveTemplateMap_(sheet, layout);
+  var headers = sheet
+    .getRange(1, 1, 1, Math.max(1, sheet.getLastColumn()))
+    .getValues()[0]
+    .map(function (h) { return String(h || '').trim(); });
 
   // Get current row and update values
   var range = sheet.getRange(rowIndex, 1, 1, headers.length);
@@ -2008,7 +2255,12 @@ function handleUpdateEmailRecipient_(body) {
       (map.amount === i && body.hasOwnProperty('Amount')) ||
       (map.oldPosition === i && body.hasOwnProperty('OldPosition')) ||
       (map.link === i && body.hasOwnProperty('Link')) ||
+      (map.gcButtonLabel === i && body.hasOwnProperty('GcButtonLabel')) ||
       (map.registrationLink === i && body.hasOwnProperty('RegistrationLink')) ||
+      (map.rsvpPrimaryLabel === i && body.hasOwnProperty('RsvpPrimaryLabel')) ||
+      (map.rsvpPrimaryMessage === i && body.hasOwnProperty('RsvpPrimaryMessage')) ||
+      (map.rsvpSecondaryLabel === i && body.hasOwnProperty('RsvpSecondaryLabel')) ||
+      (map.rsvpSecondaryMessage === i && body.hasOwnProperty('RsvpSecondaryMessage')) ||
       (map.attach === i && body.hasOwnProperty('Attachments'));
 
     if (body.hasOwnProperty(header) && header !== 'RowIndex') {
@@ -2024,7 +2276,12 @@ function handleUpdateEmailRecipient_(body) {
       else if (map.amount === i) currentValues[i] = body.Amount;
       else if (map.oldPosition === i) currentValues[i] = body.OldPosition;
       else if (map.link === i) currentValues[i] = body.Link;
+      else if (map.gcButtonLabel === i) currentValues[i] = body.GcButtonLabel;
       else if (map.registrationLink === i) currentValues[i] = body.RegistrationLink;
+      else if (map.rsvpPrimaryLabel === i) currentValues[i] = body.RsvpPrimaryLabel;
+      else if (map.rsvpPrimaryMessage === i) currentValues[i] = body.RsvpPrimaryMessage;
+      else if (map.rsvpSecondaryLabel === i) currentValues[i] = body.RsvpSecondaryLabel;
+      else if (map.rsvpSecondaryMessage === i) currentValues[i] = body.RsvpSecondaryMessage;
       else if (map.attach === i) currentValues[i] = body.Attachments;
     }
   }

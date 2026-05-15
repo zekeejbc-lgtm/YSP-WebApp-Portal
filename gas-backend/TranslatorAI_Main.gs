@@ -14,33 +14,7 @@
         RETRY_DELAY_MS: 1200
     };
 
-    function doGet() {
-        return createTranslatorJsonResponse_({
-            success: true,
-            status: 'online',
-            service: 'TranslatorAI',
-            model: HF_TRANSLATOR_CONFIG.MODEL_NAME,
-            provider: HF_TRANSLATOR_CONFIG.PROVIDER,
-            timestamp: new Date().toISOString()
-        });
-    }
-
-    function doPost(e) {
-        try {
-            var request = parseTranslatorRequest_(e);
-            var translationPayload = buildTranslationPayload_(request);
-
-            return createTranslatorJsonResponse_(Object.assign({ success: true }, translationPayload));
-        } catch (error) {
-            Logger.log('Translator doPost error: ' + (error && error.stack ? error.stack : error));
-            var code = error && error.code ? Number(error.code) : 500;
-            return createTranslatorJsonResponse_({
-                success: false,
-                error: error && error.message ? error.message : 'Server error',
-                code: isNaN(code) ? 500 : code
-            });
-        }
-    }
+ 
 
     /**
     * Shared router entry for SystemTools_Main.gs action: "translateText".
